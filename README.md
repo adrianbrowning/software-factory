@@ -1,65 +1,86 @@
-# Software Factory
+# Sandcastle Factory
 
-A local, deterministic orchestrator that turns one trusted GitHub Issue into a tested, reviewed pull request or native PR Stack, stopping at a human-controlled Merge Boundary.
+A small issue-to-reviewed-branch loop for an existing repository. It loads one GitHub issue, asks a Sandcastle agent to implement it, gates every code-changing run with deterministic checks, processes structured review findings, and verifies the result.
 
-This project is at the first tracer-bullet stage. The current CLI can capture an immutable Issue Contract from GitHub and persist an atomic run manifest:
+It deliberately does not manage sub-issues, pull requests, stacks, or merges.
+
+## Install in a repository
+
+Initialize Sandcastle and choose the blank template:
 
 ```sh
-pnpm install
-pnpm process issue 'owner/repository#42'
+npx @ai-hero/sandcastle init
 ```
 
-## Development
+Copy the three drop-in files into the generated directory:
 
-The project uses Node.js, TypeScript, and pnpm 10. TypeScript 5.9 is intentionally pinned because the TypeScript 7 native compiler does not currently provide an Android/Termux binary.
+```sh
+cp /path/to/software-factory/drop-in/factory.ts .sandcastle/factory.ts
+cp /path/to/software-factory/drop-in/github-issue.ts .sandcastle/github-issue.ts
+cp /path/to/software-factory/drop-in/main.mts .sandcastle/main.mts
+```
+
+Install Zod if needed, then edit the configuration block at the top of `main.mts`:
+
+```sh
+pnpm add --save-dev zod
+```
+
+```ts
+const BASE_REF = 'origin/main';
+const CHECKS = ['pnpm lint', 'pnpm typecheck', 'pnpm test'];
+const MAX_ROUNDS = 3;
+const SETUP_COMMAND = 'pnpm install --frozen-lockfile';
+```
+
+The provided adapter uses Docker and Claude Code. Retain the provider and agent selected by `sandcastle init` if those differ.
+
+## Run an issue
+
+Pass an issue number from the current repository, an explicit repository reference, or a URL:
+
+```sh
+npx tsx .sandcastle/main.mts 42
+npx tsx .sandcastle/main.mts 'owner/repository#42'
+npx tsx .sandcastle/main.mts https://github.com/owner/repository/issues/42
+```
+
+The terminal reports setup, implementation, every check result, repair, review findings, completion, and failure as they happen:
+
+```text
+[implement] Starting issue #42
+[round 1/3] Starting
+[check] pnpm lint ✓
+[check] pnpm typecheck ✓
+[check] pnpm test ✗
+[repair] Fixing failed checks
+```
+
+## Re-run review
+
+Check out the branch containing the work and pass `--review-only`:
+
+```sh
+git switch sandcastle/factory/EXISTING_RUN
+npx tsx .sandcastle/main.mts 42 --review-only
+```
+
+Review-only skips the implementation agent. It still runs all checks, repairs failures, reviews against the issue, processes findings, and reruns checks before every re-review. The new run writes fixes to a new named branch and never merges automatically.
+
+## Flow
+
+1. Create one named Sandcastle branch and sandbox.
+2. Load and validate the issue with `gh issue view`.
+3. Implement the issue, unless `--review-only` was passed.
+4. Run every configured check through `sandbox.exec()`.
+5. Repair failed checks and re-run all checks; review cannot run while a check is red.
+6. Run a read-only review against the issue and validate its structured findings.
+7. Process findings, then return to all deterministic checks before re-reviewing.
+8. Stop clean or fail when `MAX_ROUNDS` is exhausted.
+
+## Developing this drop-in
 
 ```sh
 pnpm test
 pnpm typecheck
 ```
-
-The agreed domain language lives in [CONTEXT.md](./CONTEXT.md). The [MVP design and roadmap](./docs/MVP.md) define the delivery sequence, and durable decisions are recorded in [docs/adr](./docs/adr/).
-
-## Grilling Web Companion
-
-The repository includes a local, phone-friendly wizard used during design interviews. It uses only Node.js built-ins, binds to the phone itself by default, and stores its local transcript in the ignored `.grilling/sessions.json` file.
-
-### Start it
-
-```sh
-pnpm start
-```
-
-Open <http://127.0.0.1:8787> in the phone's browser. The page checks for new rounds every two seconds.
-
-### Grilling-session bridge
-
-Write each frontier round as JSON:
-
-```json
-{
-  "questions": [
-    {
-      "title": "Audience",
-      "body": "Who is this for?",
-      "recommendation": "Start with maintainers."
-    }
-  ]
-}
-```
-
-Publish the round and retain its ID:
-
-```sh
-node src/cli.mjs publish /path/to/questions.json
-```
-
-Read its answers after submission:
-
-```sh
-node src/cli.mjs answers ROUND_ID
-```
-
-While a round is open, `answers` returns `{"status":"waiting"}`. The web page waits for the next published round automatically after submission.
-
-The server defaults to private loopback access. Binding it to `0.0.0.0` exposes the unauthenticated page to other devices that can reach the host.

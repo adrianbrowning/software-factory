@@ -1,21 +1,22 @@
 {
-  "name": "software-factory",
+  "name": "sandcastle-factory-drop-in",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@10.29.2",
   "scripts": {
-    "start": "node src/cli.mjs serve",
-    "process": "tsx src/process-cli.ts",
-    "test": "node --import tsx --test test/*.test.mjs test/*.test.ts",
+    "test": "node --import tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "engines": {
     "node": ">=20"
   },
   "devDependencies": {
+    "@ai-hero/sandcastle": "0.12.0",
+    "@standard-schema/spec": "^1.1.0",
     "@types/node": "^26.6.3",
     "tsx": "^4.23.15",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "zod": "^4.6.5"
   }
 }
