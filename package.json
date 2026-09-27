@@ -1,0 +1,21 @@
+{
+  "name": "software-factory",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.29.2",
+  "scripts": {
+    "start": "node src/cli.mjs serve",
+    "process": "tsx src/process-cli.ts",
+    "test": "node --import tsx --test test/*.test.mjs test/*.test.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.3",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3"
+  }
+}

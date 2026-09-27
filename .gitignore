@@ -1,0 +1,6 @@
+.grilling/
+.software-factory/
+node_modules/
+coverage/
+dist/
+*.log
