@@ -1,5 +1,9 @@
 # Agent Instructions
 
-When conducting a grilling session, follow the web companion protocol in
-`README.md` under **Grilling-session bridge** to publish every frontier round
-and read the submitted answers before continuing.
+Keep this repository's drop-in workflow intentionally small: it loads one
+trusted GitHub issue, creates a reviewed Sandcastle branch, and never creates
+or merges pull requests automatically.
+
+When conducting a grilling session, read `grilling-companion/README.md`,
+publish every frontier round through its bridge, and read the submitted answers
+before continuing.

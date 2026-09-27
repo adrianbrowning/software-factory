@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import { runFactory } from '../drop-in/factory.js';
 import { parseArguments } from '../drop-in/github-issue.js';
+import { factoryOptions } from './fixtures.js';
 
 test('parses the review-only flag with one issue reference', () => {
   assert.deepEqual(parseArguments(['42', '--review-only']), {
@@ -20,12 +21,10 @@ test('parses the review-only flag with one issue reference', () => {
 test('review-only skips implementation but still runs checks and review', async () => {
   const events: string[] = [];
   const status: string[] = [];
-  const result = await runFactory({
-    baseRef: 'main',
-    checks: ['pnpm test'],
+  const result = await runFactory(factoryOptions({
     execute: async () => {
       events.push('check');
-      return { exitCode: 0, stderr: '', stdout: 'passed' };
+      return { exitCode: 0, timedOut: false, stderr: '', stdout: 'passed' };
     },
     fix: async () => {
       events.push('fix');
@@ -33,22 +32,15 @@ test('review-only skips implementation but still runs checks and review', async 
     implement: async () => {
       events.push('implement');
     },
-    issue: {
-      body: 'Requested behavior',
-      number: 42,
-      title: 'Add behavior',
-      url: 'https://github.com/acme/example/issues/42',
-    },
-    maxRounds: 1,
     mode: 'review-only',
     onStatus: message => status.push(message),
     review: async () => {
       events.push('review');
       return { findings: [] };
     },
-  });
+  }));
 
   assert.equal(result.status, 'passed');
-  assert.deepEqual(events, ['check', 'review']);
+  assert.deepEqual(events, ['check', 'review', 'check']);
   assert.equal(status[0], '[review-only] Skipping implementation');
 });

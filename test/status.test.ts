@@ -2,25 +2,13 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { runFactory } from '../drop-in/factory.js';
+import { factoryOptions } from './fixtures.js';
 
 test('reports human-readable progress throughout a successful run', async () => {
   const status: string[] = [];
-  const result = await runFactory({
-    baseRef: 'main',
-    checks: ['pnpm test'],
-    execute: async () => ({ exitCode: 0, stderr: '', stdout: 'passed' }),
-    fix: async () => {},
-    implement: async () => {},
-    issue: {
-      body: 'Requested behavior',
-      number: 42,
-      title: 'Add behavior',
-      url: 'https://github.com/acme/example/issues/42',
-    },
-    maxRounds: 1,
+  const result = await runFactory(factoryOptions({
     onStatus: message => status.push(message),
-    review: async () => ({ findings: [] }),
-  });
+  }));
 
   assert.equal(result.status, 'passed');
   assert.deepEqual(status, [
@@ -30,6 +18,9 @@ test('reports human-readable progress throughout a successful run', async () => 
     '[check] pnpm test',
     '[check] pnpm test ✓',
     '[review] Starting',
+    '[verify] Rechecking after clean review',
+    '[check] pnpm test',
+    '[check] pnpm test ✓',
     '[review] Clean',
     '[complete] Passed in round 1',
   ]);
