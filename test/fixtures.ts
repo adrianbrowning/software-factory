@@ -1,4 +1,4 @@
-import type { FactoryOptions, GitHubIssue } from '../drop-in/factory.js';
+import type { FactoryOptions, GitHubIssue } from '../drop-in/factory.ts';
 
 export const authorizedIssue = {
   author: 'octocat',

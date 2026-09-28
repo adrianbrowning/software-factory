@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { runMain, type MainDependencies, type MainOptions } from '../drop-in/main.mjs';
+import { runMain, type MainDependencies, type MainOptions } from '../drop-in/main.mts';
 
 const options: MainOptions = {
   baseRef: 'origin/main',
@@ -27,6 +27,9 @@ const issueJson = JSON.stringify({
 });
 
 type FakeAgent = { name: string };
+
+const buildAgent: FakeAgent = { name: 'fake-build-agent' };
+const reviewAgent: FakeAgent = { name: 'fake-review-agent' };
 
 function taggedSkillReview(findings: unknown[] = []) {
   const critical = findings.filter((finding): finding is { severity: string } => (
@@ -63,8 +66,8 @@ function harness(overrides: Partial<MainDependencies<FakeAgent>> = {}) {
       }
       return { exitCode: 0, stderr: '', stdout: 'passed' };
     },
-    run: async ({ name }: { name: string }) => {
-      events.push(`run:${name}`);
+    run: async ({ agent, name }: { agent: FakeAgent; name: string }) => {
+      events.push(`run:${name}:${agent.name}`);
       return {
         stdout: name === 'review' ? taggedSkillReview() : '',
       };
@@ -72,7 +75,7 @@ function harness(overrides: Partial<MainDependencies<FakeAgent>> = {}) {
   };
 
   const dependencies: MainDependencies<FakeAgent> = {
-    agent: { name: 'fake-agent' },
+    buildAgent,
     createSandbox: async input => {
       events.push(`create:${input.branch}`);
       return sandbox;
@@ -86,6 +89,11 @@ function harness(overrides: Partial<MainDependencies<FakeAgent>> = {}) {
       error: message => errors.push(message),
       log: message => logs.push(message),
     },
+    readFile: async path => {
+      events.push(`readFile:${path}`);
+      throw new Error(`unexpected readFile: ${path}`);
+    },
+    reviewAgent,
     setExitCode: code => {
       exitCode = code;
     },
@@ -113,6 +121,44 @@ test('runMain completes successfully and prints the final result', async () => {
   assert.equal(testHarness.events.at(-1), 'close');
   assert.match(testHarness.logs.at(-2) ?? '', /"status": "passed"/);
   assert.equal(testHarness.logs.at(-1), '[setup] Closing sandbox');
+});
+
+test('implement and fix runs use the build agent, and the review run uses the review agent', async () => {
+  const testHarness = harness();
+  await runMain(testHarness.dependencies, ['42'], options);
+
+  assert.equal(testHarness.events.some(event => event === `run:implement:${buildAgent.name}`), true);
+  assert.equal(testHarness.events.some(event => event === `run:review:${reviewAgent.name}`), true);
+  assert.equal(testHarness.events.some(event => event.startsWith('run:') && event.includes(reviewAgent.name) && !event.startsWith('run:review:')), false);
+});
+
+test('runs from a file without calling gh, deriving the issue and branch from the file', async () => {
+  const testHarness = harness({
+    readFile: async path => {
+      assert.equal(path, 'issue.md');
+      return '# Add a widget\n\nBuild the thing.';
+    },
+  });
+
+  const outcome = await runMain(testHarness.dependencies, ['--file', 'issue.md'], options);
+
+  assert.equal(outcome.status, 'completed');
+  assert.equal(testHarness.events.some(event => event.startsWith('load:')), false);
+  assert.equal(testHarness.events[0], 'create:sandcastle/factory/file-issue-123');
+  assert.match(testHarness.logs.at(-2) ?? '', /"status": "passed"/);
+});
+
+test('--file combined with --review-only skips implementation but still reviews', async () => {
+  const testHarness = harness({
+    readFile: async () => '# Add a widget\n\nBuild the thing.',
+  });
+
+  const outcome = await runMain(testHarness.dependencies, ['--file', 'issue.md', '--review-only'], options);
+
+  assert.equal(outcome.status, 'completed');
+  assert.equal(testHarness.logs.includes('[review-only] Skipping implementation'), true);
+  assert.equal(testHarness.events.some(event => event === `run:implement:${buildAgent.name}`), false);
+  assert.equal(testHarness.events.some(event => event === `run:review:${reviewAgent.name}`), true);
 });
 
 test('issue-load failure does not provision a sandbox and propagates exit code', async () => {

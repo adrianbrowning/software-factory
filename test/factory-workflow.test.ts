@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { runFactory } from '../drop-in/factory.js';
-import { authorizedIssue, factoryOptions } from './fixtures.js';
+import { runFactory } from '../drop-in/factory.ts';
+import { authorizedIssue, factoryOptions } from './fixtures.ts';
 
 test('implements an issue, checks it, processes findings, and verifies fixes', async () => {
   const events: string[] = [];

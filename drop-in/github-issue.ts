@@ -1,7 +1,7 @@
-import type { GitHubIssue } from './factory.js';
+import type { GitHubIssue } from './factory.ts';
 
 const fields = 'author,body,labels,number,title,url';
-const usage = 'Usage: npx tsx .sandcastle/main.mts <issue> [--review-only]';
+const usage = 'Usage: node .sandcastle/main.mts (<issue> | --file <path>) [--review-only]';
 
 export type IssueTrustPolicy = {
   requiredLabel: string;
@@ -9,18 +9,26 @@ export type IssueTrustPolicy = {
   trustedRepositories: readonly string[];
 };
 
-export type ParsedArguments = {
-  issueReference: string;
-  reviewOnly: boolean;
-};
+export type ParsedArguments =
+  | { filePath: string; reviewOnly: boolean }
+  | { issueReference: string; reviewOnly: boolean };
 
-export function parseArguments(arguments_: string[]) {
+export function parseArguments(arguments_: string[]): ParsedArguments {
+  let filePath: string | undefined;
   let issueReference: string | undefined;
   let reviewOnly = false;
 
-  for (const argument of arguments_) {
+  for (let index = 0; index < arguments_.length; index += 1) {
+    const argument = arguments_[index];
+    if (argument === undefined) continue;
+
     if (argument === '--review-only' && !reviewOnly) {
       reviewOnly = true;
+    } else if (argument === '--file' && filePath === undefined) {
+      const next = arguments_[index + 1];
+      if (next === undefined || next.startsWith('-')) throw new Error(usage);
+      filePath = next;
+      index += 1;
     } else if (!argument.startsWith('-') && issueReference === undefined) {
       issueReference = argument;
     } else {
@@ -28,8 +36,10 @@ export function parseArguments(arguments_: string[]) {
     }
   }
 
-  if (issueReference === undefined) throw new Error(usage);
-  return { issueReference, reviewOnly } satisfies ParsedArguments;
+  if (filePath !== undefined && issueReference !== undefined) throw new Error(usage);
+  if (filePath !== undefined) return { filePath, reviewOnly };
+  if (issueReference !== undefined) return { issueReference, reviewOnly };
+  throw new Error(usage);
 }
 
 function normalizeRepository(repository: string) {
@@ -79,21 +89,21 @@ type RawGitHubIssue = {
 
 function isRawGitHubIssue(value: unknown): value is RawGitHubIssue {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) return false;
-  const issue = <Record<string, unknown>>value;
+  const issue = value as Record<string, unknown>;
   const author = issue.author;
   const labels = issue.labels;
   return (
     typeof author === 'object'
     && author !== null
     && !Array.isArray(author)
-    && typeof (<Record<string, unknown>>author).login === 'string'
+    && typeof (author as Record<string, unknown>).login === 'string'
     && typeof issue.body === 'string'
     && Array.isArray(labels)
     && labels.every(label => (
       typeof label === 'object'
       && label !== null
       && !Array.isArray(label)
-      && typeof (<Record<string, unknown>>label).name === 'string'
+      && typeof (label as Record<string, unknown>).name === 'string'
     ))
     && Number.isInteger(issue.number)
     && Number(issue.number) > 0
@@ -134,5 +144,32 @@ export function parseGitHubIssue(stdout: string, policy: IssueTrustPolicy) {
     number: value.number,
     title: value.title,
     url: value.url,
+  } satisfies GitHubIssue;
+}
+
+export function fileIssueSlug(filePath: string) {
+  const base = filePath.split(/[\\/]/).pop() ?? filePath;
+  const withoutExtension = base.replace(/\.[^./]+$/, '');
+  const slug = withoutExtension.toLowerCase().replaceAll(/[^a-z0-9]+/g, '-').replaceAll(/^-+|-+$/g, '');
+  return slug.length > 0 ? slug : 'issue';
+}
+
+export function parseFileIssue(content: string, filePath: string) {
+  const lines = content.split(/\r?\n/);
+  const titleIndex = lines.findIndex(line => line.trim().length > 0);
+  if (titleIndex === -1) throw new Error(`Issue file is empty: ${filePath}`);
+
+  const title = (lines[titleIndex] ?? '').trim().replace(/^#+\s*/, '').trim();
+  if (title.length === 0) throw new Error(`Issue file is missing a title: ${filePath}`);
+
+  const body = lines.slice(titleIndex + 1).join('\n').trim();
+
+  return {
+    author: 'local-file',
+    body,
+    labels: [],
+    number: 0,
+    title,
+    url: `file://${fileIssueSlug(filePath)}`,
   } satisfies GitHubIssue;
 }

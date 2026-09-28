@@ -12,7 +12,7 @@ It deliberately does not manage sub-issues, pull requests, stacks, or merges.
 Initialize Sandcastle and choose the blank template:
 
 ```sh
-npx @ai-hero/sandcastle init
+pnpm dlx @ai-hero/sandcastle init
 ```
 
 Copy the three drop-in files into the generated directory:
@@ -70,21 +70,23 @@ Provider selection is also explicit near the executable bootstrap:
 
 ```ts
 const AGENT_PROVIDER = 'claude-code';
-const AGENT_MODEL = 'claude-sonnet-4-6';
+const BUILD_MODEL = 'claude-opus-5-5';
+const REVIEW_MODEL = 'claude-opus-5-5';
 ```
 
 The included adapter supports `claude-code`. Replace the adapter deliberately
 if the provider selected during `sandcastle init` differs; do not rely on an
-implicit provider override.
+implicit provider override. `BUILD_MODEL` drives implement/fix runs and
+`REVIEW_MODEL` drives the review run; change either independently.
 
 ## Run an issue
 
 Add the authorization label, then pass an issue from a trusted repository:
 
 ```sh
-npx tsx .sandcastle/main.mts 42
-npx tsx .sandcastle/main.mts 'owner/repository#42'
-npx tsx .sandcastle/main.mts https://github.com/owner/repository/issues/42
+node .sandcastle/main.mts 42
+node .sandcastle/main.mts 'owner/repository#42'
+node .sandcastle/main.mts https://github.com/owner/repository/issues/42
 ```
 
 Issue authorization is checked on the host before sandbox provisioning. GitHub
@@ -119,13 +121,31 @@ Reviewer isolation snapshots fail closed after 30 seconds or 1 MiB of probe
 output. Dirty-file hashing is bounded to 10,000 paths, 10 MiB per file, and
 50 MiB total; exceeding a bound aborts the run instead of accepting the review.
 
+## Run from a file
+
+Paste an issue from elsewhere (Jira, a doc, a chat thread) into a text file and
+pass it with `--file` instead of an issue reference. Exactly one of the two is
+required.
+
+```sh
+node .sandcastle/main.mts --file ./issue.md
+node .sandcastle/main.mts --file ./issue.md --review-only
+```
+
+The file is read on the host, never in the sandbox, and skips the GitHub
+label/author trust gate entirely — the operator supplied the file directly.
+The first non-empty line (leading `#`s and whitespace stripped) becomes the
+title; the rest of the file, trimmed, becomes the body. The issue is still
+wrapped as `<untrusted-issue>` evidence for every agent prompt. The branch
+name includes the file name, e.g. `sandcastle/factory/file-issue-<timestamp>`.
+
 ## Re-run review
 
 Check out the branch containing the work and pass `--review-only`:
 
 ```sh
 git switch sandcastle/factory/EXISTING_RUN
-npx tsx .sandcastle/main.mts 42 --review-only
+node .sandcastle/main.mts 42 --review-only
 ```
 
 Review-only skips implementation but still runs all checks, repairs failures,

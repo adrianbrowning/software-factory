@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { githubIssueCommand, parseGitHubIssue } from '../drop-in/github-issue.js';
+import { githubIssueCommand, parseGitHubIssue } from '../drop-in/github-issue.ts';
 
 const policy = {
   requiredLabel: 'factory-approved',

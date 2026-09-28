@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { parseReviewReport, parseSkillReview, parseTaggedReview } from '../drop-in/factory.js';
+import { parseReviewReport, parseSkillReview, parseTaggedReview } from '../drop-in/factory.ts';
 
 const finding = {
   evidence: 'The error is ignored.',

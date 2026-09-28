@@ -3,9 +3,9 @@ import { exec as execCallback } from 'node:child_process';
 import { promisify } from 'node:util';
 import { test } from 'node:test';
 
-import { runFactory } from '../drop-in/factory.js';
-import { commandWithTimeout, isTimeoutExitCode } from '../drop-in/main.mjs';
-import { factoryOptions } from './fixtures.js';
+import { runFactory } from '../drop-in/factory.ts';
+import { commandWithTimeout, isTimeoutExitCode } from '../drop-in/main.mts';
+import { factoryOptions } from './fixtures.ts';
 
 const exec = promisify(execCallback);
 
@@ -19,7 +19,7 @@ test('actively terminates a deterministic check after its timeout', async () => 
         const output = await exec(commandWithTimeout(command, timeoutMs));
         return { exitCode: 0, timedOut: false, stderr: output.stderr, stdout: output.stdout };
       } catch (error) {
-        const failure = <{ code?: number; stderr?: string; stdout?: string }>error;
+        const failure = error as { code?: number; stderr?: string; stdout?: string };
         return {
           exitCode: typeof failure.code === 'number' ? failure.code : 1,
           stderr: failure.stderr ?? '',

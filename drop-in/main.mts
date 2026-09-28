@@ -1,4 +1,5 @@
 import { exec as execCallback } from 'node:child_process';
+import { readFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 
@@ -10,13 +11,16 @@ import {
   runFactory,
   type ExecResult,
   type FactoryResult,
-} from './factory.js';
+  type GitHubIssue,
+} from './factory.ts';
 import {
+  fileIssueSlug,
   githubIssueCommand,
   parseArguments,
+  parseFileIssue,
   parseGitHubIssue,
   type IssueTrustPolicy,
-} from './github-issue.js';
+} from './github-issue.ts';
 
 export type MainOptions = {
   baseRef: string;
@@ -41,7 +45,7 @@ export type MainSandbox<Agent> = {
 };
 
 export type MainDependencies<Agent> = {
-  agent: Agent;
+  buildAgent: Agent;
   createSandbox: (input: { branch: string; setupCommand: string }) => Promise<MainSandbox<Agent>>;
   loadIssue: (command: string) => Promise<ExecResult>;
   now: () => number;
@@ -49,6 +53,8 @@ export type MainDependencies<Agent> = {
     error: (message: string) => void;
     log: (message: string) => void;
   };
+  readFile: (path: string) => Promise<string>;
+  reviewAgent: Agent;
   setExitCode: (code: number) => void;
 };
 
@@ -101,14 +107,14 @@ export async function captureRepositoryState<Agent>(sandbox: MainSandbox<Agent>)
       if [[ -L "$path" ]]; then
         printf 'link %s %s\\n' "$path" "$(readlink -- "$path")"
       elif [[ -f "$path" ]]; then
-        size=$(stat -c %s -- "$path")
+        size=$(stat -c %s -- "$path" 2>/dev/null || stat -f %z -- "$path")
         (( size <= 10485760 )) || exit 65
         total=$((total + size))
         (( total <= 52428800 )) || exit 65
         sha256sum -- "$path"
-        stat -c 'mode %a %n' -- "$path"
+        stat -c 'mode %a %n' -- "$path" 2>/dev/null || stat -f 'mode %Lp %N' -- "$path"
       elif [[ -e "$path" ]]; then
-        stat -c 'special %F %a %n' -- "$path"
+        stat -c 'special %F %a %n' -- "$path" 2>/dev/null || stat -f 'special %HT %Lp %N' -- "$path"
       else
         printf 'deleted %s\\n' "$path"
       fi
@@ -124,7 +130,7 @@ export async function captureRepositoryState<Agent>(sandbox: MainSandbox<Agent>)
       git config --local --list --show-origin >> "$metadata"
       sha256sum "$metadata"`,
     dirtyFiles,
-    'set -euo pipefail; hooks="$(git rev-parse --git-path hooks)"; info="$(git rev-parse --git-path info)"; find "$hooks" "$info" -maxdepth 2 \\( -type f -o -type l \\) -print0 | sort -z | xargs -0 -r sha256sum',
+    'set -euo pipefail; hooks="$(git rev-parse --git-path hooks)"; info="$(git rev-parse --git-path info)"; paths=(); [[ -e "$hooks" ]] && paths+=("$hooks"); [[ -e "$info" ]] && paths+=("$info"); if (( ${#paths[@]} )); then find "${paths[@]}" -maxdepth 2 \\( -type f -o -type l \\) -print0 | sort -z | xargs -0 -r sha256sum; fi',
     'set -euo pipefail; if [[ -d node_modules/.bin ]]; then find node_modules/.bin \\( -type f -o -type l \\) -print0 | sort -z | xargs -0 -r sha256sum; fi',
   ];
 
@@ -150,20 +156,37 @@ export async function runMain<Agent>(
   let outcome: MainOutcome;
 
   try {
-    const { issueReference, reviewOnly } = parseArguments(arguments_);
-    const loadIssueCommand = githubIssueCommand(issueReference, options.trustPolicy);
+    const parsed = parseArguments(arguments_);
+    const { reviewOnly } = parsed;
 
-    dependencies.output.log(`[setup] Loading GitHub issue ${issueReference}`);
-    const loadedIssue = await dependencies.loadIssue(loadIssueCommand);
-    if (loadedIssue.exitCode !== 0) {
-      throw new Error(
-        `Unable to load GitHub issue: ${boundedErrorEvidence(loadedIssue.stderr)}`,
-      );
+    let issue: GitHubIssue;
+    let branch: string;
+    if ('filePath' in parsed) {
+      dependencies.output.log(`[setup] Loading issue from file ${parsed.filePath}`);
+      let fileContents: string;
+      try {
+        fileContents = await dependencies.readFile(parsed.filePath);
+      } catch (value) {
+        throw new Error(`Unable to read issue file: ${errorFrom(value).message}`);
+      }
+      issue = parseFileIssue(fileContents, parsed.filePath);
+      dependencies.output.log(`[setup] Loaded issue "${issue.title}" from file`);
+      branch = `${options.branchPrefix}/file-${fileIssueSlug(parsed.filePath)}-${dependencies.now()}`;
+    } else {
+      const loadIssueCommand = githubIssueCommand(parsed.issueReference, options.trustPolicy);
+
+      dependencies.output.log(`[setup] Loading GitHub issue ${parsed.issueReference}`);
+      const loadedIssue = await dependencies.loadIssue(loadIssueCommand);
+      if (loadedIssue.exitCode !== 0) {
+        throw new Error(
+          `Unable to load GitHub issue: ${boundedErrorEvidence(loadedIssue.stderr)}`,
+        );
+      }
+      issue = parseGitHubIssue(loadedIssue.stdout, options.trustPolicy);
+      dependencies.output.log(`[setup] Loaded issue #${issue.number}: ${issue.title}`);
+      branch = `${options.branchPrefix}/${dependencies.now()}`;
     }
-    const issue = parseGitHubIssue(loadedIssue.stdout, options.trustPolicy);
-    dependencies.output.log(`[setup] Loaded issue #${issue.number}: ${issue.title}`);
 
-    const branch = `${options.branchPrefix}/${dependencies.now()}`;
     dependencies.output.log(`[setup] Creating sandbox branch ${branch}`);
     sandbox = await dependencies.createSandbox({
       branch,
@@ -182,14 +205,14 @@ export async function runMain<Agent>(
       },
       fix: async prompt => {
         await activeSandbox.run({
-          agent: dependencies.agent,
+          agent: dependencies.buildAgent,
           name: 'fix',
           prompt,
         });
       },
       implement: async prompt => {
         await activeSandbox.run({
-          agent: dependencies.agent,
+          agent: dependencies.buildAgent,
           name: 'implement',
           prompt,
         });
@@ -200,7 +223,7 @@ export async function runMain<Agent>(
       onStatus: message => dependencies.output.log(message),
       review: async prompt => {
         const review = await activeSandbox.run({
-          agent: dependencies.agent,
+          agent: dependencies.reviewAgent,
           name: 'review',
           prompt,
         });
@@ -247,9 +270,11 @@ export function isTimeoutExitCode(exitCode: number) {
 
 const exec = promisify(execCallback);
 const AGENT_PROVIDER = 'claude-code';
-const AGENT_MODEL = 'claude-sonnet-4-6';
+const BUILD_MODEL = 'claude-opus-5-5';
+const REVIEW_MODEL = 'claude-opus-5-5';
 if (AGENT_PROVIDER !== 'claude-code') throw new Error('Unsupported agent provider');
-const configuredAgent = sandcastle.claudeCode(AGENT_MODEL);
+const configuredBuildAgent = sandcastle.claudeCode(BUILD_MODEL);
+const configuredReviewAgent = sandcastle.claudeCode(REVIEW_MODEL);
 
 async function defaultLoadIssue(command: string) {
   try {
@@ -269,7 +294,7 @@ async function defaultLoadIssue(command: string) {
 }
 
 const defaultDependencies: MainDependencies<sandcastle.AgentProvider> = {
-  agent: configuredAgent,
+  buildAgent: configuredBuildAgent,
   createSandbox: async ({ branch, setupCommand }) => {
     const sandbox = await sandcastle.createSandbox({
       branch,
@@ -295,6 +320,8 @@ const defaultDependencies: MainDependencies<sandcastle.AgentProvider> = {
     error: message => console.error(message),
     log: message => console.log(message),
   },
+  readFile: path => readFile(path, 'utf8'),
+  reviewAgent: configuredReviewAgent,
   setExitCode: code => {
     process.exitCode = code;
   },

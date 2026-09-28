@@ -13,7 +13,7 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { test } from 'node:test';
 
-import { captureRepositoryState, type MainSandbox } from '../drop-in/main.mjs';
+import { captureRepositoryState, type MainSandbox } from '../drop-in/main.mts';
 
 const execFileAsync = promisify(execFile);
 

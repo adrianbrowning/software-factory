@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { runFactory } from '../drop-in/factory.js';
-import { factoryOptions } from './fixtures.js';
+import { runFactory } from '../drop-in/factory.ts';
+import { factoryOptions } from './fixtures.ts';
 
 test('repair prompts and public results bound and redact check evidence', async () => {
   const secrets = [

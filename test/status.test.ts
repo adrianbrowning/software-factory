@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { runFactory } from '../drop-in/factory.js';
-import { factoryOptions } from './fixtures.js';
+import { runFactory } from '../drop-in/factory.ts';
+import { factoryOptions } from './fixtures.ts';
 
 test('reports human-readable progress throughout a successful run', async () => {
   const status: string[] = [];
