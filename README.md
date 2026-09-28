@@ -41,7 +41,11 @@ export const DEFAULT_OPTIONS = {
   checks: ['pnpm lint', 'pnpm typecheck', 'pnpm test'],
   checkTimeoutMs: 10 * 60 * 1_000,
   maxRounds: 3,
-  setupCommand: 'pnpm install --frozen-lockfile',
+  setupCommand: [
+    'pnpm install --frozen-lockfile',
+    'pnpm dlx skills add adrianbrowning/agent-skills -s cc-pr-review-ci -a claude-code -y',
+    'printf \'.claude/skills/\\nskills-lock.json\\n\' >> "$(git rev-parse --git-path info/exclude)"',
+  ].join(' && '),
   trustPolicy: {
     requiredLabel: 'factory-approved',
     trustedAuthors: ['trusted-maintainer'],
@@ -54,6 +58,13 @@ The checks run sequentially in the declared order. This is intentional because
 lint, typecheck, and test scripts may share generated files or other mutable
 state. Configure independent parallelism inside the repository's own scripts if
 that repository guarantees it is safe.
+
+`setupCommand` also installs the `cc-pr-review-ci` skill (from
+`adrianbrowning/agent-skills`, tracking `HEAD`, no pinning) at the project level
+and appends its installed paths (`.claude/skills/`, `skills-lock.json`) to
+`info/exclude` so the implementer agent cannot commit them. Known risk: because
+those paths are ignored, the implementer can edit the skill before review without
+it showing in the diff; a prompt-injected issue could weaken the reviewer.
 
 Provider selection is also explicit near the executable bootstrap:
 
@@ -80,6 +91,14 @@ Issue authorization is checked on the host before sandbox provisioning. GitHub
 credentials are not passed through the issue-loading path to coding or repair
 agents. Issue text, check output, and review findings are delimited as untrusted
 evidence. Agent prompts forbid network tools and credential inspection.
+
+The review round runs the `cc-pr-review-ci` skill as a local run (no PR
+number) against `${baseRef}...HEAD`; the issue is still passed as
+`<untrusted-issue>` evidence of intended scope. The reviewer follows only the
+skill's own instructions and prints the skill's `review.json` inside
+`<review>...</review>`. Only `critical` and `high` findings block completion
+and drive repair; `observation` findings are reported but non-blocking and are
+still included in the final result.
 
 The terminal reports setup, implementation, every check result, repair, review
 findings, completion, and failure as they happen:
@@ -121,10 +140,13 @@ automatically.
 3. Implement the issue unless `--review-only` was passed.
 4. Run every configured check sequentially with an active timeout.
 5. Repair failed checks and rerun all checks; review cannot run while a check is red.
-6. Capture repository state and run the nominally read-only review.
+6. Capture repository state and run the nominally read-only `cc-pr-review-ci`
+   skill review.
 7. Reject the run if the reviewer changed tracked or untracked repository state.
-8. Process validated findings, then return to all deterministic checks.
-9. After a clean review, rerun every deterministic check before declaring success.
+8. Process validated `critical`/`high` findings, then return to all deterministic
+   checks; `observation` findings are reported but do not block.
+9. After a clean review (no `critical`/`high` findings), rerun every
+   deterministic check before declaring success.
 10. Stop clean or fail when `maxRounds` is exhausted.
 11. Close the sandbox on every success and failure path.
 

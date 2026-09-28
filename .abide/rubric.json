@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "compiledAt": "2026-09-28T00:00:00.000Z",
+  "compiledBy": "claude",
+  "sources": [
+    {
+      "path": "AGENTS.md",
+      "sha": "633e6eb6b7a1fa21d2392bad04f5246cfa59bc730737c62ef13020b667bc2e1d",
+      "scope": "**/*"
+    }
+  ],
+  "rules": [
+    {
+      "id": "no-auto-pr",
+      "text": "it loads one trusted GitHub issue, creates a reviewed Sandcastle branch, and never creates or merges pull requests automatically.",
+      "source": {
+        "path": "AGENTS.md",
+        "line": 3
+      },
+      "check": {
+        "type": "lint",
+        "how": "grep for gh pr create/merge or pulls API calls",
+        "pattern": "gh\\W+pr\\W+(create|merge)|/pulls\\b|pulls\\.(create|merge)"
+      },
+      "status": "active"
+    },
+    {
+      "id": "keep-workflow-small",
+      "text": "Keep this repository's drop-in workflow intentionally small",
+      "source": {
+        "path": "AGENTS.md",
+        "line": 3
+      },
+      "scope": [
+        "drop-in/**"
+      ],
+      "when": "turn",
+      "check": {
+        "type": "model",
+        "question": {
+          "type": "score",
+          "instructions": "How much does this change grow the drop-in workflow beyond loading one issue and producing one reviewed branch?",
+          "criteria": [
+            "no new scope; fixes or trims existing behaviour",
+            "small addition directly serving the one-issue flow",
+            "adds a new option, mode, or module",
+            "adds several new features or a new workflow"
+          ],
+          "violatingFrom": 2
+        }
+      },
+      "status": "active",
+      "calibration": {
+        "at": "2026-09-28T08:45:01.186Z",
+        "hunks": 0,
+        "median": 0,
+        "min": 0,
+        "max": 0,
+        "fired": 0,
+        "verdict": "skipped"
+      }
+    }
+  ]
+}

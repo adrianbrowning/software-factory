@@ -62,7 +62,11 @@ export const DEFAULT_OPTIONS: MainOptions = {
   checks: ['pnpm lint', 'pnpm typecheck', 'pnpm test'],
   checkTimeoutMs: 10 * 60 * 1_000,
   maxRounds: 3,
-  setupCommand: 'pnpm install --frozen-lockfile',
+  setupCommand: [
+    'pnpm install --frozen-lockfile',
+    'pnpm dlx skills add adrianbrowning/agent-skills -s cc-pr-review-ci -a claude-code -y',
+    'printf \'.claude/skills/\\nskills-lock.json\\n\' >> "$(git rev-parse --git-path info/exclude)"',
+  ].join(' && '),
   trustPolicy: {
     requiredLabel: 'factory-approved',
     trustedAuthors: ['owner'],

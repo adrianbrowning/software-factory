@@ -28,6 +28,21 @@ const issueJson = JSON.stringify({
 
 type FakeAgent = { name: string };
 
+function taggedSkillReview(findings: unknown[] = []) {
+  const critical = findings.filter((finding): finding is { severity: string } => (
+    typeof finding === 'object' && finding !== null && (finding as { severity?: unknown }).severity === 'critical'
+  )).length;
+  const high = findings.filter((finding): finding is { severity: string } => (
+    typeof finding === 'object' && finding !== null && (finding as { severity?: unknown }).severity === 'high'
+  )).length;
+  return `<review>${JSON.stringify({
+    counts: { critical, high, observations: findings.length - critical - high },
+    findings,
+    summary: 'Reviewed.',
+    verdict: critical > 0 ? 'CHANGES_REQUESTED' : high > 0 ? 'APPROVED_WITH_SUGGESTIONS' : 'APPROVED',
+  })}</review>`;
+}
+
 function harness(overrides: Partial<MainDependencies<FakeAgent>> = {}) {
   const logs: string[] = [];
   const errors: string[] = [];
@@ -51,7 +66,7 @@ function harness(overrides: Partial<MainDependencies<FakeAgent>> = {}) {
     run: async ({ name }: { name: string }) => {
       events.push(`run:${name}`);
       return {
-        stdout: name === 'review' ? '<review>{"findings":[]}</review>' : '',
+        stdout: name === 'review' ? taggedSkillReview() : '',
       };
     },
   };
@@ -144,7 +159,17 @@ test('unresolved final-round findings produce failure output and exit code', asy
   const testHarness = harness();
   testHarness.sandbox.run = async ({ name }: { name: string }) => ({
     stdout: name === 'review'
-      ? '<review>{"findings":[{"evidence":"broken","file":"src/a.ts","line":1,"recommendation":"fix","severity":"high","title":"bug"}]}</review>'
+      ? taggedSkillReview([{
+          domain: 'bug',
+          fix: 'fix',
+          fix_prompt: 'Fix the bug in src/a.ts at line 1.',
+          id: 'bug-broken',
+          line: 1,
+          path: 'src/a.ts',
+          problem: 'broken',
+          severity: 'high',
+          title: 'bug',
+        }])
       : '',
   });
 
@@ -182,7 +207,7 @@ test('content changes to an existing dirty file are detected after review', asyn
   testHarness.sandbox.run = async ({ name }: { name: string }) => {
     if (name === 'review') snapshot = 'dirty-file hash-after';
     return {
-      stdout: name === 'review' ? '<review>{"findings":[]}</review>' : '',
+      stdout: name === 'review' ? taggedSkillReview() : '',
     };
   };
 
@@ -205,7 +230,7 @@ test('Git metadata changes are detected after review', async () => {
   testHarness.sandbox.run = async ({ name }: { name: string }) => {
     if (name === 'review') gitState = 'head-and-index-after';
     return {
-      stdout: name === 'review' ? '<review>{"findings":[]}</review>' : '',
+      stdout: name === 'review' ? taggedSkillReview() : '',
     };
   };
 

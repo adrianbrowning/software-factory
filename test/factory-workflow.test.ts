@@ -97,6 +97,39 @@ test('repairs and rechecks deterministic failures before review', async () => {
   assert.deepEqual(events, ['implement', 'check', 'fix', 'check', 'review', 'check']);
 });
 
+test('observation-only findings pass cleanly without triggering repair', async () => {
+  const events: string[] = [];
+  const status: string[] = [];
+  const result = await runFactory(factoryOptions({
+    execute: async () => {
+      events.push('check');
+      return { exitCode: 0, timedOut: false, stderr: '', stdout: 'passed' };
+    },
+    fix: async () => {
+      events.push('fix');
+    },
+    onStatus: message => status.push(message),
+    review: async () => {
+      events.push('review');
+      return {
+        findings: [{
+          evidence: 'Consider renaming this variable.',
+          file: 'src/example.ts',
+          line: 3,
+          recommendation: 'Rename for clarity.',
+          severity: 'low',
+          title: 'Naming nit',
+        }],
+      };
+    },
+  }));
+
+  assert.equal(result.status, 'passed');
+  assert.deepEqual(events, ['check', 'review', 'check']);
+  assert.equal(result.findings.length, 1);
+  assert.ok(status.some(message => /1 observation, non-blocking/.test(message)));
+});
+
 test('returns a failing result when the final round is not clean', async () => {
   const result = await runFactory(factoryOptions({
     execute: async () => ({ exitCode: 1, timedOut: false, stderr: 'test failed', stdout: '' }),
