@@ -114,7 +114,8 @@ export async function startRun(ws: Workspace, input: { feature: string; sessionI
     throw new Error(`Run "${input.feature}" already exists. Use /factory resume ${input.feature}.`);
   }
   const source = sourceSchema.parse(input.source);
-  const { baseRef, trunk } = await resolveBase(ws);
+  // The base is resolved and pinned at plan approval, where the user can still pick a different one.
+  const { baseRef, trunk } = ws.config;
   await excludeScratch(ws);
   const run: Run = {
     baseRef,

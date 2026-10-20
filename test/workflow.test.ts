@@ -113,14 +113,14 @@ async function green(ws: Workspace) {
   return step(ws, run => recordReview(ws, run));
 }
 
-describe('startRun', () => {
-  it('refuses a base ref that does not exist, before writing any state', async () => {
+describe('base resolution', () => {
+  it('starts a run without the default base, and plans on a base the user chooses', async () => {
     const ws = workspace({ baseRef: 'origin/main' });
-    await assert.rejects(
-      startRun(ws, { feature: 'demo', sessionId: 's', source: { body: '', kind: 'text', ref: 'r', title: 'T' } }),
-      /Base ref "origin\/main" does not exist/,
-    );
-    assert.equal(existsSync(join(ws.root, '.scratch', 'demo')), false);
+    await startRun(ws, { feature: 'demo', sessionId: 's', source: { body: '', kind: 'text', ref: 'r', title: 'T' } });
+    await assert.rejects(resolveBase(ws), /Base ref "origin\/main" does not exist/);
+    const base = await resolveBase(ws, { baseRef: 'main' });
+    await step(ws, run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')], base), base));
+    assert.equal(readRun(ws, 'demo').slices[0]?.parentBranch, sh(ws.root, 'rev-parse', 'main'));
   });
 });
 
