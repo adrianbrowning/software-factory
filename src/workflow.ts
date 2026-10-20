@@ -15,6 +15,7 @@ import {
   reviewDir,
   runDir,
   type Run,
+  SEVERITIES,
   saveRun,
   type Slice,
   type SliceInput,
@@ -521,21 +522,47 @@ export function readDomainFindings(ws: Workspace, run: Run, reviewId: string) {
   return { findings, missing };
 }
 
-const validationSchema = z.object({
-  dropped: z.array(z.object({ id: z.string().min(1), reason: z.string().min(1) })),
-  keep: z.array(z.string().min(1)),
+export const validationSchema = z.object({
+  dropped: z
+    .array(
+      z.object({
+        duplicateOf: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Kept finding id this one repeats; the kept one must be at least as severe'),
+        id: z.string().min(1),
+        reason: z.string().min(1),
+      }),
+    )
+    .describe('Findings removed, each with a reason'),
+  keep: z.array(z.string().min(1)).describe('Ids of findings the diff substantiates, one per distinct problem'),
 });
 type Validation = z.infer<typeof validationSchema>;
 
-/** Throws unless the validation keeps or drops every submitted finding exactly once, and nothing else. */
+/**
+ * Throws unless the validation keeps or drops every submitted finding exactly once, and nothing else. A duplicate
+ * may only be dropped in favour of a kept finding of the same or higher severity, so merging never weakens the gate.
+ */
 function checkCoverage(findings: Finding[], validation: Validation) {
   const decided = [...validation.keep, ...validation.dropped.map(entry => entry.id)];
-  const known = new Set(findings.map(finding => finding.id));
-  const unknown = decided.filter(id => !known.has(id));
+  const byId = new Map(findings.map(finding => [finding.id, finding]));
+  const unknown = decided.filter(id => !byId.has(id));
   if (unknown.length > 0) throw new Error(`Unknown finding ids: ${unknown.join(', ')}`);
   if (new Set(decided).size !== decided.length) throw new Error('A finding id appears twice across keep and dropped.');
-  const undecided = [...known].filter(id => !decided.includes(id));
+  const undecided = [...byId.keys()].filter(id => !decided.includes(id));
   if (undecided.length > 0) throw new Error(`Keep or drop every finding. Undecided: ${undecided.join(', ')}`);
+  for (const entry of validation.dropped) {
+    if (entry.duplicateOf === undefined) continue;
+    const kept = byId.get(entry.duplicateOf);
+    if (kept === undefined || !validation.keep.includes(entry.duplicateOf)) {
+      throw new Error(`"${entry.id}" is a duplicate of "${entry.duplicateOf}", which is not a kept finding.`);
+    }
+    const dropped = byId.get(entry.id);
+    if (dropped !== undefined && SEVERITIES.indexOf(kept.severity) > SEVERITIES.indexOf(dropped.severity)) {
+      throw new Error(`Keep the most severe of the duplicates: "${entry.id}" is ${dropped.severity}, "${kept.id}" is ${kept.severity}.`);
+    }
+  }
 }
 
 /** The validator only selects: every raw finding is kept or dropped with a reason, and none is added or rewritten. */

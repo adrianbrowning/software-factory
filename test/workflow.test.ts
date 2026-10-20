@@ -321,6 +321,41 @@ describe('review submissions', () => {
     assert.equal(result.green ? 0 : result.blocking, 1);
   });
 
+  it('merges duplicates across domains into the most severe kept finding', async () => {
+    const { reviewId, ws } = await openReview();
+    const same = { path: 'ok', problem: 'TS5097', title: 'ts-extension-import' };
+    for (const domain of REVIEW_DOMAINS) {
+      const findings =
+        domain === 'react-ts'
+          ? [{ ...finding('react-ts', 'high', 'ts5097'), ...same }]
+          : domain === 'thermo' || domain === 'devops'
+            ? [{ ...finding(domain, 'observation', 'ts5097'), ...same }]
+            : [];
+      await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings, reviewId }));
+    }
+    const validate = (keep: string[], dropped: { duplicateOf?: string; id: string; reason: string }[]) =>
+      step(ws, run => submitValidation(ws, run, { agentId: 'validator', dropped, keep, reviewId }));
+
+    await assert.rejects(
+      validate(['thermo-ts5097'], [
+        { duplicateOf: 'thermo-ts5097', id: 'react-ts-ts5097', reason: 'same issue' },
+        { duplicateOf: 'thermo-ts5097', id: 'devops-ts5097', reason: 'same issue' },
+      ]),
+      /Keep the most severe of the duplicates: "react-ts-ts5097" is high/,
+    );
+    await assert.rejects(
+      validate(['react-ts-ts5097', 'devops-ts5097'], [{ duplicateOf: 'missing', id: 'thermo-ts5097', reason: 'same issue' }]),
+      /not a kept finding/,
+    );
+    await validate(['react-ts-ts5097'], [
+      { duplicateOf: 'react-ts-ts5097', id: 'thermo-ts5097', reason: 'same issue' },
+      { duplicateOf: 'react-ts-ts5097', id: 'devops-ts5097', reason: 'same issue' },
+    ]);
+    const result = await step(ws, run => recordReview(ws, run));
+    assert.ok(!result.green);
+    assert.equal(result.blocking, 1);
+  });
+
   it('rejects findings submitted after validation', async () => {
     const { reviewId, ws } = await openReview();
     for (const domain of REVIEW_DOMAINS.filter(domain => domain !== 'bug')) {

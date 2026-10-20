@@ -46,6 +46,7 @@ import {
   submitStack,
   submitValidation,
   summarize,
+  validationSchema,
 } from './workflow.ts';
 
 const IMPLEMENTER = 'factory-implementer';
@@ -78,11 +79,7 @@ const startSchema = z.object({
 const planSchema = z.object({ slices: z.array(sliceInputSchema) });
 const seamsSchema = z.object({ seams: z.array(z.string().min(1)).min(1).describe('Seams the user agreed, as public interfaces') });
 const submitSchema = z.object({ domain: z.enum(REVIEW_DOMAINS), findings: z.array(findingSchema), reviewId: z.string().min(1) });
-const validateSchema = z.object({
-  dropped: z.array(z.object({ id: z.string().min(1), reason: z.string().min(1) })).describe('Findings removed, each with a reason'),
-  keep: z.array(z.string().min(1)).describe('Ids of findings the diff substantiates'),
-  reviewId: z.string().min(1),
-});
+const validateSchema = validationSchema.extend({ reviewId: z.string().min(1) });
 const emptySchema = z.object({});
 
 export function callerOf(ctx: Pick<ExtensionContext, 'agent'>) {
