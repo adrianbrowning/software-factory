@@ -21,7 +21,9 @@ function load() {
   return tools;
 }
 
-const ctx = (kind: 'main' | 'sub', name: string) => ({ agent: { depth: 1, id: `${name}-1`, kind, name }, cwd: process.cwd(), hasUI: false });
+type TestContext = { agent: { depth: number; id: string; kind: 'main' | 'sub'; name: string }; cwd: string; hasUI: boolean };
+
+const ctx = (kind: 'main' | 'sub', name: string): TestContext => ({ agent: { depth: 1, id: `${name}-1`, kind, name }, cwd: process.cwd(), hasUI: false });
 
 describe('tool registration', () => {
   it('advertises each tool schema as JSON Schema', () => {
@@ -31,7 +33,7 @@ describe('tool registration', () => {
 
   it('lets only the named agent call each tool', async () => {
     const tools = load();
-    const call = (name: string, caller: ReturnType<typeof ctx>) => tools.get(name)?.execute('id', {}, undefined, undefined, caller);
+    const call = (name: string, caller: TestContext) => tools.get(name)?.execute('id', {}, undefined, undefined, caller);
     await assert.rejects(call('factory_review_submit', ctx('sub', 'factory-implementer')) ?? Promise.resolve(), /Only the factory-reviewer agent/);
     await assert.rejects(call('factory_review_validate', ctx('sub', 'factory-reviewer')) ?? Promise.resolve(), /Only the factory-review-validator agent/);
     await assert.rejects(call('factory_checks', ctx('sub', 'factory-implementer')) ?? Promise.resolve(), /Only the main agent/);
