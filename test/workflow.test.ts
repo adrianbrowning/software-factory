@@ -435,10 +435,10 @@ describe('retro', () => {
 
     await step(ws, run => {
       assert.throws(
-        () => parseRetro(run, [{ action: 'apply', category: 'tool-economy', detail: 'd', severity: 'low', target: 'factory', title: 't' }]),
+        () => parseRetro(ws, run, [{ action: 'apply', category: 'tool-economy', detail: 'd', severity: 'low', target: 'factory', title: 't' }]),
         /only repo findings can be applied/,
       );
-      const retro = parseRetro(run, [
+      const retro = parseRetro(ws, run, [
         { action: 'skip', category: 'no-ops', detail: 'minor', severity: 'low', target: 'repo', title: 'Low one' },
         { action: 'skip', category: 'navigation', detail: 'big', severity: 'high', target: 'repo', title: 'High repo' },
         { action: 'file-issue', category: 'tool-economy', detail: 'big', severity: 'high', target: 'factory', title: 'High one' },
@@ -467,7 +467,7 @@ describe('retro', () => {
     await step(ws, run => completeSlice(ws, run));
 
     const added = await step(ws, run =>
-      recordRetro(ws, run, parseRetro(run, [{ action: 'apply', category: 'automated-checks', detail: 'Add a lint rule', severity: 'high', target: 'repo', title: 'Lint rule' }])),
+      recordRetro(ws, run, parseRetro(ws, run, [{ action: 'apply', category: 'automated-checks', detail: 'Add a lint rule', severity: 'high', target: 'repo', title: 'Lint rule' }])),
     );
     const run = readRun(ws, 'demo');
     assert.deepEqual([added?.blockedBy, run.status], [['Feature'], 'running']);
@@ -482,7 +482,7 @@ describe('submit', () => {
     commit(ws, 'ok');
     await green(ws);
     await step(ws, run => completeSlice(ws, run));
-    await step(ws, run => recordRetro(ws, run, parseRetro(run, [])));
+    await step(ws, run => recordRetro(ws, run, parseRetro(ws, run, [])));
 
     commit(ws, 'unreviewed.txt');
     await assert.rejects(step(ws, run => submitStack(ws, run)), new RegExp(`moved after their green review.*${started?.branch}`));

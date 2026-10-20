@@ -291,17 +291,25 @@ export function amendSeams(ws: Workspace, run: Run, seams: string[]) {
   return slice;
 }
 
-/** Adds one slice on top of the stack, blocked by every existing slice. */
-export function appendSlice(ws: Workspace, run: Run, proposed: Omit<SliceInput, 'blockedBy'>) {
+/** Builds the slice `appendSlice` would add, validated, without changing the run. */
+function planAppend(ws: Workspace, run: Run, proposed: Omit<SliceInput, 'blockedBy'>) {
   const existing = run.slices.map(slice => slice.title);
   const [input] = orderInputs(ws, [{ ...proposed, blockedBy: existing }], new Set(existing), new Set());
-  if (input === undefined) throw new Error('No slice to append');
-  const [slice] = stack(ws, run, run.slices, [input]).slice(-1);
+  const slice = input === undefined ? undefined : stack(ws, run, run.slices, [input]).at(-1);
   if (slice === undefined) throw new Error('No slice to append');
+  return slice;
+}
+
+function pushSlice(ws: Workspace, run: Run, slice: Slice) {
   run.slices.push(slice);
   writeTicket(ws, run, slice);
   addEvent(run, 'plan', `slice ${slice.id} appended: ${slice.title}`, slice);
   return slice;
+}
+
+/** Adds one slice on top of the stack, blocked by every existing slice. */
+export function appendSlice(ws: Workspace, run: Run, proposed: Omit<SliceInput, 'blockedBy'>) {
+  return pushSlice(ws, run, planAppend(ws, run, proposed));
 }
 
 /** Returns the active slice, or checks out the next pending slice's branch. `undefined` when every slice is done. */
@@ -651,20 +659,31 @@ function requireRetroOpen(run: Run) {
   if (run.retroRecorded) throw new Error('The retro for this run is already recorded.');
 }
 
-export type Retro = { apply: RetroFinding[]; file: RetroFinding[]; findings: RetroFinding[] };
+export type Retro = { apply: RetroFinding[]; file: RetroFinding[]; findings: RetroFinding[]; slice?: Slice | undefined };
 
-/** Validates the retro and groups its actions without changing the run, so the user can confirm first. */
-export function parseRetro(run: Run, proposed: unknown): Retro {
+/**
+ * Validates the retro, groups its actions, and builds the apply slice, all without changing the run, so the user
+ * confirms and issues are filed only for a retro that `recordRetro` can record.
+ */
+export function parseRetro(ws: Workspace, run: Run, proposed: unknown): Retro {
   requireRetroOpen(run);
   const findings = z
     .array(retroFindingSchema)
     .parse(proposed)
     .toSorted((a, b) => RETRO_SEVERITIES.indexOf(a.severity) - RETRO_SEVERITIES.indexOf(b.severity));
-  return {
-    apply: findings.filter(finding => finding.action === 'apply'),
-    file: findings.filter(finding => finding.action === 'file-issue'),
-    findings,
-  };
+  const apply = findings.filter(finding => finding.action === 'apply');
+  const slice =
+    apply.length === 0
+      ? undefined
+      : planAppend(ws, run, {
+          acceptance: apply.map(finding => finding.title),
+          estimateTokens: Math.floor(ws.config.sliceTokenBudget / 4),
+          noTestReason: 'Agent-environment changes. A new custom lint rule or script still needs its own test.',
+          seams: [],
+          title: 'Apply retro improvements',
+          whatToBuild: apply.map(finding => `${finding.title}: ${finding.detail}`).join('\n'),
+        });
+  return { apply, file: findings.filter(finding => finding.action === 'file-issue'), findings, slice };
 }
 
 /** The issue body a factory finding is filed with. Redacted: retro details come from a possibly private repository. */
@@ -693,6 +712,9 @@ export async function fileFactoryIssues(ws: Workspace, findings: RetroFinding[])
  */
 export function recordRetro(ws: Workspace, run: Run, retro: Retro, filed: FiledIssues = { urls: {} }) {
   requireRetroOpen(run);
+  if (retro.slice !== undefined && retro.slice.parentBranch !== (run.slices.at(-1)?.branch ?? run.baseRef)) {
+    throw new Error('The slices changed since the retro was parsed. Call factory_retro again.');
+  }
   const status = (finding: RetroFinding) => {
     if (finding.action !== 'file-issue') return '';
     const url = filed.urls[finding.title];
@@ -710,17 +732,7 @@ export function recordRetro(ws: Workspace, run: Run, retro: Retro, filed: FiledI
   run.retroRecorded = true;
   const repoCount = retro.findings.filter(finding => finding.target === 'repo').length;
   addEvent(run, 'retro', `${retro.findings.length} findings: repo=${repoCount} factory=${retro.findings.length - repoCount}`);
-  const slice =
-    retro.apply.length === 0
-      ? undefined
-      : appendSlice(ws, run, {
-          acceptance: retro.apply.map(finding => finding.title),
-          estimateTokens: Math.floor(ws.config.sliceTokenBudget / 4),
-          noTestReason: 'Agent-environment changes. A new custom lint rule or script still needs its own test.',
-          seams: [],
-          title: 'Apply retro improvements',
-          whatToBuild: retro.apply.map(finding => `${finding.title}: ${finding.detail}`).join('\n'),
-        });
+  const slice = retro.slice === undefined ? undefined : pushSlice(ws, run, retro.slice);
   settle(run);
   return slice;
 }

@@ -86,6 +86,7 @@ describe('loadConfig', () => {
     assert.throws(() => loadConfig(config({ checks: [] })), /factory\.json[\s\S]*checks/);
     assert.throws(() => loadConfig(config({ maxRound: 3 })), /factory\.json[\s\S]*maxRound/);
     assert.throws(() => loadConfig(config(null)), /factory\.json/);
+    assert.throws(() => loadConfig(dir({ '.omp/factory.json': '{ nope', 'package.json': scripts(['test']) })), /factory\.json: invalid JSON/);
     assert.throws(() => loadConfig(config({ scratchDir: '../outside' })), /scratchDir/);
   });
 

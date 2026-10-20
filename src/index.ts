@@ -421,7 +421,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
     schema: retroSchema,
     async run(params, ws, ctx) {
       const feature = activeFeature(ws);
-      const retro = parseRetro(readRun(ws, feature), params.findings);
+      const retro = parseRetro(ws, readRun(ws, feature), params.findings);
       let filed: FiledIssues = { urls: {} };
       if (retro.apply.length > 0 || retro.file.length > 0) {
         const repo = ws.config.factoryRepo;

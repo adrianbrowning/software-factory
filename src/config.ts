@@ -48,11 +48,19 @@ function packageManager(cwd: string, declared: string | undefined) {
   return 'npm';
 }
 
+function readJson(path: string): unknown {
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'));
+  } catch (error) {
+    throw new Error(`${path}: invalid JSON (${error instanceof Error ? error.message : String(error)})`);
+  }
+}
+
 /** `lint`, `typecheck`, `test` scripts from package.json, in that order, run with the repo's package manager. */
 export function detectChecks(cwd: string) {
   const path = join(cwd, 'package.json');
   if (!existsSync(path)) return [];
-  const manifest = manifestSchema.parse(JSON.parse(readFileSync(path, 'utf8')));
+  const manifest = manifestSchema.parse(readJson(path));
   const pm = packageManager(cwd, manifest.packageManager);
   return CHECK_SCRIPTS.filter(name => typeof manifest.scripts?.[name] === 'string').map(name => `${pm} run ${name}`);
 }
@@ -67,7 +75,7 @@ function normalizeScratchDir(value: string) {
 
 export function loadConfig(cwd: string): FactoryConfig {
   const path = join(cwd, CONFIG_PATH);
-  const parsed = configSchema.safeParse(existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : {});
+  const parsed = configSchema.safeParse(existsSync(path) ? readJson(path) : {});
   if (!parsed.success) throw new Error(`${CONFIG_PATH}: ${z.prettifyError(parsed.error)}`);
   const { checks: configured, trunk, ...config } = parsed.data;
   const checks = configured ?? detectChecks(cwd);
