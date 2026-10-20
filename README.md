@@ -29,14 +29,14 @@ flowchart TD
 
 | Part | Owner | Why |
 | --- | --- | --- |
-| Gates: checks, review verdict, round limits, approvals, branch/HEAD checks | TypeScript tools (`src/`) | Deterministic; the model cannot talk its way past them |
+| Gates: checks, review verdict, round limits, approvals, branch/HEAD checks | TypeScript tools (`src/`) | Deterministic: they decide from git and from what the tools recorded, not from what an agent says |
 | Questions, slicing, deciding what to spawn | Orchestrator (main session) following `skills/software-factory/SKILL.md` | Judgement |
 | Implementation and fixes | `factory-implementer` subagent, `tdd` skill autoloaded | Fresh context per slice and per fix |
 | Review | 11 `factory-reviewer` subagents (one per cc-pr-review domain) + `factory-review-validator` | Port of `cc-pr-review` onto omp's `task` tool |
 
 User gates: questions at intake, slice-plan approval, seam additions, re-slice approval, stalled fix loops,
-retro actions, and `/factory submit`. Nothing opens or merges a PR without the user running `/factory submit`,
-and nothing merges at all.
+retro actions, and `/factory submit`. The plugin opens PRs only when you run `/factory submit`, and it never
+merges.
 
 ## Install
 
@@ -65,12 +65,13 @@ The package bundles the extension (`src/index.ts`), the skill (`skills/software-
 /factory submit [feature]
 ```
 
-While a run is active, the session cannot end until the run is done, paused, or stalled. Three stop attempts
-without progress pause the run automatically.
+While a run is active, the session cannot end until the run is done, paused, or stalled. The third stop attempt in a
+row without progress pauses the run instead.
 
 ## Configure
 
-Optional `.omp/factory.json` in the target repository:
+Optional `.omp/factory.json` in the target repository. Commit it on the base branch: every gate needs a clean
+working tree, and unknown keys are rejected.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -102,7 +103,21 @@ under `issues/`, fix files under `fixes/`, review data, per-domain findings, val
 never share a write.
 
 The review gate snapshots `HEAD` plus `git status` when a review opens and rejects the review if either changes.
-A slice completes only when `HEAD` is still the commit that passed checks and review.
+A slice completes only when `HEAD` is still the commit that passed checks and review, and `/factory submit`
+refuses any branch whose tip is not its reviewed commit.
+
+## Trust boundaries
+
+The gates stop model mistakes and limit what a misled agent can do. They are not a sandbox:
+
+- Reviewers and the validator have read-only tools plus their one submit tool. Each domain submits once, before
+  validation, and the tool records a hash of what it wrote; an edited findings or validation file fails the review.
+- The implementer has `read`, `write`, `edit`, `grep`, `glob`, `bash`, and `lsp`, and runs on your machine with your
+  credentials. Within one omp process, the tools reject a `state.json` changed outside them. After a restart,
+  `/factory resume` trusts the file on disk but sends the active slice back through checks and review.
+- Issue text and comments are marked as untrusted in `issue.md` and in the review data. The orchestrator asks you
+  before it uses text from GitHub users who are not collaborators. Unlike the earlier Sandcastle drop-in, nothing
+  runs in a container.
 
 ## Develop
 

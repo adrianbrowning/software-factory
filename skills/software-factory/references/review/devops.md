@@ -10,7 +10,7 @@ Your task gives you the review id and the data file (PR metadata, full diff, cha
 
 2. Review the diff against the checklist below.
 
-3. For file duplication: use `Glob` or `Bash` to check if newly added files have byte-for-byte copies elsewhere in the repo.
+3. For file duplication: use `glob` and `grep` to check if newly added files have copies elsewhere in the repo.
 
 4. Find real issues only — skip nits with no functional impact.
 
@@ -42,7 +42,7 @@ Your task gives you the review id and the data file (PR metadata, full diff, cha
 
 **File duplication (cross-repo check):**
 - List files added by the PR (`--name-only`).
-- For each new file, check whether an identically-named file exists elsewhere in the repo: `find . -name "<filename>" -not -path "./.git/*"`.
+- For each new file, check whether an identically-named file exists elsewhere in the repo with `glob` (`**/<filename>`).
 - If duplicates exist, compare content: identical content = maintenance burden (flag as Observation); near-identical = flag as High with deduplication suggestion.
 - Pay special attention to: config files, reference docs, workflow templates, skill files.
 

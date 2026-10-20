@@ -27,7 +27,7 @@ Your task gives you the review id and the data file (PR metadata, full diff, cha
 
 **Undocumented intent**
 - Are there new triggers (e.g. `workflow_dispatch`), flags, config values, or environment variables with no comment explaining *why*?
-- Does the PR description (if available via `gh pr view <N>`) explain the purpose of each change cluster?
+- Does the slice ticket in `## PR METADATA` explain the purpose of each change cluster?
 
 **Scope creep**
 - Do all changed files relate to the PR's stated purpose?

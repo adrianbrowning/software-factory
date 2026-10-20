@@ -1,28 +1,45 @@
 import type { ExtensionAPI, ExtensionContext } from '@oh-my-pi/pi-coding-agent';
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
+import { z } from 'zod';
 import { loadConfig } from './config.ts';
-import { activeSlice, addEvent, readRun, REVIEW_DOMAINS, type Run, statePath, ticketPath, withRun, type Workspace } from './run.ts';
+import {
+  activeSlice,
+  addEvent,
+  findingSchema,
+  forgetRun,
+  readRun,
+  REVIEW_DOMAINS,
+  type Run,
+  sliceInputSchema,
+  sourceSchema,
+  statePath,
+  ticketPath,
+  withRun,
+  type Workspace,
+} from './run.ts';
 import {
   amendSeams,
-  appendSlice,
   applyReslice,
   approvePlan,
   completeSlice,
   fileFactoryIssues,
+  type FiledIssues,
   nextAction,
   nextSlice,
+  parseRetro,
+  pauseRun,
   planReslice,
   planSlices,
-  parseRetro,
-  RETRO_CATEGORIES,
   recordRetro,
   recordReview,
   repoRoot,
+  requireFeatureName,
   resolveStall,
-  retroSlice,
+  resumeRun,
+  retroIssueBody,
+  retroSchema,
   runChecks,
-  settle,
   startReview,
   startRun,
   submitDomain,
@@ -34,6 +51,7 @@ import {
 const IMPLEMENTER = 'factory-implementer';
 const REVIEWER = 'factory-reviewer';
 const VALIDATOR = 'factory-review-validator';
+const DEFAULT_FACTORY_REPO = 'adrianbrowning/software-factory';
 /** Tools `factory_start` activates; they stay out of every other session's tool list. */
 const ORCHESTRATION_TOOLS = [
   'factory_plan',
@@ -47,15 +65,41 @@ const ORCHESTRATION_TOOLS = [
   'factory_status',
   'factory_retro',
 ];
-/** Stop attempts with no new run events before the gate gives up and pauses the run. */
-const MAX_IDLE_STOP_BLOCKS = 3;
+/** Stop attempts in a row without new run events; the last one pauses the run instead of blocking. */
+export const MAX_IDLE_STOP_ATTEMPTS = 3;
+
+type Caller = 'main' | typeof REVIEWER | typeof VALIDATOR;
+
+const startSchema = z.object({
+  feature: z.string().optional().describe('kebab-case run name for a new run'),
+  resume: z.string().optional().describe('Feature name of an existing run to resume instead of starting one'),
+  source: sourceSchema.optional().describe('The loaded issue, required for a new run'),
+});
+const planSchema = z.object({ slices: z.array(sliceInputSchema) });
+const seamsSchema = z.object({ seams: z.array(z.string().min(1)).min(1).describe('Seams the user agreed, as public interfaces') });
+const submitSchema = z.object({ domain: z.enum(REVIEW_DOMAINS), findings: z.array(findingSchema), reviewId: z.string().min(1) });
+const validateSchema = z.object({
+  dropped: z.array(z.object({ id: z.string().min(1), reason: z.string().min(1) })).describe('Findings removed, each with a reason'),
+  keep: z.array(z.string().min(1)).describe('Ids of findings the diff substantiates'),
+  reviewId: z.string().min(1),
+});
+const emptySchema = z.object({});
+
+export function callerOf(ctx: Pick<ExtensionContext, 'agent'>) {
+  return ctx.agent.kind === 'main' ? 'main' : ctx.agent.name;
+}
 
 /** Active run per repository root. Module scope is shared by the main session and its subagents in one process. */
 const activeRuns = new Map<string, string>();
-const stopBlocks = new Map<string, { count: number; events: number }>();
+const stopAttempts = new Map<string, { count: number; events: number }>();
+const roots = new Map<string, string>();
 
 async function workspace(cwd: string): Promise<Workspace> {
-  const root = await repoRoot(cwd);
+  let root = roots.get(cwd);
+  if (root === undefined) {
+    root = await repoRoot(cwd);
+    roots.set(cwd, root);
+  }
   return { config: loadConfig(root), root };
 }
 
@@ -65,17 +109,20 @@ function activeFeature(ws: Workspace) {
   return feature;
 }
 
-function requireAgent(ctx: ExtensionContext, expected: 'main' | typeof REVIEWER | typeof VALIDATOR) {
-  const actual = ctx.agent.kind === 'main' ? 'main' : ctx.agent.name;
-  if (actual !== expected) throw new Error(`Only the ${expected} agent may call this tool (caller: ${actual}).`);
+type Reply = { content: { text: string; type: 'text' }[]; details: unknown };
+
+function reply(text: string, details?: unknown): Reply {
+  return { content: [{ text, type: 'text' }], details };
 }
 
-function reply(text: string, details?: unknown) {
-  return { content: [{ text, type: 'text' as const }], details };
+async function confirm(ctx: ExtensionContext, title: string, body: string) {
+  if (!ctx.hasUI) throw new Error(`${title} needs the interactive UI.`);
+  return ctx.ui.confirm(title, body);
 }
 
 /** Asks the user how to continue once a slice's fix budget is used up. Without a UI the run pauses. */
-async function decideStall(ctx: ExtensionContext, ws: Workspace, run: Run) {
+async function decideStall(ctx: ExtensionContext, ws: Workspace, feature: string) {
+  const run = readRun(ws, feature);
   const slice = activeSlice(run);
   if (slice === undefined || !slice.stalled) return '';
   const more = `Continue: ${ws.config.maxRounds} more fix rounds`;
@@ -85,14 +132,17 @@ async function decideStall(ctx: ExtensionContext, ws: Workspace, run: Run) {
         { description: 'Stop here; /factory resume continues later.', label: 'Pause the run' },
       ])
     : undefined;
-  resolveStall(ws, run, choice === more ? 'continue' : 'pause');
-  return run.status === 'stalled'
+  const status = await withRun(ws, feature, current => {
+    resolveStall(ws, current, choice === more ? 'continue' : 'pause');
+    return current.status;
+  });
+  return status === 'stalled'
     ? '\nThe user paused the run. Run the retro now (skill://retro, then factory_retro) so this stall improves future runs, then stop.'
     : `\nThe user allowed ${ws.config.maxRounds} more fix rounds.`;
 }
 
-function planSummary(run: Run) {
-  return run.slices
+function planSummary(slices: Run['slices']) {
+  return slices
     .map(
       slice =>
         `${slice.id}. ${slice.title}\n   blocked by: ${slice.blockedBy.join('; ') || 'none'}\n   seams: ${slice.seams.join('; ') || `none (${slice.noTestReason})`}\n   ~${slice.estimateTokens} tokens`,
@@ -100,98 +150,73 @@ function planSummary(run: Run) {
     .join('\n');
 }
 
+/** Stop gate: block a stop while the owner session's run is running, and pause it after repeated idle stops. */
+export function stopDecision(run: Run, sessionId: string, previous: { count: number; events: number } | undefined) {
+  if (run.ownerSessionId !== sessionId || run.status !== 'running') return { action: 'allow' as const };
+  const count = previous?.events === run.events.length ? previous.count + 1 : 1;
+  if (count >= MAX_IDLE_STOP_ATTEMPTS) return { action: 'pause' as const };
+  return { action: 'block' as const, attempts: { count, events: run.events.length } };
+}
+
 export default function softwareFactory(pi: ExtensionAPI) {
-  const z = pi.zod;
   pi.setLabel('Software Factory');
 
-  const findingSchema = z.object({
-    domain: z.enum(REVIEW_DOMAINS).describe('Your review domain'),
-    fix: z.string().describe('How to fix it'),
-    fix_prompt: z.string().describe('Plain-text prompt an implementer can act on directly'),
-    id: z.string().describe('Stable id: {domain}-{kebab-case-title}, no line numbers'),
-    line: z.number().int().optional().describe('New-file line number on the + side of the diff; omit for file-level findings'),
-    path: z.string().describe('Repo-relative path as in the diff header'),
-    problem: z.string().describe('What is wrong and why it matters'),
-    severity: z.enum(['critical', 'high', 'observation']),
-    title: z.string(),
-  });
-  const sliceSchema = z.object({
-    acceptance: z.array(z.string()).describe('Checkable acceptance criteria'),
-    blockedBy: z.array(z.string()).describe('Titles of slices that must finish first'),
-    estimateTokens: z.number().int().describe('Estimated implementer context tokens for the whole slice'),
-    noTestReason: z.string().optional().describe('Only when seams is empty: why the slice has nothing to test'),
-    seams: z.array(z.string()).describe('Public interfaces the tests go through (tdd skill seams)'),
-    title: z.string(),
-    whatToBuild: z.string().describe('End-to-end behavior from the user perspective, not a layer list'),
-  });
-  const startSchema = z.object({
-    feature: z.string().optional().describe('kebab-case run name for a new run'),
-    resume: z.string().optional().describe('Feature name of an existing run to resume instead of starting one'),
-    source: z
-      .object({
-        body: z.string().describe('Full issue text, including relevant comments'),
-        kind: z.enum(['github', 'jira', 'file', 'text']),
-        ref: z.string().describe('Issue reference as the user gave it'),
-        title: z.string(),
-        url: z.string().optional(),
-      })
-      .optional()
-      .describe('The loaded issue, required for a new run'),
-  });
-  const planSchema = z.object({ slices: z.array(sliceSchema) });
-  const seamsSchema = z.object({ seams: z.array(z.string()).describe('Seams the user agreed, as public interfaces') });
-  const submitSchema = z.object({ domain: z.enum(REVIEW_DOMAINS), findings: z.array(findingSchema), reviewId: z.string() });
-  const validateSchema = z.object({
-    dropped: z.array(z.object({ id: z.string(), reason: z.string() })).describe('Findings removed, each with a reason'),
-    keep: z.array(z.string()).describe('Ids of findings the diff substantiates'),
-    reviewId: z.string(),
-  });
-  const retroSchema = z.object({
-    findings: z.array(
-      z.object({
-        action: z.enum(['apply', 'file-issue', 'skip']).describe('apply: repo change in a final slice; file-issue: factory issue'),
-        category: z.enum(RETRO_CATEGORIES),
-        detail: z.string(),
-        severity: z.enum(['high', 'medium', 'low']),
-        target: z.enum(['repo', 'factory']).describe('repo: the repository worked on; factory: this plugin'),
-        title: z.string(),
-      }),
-    ),
-  });
-  const empty = z.object({});
+  /** Registers a tool whose parameters are the JSON Schema of `schema`; `schema` is also the only runtime parse. */
+  function tool<S extends z.ZodType>(definition: {
+    caller: Caller;
+    description: string;
+    essential?: boolean;
+    label: string;
+    name: string;
+    schema: S;
+    run: (input: z.infer<S>, ws: Workspace, ctx: ExtensionContext, signal: AbortSignal | undefined) => Promise<Reply>;
+  }) {
+    pi.registerTool({
+      defaultInactive: definition.essential !== true,
+      description: definition.description,
+      label: definition.label,
+      loadMode: 'essential',
+      name: definition.name,
+      parameters: z.toJSONSchema(definition.schema) as Record<string, unknown>,
+      async execute(_id, raw, signal, _onUpdate, ctx) {
+        const caller = callerOf(ctx);
+        if (caller !== definition.caller) throw new Error(`Only the ${definition.caller} agent may call this tool (caller: ${caller}).`);
+        const parsed = definition.schema.safeParse(raw);
+        if (!parsed.success) throw new Error(z.prettifyError(parsed.error));
+        return definition.run(parsed.data, await workspace(ctx.cwd), ctx, signal);
+      },
+    });
+  }
 
-  pi.registerTool({
-    description:
-      'Start a software-factory run for a loaded issue (feature + source), or resume one (resume). Read skill://software-factory first.',
+  tool({
+    caller: 'main',
+    description: 'Start a software-factory run for a loaded issue (feature + source), or resume one (resume). Read skill://software-factory first.',
+    essential: true,
     label: 'Factory: start',
-    loadMode: 'essential',
     name: 'factory_start',
-    parameters: startSchema,
-    async execute(_id, raw, _signal, _onUpdate, ctx) {
-      requireAgent(ctx, 'main');
-      const params = startSchema.parse(raw);
-      const ws = await workspace(ctx.cwd);
+    schema: startSchema,
+    async run(params, ws, ctx) {
       const sessionId = ctx.sessionManager.getSessionId();
       let run: Run;
       if (params.resume !== undefined) {
-        const feature = params.resume;
+        const feature = requireFeatureName(params.resume);
         if (!existsSync(statePath(ws, feature))) throw new Error(`No run named "${feature}".`);
-        run = await withRun(ws, feature, async current => {
-          if (current.status === 'paused' || current.status === 'stalled') {
-            const ok = ctx.hasUI && (await ctx.ui.confirm('Resume software factory run', `Resume "${feature}" (${current.status})?`));
-            if (!ok) throw new Error(`The user kept "${feature}" ${current.status}.`);
-            current.status = 'running';
-            resolveStall(ws, current, 'continue');
+        forgetRun(ws, feature);
+        const current = readRun(ws, feature);
+        if (current.status === 'paused' || current.status === 'stalled') {
+          if (!(await confirm(ctx, 'Resume software factory run', `Resume "${feature}" (${current.status})?`))) {
+            throw new Error(`The user kept "${feature}" ${current.status}.`);
           }
-          current.ownerSessionId = sessionId;
-          addEvent(current, 'resume', `session ${sessionId}`);
-          return current;
+        }
+        run = await withRun(ws, feature, latest => {
+          resumeRun(ws, latest, sessionId);
+          return latest;
         });
       } else {
         if (params.feature === undefined || params.source === undefined) throw new Error('A new run needs feature and source.');
         const current = activeRuns.get(ws.root);
-        if (current !== undefined && readRun(ws, current).status !== 'done') {
-          throw new Error(`Run "${current}" is still open in this repository. Finish or pause it first.`);
+        if (current !== undefined && readRun(ws, current).status === 'running') {
+          throw new Error(`Run "${current}" is still running in this repository. Finish or /factory pause it first.`);
         }
         run = await startRun(ws, { feature: params.feature, sessionId, source: params.source });
       }
@@ -204,40 +229,34 @@ export default function softwareFactory(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
-    defaultInactive: true,
+  tool({
+    caller: 'main',
     description:
       'Propose the tracer-bullet slices. The user approves or rejects them in a dialog. Each slice must fit the context budget and name its test seams.',
     label: 'Factory: plan',
-    loadMode: 'essential',
     name: 'factory_plan',
-    parameters: planSchema,
-    async execute(_id, raw, _signal, _onUpdate, ctx) {
-      requireAgent(ctx, 'main');
-      const params = planSchema.parse(raw);
-      const ws = await workspace(ctx.cwd);
-      return withRun(ws, activeFeature(ws), async run => {
-        const slices = planSlices(ws, run, params.slices);
-        if (!ctx.hasUI) throw new Error('Plan approval needs the interactive UI.');
-        const preview = { ...run, slices };
-        const approved = await ctx.ui.confirm(`Approve ${slices.length} slices for "${run.feature}"?`, planSummary(preview));
-        if (!approved) return reply('The user rejected the plan. Ask what to change, then call factory_plan again.');
-        approvePlan(ws, run, slices);
-        return reply(`Plan approved. Tickets are in ${join(ws.config.scratchDir, run.feature, 'issues')}.\nNext: ${nextAction(run)}`);
+    schema: planSchema,
+    async run(params, ws, ctx) {
+      const feature = activeFeature(ws);
+      const slices = planSlices(ws, readRun(ws, feature), params.slices);
+      if (!(await confirm(ctx, `Approve ${slices.length} slices for "${feature}"?`, planSummary(slices)))) {
+        return reply('The user rejected the plan. Ask what to change, then call factory_plan again.');
+      }
+      const run = await withRun(ws, feature, current => {
+        approvePlan(ws, current, planSlices(ws, current, params.slices));
+        return current;
       });
+      return reply(`Plan approved. Tickets are in ${join(ws.config.scratchDir, feature, 'issues')}.\nNext: ${nextAction(run)}`);
     },
   });
 
-  pi.registerTool({
-    defaultInactive: true,
+  tool({
+    caller: 'main',
     description: 'Check out the next slice branch (or return the active slice) and get its ticket.',
     label: 'Factory: next slice',
-    loadMode: 'essential',
     name: 'factory_next',
-    parameters: empty,
-    async execute(_id, _raw, _signal, _onUpdate, ctx) {
-      requireAgent(ctx, 'main');
-      const ws = await workspace(ctx.cwd);
+    schema: emptySchema,
+    async run(_params, ws) {
       return withRun(ws, activeFeature(ws), async run => {
         const slice = await nextSlice(ws, run);
         if (slice === undefined) return reply(`No slices left.\nNext: ${nextAction(run)}`);
@@ -248,88 +267,73 @@ export default function softwareFactory(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
-    defaultInactive: true,
+  tool({
+    caller: 'main',
     description:
       'Split the active slice into smaller vertical slices when it outgrows the context budget. The user approves the split; committed work carries into the first child.',
     label: 'Factory: re-slice',
-    loadMode: 'essential',
     name: 'factory_reslice',
-    parameters: planSchema,
-    async execute(_id, raw, _signal, _onUpdate, ctx) {
-      requireAgent(ctx, 'main');
-      const params = planSchema.parse(raw);
-      const ws = await workspace(ctx.cwd);
-      return withRun(ws, activeFeature(ws), async run => {
-        const { children, slices } = planReslice(ws, run, params.slices);
-        if (!ctx.hasUI) throw new Error('Re-slice approval needs the interactive UI.');
-        const active = activeSlice(run);
-        const title = `Split slice ${active?.id} into ${children.length} slices?`;
-        const remaining = slices.slice(active === undefined ? 0 : run.slices.indexOf(active));
-        if (!(await ctx.ui.confirm(title, planSummary({ ...run, slices: remaining })))) {
-          return reply('The user rejected the split. Ask what to change, then call factory_reslice again.');
-        }
-        const first = await applyReslice(ws, run, slices);
-        return reply(`Now on slice ${first.id} "${first.title}" (${first.branch}).\nNext: ${nextAction(run)}`);
+    schema: planSchema,
+    async run(params, ws, ctx) {
+      const feature = activeFeature(ws);
+      const run = readRun(ws, feature);
+      const { children, slices } = planReslice(ws, run, params.slices);
+      const active = activeSlice(run);
+      const remaining = slices.slice(active === undefined ? 0 : run.slices.indexOf(active));
+      if (!(await confirm(ctx, `Split slice ${active?.id} into ${children.length} slices?`, planSummary(remaining)))) {
+        return reply('The user rejected the split. Ask what to change, then call factory_reslice again.');
+      }
+      return withRun(ws, feature, async current => {
+        const first = await applyReslice(ws, current, planReslice(ws, current, params.slices).slices);
+        return reply(`Now on slice ${first.id} "${first.title}" (${first.branch}).\nNext: ${nextAction(current)}`);
       });
     },
   });
 
-  pi.registerTool({
-    defaultInactive: true,
+  tool({
+    caller: 'main',
     description: 'Add test seams the user agreed for the active slice (tdd skill: tests only at agreed seams).',
     label: 'Factory: amend seams',
-    loadMode: 'essential',
     name: 'factory_amend_seams',
-    parameters: seamsSchema,
-    async execute(_id, raw, _signal, _onUpdate, ctx) {
-      requireAgent(ctx, 'main');
-      const params = seamsSchema.parse(raw);
-      const ws = await workspace(ctx.cwd);
-      return withRun(ws, activeFeature(ws), async run => {
-        if (!ctx.hasUI) throw new Error('Seam approval needs the interactive UI.');
-        const slice = activeSlice(run);
-        if (!(await ctx.ui.confirm(`Add test seams to slice ${slice?.id}?`, params.seams.map(seam => `- ${seam}`).join('\n')))) {
-          return reply('The user rejected these seams. Ask which seams to use.');
-        }
+    schema: seamsSchema,
+    async run(params, ws, ctx) {
+      const feature = activeFeature(ws);
+      const slice = activeSlice(readRun(ws, feature));
+      if (slice === undefined) throw new Error('No active slice. Call factory_next.');
+      if (!(await confirm(ctx, `Add test seams to slice ${slice.id}?`, params.seams.map(seam => `- ${seam}`).join('\n')))) {
+        return reply('The user rejected these seams. Ask which seams to use.');
+      }
+      return withRun(ws, feature, run => {
         const amended = amendSeams(ws, run, params.seams);
         return reply(`Slice ${amended.id} seams: ${amended.seams.join('; ')}.\nTicket updated: ${ticketPath(ws, run.feature, amended)}`);
       });
     },
   });
 
-  pi.registerTool({
-    defaultInactive: true,
+  tool({
+    caller: 'main',
     description: 'Run every configured check on the committed slice. Failures produce a fix file for the implementer.',
     label: 'Factory: checks',
-    loadMode: 'essential',
     name: 'factory_checks',
-    parameters: empty,
-    async execute(_id, _raw, signal, onUpdate, ctx) {
-      requireAgent(ctx, 'main');
-      const ws = await workspace(ctx.cwd);
-      onUpdate?.(reply(`Running ${ws.config.checks.join(' → ')}`));
-      return withRun(ws, activeFeature(ws), async run => {
-        if (signal?.aborted) throw new Error('Cancelled');
-        const result = await runChecks(ws, run);
-        const summary = result.summary.join('\n');
-        if (result.passed) return reply(`All checks passed.\n${summary}\nNext: ${nextAction(run)}`);
-        const stall = result.stalled ? await decideStall(ctx, ws, run) : '';
-        return reply(`Checks failed.\n${summary}\nFix file: ${result.fixPath}${stall}\nNext: ${nextAction(run)}`);
-      });
+    schema: emptySchema,
+    async run(_params, ws, ctx, signal) {
+      const feature = activeFeature(ws);
+      const result = await withRun(ws, feature, run => runChecks(ws, run, signal));
+      const summary = result.summary.join('\n');
+      const run = readRun(ws, feature);
+      if (result.passed) return reply(`All checks passed.\n${summary}\nNext: ${nextAction(run)}`);
+      const stall = result.stalled ? await decideStall(ctx, ws, feature) : '';
+      return reply(`Checks failed.\n${summary}\nFix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
     },
   });
 
-  pi.registerTool({
-    defaultInactive: true,
+  tool({
+    caller: 'main',
     description: 'Freeze the reviewed state and write the review data file. Then spawn one factory-reviewer per domain.',
     label: 'Factory: start review',
-    loadMode: 'essential',
     name: 'factory_review_start',
-    parameters: empty,
-    async execute(_id, _raw, _signal, _onUpdate, ctx) {
-      requireAgent(ctx, 'main');
-      const ws = await workspace(ctx.cwd);
+    schema: emptySchema,
+    async run(_params, ws) {
       return withRun(ws, activeFeature(ws), async run => {
         const review = await startReview(ws, run);
         return reply(
@@ -340,70 +344,55 @@ export default function softwareFactory(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
-    defaultInactive: true,
+  tool({
+    caller: REVIEWER,
     description: 'Submit your domain findings for the active review. Call once, with an empty list when you found nothing.',
     label: 'Factory: submit review findings',
-    loadMode: 'essential',
     name: 'factory_review_submit',
-    parameters: submitSchema,
-    async execute(_id, raw, _signal, _onUpdate, ctx) {
-      requireAgent(ctx, REVIEWER);
-      const params = submitSchema.parse(raw);
-      const ws = await workspace(ctx.cwd);
-      const count = submitDomain(ws, readRun(ws, activeFeature(ws)), params);
+    schema: submitSchema,
+    async run(params, ws, ctx) {
+      const count = await withRun(ws, activeFeature(ws), run => submitDomain(ws, run, { ...params, agentId: ctx.agent.id }));
       return reply(`Recorded ${count} ${params.domain} findings for ${params.reviewId}.`);
     },
   });
 
-  pi.registerTool({
-    defaultInactive: true,
+  tool({
+    caller: VALIDATOR,
     description: 'Submit the validation: keep the substantiated finding ids, drop the rest with reasons.',
     label: 'Factory: submit validation',
-    loadMode: 'essential',
     name: 'factory_review_validate',
-    parameters: validateSchema,
-    async execute(_id, raw, _signal, _onUpdate, ctx) {
-      requireAgent(ctx, VALIDATOR);
-      const params = validateSchema.parse(raw);
-      const ws = await workspace(ctx.cwd);
-      const result = submitValidation(ws, readRun(ws, activeFeature(ws)), params);
+    schema: validateSchema,
+    async run(params, ws, ctx) {
+      const result = await withRun(ws, activeFeature(ws), run => submitValidation(ws, run, { ...params, agentId: ctx.agent.id }));
       return reply(`Kept ${result.kept}, dropped ${result.dropped}.`);
     },
   });
 
-  pi.registerTool({
-    defaultInactive: true,
+  tool({
+    caller: 'main',
     description: 'Gate the slice on the validated review: green when no critical or high findings remain.',
     label: 'Factory: record review',
-    loadMode: 'essential',
     name: 'factory_review_record',
-    parameters: empty,
-    async execute(_id, _raw, _signal, _onUpdate, ctx) {
-      requireAgent(ctx, 'main');
-      const ws = await workspace(ctx.cwd);
-      return withRun(ws, activeFeature(ws), async run => {
-        const result = await recordReview(ws, run);
-        if (result.green) {
-          const notes = result.observations.length > 0 ? `\nObservations (non-blocking):\n${result.observations.join('\n\n')}` : '';
-          return reply(`Review is green.${notes}\nNext: ${nextAction(run)}`);
-        }
-        const stall = result.stalled ? await decideStall(ctx, ws, run) : '';
-        return reply(`${result.blocking} blocking findings. Fix file: ${result.fixPath}${stall}\nNext: ${nextAction(run)}`);
-      });
+    schema: emptySchema,
+    async run(_params, ws, ctx) {
+      const feature = activeFeature(ws);
+      const result = await withRun(ws, feature, run => recordReview(ws, run));
+      if (result.green) {
+        const notes = result.observations.length > 0 ? `\nObservations (non-blocking):\n${result.observations.join('\n\n')}` : '';
+        return reply(`Review is green.${notes}\nNext: ${nextAction(readRun(ws, feature))}`);
+      }
+      const stall = result.stalled ? await decideStall(ctx, ws, feature) : '';
+      return reply(`${result.blocking} blocking findings. Fix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
     },
   });
 
-  pi.registerTool({
-    defaultInactive: true,
+  tool({
+    caller: 'main',
     description: 'Mark the green slice done. HEAD must be the reviewed commit.',
     label: 'Factory: complete slice',
-    loadMode: 'essential',
     name: 'factory_complete_slice',
-    parameters: empty,
-    async execute(_id, _raw, _signal, _onUpdate, ctx) {
-      requireAgent(ctx, 'main');
-      const ws = await workspace(ctx.cwd);
+    schema: emptySchema,
+    async run(_params, ws) {
       return withRun(ws, activeFeature(ws), async run => {
         const slice = await completeSlice(ws, run);
         return reply(`Slice ${slice.id} is done on ${slice.branch}.\nNext: ${nextAction(run)}`);
@@ -411,60 +400,51 @@ export default function softwareFactory(pi: ExtensionAPI) {
     },
   });
 
-  pi.registerTool({
-    defaultInactive: true,
+  tool({
+    caller: 'main',
     description: 'Show the run: slices, phases, fix rounds, peak implementer context, recent events, next action.',
     label: 'Factory: status',
-    loadMode: 'essential',
     name: 'factory_status',
-    parameters: empty,
-    async execute(_id, _raw, _signal, _onUpdate, ctx) {
-      requireAgent(ctx, 'main');
-      const ws = await workspace(ctx.cwd);
+    schema: emptySchema,
+    async run(_params, ws) {
       const summary = summarize(ws, readRun(ws, activeFeature(ws)));
       return reply(JSON.stringify(summary, null, 2), summary);
     },
   });
 
-  pi.registerTool({
-    defaultInactive: true,
+  tool({
+    caller: 'main',
     description:
       'Record the retro the user agreed. apply findings become a final slice; file-issue findings become issues on the factory repository.',
     label: 'Factory: retro',
-    loadMode: 'essential',
     name: 'factory_retro',
-    parameters: retroSchema,
-    async execute(_id, raw, _signal, _onUpdate, ctx) {
-      requireAgent(ctx, 'main');
-      const params = retroSchema.parse(raw);
-      const ws = await workspace(ctx.cwd);
-      return withRun(ws, activeFeature(ws), async run => {
-        const { apply, file, findings } = parseRetro(run, params.findings);
-        if (apply.length > 0 || file.length > 0) {
-          if (!ctx.hasUI) throw new Error('Retro actions need the interactive UI; record them with action "skip" instead.');
-          const plan = [
-            ...(apply.length > 0 ? ['Final slice applying to this repository:', ...apply.map(finding => `- ${finding.title}`)] : []),
-            ...(file.length > 0 ? [`Issues on ${ws.config.factoryRepo}:`, ...file.map(finding => `- ${finding.title}`)] : []),
-          ];
-          if (!(await ctx.ui.confirm('Record the retro with these actions?', plan.join('\n')))) {
-            throw new Error('The user declined these retro actions. Ask which to change, then call factory_retro again.');
-          }
+    schema: retroSchema,
+    async run(params, ws, ctx) {
+      const feature = activeFeature(ws);
+      const retro = parseRetro(readRun(ws, feature), params.findings);
+      let filed: FiledIssues = { urls: {} };
+      if (retro.apply.length > 0 || retro.file.length > 0) {
+        const repo = ws.config.factoryRepo;
+        const plan = [
+          ...(retro.apply.length > 0 ? ['Final slice applying to this repository:', ...retro.apply.map(finding => `- ${finding.title}`), ''] : []),
+          ...(retro.file.length > 0
+            ? [
+                `Issues on ${repo}${repo === DEFAULT_FACTORY_REPO ? '' : ` (configured in .omp/factory.json, not the default ${DEFAULT_FACTORY_REPO})`}, posted exactly as shown:`,
+                ...retro.file.map(finding => `\n## ${finding.title}\n${retroIssueBody(finding)}`),
+              ]
+            : []),
+        ];
+        if (!(await confirm(ctx, 'Record the retro with these actions?', plan.join('\n')))) {
+          throw new Error('The user declined these retro actions. Ask which to change, then call factory_retro again.');
         }
-        recordRetro(ws, run, findings);
-        const lines = [`Retro written to ${join(ws.config.scratchDir, run.feature, 'retro.md')}.`];
-        if (apply.length > 0) {
-          const estimate = Math.floor(ws.config.sliceTokenBudget / 4);
-          const slice = appendSlice(ws, run, retroSlice(apply, run.slices.map(existing => existing.title), estimate));
-          lines.push(`Added slice ${slice.id} "${slice.title}".`);
-        }
-        if (file.length > 0) {
-          try {
-            lines.push(...(await fileFactoryIssues(ws, file)));
-          } catch (error) {
-            lines.push(`Filing issues failed; they are still in retro.md: ${error instanceof Error ? error.message : String(error)}`);
-          }
-        }
-        settle(run);
+        filed = await fileFactoryIssues(ws, retro.file);
+      }
+      return withRun(ws, feature, run => {
+        const slice = recordRetro(ws, run, retro, filed);
+        const lines = [`Retro written to ${join(ws.config.scratchDir, feature, 'retro.md')}.`];
+        if (slice !== undefined) lines.push(`Added slice ${slice.id} "${slice.title}".`);
+        lines.push(...Object.values(filed.urls));
+        if (filed.error !== undefined) lines.push(`Filing stopped: ${filed.error}. Unfiled findings are marked in retro.md.`);
         lines.push(`Next: ${nextAction(run)}`);
         return reply(lines.join('\n'));
       });
@@ -487,20 +467,17 @@ export default function softwareFactory(pi: ExtensionAPI) {
       }
       if (verb === 'pause') {
         const feature = activeFeature(ws);
-        await withRun(ws, feature, run => {
-          run.status = 'paused';
-          addEvent(run, 'pause', 'user paused the run');
-        });
+        await withRun(ws, feature, run => pauseRun(run, 'user paused the run'));
         ctx.ui.notify(`Paused "${feature}".`, 'info');
         return;
       }
       if (verb === 'resume') {
-        if (argument === '') throw new Error('Usage: /factory resume <feature>');
-        pi.sendUserMessage(`Resume software-factory run "${argument}": read skill://software-factory, call factory_start with resume "${argument}", then continue from its next action.`);
+        const feature = requireFeatureName(argument);
+        pi.sendUserMessage(`Resume software-factory run "${feature}": read skill://software-factory, call factory_start with resume "${feature}", then continue from its next action.`);
         return;
       }
       if (verb === 'submit') {
-        const feature = argument || activeFeature(ws);
+        const feature = requireFeatureName(argument || activeFeature(ws));
         const run = readRun(ws, feature);
         const ok = await ctx.ui.confirm(
           'Open draft PRs?',
@@ -526,19 +503,15 @@ export default function softwareFactory(pi: ExtensionAPI) {
     const feature = activeRuns.get(ws.root);
     if (feature === undefined) return;
     const run = readRun(ws, feature);
-    if (run.ownerSessionId !== event.session_id || run.status !== 'running') return;
-    const previous = stopBlocks.get(feature);
-    const count = previous?.events === run.events.length ? previous.count + 1 : 1;
-    if (count > MAX_IDLE_STOP_BLOCKS) {
-      stopBlocks.delete(feature);
-      await withRun(ws, feature, current => {
-        current.status = 'paused';
-        addEvent(current, 'pause', `no progress after ${MAX_IDLE_STOP_BLOCKS} stop attempts`);
-      });
+    const decision = stopDecision(run, event.session_id, stopAttempts.get(feature));
+    if (decision.action === 'allow') return;
+    if (decision.action === 'pause') {
+      stopAttempts.delete(feature);
+      await withRun(ws, feature, current => pauseRun(current, `no progress after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts`));
       ctx.ui.notify(`Software factory paused "${feature}": no progress. /factory resume ${feature} continues.`, 'warning');
       return;
     }
-    stopBlocks.set(feature, { count, events: run.events.length });
+    stopAttempts.set(feature, decision.attempts);
     return { decision: 'block', reason: `Software factory run "${feature}" is not finished. Next: ${nextAction(run)}` };
   });
 
