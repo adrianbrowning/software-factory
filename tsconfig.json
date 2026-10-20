@@ -3,14 +3,16 @@
     "allowImportingTsExtensions": true,
     "erasableSyntaxOnly": true,
     "exactOptionalPropertyTypes": true,
+    "lib": ["ES2024"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "noEmit": true,
-    "noUnusedLocals": true,
     "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "skipLibCheck": true,
     "strict": true,
-    "target": "ES2022",
+    "target": "ES2024",
     "types": ["node"]
   },
-  "include": ["drop-in/**/*.ts", "drop-in/**/*.mts", "test/**/*.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts"]
 }
