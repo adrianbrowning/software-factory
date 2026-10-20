@@ -16,7 +16,9 @@ import {
   pauseRun,
   planReslice,
   planSlices,
+  recordDecisions,
   recordRetro,
+  resolveBase,
   recordReview,
   resolveStall,
   resumeRun,
@@ -214,6 +216,54 @@ describe('slice loop gates', () => {
     const data = readFileSync(dataFile, 'utf8');
     assert.match(data, /second\.txt/);
     assert.doesNotMatch(data, /first\.txt/);
+  });
+
+  it('stacks slice 01 on the pinned commit of a user-chosen base branch', async () => {
+    const ws = workspace();
+    sh(ws.root, 'switch', '-q', '-c', 'ext-950');
+    commit(ws, 'ext.txt');
+    const pinned = sh(ws.root, 'rev-parse', 'HEAD');
+    sh(ws.root, 'switch', '-q', 'main');
+    await startRun(ws, { feature: 'demo', sessionId: 's', source: { body: '', kind: 'text', ref: 'r', title: 'T' } });
+    const base = await resolveBase(ws, { baseRef: 'ext-950' });
+    await step(ws, run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')], base), base));
+
+    sh(ws.root, 'switch', '-q', 'ext-950');
+    commit(ws, 'later.txt');
+    sh(ws.root, 'switch', '-q', 'main');
+    await step(ws, run => nextSlice(ws, run));
+    assert.equal(sh(ws.root, 'rev-parse', 'HEAD'), pinned, 'later commits on the base branch stay out');
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const { dataFile } = await step(ws, run => startReview(ws, run));
+    const data = readFileSync(dataFile, 'utf8');
+    assert.match(data, /\+\+\+ b\/ok/);
+    assert.doesNotMatch(data, /ext\.txt|later\.txt/);
+    assert.equal(readRun(ws, 'demo').trunk, 'ext-950');
+  });
+
+  it('refuses checks on a slice that fast-forwarded onto another branch', async () => {
+    const ws = workspace();
+    sh(ws.root, 'switch', '-q', '-c', 'ext-950');
+    commit(ws, 'ext.txt');
+    sh(ws.root, 'switch', '-q', 'main');
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    sh(ws.root, 'merge', '-q', '--ff-only', 'ext-950');
+    commit(ws, 'ok');
+    await assert.rejects(step(ws, run => runChecks(ws, run)), /holds 1 commits from other branches[\s\S]*add ext\.txt/);
+  });
+
+  it('lists the slice commits in the checks result and the user decisions in the review data', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => recordDecisions(ws, run, ['The tsx runner stays; replacing it is out of scope.']));
+    const checks = await step(ws, run => runChecks(ws, run));
+    assert.match(checks.commits, /add ok/);
+    const { dataFile } = await step(ws, run => startReview(ws, run));
+    assert.match(readFileSync(dataFile, 'utf8'), /## Decisions the user already made\n\n- The tsx runner stays/);
   });
 
   it('fails checks that leave the working tree changed', async () => {

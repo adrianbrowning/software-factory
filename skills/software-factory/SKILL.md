@@ -25,6 +25,10 @@ To continue an existing run, call `factory_start` with `resume` instead and foll
 
 Explore the code the issue touches (a `scout` task for unfamiliar areas). Then ask the user, in batched `ask` calls, about every ambiguity that would change the slices: behavior, scope edges, interfaces, data, rollout. Done when you can state, for each acceptance criterion, what observable behavior proves it done.
 
+Ask also whether the work builds on code that is not merged yet (another branch, stack, or open PR). If it does, the user picks that branch as the run's base; pass it as `baseRef` to `factory_plan`. Slice 01 then stacks on it, pinned to its current commit.
+
+Record each decision the user makes that a reviewer could otherwise question (an accepted tradeoff, work kept out of scope, a known limitation) with `factory_decide`, at any point in the run. Tickets and review data list them, so reviewers check the code against them instead of raising them again.
+
 ## 3. Slice
 
 Break the work into **tracer bullets** (Matt Pocock's `to-tickets` rules):
@@ -35,7 +39,7 @@ Break the work into **tracer bullets** (Matt Pocock's `to-tickets` rules):
 - Each slice fits one fresh implementer inside the slice budget from `factory_start` (default 400k tokens, 40% of a 1M window), counting exploration, tests, and debugging. Estimate from the files to read and change; split anything near the budget.
 - Each slice names its **seams**: the public interfaces its tests go through (tdd skill). A slice with nothing to test gives a `noTestReason`.
 
-Show the breakdown to the user with `ask` and iterate on granularity, blocking edges, and seams. Then call `factory_plan`; its dialog is the approval. Done when the reply says the plan is approved.
+Show the breakdown to the user with `ask` and iterate on granularity, blocking edges, seams, and the base. Then call `factory_plan` (with `baseRef` when the user chose one); its dialog is the approval and shows the base commit. Done when the reply says the plan is approved.
 
 ## 4. Build each slice until green
 
@@ -45,7 +49,9 @@ Repeat until `factory_next` reports no slices left:
 2. Spawn one `factory-implementer` with the ticket path, branch, check commands, and budget from `factory_next`.
    - `NEEDS SEAM`: ask the user, record the agreed seam with `factory_amend_seams`, and spawn the implementer again.
    - `SLICE TOO BIG`: propose smaller vertical slices for the remaining work, show them to the user, and call `factory_reslice`. Committed work carries into the first child.
-3. `factory_checks`. Red: spawn a fresh `factory-implementer` in fix mode with the returned fix file, then run `factory_checks` again.
+   - `MISSING DEPENDENCY`: show the user what is missing and where it lives. If the run must build on that branch, `/factory pause` this run and start a new run whose `factory_plan` sets that branch as `baseRef`. Otherwise record the user's decision with `factory_decide` and spawn the implementer again with it.
+   - Check the implementer's report against the `Slice commits` list that `factory_checks` returns, not against the report alone.
+3. `factory_checks`. Red: spawn a fresh `factory-implementer` in fix mode with the returned fix file, then run `factory_checks` again. A refusal for commits from other branches is not a fix round: ask the user, as for `MISSING DEPENDENCY`.
 4. `factory_review_start`. Spawn one `factory-reviewer` per domain in a single `task` batch. Shared context: the review id and data file. Per task: the domain and its reference file (`<reference dir>/<domain>.md`).
 5. When every reviewer has finished, spawn one `factory-review-validator` with the review id, data file, and the findings dir from `factory_review_start`.
 6. `factory_review_record`. Blocking findings: spawn a fresh `factory-implementer` in fix mode with the fix file, then go back to step 3. Each fix gets a full new review.

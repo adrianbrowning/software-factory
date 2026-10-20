@@ -84,23 +84,42 @@ async function excludeScratch(ws: Workspace) {
   appendFileSync(path, `${current === '' || current.endsWith('\n') ? '' : '\n'}${line}\n`);
 }
 
+/** The base slice 01 stacks on: the ref the user named, pinned to the commit it pointed at when the plan was approved. */
+export type Base = { baseRef: string; baseSha: string; trunk: string };
+
+/**
+ * Resolves the run's base. `baseRef` overrides the configured base when the work builds on an unmerged branch; the
+ * trunk then defaults to that branch, so the stack's PRs target it.
+ */
+export async function resolveBase(ws: Workspace, override: { baseRef?: string | undefined; trunk?: string | undefined } = {}): Promise<Base> {
+  const baseRef = override.baseRef ?? ws.config.baseRef;
+  const trunk = override.trunk ?? (override.baseRef === undefined ? ws.config.trunk : baseRef.replace(/^[^/]+\//, ''));
+  try {
+    const baseSha = (await git(ws.root, 'rev-parse', '--verify', '--quiet', `${baseRef}^{commit}`)).trim();
+    return { baseRef, baseSha, trunk };
+  } catch {
+    throw new Error(
+      `Base ref "${baseRef}" does not exist. ${
+        override.baseRef === undefined
+          ? 'Fetch it, or set "baseRef" (and "trunk") in .omp/factory.json, for example "main".'
+          : 'Fetch the branch the work builds on, then plan again.'
+      }`,
+    );
+  }
+}
+
 export async function startRun(ws: Workspace, input: { feature: string; sessionId: string; source: Source }) {
   requireFeatureName(input.feature);
   if (existsSync(statePath(ws, input.feature))) {
     throw new Error(`Run "${input.feature}" already exists. Use /factory resume ${input.feature}.`);
   }
   const source = sourceSchema.parse(input.source);
-  try {
-    await git(ws.root, 'rev-parse', '--verify', '--quiet', `${ws.config.baseRef}^{commit}`);
-  } catch {
-    throw new Error(
-      `Base ref "${ws.config.baseRef}" does not exist. Fetch it, or set "baseRef" (and "trunk") in .omp/factory.json, for example "main".`,
-    );
-  }
+  const { baseRef, trunk } = await resolveBase(ws);
   await excludeScratch(ws);
   const run: Run = {
-    baseRef: ws.config.baseRef,
+    baseRef,
     createdAt: new Date().toISOString(),
+    decisions: [],
     events: [],
     feature: input.feature,
     ownerSessionId: input.sessionId,
@@ -108,10 +127,10 @@ export async function startRun(ws: Workspace, input: { feature: string; sessionI
     slices: [],
     source,
     status: 'intake',
-    trunk: ws.config.trunk,
+    trunk,
     version: 1,
   };
-  addEvent(run, 'start', `${source.kind} ${source.ref}`);
+  addEvent(run, 'start', `${source.kind} ${source.ref}; base ${baseRef}, trunk ${trunk}`);
   writeAtomic(
     join(runDir(ws, run.feature), 'issue.md'),
     `# ${source.title}\n\nSource: ${source.kind} ${source.ref}${source.url ? ` (${source.url})` : ''}\n\n${UNTRUSTED_NOTE}\n\n<untrusted-issue>\n${source.body}\n</untrusted-issue>\n`,
@@ -148,7 +167,12 @@ function makeSlice(ws: Workspace, run: Run, input: SliceInput, index: number, pa
   };
 }
 
-function renderTicket(slice: Slice, budget: number) {
+function renderDecisions(run: Run) {
+  if (run.decisions.length === 0) return 'None recorded.';
+  return run.decisions.map(decision => `- ${decision}`).join('\n');
+}
+
+function renderTicket(run: Run, slice: Slice, budget: number) {
   const seams =
     slice.seams.length > 0
       ? slice.seams.map(seam => `- ${seam}`).join('\n')
@@ -172,11 +196,15 @@ ${seams}
 ## Acceptance criteria
 
 ${slice.acceptance.map(item => `- [ ] ${item}`).join('\n')}
+
+## Decisions the user already made
+
+${renderDecisions(run)}
 `;
 }
 
 function writeTicket(ws: Workspace, run: Run, slice: Slice) {
-  writeAtomic(ticketPath(ws, run.feature, slice), renderTicket(slice, ws.config.sliceTokenBudget));
+  writeAtomic(ticketPath(ws, run.feature, slice), renderTicket(run, slice, ws.config.sliceTokenBudget));
 }
 
 /**
@@ -220,14 +248,17 @@ function orderInputs(ws: Workspace, proposed: unknown, satisfied: Set<string>, t
 /** Lays inputs out as one linear stack after `base`: each slice branches from the one before it. */
 function stack(ws: Workspace, run: Run, base: Slice[], inputs: SliceInput[]) {
   const slices = [...base];
-  for (const input of inputs) slices.push(makeSlice(ws, run, input, slices.length, slices.at(-1)?.branch ?? run.baseRef));
+  for (const input of inputs) slices.push(makeSlice(ws, run, input, slices.length, slices.at(-1)?.branch ?? run.baseSha ?? run.baseRef));
   return slices;
 }
 
-/** Validates the proposed slices and orders them into one linear stack (blockers first). Does not save. */
-export function planSlices(ws: Workspace, run: Run, proposed: unknown): Slice[] {
+/**
+ * Validates the proposed slices and orders them into one linear stack (blockers first) on `base`, slice 01 branching
+ * from the pinned base commit. Does not save.
+ */
+export function planSlices(ws: Workspace, run: Run, proposed: unknown, base?: Base): Slice[] {
   if (run.status !== 'intake') throw new Error(`Run is ${run.status}; the plan is already approved.`);
-  return stack(ws, run, [], orderInputs(ws, proposed, new Set(), new Set()));
+  return stack(ws, base === undefined ? run : { ...run, ...base }, [], orderInputs(ws, proposed, new Set(), new Set()));
 }
 
 /**
@@ -274,12 +305,26 @@ export async function applyReslice(ws: Workspace, run: Run, slices: Slice[]) {
   return first;
 }
 
-export function approvePlan(ws: Workspace, run: Run, slices: Slice[]) {
+export function approvePlan(ws: Workspace, run: Run, slices: Slice[], base?: Base) {
   if (run.status !== 'intake') throw new Error(`Run is ${run.status}; the plan is already approved.`);
+  if (base !== undefined) Object.assign(run, base);
   run.slices = slices;
   for (const slice of slices) writeTicket(ws, run, slice);
   run.status = 'running';
   addEvent(run, 'plan', `${slices.length} slices approved: ${slices.map(slice => `${slice.id} ${slice.title}`).join('; ')}`);
+}
+
+/**
+ * Records decisions the user confirmed (accepted tradeoffs, out-of-scope work) so every later ticket and review
+ * data file carries them. Reviewers check the code against them: they report code that breaks a decision, and do
+ * not re-raise a tradeoff the user already accepted.
+ */
+export function recordDecisions(ws: Workspace, run: Run, decisions: string[]) {
+  const added = z.array(z.string().min(1)).min(1).parse(decisions);
+  run.decisions.push(...added);
+  for (const slice of run.slices.filter(candidate => candidate.status !== 'done')) writeTicket(ws, run, slice);
+  addEvent(run, 'decision', added.join('; '));
+  return run.decisions;
 }
 
 /** Adds user-agreed test seams to the active slice; the tdd skill tests only at agreed seams. */
@@ -399,10 +444,35 @@ function describeCheck(command: string, result: CommandResult) {
   return `${command}: ${result.exitCode === 0 ? 'passed' : `failed (exit ${result.exitCode})`} in ${result.durationMs}ms`;
 }
 
+/**
+ * Commits on the slice branch past its parent that a branch or remote outside this run also holds: work pulled in
+ * from elsewhere (a merge, rebase, or fast-forward onto another stack) instead of written for this slice.
+ */
+async function foreignCommits(ws: Workspace, run: Run, slice: Slice) {
+  const runBranches = `${ws.config.branchPrefix}/${run.feature}/*`;
+  const own = await git(ws.root, 'rev-list', 'HEAD', '--not', slice.parentBranch);
+  const unique = new Set(
+    (
+      await git(ws.root, 'rev-list', 'HEAD', '--not', slice.parentBranch, `--exclude=${runBranches}`, '--branches', `--exclude=*/${runBranches}`, '--remotes')
+    )
+      .split('\n')
+      .filter(Boolean),
+  );
+  return own.split('\n').filter(sha => sha !== '' && !unique.has(sha));
+}
+
 export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   const slice = requireActive(run);
   await requireOnBranch(ws.root, slice);
   await requireClean(ws.root, 'Checks run on committed work only');
+  const foreign = await foreignCommits(ws, run, slice);
+  if (foreign.length > 0) {
+    const listed = await git(ws.root, 'log', '--oneline', '--no-walk', ...foreign.slice(0, 20));
+    throw new Error(
+      `Slice ${slice.id} holds ${foreign.length} commits from other branches, so its review would include work outside the slice:\n${listed.trim()}\nReset the branch to its own commits on ${slice.parentBranch}. If the slice needs that work, ask the user: a run that builds on another branch starts with factory_start baseRef set to it.`,
+    );
+  }
+  const commits = (await git(ws.root, 'log', '--oneline', `${slice.parentBranch}..HEAD`)).trim();
   const sha = await head(ws.root);
   const results: { command: string; result: CommandResult }[] = [];
   for (const command of ws.config.checks) {
@@ -418,7 +488,7 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
     slice.phase = 'review';
     slice.review = undefined;
     addEvent(run, 'checks-pass', summary.join('; '), slice);
-    return { passed: true as const, summary };
+    return { commits, passed: true as const, summary };
   }
 
   const sections = failed.map(
@@ -432,7 +502,7 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
     [...failed.map(({ command }) => command), ...(dirty === '' ? [] : ['working tree changed'])].join('; '),
     slice,
   );
-  return { passed: false as const, summary, ...requestFix(ws, run, slice, sections.join('\n\n')) };
+  return { commits, passed: false as const, summary, ...requestFix(ws, run, slice, sections.join('\n\n')) };
 }
 
 export async function startReview(ws: Workspace, run: Run) {
@@ -455,7 +525,7 @@ export async function startReview(ws: Workspace, run: Run) {
   const dataFile = join(reviewDir(ws, run.feature, id), 'data.md');
   writeAtomic(
     dataFile,
-    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(slice, ws.config.sliceTokenBudget)}\n## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files}`,
+    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files}`,
   );
   slice.review = { id, sha: slice.checkedSha, snapshot: await snapshot(ws.root), submissions: {} };
   addEvent(run, 'review-start', id, slice);
@@ -739,7 +809,7 @@ export async function fileFactoryIssues(ws: Workspace, findings: RetroFinding[])
  */
 export function recordRetro(ws: Workspace, run: Run, retro: Retro, filed: FiledIssues = { urls: {} }) {
   requireRetroOpen(run);
-  if (retro.slice !== undefined && retro.slice.parentBranch !== (run.slices.at(-1)?.branch ?? run.baseRef)) {
+  if (retro.slice !== undefined && retro.slice.parentBranch !== (run.slices.at(-1)?.branch ?? run.baseSha ?? run.baseRef)) {
     throw new Error('The slices changed since the retro was parsed. Call factory_retro again.');
   }
   const status = (finding: RetroFinding) => {

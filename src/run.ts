@@ -102,7 +102,11 @@ export type Slice = z.infer<typeof sliceSchema>;
 
 const runSchema = z.object({
   baseRef: text,
+  /** Commit `baseRef` pointed at when the plan was approved; slice 01 branches from it. */
+  baseSha: z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/).optional(),
   createdAt: text,
+  /** Decisions the user made during the run (accepted tradeoffs, out-of-scope work). Reviewers read them. */
+  decisions: z.array(text).default([]),
   events: z.array(z.object({ at: text, detail: z.string(), kind: text, slice: z.string().optional() })),
   feature: text,
   ownerSessionId: text,

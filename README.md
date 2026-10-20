@@ -79,7 +79,7 @@ working tree, and unknown keys are rejected.
 | `checkTimeoutMs` | `600000` | Per-check timeout; the whole process group is killed |
 | `maxRounds` | `3` | Fix rounds per slice before the user decides to continue or pause |
 | `sliceTokenBudget` | `400000` | Planned context per slice: 40% of a 1M window |
-| `baseRef` / `trunk` | `origin/main` / `main` | First slice branches from `baseRef`; the stack is based on `trunk` |
+| `baseRef` / `trunk` | `origin/main` / `main` | Default base: slice 01 branches from the commit `baseRef` points at when the plan is approved; the stack is based on `trunk`. A run that builds on unmerged work names that branch as `baseRef` in `factory_plan`, and its PRs then target it |
 | `branchPrefix` | `factory` | Branches are `<prefix>/<feature>/<NN>-<slug>` |
 | `scratchDir` | `.scratch` | Run state; added to `.git/info/exclude` |
 | `factoryRepo` | `adrianbrowning/software-factory` | Where retro findings about the factory are filed |
@@ -105,6 +105,10 @@ never share a write.
 The review gate snapshots `HEAD` plus `git status` when a review opens and rejects the review if either changes.
 A slice completes only when `HEAD` is still the commit that passed checks and review, and `/factory submit`
 refuses any branch whose tip is not its reviewed commit.
+
+Checks refuse a slice that holds commits another branch or remote outside the run also holds (a merge, rebase,
+or fast-forward onto other work), so the review diff is only the slice's own commits. A backup branch that copies a
+slice trips this too; delete it, or keep backups under a name the check ignores (`<prefix>/<feature>/…`).
 
 ## Trust boundaries
 

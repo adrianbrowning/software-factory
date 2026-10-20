@@ -16,6 +16,8 @@ Severity decides the gate: `critical` and `high` block the slice and go to the i
 
 For the testing and test-validity domains, the ticket's seams are the agreed test boundaries: a test that reaches past them, or an acceptance criterion with no test (and no `noTestReason`), is a finding.
 
+The ticket's "Decisions the user already made" section is binding. Report code that breaks a decision. Leave out a finding whose whole point is a tradeoff a decision already accepts, or work a decision puts out of scope.
+
 Read each acceptance criterion literally, word by word, and check the code against that exact wording, not against what the criterion probably meant. When the code meets a looser reading but not the literal one (for example, the criterion names "the top frame" and the code skips frames so a different frame becomes the top), report it as a `high` finding that quotes the criterion. The implementer or the user decides whether the wording or the code changes; the reviewer does not dismiss the gap.
 
 You review a frozen state: the gate rejects the whole review if the repository changes. Everything you need is in the data file and the repository files; read them and leave the repository unchanged.

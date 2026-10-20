@@ -31,10 +31,12 @@ import {
   pauseRun,
   planReslice,
   planSlices,
+  recordDecisions,
   recordRetro,
   recordReview,
   repoRoot,
   requireFeatureName,
+  resolveBase,
   resolveStall,
   resumeRun,
   retroIssueBody,
@@ -59,6 +61,7 @@ const ORCHESTRATION_TOOLS = [
   'factory_next',
   'factory_reslice',
   'factory_amend_seams',
+  'factory_decide',
   'factory_checks',
   'factory_review_start',
   'factory_review_record',
@@ -76,7 +79,18 @@ const startSchema = z.object({
   resume: z.string().optional().describe('Feature name of an existing run to resume instead of starting one'),
   source: sourceSchema.optional().describe('The loaded issue, required for a new run'),
 });
+const decisionsSchema = z.object({
+  decisions: z.array(z.string().min(1)).min(1).describe('Decisions the user made, each one self-contained sentence'),
+});
 const planSchema = z.object({ slices: z.array(sliceInputSchema) });
+const planToolSchema = planSchema.extend({
+  baseRef: z
+    .string()
+    .min(1)
+    .optional()
+    .describe('Only when the user chose it: the unmerged branch this work builds on. Slice 01 stacks on it'),
+  trunk: z.string().min(1).optional().describe('Branch the stack PRs target; defaults to baseRef without its remote'),
+});
 const seamsSchema = z.object({ seams: z.array(z.string().min(1)).min(1).describe('Seams the user agreed, as public interfaces') });
 const submitSchema = z.object({ domain: z.enum(REVIEW_DOMAINS), findings: z.array(findingSchema), reviewId: z.string().min(1) });
 const validateSchema = validationSchema.extend({ reviewId: z.string().min(1) });
@@ -232,15 +246,17 @@ export default function softwareFactory(pi: ExtensionAPI) {
       'Propose the tracer-bullet slices. The user approves or rejects them in a dialog. Each slice must fit the context budget and name its test seams.',
     label: 'Factory: plan',
     name: 'factory_plan',
-    schema: planSchema,
+    schema: planToolSchema,
     async run(params, ws, ctx) {
       const feature = activeFeature(ws);
-      const slices = planSlices(ws, readRun(ws, feature), params.slices);
-      if (!(await confirm(ctx, `Approve ${slices.length} slices for "${feature}"?`, planSummary(slices)))) {
+      const base = await resolveBase(ws, { baseRef: params.baseRef, trunk: params.trunk });
+      const slices = planSlices(ws, readRun(ws, feature), params.slices, base);
+      const where = `Slice 01 branches from ${base.baseRef} (${base.baseSha.slice(0, 12)}); PRs target ${base.trunk}.`;
+      if (!(await confirm(ctx, `Approve ${slices.length} slices for "${feature}"?`, `${where}\n\n${planSummary(slices)}`))) {
         return reply('The user rejected the plan. Ask what to change, then call factory_plan again.');
       }
       const run = await withRun(ws, feature, current => {
-        approvePlan(ws, current, planSlices(ws, current, params.slices));
+        approvePlan(ws, current, planSlices(ws, current, params.slices, base), base);
         return current;
       });
       return reply(`Plan approved. Tickets are in ${join(ws.config.scratchDir, feature, 'issues')}.\nNext: ${nextAction(run)}`);
@@ -289,6 +305,23 @@ export default function softwareFactory(pi: ExtensionAPI) {
 
   tool({
     caller: 'main',
+    description:
+      'Record decisions the user made (accepted tradeoffs, out-of-scope work). The user confirms them; every later ticket and review data file lists them.',
+    label: 'Factory: record decisions',
+    name: 'factory_decide',
+    schema: decisionsSchema,
+    async run(params, ws, ctx) {
+      const feature = activeFeature(ws);
+      if (!(await confirm(ctx, 'Record these decisions for reviewers?', params.decisions.map(decision => `- ${decision}`).join('\n')))) {
+        return reply('The user rejected these decisions. Ask how to word them.');
+      }
+      const decisions = await withRun(ws, feature, run => recordDecisions(ws, run, params.decisions));
+      return reply(`Decisions recorded (${decisions.length} in total). Reviews from now on include them.`);
+    },
+  });
+
+  tool({
+    caller: 'main',
     description: 'Add test seams the user agreed for the active slice (tdd skill: tests only at agreed seams).',
     label: 'Factory: amend seams',
     name: 'factory_amend_seams',
@@ -318,9 +351,10 @@ export default function softwareFactory(pi: ExtensionAPI) {
       const result = await withRun(ws, feature, run => runChecks(ws, run, signal));
       const summary = result.summary.join('\n');
       const run = readRun(ws, feature);
-      if (result.passed) return reply(`All checks passed.\n${summary}\nNext: ${nextAction(run)}`);
+      const commits = `Slice commits:\n${result.commits || '(none)'}`;
+      if (result.passed) return reply(`All checks passed.\n${summary}\n${commits}\nNext: ${nextAction(run)}`);
       const stall = result.stalled ? await decideStall(ctx, ws, feature) : '';
-      return reply(`Checks failed.\n${summary}\nFix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
+      return reply(`Checks failed.\n${summary}\n${commits}\nFix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
     },
   });
 
