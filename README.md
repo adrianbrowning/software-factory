@@ -1,184 +1,117 @@
-# Sandcastle Factory
+# Software Factory
 
-A small issue-to-reviewed-branch loop for an existing repository. It loads one
-authorized GitHub issue, asks a Sandcastle agent to implement it, gates every
-code-changing run with deterministic checks, processes structured review
-findings, and verifies the result.
+An [omp](https://github.com/can1357/oh-my-pi) plugin that takes one Jira or GitHub issue to a stack of reviewed
+branches. It asks questions, splits the work into tracer-bullet slices that each fit a fresh agent's context
+budget, builds each slice test-first, and loops checks → multi-domain review → fixes until the slice is green.
+A retro at the end feeds improvements back into the repository and into this plugin.
 
-It deliberately does not manage sub-issues, pull requests, stacks, or merges.
+```mermaid
+flowchart TD
+  A[/factory issue/] --> B[Load issue: gh or Jira MCP]
+  B --> C[Ask questions]
+  C --> D[Propose tracer-bullet slices]
+  D -->|user approves| E[factory_next: checkout slice branch]
+  E --> F[factory-implementer: red → green at agreed seams, commit]
+  F -->|SLICE TOO BIG| R[factory_reslice: user approves split]
+  R --> F
+  F --> G[factory_checks: lint, typecheck, test]
+  G -->|red| H[fix file → implementer fix mode]
+  H --> G
+  G -->|green| I[11 factory-reviewer domains + validator]
+  I -->|critical/high| H
+  I -->|green| J[factory_complete_slice]
+  J -->|slices left| E
+  J -->|all done| K[Retro: repo slice + factory issues]
+  K --> L[Stack ready: /factory submit opens draft PRs]
+```
 
-## Install in a repository
+## How the work is split
 
-Initialize Sandcastle and choose the blank template:
+| Part | Owner | Why |
+| --- | --- | --- |
+| Gates: checks, review verdict, round limits, approvals, branch/HEAD checks | TypeScript tools (`src/`) | Deterministic; the model cannot talk its way past them |
+| Questions, slicing, deciding what to spawn | Orchestrator (main session) following `skills/software-factory/SKILL.md` | Judgement |
+| Implementation and fixes | `factory-implementer` subagent, `tdd` skill autoloaded | Fresh context per slice and per fix |
+| Review | 11 `factory-reviewer` subagents (one per cc-pr-review domain) + `factory-review-validator` | Port of `cc-pr-review` onto omp's `task` tool |
+
+User gates: questions at intake, slice-plan approval, seam additions, re-slice approval, stalled fix loops,
+retro actions, and `/factory submit`. Nothing opens or merges a PR without the user running `/factory submit`,
+and nothing merges at all.
+
+## Install
+
+Prerequisites: `gh` (authenticated), the [`gh-stack`](https://github.com/github/gh-stack) extension for
+`/factory submit`, and the Atlassian MCP server for Jira issues. Reviewers and the implementer load these skills
+when present: `tdd`, `retro`, `testing-best-practice`, `test-validity-review`, `thermo-nuclear-code-quality-review`.
 
 ```sh
-pnpm dlx @ai-hero/sandcastle init
+git clone git@github.com:adrianbrowning/software-factory.git
+cd software-factory && pnpm install
+omp plugin link "$PWD"        # or add the path to `extensions:` in ~/.omp/agent/config.yml
 ```
 
-Copy the three drop-in files into the generated directory:
+The package bundles the extension (`src/index.ts`), the skill (`skills/software-factory/`), and the three agents
+(`agents/`).
 
-```sh
-cp /path/to/software-factory/drop-in/factory.ts .sandcastle/factory.ts
-cp /path/to/software-factory/drop-in/github-issue.ts .sandcastle/github-issue.ts
-cp /path/to/software-factory/drop-in/main.mts .sandcastle/main.mts
-```
-
-Install Zod if needed:
-
-```sh
-pnpm add --save-dev zod
-```
-
-Edit `DEFAULT_OPTIONS` in `main.mts`. Replace `owner/repository` with the
-receiving repository. A numeric issue reference is always resolved against the
-first trusted repository; explicit references are accepted only when listed.
-Every loaded issue must carry the configured authorization label and be authored by a configured trusted author.
-
-```ts
-export const DEFAULT_OPTIONS = {
-  baseRef: 'origin/main',
-  branchPrefix: 'sandcastle/factory',
-  checks: ['pnpm lint', 'pnpm typecheck', 'pnpm test'],
-  checkTimeoutMs: 10 * 60 * 1_000,
-  maxRounds: 3,
-  setupCommand: [
-    'pnpm install --frozen-lockfile',
-    'pnpm dlx skills add adrianbrowning/agent-skills -s cc-pr-review-ci -a claude-code -y',
-    'printf \'.claude/skills/\\nskills-lock.json\\n\' >> "$(git rev-parse --git-path info/exclude)"',
-  ].join(' && '),
-  trustPolicy: {
-    requiredLabel: 'factory-approved',
-    trustedAuthors: ['trusted-maintainer'],
-    trustedRepositories: ['owner/repository'],
-  },
-};
-```
-
-The checks run sequentially in the declared order. This is intentional because
-lint, typecheck, and test scripts may share generated files or other mutable
-state. Configure independent parallelism inside the repository's own scripts if
-that repository guarantees it is safe.
-
-`setupCommand` also installs the `cc-pr-review-ci` skill (from
-`adrianbrowning/agent-skills`, tracking `HEAD`, no pinning) at the project level
-and appends its installed paths (`.claude/skills/`, `skills-lock.json`) to
-`info/exclude` so the implementer agent cannot commit them. Known risk: because
-those paths are ignored, the implementer can edit the skill before review without
-it showing in the diff; a prompt-injected issue could weaken the reviewer.
-
-Provider selection is also explicit near the executable bootstrap:
-
-```ts
-const AGENT_PROVIDER = 'claude-code';
-const BUILD_MODEL = 'claude-opus-5-5';
-const REVIEW_MODEL = 'claude-opus-5-5';
-```
-
-The included adapter supports `claude-code`. Replace the adapter deliberately
-if the provider selected during `sandcastle init` differs; do not rely on an
-implicit provider override. `BUILD_MODEL` drives implement/fix runs and
-`REVIEW_MODEL` drives the review run; change either independently.
-
-## Run an issue
-
-Add the authorization label, then pass an issue from a trusted repository:
-
-```sh
-node .sandcastle/main.mts 42
-node .sandcastle/main.mts 'owner/repository#42'
-node .sandcastle/main.mts https://github.com/owner/repository/issues/42
-```
-
-Issue authorization is checked on the host before sandbox provisioning. GitHub
-credentials are not passed through the issue-loading path to coding or repair
-agents. Issue text, check output, and review findings are delimited as untrusted
-evidence. Agent prompts forbid network tools and credential inspection.
-
-The review round runs the `cc-pr-review-ci` skill as a local run (no PR
-number) against `${baseRef}...HEAD`; the issue is still passed as
-`<untrusted-issue>` evidence of intended scope. The reviewer follows only the
-skill's own instructions and prints the skill's `review.json` inside
-`<review>...</review>`. Only `critical` and `high` findings block completion
-and drive repair; `observation` findings are reported but non-blocking and are
-still included in the final result.
-
-The terminal reports setup, implementation, every check result, repair, review
-findings, completion, and failure as they happen:
+## Use
 
 ```text
-[implement] Starting issue #42
-[round 1/3] Starting
-[check] pnpm lint ✓
-[check] pnpm typecheck ✓
-[check] pnpm test timed out after 600000ms
-[repair] Fixing failed checks
+/factory https://github.com/owner/repo/issues/42
+/factory PROJ-123
+/factory <pasted issue text>
+/factory status
+/factory pause
+/factory resume <feature>
+/factory submit [feature]
 ```
 
-Check evidence sent to repair agents is redacted for common credential forms
-and truncated per stream. Full check logs are not persisted by this drop-in.
+While a run is active, the session cannot end until the run is done, paused, or stalled. Three stop attempts
+without progress pause the run automatically.
 
-Reviewer isolation snapshots fail closed after 30 seconds or 1 MiB of probe
-output. Dirty-file hashing is bounded to 10,000 paths, 10 MiB per file, and
-50 MiB total; exceeding a bound aborts the run instead of accepting the review.
+## Configure
 
-## Run from a file
+Optional `.omp/factory.json` in the target repository:
 
-Paste an issue from elsewhere (Jira, a doc, a chat thread) into a text file and
-pass it with `--file` instead of an issue reference. Exactly one of the two is
-required.
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `checks` | `lint`, `typecheck`, `test` scripts found in `package.json` | Commands run in order; all must pass |
+| `checkTimeoutMs` | `600000` | Per-check timeout; the whole process group is killed |
+| `maxRounds` | `3` | Fix rounds per slice before the user decides to continue or pause |
+| `sliceTokenBudget` | `400000` | Planned context per slice: 40% of a 1M window |
+| `baseRef` / `trunk` | `origin/main` / `main` | First slice branches from `baseRef`; the stack is based on `trunk` |
+| `branchPrefix` | `factory` | Branches are `<prefix>/<feature>/<NN>-<slug>` |
+| `scratchDir` | `.scratch` | Run state; added to `.git/info/exclude` |
+| `factoryRepo` | `adrianbrowning/software-factory` | Where retro findings about the factory are filed |
 
-```sh
-node .sandcastle/main.mts --file ./issue.md
-node .sandcastle/main.mts --file ./issue.md --review-only
+The budget is enforced at planning time (every slice estimate must fit) and measured at run time (peak
+implementer context and compactions are recorded per slice for the retro). To keep implementers inside the
+budget, compact them at it:
+
+```yaml
+# ~/.omp/agent/config.yml
+task:
+  agentCompactionThresholdOverrides:
+    factory-implementer: 400000
 ```
 
-The file is read on the host, never in the sandbox, and skips the GitHub
-label/author trust gate entirely — the operator supplied the file directly.
-The first non-empty line (leading `#`s and whitespace stripped) becomes the
-title; the rest of the file, trimmed, becomes the body. The issue is still
-wrapped as `<untrusted-issue>` evidence for every agent prompt. The branch
-name includes the file name, e.g. `sandcastle/factory/file-issue-<timestamp>`.
+## Run state
 
-## Re-run review
+`<scratchDir>/<feature>/` holds `state.json` (schema-validated on every read), `issue.md`, one ticket per slice
+under `issues/`, fix files under `fixes/`, review data, per-domain findings, validation and `review.json` under
+`reviews/<slice>-r<n>/`, and `retro.md`. Each reviewer writes only its own domain file, so parallel reviewers
+never share a write.
 
-Check out the branch containing the work and pass `--review-only`:
+The review gate snapshots `HEAD` plus `git status` when a review opens and rejects the review if either changes.
+A slice completes only when `HEAD` is still the commit that passed checks and review.
 
-```sh
-git switch sandcastle/factory/EXISTING_RUN
-node .sandcastle/main.mts 42 --review-only
-```
-
-Review-only skips implementation but still runs all checks, repairs failures,
-reviews against the issue, processes findings, and reruns checks before every
-re-review. The new run writes fixes to a new named branch and never merges
-automatically.
-
-## Flow
-
-1. Load, validate, and authorize the issue against the configured trust policy.
-2. Create one named Sandcastle branch and sandbox.
-3. Implement the issue unless `--review-only` was passed.
-4. Run every configured check sequentially with an active timeout.
-5. Repair failed checks and rerun all checks; review cannot run while a check is red.
-6. Capture repository state and run the nominally read-only `cc-pr-review-ci`
-   skill review.
-7. Reject the run if the reviewer changed tracked or untracked repository state.
-8. Process validated `critical`/`high` findings, then return to all deterministic
-   checks; `observation` findings are reported but do not block.
-9. After a clean review (no `critical`/`high` findings), rerun every
-   deterministic check before declaring success.
-10. Stop clean or fail when `maxRounds` is exhausted.
-11. Close the sandbox on every success and failure path.
-
-## Developing this drop-in
+## Develop
 
 ```sh
-pnpm test
 pnpm typecheck
-git diff --check
+pnpm test
 ```
 
-The test suite exercises `runMain` through fakes, including issue-load,
-agent/review, malformed-output, final-failure, exit-code, output, and cleanup
-paths. A real Docker/agent smoke test additionally requires local Sandcastle
-credentials and a working configured provider.
+`skills/software-factory/references/review/` holds the cc-pr-review domain references from
+[`adrianbrowning/agent-skills`](https://github.com/adrianbrowning/agent-skills), adapted to report through
+`factory_review_submit`. When the upstream references change, copy them again and re-apply that adaptation
+(the "Your role" reporting step and the "Report Format" section).
