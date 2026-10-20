@@ -40,7 +40,7 @@ Show the breakdown to the user with `ask` and iterate on granularity, blocking e
 Repeat until `factory_next` reports no slices left:
 
 1. `factory_next` checks out the slice branch and returns the ticket path.
-2. Spawn one `factory-implementer` with the ticket path, branch, and budget.
+2. Spawn one `factory-implementer` with the ticket path, branch, check commands, and budget from `factory_next`.
    - `NEEDS SEAM`: ask the user, record the agreed seam with `factory_amend_seams`, and spawn the implementer again.
    - `SLICE TOO BIG`: propose smaller vertical slices for the remaining work, show them to the user, and call `factory_reslice`. Committed work carries into the first child.
 3. `factory_checks`. Red: spawn a fresh `factory-implementer` in fix mode with the returned fix file, then run `factory_checks` again.

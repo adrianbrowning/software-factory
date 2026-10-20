@@ -242,7 +242,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         const slice = await nextSlice(ws, run);
         if (slice === undefined) return reply(`No slices left.\nNext: ${nextAction(run)}`);
         return reply(
-          `Slice ${slice.id} "${slice.title}" on ${slice.branch} (phase ${slice.phase}).\nTicket: ${ticketPath(ws, run.feature, slice)}\nContext budget: ${ws.config.sliceTokenBudget} tokens.\nNext: ${nextAction(run)}`,
+          `Slice ${slice.id} "${slice.title}" on ${slice.branch} (phase ${slice.phase}).\nTicket: ${ticketPath(ws, run.feature, slice)}\nChecks: ${ws.config.checks.join('; ')}\nContext budget: ${ws.config.sliceTokenBudget} tokens.\nNext: ${nextAction(run)}`,
         );
       });
     },
@@ -263,8 +263,10 @@ export default function softwareFactory(pi: ExtensionAPI) {
       return withRun(ws, activeFeature(ws), async run => {
         const { children, slices } = planReslice(ws, run, params.slices);
         if (!ctx.hasUI) throw new Error('Re-slice approval needs the interactive UI.');
-        const title = `Split slice ${activeSlice(run)?.id} into ${children.length} slices?`;
-        if (!(await ctx.ui.confirm(title, planSummary({ ...run, slices: children })))) {
+        const active = activeSlice(run);
+        const title = `Split slice ${active?.id} into ${children.length} slices?`;
+        const remaining = slices.slice(active === undefined ? 0 : run.slices.indexOf(active));
+        if (!(await ctx.ui.confirm(title, planSummary({ ...run, slices: remaining })))) {
           return reply('The user rejected the split. Ask what to change, then call factory_reslice again.');
         }
         const first = await applyReslice(ws, run, slices);

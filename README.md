@@ -46,7 +46,7 @@ when present: `tdd`, `retro`, `testing-best-practice`, `test-validity-review`, `
 
 ```sh
 git clone git@github.com:adrianbrowning/software-factory.git
-cd software-factory && pnpm install
+cd software-factory && pnpm install --prod
 omp plugin link "$PWD"        # or add the path to `extensions:` in ~/.omp/agent/config.yml
 ```
 
