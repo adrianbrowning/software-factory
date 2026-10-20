@@ -89,6 +89,13 @@ export async function startRun(ws: Workspace, input: { feature: string; sessionI
     throw new Error(`Run "${input.feature}" already exists. Use /factory resume ${input.feature}.`);
   }
   const source = sourceSchema.parse(input.source);
+  try {
+    await git(ws.root, 'rev-parse', '--verify', '--quiet', `${ws.config.baseRef}^{commit}`);
+  } catch {
+    throw new Error(
+      `Base ref "${ws.config.baseRef}" does not exist. Fetch it, or set "baseRef" (and "trunk") in .omp/factory.json, for example "main".`,
+    );
+  }
   await excludeScratch(ws);
   const run: Run = {
     baseRef: ws.config.baseRef,

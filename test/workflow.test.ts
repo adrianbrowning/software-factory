@@ -111,6 +111,17 @@ async function green(ws: Workspace) {
   return step(ws, run => recordReview(ws, run));
 }
 
+describe('startRun', () => {
+  it('refuses a base ref that does not exist, before writing any state', async () => {
+    const ws = workspace({ baseRef: 'origin/main' });
+    await assert.rejects(
+      startRun(ws, { feature: 'demo', sessionId: 's', source: { body: '', kind: 'text', ref: 'r', title: 'T' } }),
+      /Base ref "origin\/main" does not exist/,
+    );
+    assert.equal(existsSync(join(ws.root, '.scratch', 'demo')), false);
+  });
+});
+
 describe('planSlices', () => {
   it('orders slices blockers first into one linear stack', async () => {
     const ws = workspace();
