@@ -32,7 +32,7 @@ flowchart TD
 | Gates: checks, review verdict, round limits, approvals, branch/HEAD checks | TypeScript tools (`src/`) | Deterministic: they decide from git and from what the tools recorded, not from what an agent says |
 | Questions, slicing, deciding what to spawn | Orchestrator (main session) following `skills/software-factory/SKILL.md` | Judgement |
 | Implementation and fixes | `factory-implementer` subagent, `tdd` skill autoloaded, own advisor (`advisor: true`; override with `task.agentAdvisor.factory-implementer: "off"`) | Fresh context per slice and per fix; the advisor watches the session under the most context pressure |
-| Review | 11 `factory-reviewer` subagents (one per cc-pr-review domain) + `factory-review-validator` | Port of `cc-pr-review` onto omp's `task` tool |
+| Review | 11 `factory-reviewer` subagents (one per cc-pr-review domain) + `factory-review-validator` | Port of `cc-pr-review` onto omp's `task` tool. The validator, with a clean context, keeps only gaps in correctness or the ticket's requirements; it drops speculative abstractions, defensive code for impossible states, and tests for cases that cannot happen |
 
 User gates: questions at intake, slice-plan approval, seam additions, re-slice approval, stalled fix loops,
 retro actions, and `/factory submit`. The plugin opens PRs only when you run `/factory submit`, and it never
