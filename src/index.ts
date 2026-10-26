@@ -395,7 +395,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
     schema: validateSchema,
     async run(params, ws, ctx) {
       const result = await withRun(ws, activeFeature(ws), run => submitValidation(ws, run, { ...params, agentId: ctx.agent.id }));
-      return reply(`Kept ${result.kept}, dropped ${result.dropped}.`);
+      return reply(`Kept ${result.kept}, downgraded ${result.downgraded} to observations, dropped ${result.dropped}.`);
     },
   });
 

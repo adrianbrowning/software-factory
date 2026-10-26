@@ -607,26 +607,42 @@ export const validationSchema = z.object({
       }),
     )
     .describe('Findings removed, each with a reason'),
+  downgrade: z
+    .array(z.object({ id: z.string().min(1), reason: z.string().min(1) }))
+    .default([])
+    .describe('critical/high findings the diff supports but that fail the correctness-or-requirements bar; kept as observations'),
   keep: z.array(z.string().min(1)).describe('Ids of findings the diff substantiates, one per distinct problem'),
 });
 type Validation = z.infer<typeof validationSchema>;
 
+/** Kept findings at the severity the gate uses: downgraded findings count as observations. */
+function keptFindings(findings: Finding[], validation: Validation) {
+  const downgraded = new Set(validation.downgrade.map(entry => entry.id));
+  return findings
+    .filter(finding => validation.keep.includes(finding.id) || downgraded.has(finding.id))
+    .map(finding => (downgraded.has(finding.id) ? { ...finding, severity: 'observation' as const } : finding));
+}
+
 /**
- * Throws unless the validation keeps or drops every submitted finding exactly once, and nothing else. A duplicate
- * may only be dropped in favour of a kept finding of the same or higher severity, so merging never weakens the gate.
+ * Throws unless the validation keeps, downgrades, or drops every submitted finding exactly once, and nothing else.
+ * Only a `critical` or `high` finding can be downgraded, and only to `observation`. A duplicate may only be dropped in
+ * favour of a kept or downgraded finding of the same or higher original severity.
  */
 function checkCoverage(findings: Finding[], validation: Validation) {
-  const decided = [...validation.keep, ...validation.dropped.map(entry => entry.id)];
+  const downgraded = validation.downgrade.map(entry => entry.id);
+  const decided = [...validation.keep, ...downgraded, ...validation.dropped.map(entry => entry.id)];
   const byId = new Map(findings.map(finding => [finding.id, finding]));
   const unknown = decided.filter(id => !byId.has(id));
   if (unknown.length > 0) throw new Error(`Unknown finding ids: ${unknown.join(', ')}`);
-  if (new Set(decided).size !== decided.length) throw new Error('A finding id appears twice across keep and dropped.');
+  if (new Set(decided).size !== decided.length) throw new Error('A finding id appears twice across keep, downgrade, and dropped.');
   const undecided = [...byId.keys()].filter(id => !decided.includes(id));
-  if (undecided.length > 0) throw new Error(`Keep or drop every finding. Undecided: ${undecided.join(', ')}`);
+  if (undecided.length > 0) throw new Error(`Keep, downgrade, or drop every finding. Undecided: ${undecided.join(', ')}`);
+  const notBlocking = downgraded.filter(id => byId.get(id)?.severity === 'observation');
+  if (notBlocking.length > 0) throw new Error(`Only critical or high findings can be downgraded: ${notBlocking.join(', ')}`);
   for (const entry of validation.dropped) {
     if (entry.duplicateOf === undefined) continue;
     const kept = byId.get(entry.duplicateOf);
-    if (kept === undefined || !validation.keep.includes(entry.duplicateOf)) {
+    if (kept === undefined || !(validation.keep.includes(entry.duplicateOf) || downgraded.includes(entry.duplicateOf))) {
       throw new Error(`"${entry.id}" is a duplicate of "${entry.duplicateOf}", which is not a kept finding.`);
     }
     const dropped = byId.get(entry.id);
@@ -636,18 +652,25 @@ function checkCoverage(findings: Finding[], validation: Validation) {
   }
 }
 
-/** The validator only selects: every raw finding is kept or dropped with a reason, and none is added or rewritten. */
-export function submitValidation(ws: Workspace, run: Run, input: { agentId: string; dropped: unknown; keep: unknown; reviewId: string }) {
+/**
+ * The validator only selects: every raw finding is kept, downgraded to an observation, or dropped with a reason. It
+ * adds no finding and rewrites no text.
+ */
+export function submitValidation(
+  ws: Workspace,
+  run: Run,
+  input: { agentId: string; downgrade?: unknown; dropped: unknown; keep: unknown; reviewId: string },
+) {
   const review = requireReview(run, input.reviewId);
   if (review.validation !== undefined) throw new Error(`Review ${review.id} is already validated.`);
   const { findings, missing } = readDomainFindings(ws, run, input.reviewId);
   if (missing.length > 0) throw new Error(`Domains not submitted yet: ${missing.join(', ')}`);
-  const validation = validationSchema.parse({ dropped: input.dropped, keep: input.keep });
+  const validation = validationSchema.parse({ downgrade: input.downgrade, dropped: input.dropped, keep: input.keep });
   checkCoverage(findings, validation);
   const content = `${JSON.stringify(validation, null, 2)}\n`;
   writeAtomic(validationFile(ws, run, input.reviewId), content);
   review.validation = { agentId: input.agentId, hash: sha256(content) };
-  return { dropped: validation.dropped.length, kept: validation.keep.length };
+  return { downgraded: validation.downgrade.length, dropped: validation.dropped.length, kept: validation.keep.length };
 }
 
 function countBy(findings: Finding[], key: 'domain' | 'severity') {
@@ -680,16 +703,16 @@ export async function recordReview(ws: Workspace, run: Run) {
     throw new Invalidated('The repository changed during review. Restore the reviewed state, then call factory_checks.');
   }
 
-  const kept = findings.filter(finding => validation.keep.includes(finding.id));
+  const kept = keptFindings(findings, validation);
   const blocking = kept.filter(finding => finding.severity !== 'observation');
   const observations = kept.filter(finding => finding.severity === 'observation');
   // critical and high both block the slice, so the recorded verdict follows the gate.
   const verdict = blocking.length > 0 ? 'CHANGES_REQUESTED' : 'APPROVED';
   writeAtomic(
     join(reviewDir(ws, run.feature, review.id), 'review.json'),
-    `${JSON.stringify({ dropped: validation.dropped, findings: kept, verdict }, null, 2)}\n`,
+    `${JSON.stringify({ downgraded: validation.downgrade, dropped: validation.dropped, findings: kept, verdict }, null, 2)}\n`,
   );
-  const detail = `${review.id} kept ${kept.length} (${countBy(kept, 'severity')}) dropped ${validation.dropped.length} by-domain ${countBy(kept, 'domain')}`;
+  const detail = `${review.id} kept ${kept.length} (${countBy(kept, 'severity')}) downgraded ${validation.downgrade.length} dropped ${validation.dropped.length} by-domain ${countBy(kept, 'domain')}`;
 
   if (blocking.length === 0) {
     slice.phase = 'ready';

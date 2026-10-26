@@ -406,6 +406,30 @@ describe('review submissions', () => {
     assert.equal(result.blocking, 1);
   });
 
+  it('turns downgraded blocking findings into non-blocking observations', async () => {
+    const { reviewId, ws } = await openReview();
+    for (const domain of REVIEW_DOMAINS) {
+      const findings =
+        domain === 'thermo'
+          ? [finding('thermo', 'high', 'extract-layer'), finding('thermo', 'observation', 'naming')]
+          : domain === 'bug'
+            ? [finding('bug', 'critical', 'unreachable-guard')]
+            : [];
+      await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings, reviewId }));
+    }
+    const validate = (downgrade: { id: string; reason: string }[], keep: string[]) =>
+      step(ws, run => submitValidation(ws, run, { agentId: 'v', downgrade, dropped: [], keep, reviewId }));
+    const reason = 'not a correctness or requirement gap';
+
+    await assert.rejects(validate([{ id: 'thermo-naming', reason }], ['thermo-extract-layer', 'bug-unreachable-guard']), /Only critical or high findings can be downgraded: thermo-naming/);
+    await validate([{ id: 'thermo-extract-layer', reason }, { id: 'bug-unreachable-guard', reason }], ['thermo-naming']);
+
+    const result = await step(ws, run => recordReview(ws, run));
+    assert.ok(result.green);
+    assert.equal(result.observations.length, 3);
+    assert.match(result.observations.join('\n'), /\[observation\] thermo-extract-layer/);
+  });
+
   it('rejects findings submitted after validation', async () => {
     const { reviewId, ws } = await openReview();
     for (const domain of REVIEW_DOMAINS.filter(domain => domain !== 'bug')) {
