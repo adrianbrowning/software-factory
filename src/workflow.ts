@@ -100,7 +100,18 @@ export async function resolveBase(
   ws: Workspace,
   override: { baseRef?: string | undefined; landOn?: string | undefined; trunk?: string | undefined } = {},
 ): Promise<Base> {
-  const chosen = override.baseRef ?? override.landOn;
+  const { landOn } = override;
+  // An exact branch name, not a revision expression such as `main^{commit}` that rev-parse would also accept.
+  let landSha: string | undefined;
+  if (landOn !== undefined) {
+    try {
+      await git(ws.root, 'check-ref-format', `refs/heads/${landOn}`);
+      landSha = (await git(ws.root, 'show-ref', '--verify', '--hash', `refs/heads/${landOn}`)).trim();
+    } catch {
+      throw new Error(`"${landOn}" is not an existing local branch. Name it as \`git branch\` lists it.`);
+    }
+  }
+  const chosen = override.baseRef ?? landOn;
   const baseRef = chosen ?? ws.config.baseRef;
   const trunk = override.trunk ?? (chosen === undefined ? ws.config.trunk : baseRef.replace(/^[^/]+\//, ''));
   let baseSha: string;
@@ -115,13 +126,12 @@ export async function resolveBase(
       }`,
     );
   }
-  const { landOn } = override;
-  if (landOn === undefined) return { baseRef, baseSha, trunk };
+  if (landOn === undefined || landSha === undefined) return { baseRef, baseSha, trunk };
   try {
-    await git(ws.root, 'merge-base', '--is-ancestor', `refs/heads/${landOn}`, baseSha);
+    await git(ws.root, 'merge-base', '--is-ancestor', landSha, baseSha);
   } catch {
     throw new Error(
-      `"${landOn}" is not a local branch at or below ${baseRef} (${baseSha.slice(0, 12)}), so /factory submit could not fast-forward it to the stack. Name an existing local branch the base builds on.`,
+      `"${landOn}" is not at or below ${baseRef} (${baseSha.slice(0, 12)}), so /factory submit could not fast-forward it to the stack. Name a local branch the base builds on.`,
     );
   }
   return { baseRef, baseSha, landOn, trunk };
@@ -413,6 +423,7 @@ function requestFix(ws: Workspace, run: Run, slice: Slice, body: string) {
   slice.fixPath = fixPath;
   slice.phase = 'fix';
   slice.checkedSha = undefined;
+  slice.checkResults = undefined;
   slice.greenSha = undefined;
   slice.review = undefined;
   if (slice.fixRounds >= slice.roundLimit) {
@@ -459,6 +470,7 @@ export function resumeRun(ws: Workspace, run: Run, sessionId: string) {
   if (slice !== undefined && (slice.phase === 'review' || slice.phase === 'ready')) {
     slice.phase = 'checks';
     slice.checkedSha = undefined;
+    slice.checkResults = undefined;
     slice.greenSha = undefined;
     slice.review = undefined;
   }
@@ -541,6 +553,7 @@ export async function startReview(ws: Workspace, run: Run) {
   if ((await head(ws.root)) !== slice.checkedSha) {
     slice.phase = 'checks';
     slice.checkedSha = undefined;
+    slice.checkResults = undefined;
     throw new Invalidated('HEAD moved after checks passed. Call factory_checks again.');
   }
   const range = `${slice.parentBranch}...HEAD`;
@@ -731,6 +744,7 @@ export async function recordReview(ws: Workspace, run: Run) {
     slice.review = undefined;
     slice.phase = 'checks';
     slice.checkedSha = undefined;
+    slice.checkResults = undefined;
     addEvent(run, 'review-invalidated', `${review.id}: repository changed during review`, slice);
     throw new Invalidated('The repository changed during review. Restore the reviewed state, then call factory_checks.');
   }

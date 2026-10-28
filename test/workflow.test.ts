@@ -272,6 +272,25 @@ describe('slice loop gates', () => {
     assert.match(data, /## CHECKS\n\n.*all passed\. Do not run them again\.\n\n- test -f ok: passed in \d+ms\n/);
   });
 
+  it('drops the stored check results whenever the checked commit stops being current', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    const results = () => readRun(ws, 'demo').slices[0]?.checkResults;
+    await step(ws, run => runChecks(ws, run));
+    assert.match(results()?.join() ?? '', /test -f ok: passed/);
+    commit(ws, 'later.txt');
+    await assert.rejects(step(ws, run => startReview(ws, run)), /HEAD moved/);
+    assert.equal(results(), undefined);
+
+    await step(ws, run => runChecks(ws, run));
+    sh(ws.root, 'rm', '-q', 'ok');
+    sh(ws.root, 'commit', '-qm', 'drop ok');
+    assert.equal((await step(ws, run => runChecks(ws, run))).passed, false);
+    assert.equal(results(), undefined);
+  });
+
   it('fails checks that leave the working tree changed', async () => {
     const ws = workspace({ checks: ['touch ok stray.txt'] });
     await newRun(ws, [slice('Feature')]);
@@ -325,7 +344,9 @@ describe('slice loop gates', () => {
       if (change === 'untracked') writeFileSync(join(ws.root, 'stray.txt'), 'reviewer edit\n');
       else commit(ws, 'reviewer.txt');
       await assert.rejects(step(ws, run => recordReview(ws, run)), /changed during review/);
-      assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'checks', change);
+      const invalidated = readRun(ws, 'demo').slices[0];
+      assert.equal(invalidated?.phase, 'checks', change);
+      assert.equal(invalidated?.checkResults, undefined, change);
     }
   });
 
@@ -540,7 +561,7 @@ describe('pause and resume', () => {
     forgetRun(ws, 'demo');
     await step(ws, run => resumeRun(ws, run, 'session-2'));
     const resumed = readRun(ws, 'demo').slices[0];
-    assert.deepEqual([resumed?.phase, resumed?.greenSha], ['checks', undefined]);
+    assert.deepEqual([resumed?.phase, resumed?.greenSha, resumed?.checkResults], ['checks', undefined, undefined]);
   });
 });
 
@@ -613,7 +634,7 @@ describe('submit', () => {
     sh(ws.root, 'switch', '-q', '-c', 'ext-953');
     commit(ws, 'ext.txt');
     sh(ws.root, 'switch', '-q', 'main');
-    await assert.rejects(resolveBase(ws, { baseRef: 'main', landOn: 'ext-953' }), /"ext-953" is not a local branch at or below main/);
+    await assert.rejects(resolveBase(ws, { baseRef: 'main', landOn: 'ext-953' }), /"ext-953" is not at or below main/);
     await startRun(ws, { feature: 'demo', sessionId: 's', source: { body: '', kind: 'text', ref: 'r', title: 'T' } });
     const base = await resolveBase(ws, { landOn: 'ext-953' });
     assert.equal(base.baseRef, 'ext-953');
@@ -643,6 +664,15 @@ describe('submit', () => {
     assert.equal(sh(ws.root, 'rev-parse', 'ext-953'), top?.greenSha);
     assert.equal(sh(ws.root, 'branch', '--show-current'), checkedOut, 'the checkout is unchanged');
     assert.equal(sh(ws.root, 'rev-list', '--merges', '--count', 'ext-953'), '0');
+  });
+
+  it('refuses at plan time a landOn that is a revision expression or not a local branch', async () => {
+    const ws = workspace();
+    sh(ws.root, 'update-ref', 'refs/remotes/origin/main', 'main');
+    for (const name of ['main^{commit}', 'main~0', 'origin/main', 'refs/heads/main', '../main', '-main', 'missing']) {
+      await assert.rejects(resolveBase(ws, { baseRef: 'main', landOn: name }), /is not an existing local branch/, name);
+    }
+    assert.equal((await resolveBase(ws, { baseRef: 'main', landOn: 'main' })).landOn, 'main');
   });
 
   it('refuses to land when the target branch moved off the stack', async () => {
