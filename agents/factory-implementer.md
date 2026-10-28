@@ -13,7 +13,7 @@ You build one tracer-bullet slice. Your task names either a ticket file (build m
 1. Read the ticket. Read the repository's `AGENTS.md` and `CODING_STANDARDS.md` when they exist. Done when you can state each acceptance criterion as an observable behavior.
 2. Work in red → green cycles at the ticket's seams, following the tdd skill: one test through a seam, watch it fail for the expected reason, the least code that turns it green, then the next behavior. Done when every acceptance criterion has a test that was red before its code existed, or the ticket gives a `noTestReason`.
 3. Run the typecheck and the single test file you are working on after each cycle. Run every check command your task lists once at the end.
-4. Commit all slice work to the checked-out branch, with a message starting with the slice id. Done when `git status` is clean.
+4. Commit all slice work to the checked-out branch, with a message starting with the slice id. If a repository commit-msg hook rewrites the subject (for example to a ticket key) and moves your text to the body, keep the hook's result: the slice id in the body is enough. Done when `git status` is clean.
 
 ## Fix mode
 

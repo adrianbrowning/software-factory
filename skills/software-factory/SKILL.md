@@ -27,6 +27,8 @@ Explore the code the issue touches (a `scout` task for unfamiliar areas). Then a
 
 Ask also whether the work builds on code that is not merged yet (another branch, stack, or open PR). If it does, the user picks that branch as the run's base; pass it as `baseRef` to `factory_plan`. Slice 01 then stacks on it, pinned to its current commit.
 
+If the user does not want new PR branches and asks for the work on an existing local branch, pass that branch as `landOn` to `factory_plan`. It is then also the base unless the user picks a `baseRef`. The slices are still built and reviewed on their own branches; `/factory submit` fast-forwards `landOn` to the top slice instead of opening PRs.
+
 Record each decision the user makes that a reviewer could otherwise question (an accepted tradeoff, work kept out of scope, a known limitation) with `factory_decide`, at any point in the run. Tickets and review data list them, so reviewers check the code against them instead of raising them again.
 
 ## 3. Slice
@@ -39,7 +41,7 @@ Break the work into **tracer bullets** (Matt Pocock's `to-tickets` rules):
 - Each slice fits one fresh implementer inside the slice budget from `factory_start` (default 400k tokens, 40% of a 1M window), counting exploration, tests, and debugging. Estimate from the files to read and change; split anything near the budget.
 - Each slice names its **seams**: the public interfaces its tests go through (tdd skill). A slice with nothing to test gives a `noTestReason`.
 
-Show the breakdown to the user with `ask` and iterate on granularity, blocking edges, seams, and the base. Then call `factory_plan` (with `baseRef` when the user chose one); its dialog is the approval and shows the base commit. Done when the reply says the plan is approved.
+Show the breakdown to the user with `ask` and iterate on granularity, blocking edges, seams, and the base. Then call `factory_plan` (with `baseRef` and `landOn` when the user chose them); its dialog is the approval and shows the base commit. Done when the reply says the plan is approved.
 
 ## 4. Build each slice until green
 
@@ -72,4 +74,4 @@ Present the candidates to the user in one `ask` call, most severe first, with th
 
 ## 6. Hand over
 
-Tell the user the branches in stack order and that `/factory submit` opens one draft PR per slice through `gh stack`. Opening and merging PRs is the user's decision.
+Tell the user the branches in stack order and what `/factory submit` does: it opens one draft PR per slice through `gh stack`, or, for a run with `landOn`, fast-forwards that branch to the top slice. Opening and merging PRs is the user's decision.

@@ -36,7 +36,8 @@ flowchart TD
 
 User gates: questions at intake, slice-plan approval, seam additions, re-slice approval, stalled fix loops,
 retro actions, and `/factory submit`. The plugin opens PRs only when you run `/factory submit`, and it never
-merges.
+merges. A run planned with `landOn` opens no PRs: `/factory submit` fast-forwards that existing local branch to
+the top slice, without a checkout or a merge commit.
 
 ## Install
 
@@ -79,7 +80,7 @@ working tree, and unknown keys are rejected.
 | `checkTimeoutMs` | `600000` | Per-check timeout; the whole process group is killed |
 | `maxRounds` | `3` | Fix rounds per slice before the user decides to continue or pause |
 | `sliceTokenBudget` | `400000` | Planned context per slice: 40% of a 1M window |
-| `baseRef` / `trunk` | `origin/main` / `main` | Default base: slice 01 branches from the commit `baseRef` points at when the plan is approved; the stack is based on `trunk`. A run that builds on unmerged work names that branch as `baseRef` in `factory_plan`, and its PRs then target it |
+| `baseRef` / `trunk` | `origin/main` / `main` | Default base: slice 01 branches from the commit `baseRef` points at when the plan is approved; the stack is based on `trunk`. A run that builds on unmerged work names that branch as `baseRef` in `factory_plan`, and its PRs then target it. The plan event in `state.json` records the pinned base |
 | `branchPrefix` | `factory` | Branches are `<prefix>/<feature>/<NN>-<slug>` |
 | `scratchDir` | `.scratch` | Run state; added to `.git/info/exclude` |
 | `factoryRepo` | `adrianbrowning/software-factory` | Where retro findings about the factory are filed |
@@ -99,12 +100,14 @@ task:
 
 `<scratchDir>/<feature>/` holds `state.json` (schema-validated on every read), `issue.md`, one ticket per slice
 under `issues/`, fix files under `fixes/`, review data, per-domain findings, validation and `review.json` under
-`reviews/<slice>-r<n>/`, and `retro.md`. Each reviewer writes only its own domain file, so parallel reviewers
-never share a write.
+`reviews/<slice>-r<n>/`, and `retro.md`. The review data file lists the ticket, each check's result and duration on
+the reviewed commit, the diff, and the changed files. Each reviewer writes only its own domain file, so parallel
+reviewers never share a write.
 
 The review gate snapshots `HEAD` plus `git status` when a review opens and rejects the review if either changes.
 A slice completes only when `HEAD` is still the commit that passed checks and review, and `/factory submit`
-refuses any branch whose tip is not its reviewed commit.
+refuses any branch whose tip is not its reviewed commit. With `landOn`, it also refuses while that branch is
+checked out or when it is no longer an ancestor of the top slice; the ref update is compare-and-swap.
 
 Checks refuse a slice that holds commits another branch or remote outside the run also holds (a merge, rebase,
 or fast-forward onto other work), so the review diff is only the slice's own commits. A backup branch that copies a
