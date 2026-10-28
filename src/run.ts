@@ -69,8 +69,11 @@ const phaseSchema = z.enum(['checks', 'fix', 'implement', 'ready', 'review']);
 /** SHA-1 or SHA-256 object name. */
 const sha = z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/);
 
-/** Who wrote a review artifact and the sha256 of what the tool wrote, so a later edit is detected. */
-const submissionSchema = z.object({ agentId: text, hash: text });
+/**
+ * Who wrote a review artifact and the sha256 of what the tool wrote, so a later edit is detected. `amended` marks a
+ * domain whose reviewer has used its one replacement.
+ */
+const submissionSchema = z.object({ agentId: text, amended: z.boolean().optional(), hash: text });
 
 const reviewSchema = z.object({
   id: text,

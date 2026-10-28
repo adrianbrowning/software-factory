@@ -559,14 +559,19 @@ function readRecorded(path: string, recorded: { hash: string } | undefined) {
 }
 
 /**
- * Stores one domain reviewer's findings as its own file, so parallel reviewers never share a write. Each domain
- * is submitted once, by one agent, before validation; the run records the file's hash.
+ * Stores one domain reviewer's findings as its own file, so parallel reviewers never share a write. Each domain is
+ * submitted by one agent, before validation; that agent may replace its submission once (for a late advisor note).
+ * The run records the file's hash.
  */
 export function submitDomain(ws: Workspace, run: Run, input: { agentId: string; domain: string; findings: unknown; reviewId: string }) {
   const review = requireReview(run, input.reviewId);
   const domain = z.enum(REVIEW_DOMAINS).parse(input.domain);
   if (review.validation !== undefined) throw new Error(`Review ${review.id} is already validated; start a new review.`);
-  if (review.submissions[domain] !== undefined) throw new Error(`The ${domain} findings for ${review.id} are already submitted.`);
+  const previous = review.submissions[domain];
+  if (previous !== undefined && previous.agentId !== input.agentId) {
+    throw new Error(`The ${domain} findings for ${review.id} were submitted by another agent.`);
+  }
+  if (previous?.amended === true) throw new Error(`The ${domain} findings for ${review.id} were already amended once.`);
   const findings = findingListSchema.parse(input.findings);
   const ids = new Set<string>();
   for (const finding of findings) {
@@ -577,7 +582,7 @@ export function submitDomain(ws: Workspace, run: Run, input: { agentId: string; 
   }
   const content = `${JSON.stringify(findings, null, 2)}\n`;
   writeAtomic(domainFile(ws, run, review.id, domain), content);
-  review.submissions[domain] = { agentId: input.agentId, hash: sha256(content) };
+  review.submissions[domain] = { agentId: input.agentId, ...(previous === undefined ? {} : { amended: true }), hash: sha256(content) };
   return findings.length;
 }
 

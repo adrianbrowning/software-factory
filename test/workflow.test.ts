@@ -357,7 +357,12 @@ describe('review submissions', () => {
     for (const domain of REVIEW_DOMAINS) {
       await submit(domain, domain === 'bug' ? [finding('bug', 'high', 'a'), finding('bug', 'critical', 'b')] : []);
     }
-    await assert.rejects(submit('bug', []), /already submitted/);
+    await assert.rejects(
+      step(ws, run => submitDomain(ws, run, { agentId: 'someone-else', domain: 'bug', findings: [], reviewId })),
+      /submitted by another agent/,
+    );
+    await submit('bug', [finding('bug', 'high', 'a'), finding('bug', 'critical', 'b')]);
+    await assert.rejects(submit('bug', []), /already amended once/);
     assert.equal(JSON.parse(readFileSync(join(findingsDir, 'bug.json'), 'utf8')).length, 2);
 
     const validate = (keep: string[], dropped: { id: string; reason: string }[] = []) =>

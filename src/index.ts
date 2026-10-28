@@ -377,7 +377,8 @@ export default function softwareFactory(pi: ExtensionAPI) {
 
   tool({
     caller: REVIEWER,
-    description: 'Submit your domain findings for the active review. Call once, with an empty list when you found nothing.',
+    description:
+      'Submit your domain findings for the active review, with an empty list when you found nothing. One more call replaces them once (for a late correction), until validation.',
     label: 'Factory: submit review findings',
     name: 'factory_review_submit',
     schema: submitSchema,
