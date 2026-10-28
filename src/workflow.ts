@@ -933,12 +933,14 @@ async function landStack(ws: Workspace, run: Run, landOn: string) {
   const top = run.slices.at(-1);
   if (top?.greenSha === undefined) throw new Error(`Run "${run.feature}" has no reviewed slice to land.`);
   const ref = `refs/heads/${landOn}`;
-  const checkedOut = await git(ws.root, 'symbolic-ref', '--quiet', 'HEAD').then(
-    out => out.trim() === ref,
-    () => false,
-  );
-  if (checkedOut) {
-    throw new Error(`${landOn} is checked out, and moving it would leave the working tree behind. Switch to another branch, then run /factory submit again.`);
+  // Any worktree (this one or a linked one) with the branch checked out would be left behind by the ref update.
+  const worktree = (await git(ws.root, 'worktree', 'list', '--porcelain'))
+    .split('\n\n')
+    .map(block => block.split('\n'))
+    .find(lines => lines.includes(`branch ${ref}`));
+  if (worktree !== undefined) {
+    const path = worktree[0]?.replace(/^worktree /, '');
+    throw new Error(`${landOn} is checked out in ${path}, and moving it would leave that working tree behind. Switch it to another branch, then run /factory submit again.`);
   }
   let old: string;
   try {

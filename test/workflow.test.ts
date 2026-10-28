@@ -632,6 +632,11 @@ describe('submit', () => {
     sh(ws.root, 'switch', '-q', 'ext-953');
     await assert.rejects(step(ws, run => submitStack(ws, run)), /ext-953 is checked out/);
     sh(ws.root, 'switch', '-q', checkedOut);
+    const linked = mkdtempSync(join(tmpdir(), 'factory-wt-'));
+    roots.push(linked);
+    sh(ws.root, 'worktree', 'add', '-q', linked, 'ext-953');
+    await assert.rejects(step(ws, run => submitStack(ws, run)), /ext-953 is checked out in .*factory-wt-/);
+    sh(ws.root, 'worktree', 'remove', linked);
 
     const output = await step(ws, run => submitStack(ws, run));
     assert.match(output, /ext-953 fast-forwarded to .*No PRs were opened/);

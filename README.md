@@ -107,7 +107,8 @@ reviewers never share a write.
 The review gate snapshots `HEAD` plus `git status` when a review opens and rejects the review if either changes.
 A slice completes only when `HEAD` is still the commit that passed checks and review, and `/factory submit`
 refuses any branch whose tip is not its reviewed commit. With `landOn`, it also refuses while that branch is
-checked out or when it is no longer an ancestor of the top slice; the ref update is compare-and-swap.
+checked out in any worktree or when it is no longer an ancestor of the top slice; the ref update is
+compare-and-swap.
 
 Checks refuse a slice that holds commits another branch or remote outside the run also holds (a merge, rebase,
 or fast-forward onto other work), so the review diff is only the slice's own commits. A backup branch that copies a
