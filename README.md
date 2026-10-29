@@ -14,7 +14,7 @@ flowchart TD
   E --> F[factory-implementer: red → green at agreed seams, commit]
   F -->|SLICE TOO BIG| R[factory_reslice: user approves split]
   R --> F
-  F --> G[factory_checks: lint, typecheck, test]
+  F --> G[factory_checks: the checks chosen at setup]
   G -->|red| H[fix file → implementer fix mode]
   H --> G
   G -->|green| I[factory-reviewer per chosen domain + validator]
@@ -133,7 +133,7 @@ working tree, and unknown keys are rejected.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `checks` | `lint`, `typecheck`, `test` scripts found in `package.json` | Commands run in order; all must pass |
+| `checks` | `lint`, `typecheck`, `test` scripts found in `package.json` | Checks the setup dialog chooses by default. `factory_start` asks you which commands the run uses, and suggests other check-like `package.json` scripts and `.github/workflows` `run:` commands. Chosen commands run in order before each review; all must pass |
 | `checkTimeoutMs` | `600000` | Per-check timeout; the whole process group is killed |
 | `maxRounds` | `3` | Fix rounds per slice before the user decides to continue or pause |
 | `sliceTokenBudget` | `400000` | Planned context per slice: 40% of a 1M window |

@@ -216,12 +216,15 @@ export function fileSource(ws: Workspace, ref: string): Source {
   return { body, kind: 'file', ref, title };
 }
 
-export async function startRun(ws: Workspace, input: { feature: string; sessionId: string; source: Source }) {
+const checksSchema = z.array(z.string().trim().min(1)).min(1, 'Choose at least one check command.');
+
+export async function startRun(ws: Workspace, input: { checks: string[]; feature: string; sessionId: string; source: Source }) {
   requireFeatureName(input.feature);
   if (existsSync(statePath(ws, input.feature))) {
     throw new Error(`Run "${input.feature}" already exists. Use /factory resume ${input.feature}.`);
   }
   const source = sourceSchema.parse(input.source);
+  const checks = checksSchema.parse(input.checks);
   // The base is resolved and pinned at plan approval, where the user can still pick a different one; the plan
   // event records it.
   const { baseRef } = ws.config;
@@ -229,6 +232,7 @@ export async function startRun(ws: Workspace, input: { feature: string; sessionI
   await excludeScratch(ws);
   const run: Run = {
     baseRef,
+    checks,
     createdAt: new Date().toISOString(),
     decisions: [],
     events: [],
@@ -242,6 +246,7 @@ export async function startRun(ws: Workspace, input: { feature: string; sessionI
     version: 1,
   };
   addEvent(run, 'start', `${source.kind} ${source.ref}`);
+  addEvent(run, 'checks', checks.join('; '));
   writeAtomic(
     join(runDir(ws, run.feature), 'issue.md'),
     `# ${source.title}\n\nSource: ${source.kind} ${source.ref}${source.url ? ` (${source.url})` : ''}\n\n${UNTRUSTED_NOTE}\n\n<untrusted-issue>\n${source.body}\n</untrusted-issue>\n`,
@@ -499,7 +504,7 @@ function requestFix(ws: Workspace, run: Run, slice: Slice, body: string, sha: st
   const context = [
     `- Ticket (seams and acceptance criteria): ${ticketPath(ws, run.feature, slice)}`,
     `- Branch: ${slice.branch}`,
-    `- Checks to run before committing: ${ws.config.checks.join('; ')}`,
+    `- Checks to run before committing: ${run.checks.join('; ')}`,
   ].join('\n');
   writeAtomic(fixPath, `# Fix slice ${slice.id}: ${slice.title}\n\n${context}\n\n${UNTRUSTED_NOTE}\n\n${body}\n`);
   slice.fixPath = fixPath;
@@ -561,6 +566,12 @@ export function resumeRun(ws: Workspace, run: Run, sessionId: string) {
   addEvent(run, 'resume', `session ${sessionId}`);
 }
 
+/** Sets the check commands the user chose at setup, for a run that started before the setup dialog asked. */
+export function setChecks(run: Run, checks: string[]) {
+  run.checks = checksSchema.parse(checks);
+  addEvent(run, 'checks', run.checks.join('; '));
+}
+
 function describeCheck(command: string, result: CommandResult) {
   if (result.timedOut) return `${command}: timed out`;
   return `${command}: ${result.exitCode === 0 ? 'passed' : `failed (exit ${result.exitCode})`} in ${result.durationMs}ms`;
@@ -600,7 +611,8 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   // A fix round that ends on the commit its fix file described: the implementer changed nothing.
   const unchanged = slice.phase === 'fix' && slice.fixFromSha === sha;
   const results: { command: string; result: CommandResult }[] = [];
-  for (const command of ws.config.checks) {
+  if (run.checks.length === 0) throw new Error(`Run "${run.feature}" has no checks. Resume it with factory_start to choose them.`);
+  for (const command of run.checks) {
     signal?.throwIfAborted();
     results.push({ command, result: await runShell(command, ws.root, ws.config.checkTimeoutMs, signal) });
   }

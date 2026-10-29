@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from '@oh-my-pi/pi-coding-agent';
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { loadConfig } from './config.ts';
+import { checksPrompt, loadConfig, parseChecks, suggestChecks } from './config.ts';
 import { evidence } from './evidence.ts';
 import {
   activeSlice,
@@ -48,6 +48,7 @@ import {
   retroIssueBody,
   retroSchema,
   runChecks,
+  setChecks,
   sourceInputSchema,
   type SourceInput,
   startReview,
@@ -168,6 +169,16 @@ async function loadSource(ctx: ExtensionContext, ws: Workspace, input: SourceInp
   );
 }
 
+/** Asks the user which check commands the run gates on, prefilled with the suggestions for this repository. */
+async function chooseChecks(ctx: ExtensionContext, ws: Workspace) {
+  if (!ctx.hasUI) throw new Error('Choosing the checks needs the interactive UI.');
+  const text = await ctx.ui.editor('Checks for this run (one command per line)', checksPrompt(suggestChecks(ws.root, ws.config)));
+  if (text === undefined) throw new Error('The user cancelled the check setup. Ask which checks to run, then call factory_start again.');
+  const checks = parseChecks(text);
+  if (checks.length === 0) throw new Error('The user chose no checks. Every run needs at least one; ask which to run, then call factory_start again.');
+  return checks;
+}
+
 /** Asks the user how to continue once a slice's fix budget is used up. Without a UI the run pauses. */
 async function decideStall(ctx: ExtensionContext, ws: Workspace, feature: string) {
   const run = readRun(ws, feature);
@@ -256,7 +267,9 @@ export default function softwareFactory(pi: ExtensionAPI) {
             throw new Error(`The user kept "${feature}" ${current.status}.`);
           }
         }
+        const checks = current.checks.length === 0 ? await chooseChecks(ctx, ws) : undefined;
         run = await withRun(ws, feature, latest => {
+          if (checks !== undefined) setChecks(latest, checks);
           resumeRun(ws, latest, sessionId);
           return latest;
         });
@@ -266,12 +279,13 @@ export default function softwareFactory(pi: ExtensionAPI) {
         if (current !== undefined && readRun(ws, current).status === 'running') {
           throw new Error(`Run "${current}" is still running in this repository. Finish or /factory pause it first.`);
         }
-        run = await startRun(ws, { feature: params.feature, sessionId, source: await loadSource(ctx, ws, params.source) });
+        const source = await loadSource(ctx, ws, params.source);
+        run = await startRun(ws, { checks: await chooseChecks(ctx, ws), feature: params.feature, sessionId, source });
       }
       activeRuns.set(ws.root, run.feature);
       await pi.setActiveTools([...new Set([...pi.getActiveTools(), ...ORCHESTRATION_TOOLS])]);
       return reply(
-        `Run "${run.feature}" is ${run.status}. Checks: ${ws.config.checks.join(', ')}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${ws.config.maxRounds}.\nNext: ${nextAction(run)}`,
+        `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${ws.config.maxRounds}.\nNext: ${nextAction(run)}`,
         summarize(ws, run),
       );
     },
@@ -312,7 +326,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         const slice = await nextSlice(ws, run);
         if (slice === undefined) return reply(`No slices left.\nNext: ${nextAction(run)}`);
         return reply(
-          `Slice ${slice.id} "${slice.title}" on ${slice.branch} (phase ${slice.phase}).\nTicket: ${ticketPath(ws, run.feature, slice)}\nChecks: ${ws.config.checks.join('; ')}\nContext budget: ${ws.config.sliceTokenBudget} tokens.\nNext: ${nextAction(run)}`,
+          `Slice ${slice.id} "${slice.title}" on ${slice.branch} (phase ${slice.phase}).\nTicket: ${ticketPath(ws, run.feature, slice)}\nChecks: ${run.checks.join('; ')}\nContext budget: ${ws.config.sliceTokenBudget} tokens.\nNext: ${nextAction(run)}`,
         );
       });
     },
