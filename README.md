@@ -47,11 +47,16 @@ its agents load.
 
 ### Tools
 
-| Tool | Needed for | Install |
+| Tool | When | Install |
 | --- | --- | --- |
-| `gh`, authenticated | Issues, retro issues, PRs | `brew install gh && gh auth login` |
-| [`gh-stack`](https://github.com/github/gh-stack) | `/factory submit` when it opens PRs | `gh extension install github/gh-stack` |
-| Atlassian MCP server | Jira issues only | Add it to omp's MCP servers |
+| [omp](https://omp.sh) | Always | `brew install can1357/tap/omp` |
+| Node.js 22.18 or later 22.x, or 23.6 and later (`engines`: `>=22.18.0 <23.0.0 \|\| >=23.6.0`) | Always: runs the plugin's TypeScript directly | [nodejs.org](https://nodejs.org) or your version manager |
+| pnpm 10 | Always: installs the plugin's dependencies | `corepack enable` (the repo pins the version in `packageManager`) |
+| `gh`, authenticated | GitHub issues, and filing retro findings on the factory repo | `brew install gh && gh auth login` |
+| [`gh-stack`](https://github.com/github/gh-stack) | Only for `/factory submit` that opens PRs; not for `landOn` runs | `gh extension install github/gh-stack` |
+| Atlassian MCP server | Only for Jira issues | Add it to omp's MCP servers |
+
+`npx` in the skill commands below comes with Node.js.
 
 ### Skills
 
