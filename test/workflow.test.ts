@@ -21,7 +21,6 @@ import {
   planSlices,
   recordDecisions,
   recordRetro,
-  repoChecks,
   resolveBase,
   recordReview,
   resolveStall,
@@ -414,7 +413,8 @@ describe('slice loop gates', () => {
     assert.equal(sh(ws.root, 'status', '--porcelain'), '');
     await newRun(ws, [slice('Feature')]);
     await saveChecks(ws, ['false']);
-    assert.deepEqual(repoChecks(ws), ['false']);
+    await startRun(ws, { feature: 'later', sessionId: 's', source: { body: '', kind: 'text', ref: 'r', title: 'T' } });
+    assert.deepEqual(readRun(ws, 'later').checks, ['false']);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
     assert.ok((await step(ws, run => runChecks(ws, run))).passed);

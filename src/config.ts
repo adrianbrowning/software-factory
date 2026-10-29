@@ -17,7 +17,7 @@ const configSchema = z
     /** Ref the first slice branches from. */
     baseRef: text.default('origin/main'),
     branchPrefix: text.default('factory'),
-    /** Checks every run uses, in order. Unset: the first run asks the user and saves the choice in `scratchDir`. */
+    /** Checks a new run starts with, in order. Unset: the first run asks the user and saves the choice in `scratchDir`. */
     checks: z.array(text).min(1).optional(),
     checkTimeoutMs: positiveInt.default(10 * 60 * 1_000),
     /** Repository that receives retro findings about the factory itself. */
