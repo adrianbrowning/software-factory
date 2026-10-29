@@ -9,8 +9,10 @@ import {
   findingSchema,
   forgetRun,
   readRun,
+  REQUIRED_REVIEW_DOMAINS,
   REVIEW_DOMAINS,
   type Run,
+  skippedDomainsSchema,
   sliceInputSchema,
   sourceSchema,
   statePath,
@@ -99,6 +101,11 @@ const planToolSchema = planSchema.extend({
   trunk: z.string().min(1).optional().describe('Branch the stack PRs target; defaults to baseRef without its remote'),
 });
 const seamsSchema = z.object({ seams: z.array(z.string().min(1)).min(1).describe('Seams the user agreed, as public interfaces') });
+const reviewStartSchema = z.object({
+  skip: skippedDomainsSchema.describe(
+    'Required choice: the domains this diff gives nothing to review (for example react-ts for a diff with no TypeScript or React), each with a reason. An empty list reviews every domain.',
+  ),
+});
 const submitSchema = z.object({ domain: z.enum(REVIEW_DOMAINS), findings: z.array(findingSchema), reviewId: z.string().min(1) });
 const validateSchema = validationSchema.extend({ reviewId: z.string().min(1) });
 const emptySchema = z.object({});
@@ -360,7 +367,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
       const summary = result.summary.join('\n');
       const run = readRun(ws, feature);
       const commits = `Slice commits:\n${result.commits || '(none)'}`;
-      if (result.passed) return reply(`All checks passed.\n${summary}\n${commits}\nNext: ${nextAction(run)}`);
+      if (result.passed) return reply(`All checks passed.\n${summary}\n${commits}\nChanged files:\n${result.changed}\nNext: ${nextAction(run)}`);
       const stall = result.stalled ? await decideStall(ctx, ws, feature) : '';
       return reply(`Checks failed.\n${summary}\n${commits}\nFix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
     },
@@ -368,15 +375,15 @@ export default function softwareFactory(pi: ExtensionAPI) {
 
   tool({
     caller: 'main',
-    description: 'Freeze the reviewed state and write the review data file. Then spawn one factory-reviewer per domain.',
+    description: `Freeze the reviewed state and write the review data file. Then spawn one factory-reviewer per domain. Skip a domain the diff gives nothing to review, with a reason; ${REQUIRED_REVIEW_DOMAINS.join(' and ')} always review, and testing does too for a slice with test seams.`,
     label: 'Factory: start review',
     name: 'factory_review_start',
-    schema: emptySchema,
-    async run(_params, ws) {
+    schema: reviewStartSchema,
+    async run(params, ws) {
       return withRun(ws, activeFeature(ws), async run => {
-        const review = await startReview(ws, run);
+        const review = await startReview(ws, run, params.skip);
         return reply(
-          `Review ${review.reviewId} is open.\nData file: ${review.dataFile}\nReference dir: ${review.referenceDir}\nFindings dir: ${review.findingsDir}\nSpawn one ${REVIEWER} per domain, in one task batch: ${review.domains.join(', ')}. Give each its domain, the review id, the data file, and the reference file <reference dir>/<domain>.md. When all have submitted, spawn one ${VALIDATOR} with the review id, the data file, and the findings dir, then call factory_review_record.`,
+          `Review ${review.reviewId} is open.\nData file: ${review.dataFile}\nReference dir: ${review.referenceDir}\nFindings dir: ${review.findingsDir}\nSpawn one ${REVIEWER} per domain, in one task batch: ${review.domains.join(', ')}. Give each its domain, the review id, the data file, and the reference file <reference dir>/<domain>.md. When all have submitted, spawn one ${VALIDATOR} with the review id, the data file, and the findings dir. Wait until it has finished (it may correct its validation once), then call factory_review_record.`,
           review,
         );
       });
@@ -398,13 +405,17 @@ export default function softwareFactory(pi: ExtensionAPI) {
 
   tool({
     caller: VALIDATOR,
-    description: 'Submit the validation: keep the substantiated finding ids, drop the rest with reasons.',
+    description:
+      'Submit the validation: keep the substantiated finding ids, downgrade or escalate with reasons, drop the rest with reasons. One more call replaces it once (to correct the verdict), until the review is recorded.',
     label: 'Factory: submit validation',
     name: 'factory_review_validate',
     schema: validateSchema,
     async run(params, ws, ctx) {
       const result = await withRun(ws, activeFeature(ws), run => submitValidation(ws, run, { ...params, agentId: ctx.agent.id }));
-      return reply(`Kept ${result.kept}, downgraded ${result.downgraded} to observations, dropped ${result.dropped}.`);
+      const action = result.replaced ? 'Replaced the validation' : 'Recorded the validation';
+      return reply(
+        `${action}: kept ${result.kept}, downgraded ${result.downgraded} to observations, escalated ${result.escalated} to high, dropped ${result.dropped}.`,
+      );
     },
   });
 

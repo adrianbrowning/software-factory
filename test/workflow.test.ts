@@ -258,17 +258,19 @@ describe('slice loop gates', () => {
     await assert.rejects(step(ws, run => runChecks(ws, run)), /holds 1 commits from other branches[\s\S]*add ext\.txt/);
   });
 
-  it('lists the slice commits in the checks result and the user decisions in the review data', async () => {
+  it('lists the slice commits and changed files in the checks result and the numbered user decisions in the review data', async () => {
     const ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
     await step(ws, run => recordDecisions(ws, run, ['The tsx runner stays; replacing it is out of scope.']));
     const checks = await step(ws, run => runChecks(ws, run));
+    assert.ok(checks.passed);
     assert.match(checks.commits, /add ok/);
+    assert.match(checks.changed, /ok \| 1 \+\n 1 file changed, 1 insertion/);
     const { dataFile } = await step(ws, run => startReview(ws, run));
     const data = readFileSync(dataFile, 'utf8');
-    assert.match(data, /## Decisions the user already made\n\n- The tsx runner stays/);
+    assert.match(data, /## Decisions the user already made\n\n1\. The tsx runner stays/);
     assert.match(data, /## CHECKS\n\n.*all passed\. Do not run them again\.\n\n- test -f ok: passed in \d+ms\n/);
   });
 
@@ -364,13 +366,14 @@ describe('slice loop gates', () => {
 });
 
 describe('review submissions', () => {
-  async function openReview() {
+  async function openReview(decisions: string[] = [], skip: { domain: Finding['domain']; reason: string }[] = [], input = slice('Feature')) {
     const ws = workspace();
-    await newRun(ws, [slice('Feature')]);
+    await newRun(ws, [input]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
+    if (decisions.length > 0) await step(ws, run => recordDecisions(ws, run, decisions));
     await step(ws, run => runChecks(ws, run));
-    const opened = await step(ws, run => startReview(ws, run));
+    const opened = await step(ws, run => startReview(ws, run, skip));
     return { ws, ...opened };
   }
 
@@ -397,10 +400,108 @@ describe('review submissions', () => {
     await assert.rejects(validate(['bug-a', 'bug-invented']), /Unknown finding ids: bug-invented/);
     await assert.rejects(validate(['bug-a']), /Undecided: bug-b/);
     await validate(['bug-a'], [{ id: 'bug-b', reason: 'not in diff' }]);
-    await assert.rejects(validate(['bug-a'], [{ id: 'bug-b', reason: 'again' }]), /already validated/);
 
     const result = await step(ws, run => recordReview(ws, run));
     assert.equal(result.green ? 0 : result.blocking, 1);
+  });
+
+  it('lets the validator correct its verdict once, so a confirmed blocking finding blocks', async () => {
+    const { reviewId, ws } = await openReview();
+    for (const domain of REVIEW_DOMAINS) {
+      const findings = domain === 'testing' ? [finding('testing', 'high', 'mutation-survives')] : [];
+      await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings, reviewId }));
+    }
+    const validate = (agentId: string, input: { downgrade?: { id: string; reason: string }[]; keep: string[] }) =>
+      step(ws, run => submitValidation(ws, run, { agentId, dropped: [], reviewId, ...input }));
+    const downgrade = [{ id: 'testing-mutation-survives', reason: 'not a correctness or requirement gap' }];
+
+    await validate('v', { downgrade, keep: [] });
+    await assert.rejects(validate('other', { keep: ['testing-mutation-survives'] }), /validated by another agent/);
+    await validate('v', { keep: ['testing-mutation-survives'] });
+    await assert.rejects(validate('v', { downgrade, keep: [] }), /already corrected once/);
+
+    const result = await step(ws, run => recordReview(ws, run));
+    assert.ok(!result.green);
+    assert.equal(result.blocking, 1);
+  });
+
+  it('refuses a validation after the review is recorded', async () => {
+    const { reviewId, ws } = await openReview();
+    await review(ws, reviewId, []);
+    assert.ok((await step(ws, run => recordReview(ws, run))).green);
+    await assert.rejects(step(ws, run => submitValidation(ws, run, { agentId: 'validator', dropped: [], keep: [], reviewId })), /already recorded/);
+  });
+
+  it('blocks on findings that break a recorded decision', async () => {
+    const { reviewId, ws } = await openReview(['The shared field is a non-optional record.']);
+    // Decided after the review data was written, so no reviewer saw it.
+    await step(ws, run => recordDecisions(ws, run, ['Later decision.']));
+    const submit = (domain: Finding['domain'], findings: Finding[]) =>
+      step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings, reviewId }));
+    const declared = { ...finding('react-ts', 'high', 'undefined-field'), decision: 1 };
+
+    await assert.rejects(submit('react-ts', [{ ...declared, severity: 'observation' }]), /breaks a recorded decision, so it must be critical or high/);
+    await assert.rejects(submit('react-ts', [{ ...declared, decision: 2 }]), /names decision 2, but the review data lists 1 decisions/);
+    for (const domain of REVIEW_DOMAINS) {
+      await submit(domain, domain === 'react-ts' ? [declared] : domain === 'bug' ? [finding('bug', 'observation', 'missed-conflict')] : []);
+    }
+    const validate = (input: { downgrade?: { id: string; reason: string }[]; escalate?: { decision: number; id: string; reason: string }[]; keep: string[] }) =>
+      step(ws, run => submitValidation(ws, run, { agentId: 'v', dropped: [], reviewId, ...input }));
+    const reason = 'breaks the decision';
+
+    await assert.rejects(
+      validate({ downgrade: [{ id: 'react-ts-undefined-field', reason }], keep: ['bug-missed-conflict'] }),
+      /breaks a recorded decision cannot be downgraded/,
+    );
+    await assert.rejects(
+      validate({ escalate: [{ decision: 1, id: 'react-ts-undefined-field', reason }], keep: ['bug-missed-conflict'] }),
+      /Only observation findings can be escalated/,
+    );
+    await assert.rejects(
+      validate({ escalate: [{ decision: 3, id: 'bug-missed-conflict', reason }], keep: ['react-ts-undefined-field'] }),
+      /names decision 3, but the review data lists 1 decisions/,
+    );
+    await validate({ escalate: [{ decision: 1, id: 'bug-missed-conflict', reason }], keep: ['react-ts-undefined-field'] });
+
+    const result = await step(ws, run => recordReview(ws, run));
+    assert.ok(!result.green);
+    assert.equal(result.blocking, 2);
+    const fix = readFileSync(result.fixPath, 'utf8');
+    assert.match(fix, /\[high\] bug-missed-conflict[\s\S]*- Breaks decision 1: The shared field is a non-optional record\./);
+    assert.match(fix, /\[high\] react-ts-undefined-field[\s\S]*- Breaks decision 1:/);
+  });
+
+  it('skips the domains the orchestrator leaves out, but never the required ones', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    for (const domain of ['bug', 'scope', 'testing'] as const) {
+      await assert.rejects(step(ws, run => startReview(ws, run, [{ domain, reason: 'small' }])), new RegExp(`always review this slice: ${domain}`));
+    }
+    await assert.rejects(
+      step(ws, run => startReview(ws, run, [{ domain: 'devops', reason: 'a' }, { domain: 'devops', reason: 'b' }])),
+      /appears twice/,
+    );
+    const opened = await step(ws, run => startReview(ws, run, [{ domain: 'react-ts', reason: 'no TypeScript or React' }]));
+    assert.deepEqual(opened.domains, REVIEW_DOMAINS.filter(domain => domain !== 'react-ts'));
+    await assert.rejects(
+      step(ws, run => submitDomain(ws, run, { agentId: 'r', domain: 'react-ts', findings: [], reviewId: opened.reviewId })),
+      /skipped the react-ts domain/,
+    );
+    for (const domain of opened.domains) {
+      await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings: [], reviewId: opened.reviewId }));
+    }
+    await step(ws, run => submitValidation(ws, run, { agentId: 'v', dropped: [], keep: [], reviewId: opened.reviewId }));
+    assert.ok((await step(ws, run => recordReview(ws, run))).green);
+    assert.match(readRun(ws, 'demo').events.find(event => event.kind === 'review-start')?.detail ?? '', /skipped react-ts \(no TypeScript or React\)/);
+  });
+
+  it('lets a slice without test seams skip the testing domain', async () => {
+    const docs = slice('Docs', [], { noTestReason: 'docs only', seams: [] });
+    const { domains } = await openReview([], [{ domain: 'testing', reason: 'docs only' }, { domain: 'test-validity', reason: 'docs only' }], docs);
+    assert.ok(!domains.includes('testing'));
   });
 
   it('merges duplicates across domains into the most severe kept finding', async () => {

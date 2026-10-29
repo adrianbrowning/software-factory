@@ -8,15 +8,18 @@ import { gh, git, runShell, type CommandResult } from './exec.ts';
 import {
   activeSlice,
   addEvent,
+  type Domain,
   type Finding,
   findingListSchema,
   Invalidated,
+  REQUIRED_REVIEW_DOMAINS,
   REVIEW_DOMAINS,
   reviewDir,
   runDir,
   type Run,
   SEVERITIES,
   saveRun,
+  skippedDomainsSchema,
   type Slice,
   type SliceInput,
   sliceInputSchema,
@@ -198,9 +201,10 @@ function makeSlice(ws: Workspace, run: Run, input: SliceInput, index: number, pa
   };
 }
 
+/** Numbered, so a validator can name the decision a finding conflicts with. */
 function renderDecisions(run: Run) {
   if (run.decisions.length === 0) return 'None recorded.';
-  return run.decisions.map(decision => `- ${decision}`).join('\n');
+  return run.decisions.map((decision, index) => `${index + 1}. ${decision}`).join('\n');
 }
 
 function renderTicket(run: Run, slice: Slice, budget: number) {
@@ -528,7 +532,9 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
     slice.phase = 'review';
     slice.review = undefined;
     addEvent(run, 'checks-pass', summary.join('; '), slice);
-    return { commits, passed: true as const, summary };
+    // The orchestrator picks the review domains from these changed files.
+    const changed = (await git(ws.root, 'diff', '--stat', `${slice.parentBranch}...HEAD`)).trimEnd();
+    return { changed, commits, passed: true as const, summary };
   }
 
   const sections = failed.map(
@@ -545,7 +551,11 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   return { commits, passed: false as const, summary, ...requestFix(ws, run, slice, sections.join('\n\n')) };
 }
 
-export async function startReview(ws: Workspace, run: Run) {
+/**
+ * Opens a review of the slice diff. `skip` leaves out domains the diff gives nothing to review, each with a reason;
+ * the required domains always run.
+ */
+export async function startReview(ws: Workspace, run: Run, skip: unknown = []) {
   const slice = requireActive(run);
   if (slice.phase !== 'review' || slice.checkedSha === undefined) throw new Error('Checks must pass first: call factory_checks.');
   await requireOnBranch(ws.root, slice);
@@ -556,6 +566,12 @@ export async function startReview(ws: Workspace, run: Run) {
     slice.checkResults = undefined;
     throw new Invalidated('HEAD moved after checks passed. Call factory_checks again.');
   }
+  const skipped = skippedDomainsSchema.parse(skip);
+  const skippedNames = skipped.map(entry => entry.domain);
+  const required: Domain[] = [...REQUIRED_REVIEW_DOMAINS, ...(slice.seams.length > 0 ? (['testing'] as const) : [])];
+  const refused = skippedNames.filter(domain => required.includes(domain));
+  if (refused.length > 0) throw new Error(`These domains always review this slice: ${refused.join(', ')}.`);
+  if (new Set(skippedNames).size !== skippedNames.length) throw new Error('A skipped domain appears twice.');
   const range = `${slice.parentBranch}...HEAD`;
   const diff = await git(ws.root, 'diff', range);
   if (diff.trim() === '') throw new Error(`No changes in ${range}; the implementer committed nothing.`);
@@ -568,20 +584,28 @@ export async function startReview(ws: Workspace, run: Run) {
     dataFile,
     `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n## CHECKS\n\nThe factory ran every configured check on \`${slice.checkedSha}\` and all passed. Do not run them again.\n\n${(slice.checkResults ?? []).map(line => `- ${line}`).join('\n')}\n\n## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files}`,
   );
-  slice.review = { id, sha: slice.checkedSha, snapshot: await snapshot(ws.root), submissions: {} };
-  addEvent(run, 'review-start', id, slice);
+  slice.review = { decisions: run.decisions.length, id, sha: slice.checkedSha, skipped, snapshot: await snapshot(ws.root), submissions: {} };
+  const skippedDetail = skipped.map(entry => `${entry.domain} (${entry.reason})`).join('; ');
+  addEvent(run, 'review-start', skipped.length === 0 ? id : `${id} skipped ${skippedDetail}`, slice);
   return {
     dataFile,
-    domains: REVIEW_DOMAINS,
+    domains: reviewDomains(skipped),
     findingsDir: join(reviewDir(ws, run.feature, id), 'domains'),
     referenceDir: REVIEW_REFERENCE_DIR,
     reviewId: id,
   };
 }
 
+/** The domains a review waits for: every domain it did not skip. */
+function reviewDomains(skipped: { domain: Domain }[]) {
+  return REVIEW_DOMAINS.filter(domain => !skipped.some(entry => entry.domain === domain));
+}
+
 function requireReview(run: Run, reviewId: string) {
-  const review = activeSlice(run)?.review;
+  const slice = activeSlice(run);
+  const review = slice?.review;
   if (review?.id !== reviewId) throw new Error(`Review ${reviewId} is not the active review.`);
+  if (slice?.phase !== 'review') throw new Error(`Review ${reviewId} is already recorded.`);
   return review;
 }
 
@@ -606,6 +630,7 @@ function readRecorded(path: string, recorded: { hash: string } | undefined) {
 export function submitDomain(ws: Workspace, run: Run, input: { agentId: string; domain: string; findings: unknown; reviewId: string }) {
   const review = requireReview(run, input.reviewId);
   const domain = z.enum(REVIEW_DOMAINS).parse(input.domain);
+  if (!reviewDomains(review.skipped).includes(domain)) throw new Error(`Review ${review.id} skipped the ${domain} domain.`);
   if (review.validation !== undefined) throw new Error(`Review ${review.id} is already validated; start a new review.`);
   const previous = review.submissions[domain];
   if (previous !== undefined && previous.agentId !== input.agentId) {
@@ -619,6 +644,12 @@ export function submitDomain(ws: Workspace, run: Run, input: { agentId: string; 
     if (!finding.id.startsWith(`${domain}-`)) throw new Error(`Finding "${finding.id}" must have an id starting "${domain}-".`);
     if (ids.has(finding.id)) throw new Error(`Duplicate finding id "${finding.id}"`);
     ids.add(finding.id);
+    if (finding.decision !== undefined) {
+      if (finding.severity === 'observation') throw new Error(`Finding "${finding.id}" breaks a recorded decision, so it must be critical or high.`);
+      if (finding.decision > review.decisions) {
+        throw new Error(`Finding "${finding.id}" names decision ${finding.decision}, but the review data lists ${review.decisions} decisions.`);
+      }
+    }
   }
   const content = `${JSON.stringify(findings, null, 2)}\n`;
   writeAtomic(domainFile(ws, run, review.id, domain), content);
@@ -630,7 +661,7 @@ export function readDomainFindings(ws: Workspace, run: Run, reviewId: string) {
   const review = requireReview(run, reviewId);
   const findings: Finding[] = [];
   const missing: string[] = [];
-  for (const domain of REVIEW_DOMAINS) {
+  for (const domain of reviewDomains(review.skipped)) {
     const raw = readRecorded(domainFile(ws, run, reviewId, domain), review.submissions[domain]);
     if (raw === undefined) missing.push(domain);
     else findings.push(...findingListSchema.parse(raw));
@@ -656,66 +687,110 @@ export const validationSchema = z.object({
     .array(z.object({ id: z.string().min(1), reason: z.string().min(1) }))
     .default([])
     .describe('critical/high findings the diff supports but that fail the correctness-or-requirements bar; kept as observations'),
+  escalate: z
+    .array(
+      z.object({
+        decision: z.number().int().positive().describe('Number of the recorded decision the code breaks'),
+        id: z.string().min(1),
+        reason: z.string().min(1),
+      }),
+    )
+    .default([])
+    .describe('observation findings that show the code breaks a recorded user decision; kept as high'),
   keep: z.array(z.string().min(1)).describe('Ids of findings the diff substantiates, one per distinct problem'),
 });
 type Validation = z.infer<typeof validationSchema>;
 
-/** Kept findings at the severity the gate uses: downgraded findings count as observations. */
+/**
+ * Kept findings at the severity the gate uses: downgraded findings count as observations, escalated ones as high and
+ * carry the decision the validator cited.
+ */
 function keptFindings(findings: Finding[], validation: Validation) {
   const downgraded = new Set(validation.downgrade.map(entry => entry.id));
+  const escalated = new Map(validation.escalate.map(entry => [entry.id, entry.decision]));
   return findings
-    .filter(finding => validation.keep.includes(finding.id) || downgraded.has(finding.id))
-    .map(finding => (downgraded.has(finding.id) ? { ...finding, severity: 'observation' as const } : finding));
+    .filter(finding => validation.keep.includes(finding.id) || downgraded.has(finding.id) || escalated.has(finding.id))
+    .map(finding => {
+      if (downgraded.has(finding.id)) return { ...finding, severity: 'observation' as const };
+      const decision = escalated.get(finding.id);
+      if (decision !== undefined) return { ...finding, decision, severity: 'high' as const };
+      return finding;
+    });
 }
 
 /**
- * Throws unless the validation keeps, downgrades, or drops every submitted finding exactly once, and nothing else.
- * Only a `critical` or `high` finding can be downgraded, and only to `observation`. A duplicate may only be dropped in
- * favour of a kept or downgraded finding of the same or higher original severity.
+ * Throws unless the validation keeps, downgrades, escalates, or drops every submitted finding exactly once, and nothing
+ * else. Only a `critical` or `high` finding can be downgraded, and only to `observation`. Only an `observation` can be
+ * escalated, to `high`, and only by naming one of the `decisionCount` recorded decisions. A duplicate may only be
+ * dropped in favour of a kept, downgraded, or escalated finding of the same or higher severity (original severity,
+ * except that an escalated finding counts as high).
  */
-function checkCoverage(findings: Finding[], validation: Validation) {
+function checkCoverage(findings: Finding[], validation: Validation, decisionCount: number) {
   const downgraded = validation.downgrade.map(entry => entry.id);
-  const decided = [...validation.keep, ...downgraded, ...validation.dropped.map(entry => entry.id)];
+  const escalated = validation.escalate.map(entry => entry.id);
+  const retained = [...validation.keep, ...downgraded, ...escalated];
+  const decided = [...retained, ...validation.dropped.map(entry => entry.id)];
   const byId = new Map(findings.map(finding => [finding.id, finding]));
   const unknown = decided.filter(id => !byId.has(id));
   if (unknown.length > 0) throw new Error(`Unknown finding ids: ${unknown.join(', ')}`);
-  if (new Set(decided).size !== decided.length) throw new Error('A finding id appears twice across keep, downgrade, and dropped.');
+  if (new Set(decided).size !== decided.length) throw new Error('A finding id appears twice across keep, downgrade, escalate, and dropped.');
   const undecided = [...byId.keys()].filter(id => !decided.includes(id));
-  if (undecided.length > 0) throw new Error(`Keep, downgrade, or drop every finding. Undecided: ${undecided.join(', ')}`);
+  if (undecided.length > 0) throw new Error(`Keep, downgrade, escalate, or drop every finding. Undecided: ${undecided.join(', ')}`);
   const notBlocking = downgraded.filter(id => byId.get(id)?.severity === 'observation');
   if (notBlocking.length > 0) throw new Error(`Only critical or high findings can be downgraded: ${notBlocking.join(', ')}`);
+  const breaksDecision = downgraded.filter(id => byId.get(id)?.decision !== undefined);
+  if (breaksDecision.length > 0) {
+    throw new Error(`A finding that breaks a recorded decision cannot be downgraded; keep it or drop it: ${breaksDecision.join(', ')}`);
+  }
+  const alreadyBlocking = escalated.filter(id => byId.get(id)?.severity !== 'observation');
+  if (alreadyBlocking.length > 0) throw new Error(`Only observation findings can be escalated; keep these instead: ${alreadyBlocking.join(', ')}`);
+  for (const entry of validation.escalate) {
+    if (entry.decision > decisionCount) {
+      throw new Error(`"${entry.id}" names decision ${entry.decision}, but the review data lists ${decisionCount} decisions.`);
+    }
+  }
+  const rank = (finding: Finding) => SEVERITIES.indexOf(escalated.includes(finding.id) ? 'high' : finding.severity);
   for (const entry of validation.dropped) {
     if (entry.duplicateOf === undefined) continue;
     const kept = byId.get(entry.duplicateOf);
-    if (kept === undefined || !(validation.keep.includes(entry.duplicateOf) || downgraded.includes(entry.duplicateOf))) {
+    if (kept === undefined || !retained.includes(entry.duplicateOf)) {
       throw new Error(`"${entry.id}" is a duplicate of "${entry.duplicateOf}", which is not a kept finding.`);
     }
     const dropped = byId.get(entry.id);
-    if (dropped !== undefined && SEVERITIES.indexOf(kept.severity) > SEVERITIES.indexOf(dropped.severity)) {
+    if (dropped !== undefined && rank(kept) > rank(dropped)) {
       throw new Error(`Keep the most severe of the duplicates: "${entry.id}" is ${dropped.severity}, "${kept.id}" is ${kept.severity}.`);
     }
   }
 }
 
 /**
- * The validator only selects: every raw finding is kept, downgraded to an observation, or dropped with a reason. It
- * adds no finding and rewrites no text.
+ * The validator only selects: every raw finding is kept, downgraded to an observation, escalated to high for a broken
+ * decision, or dropped with a reason. It adds no finding and rewrites no text. The same validator may replace its
+ * validation once (to correct its verdict) until the review is recorded.
  */
 export function submitValidation(
   ws: Workspace,
   run: Run,
-  input: { agentId: string; downgrade?: unknown; dropped: unknown; keep: unknown; reviewId: string },
+  input: { agentId: string; downgrade?: unknown; dropped: unknown; escalate?: unknown; keep: unknown; reviewId: string },
 ) {
   const review = requireReview(run, input.reviewId);
-  if (review.validation !== undefined) throw new Error(`Review ${review.id} is already validated.`);
+  const previous = review.validation;
+  if (previous !== undefined && previous.agentId !== input.agentId) throw new Error(`Review ${review.id} was validated by another agent.`);
+  if (previous?.amended === true) throw new Error(`The validation for ${review.id} was already corrected once.`);
   const { findings, missing } = readDomainFindings(ws, run, input.reviewId);
   if (missing.length > 0) throw new Error(`Domains not submitted yet: ${missing.join(', ')}`);
-  const validation = validationSchema.parse({ downgrade: input.downgrade, dropped: input.dropped, keep: input.keep });
-  checkCoverage(findings, validation);
+  const validation = validationSchema.parse({ downgrade: input.downgrade, dropped: input.dropped, escalate: input.escalate, keep: input.keep });
+  checkCoverage(findings, validation, review.decisions);
   const content = `${JSON.stringify(validation, null, 2)}\n`;
   writeAtomic(validationFile(ws, run, input.reviewId), content);
-  review.validation = { agentId: input.agentId, hash: sha256(content) };
-  return { downgraded: validation.downgrade.length, dropped: validation.dropped.length, kept: validation.keep.length };
+  review.validation = { agentId: input.agentId, ...(previous === undefined ? {} : { amended: true }), hash: sha256(content) };
+  return {
+    downgraded: validation.downgrade.length,
+    dropped: validation.dropped.length,
+    escalated: validation.escalate.length,
+    kept: validation.keep.length,
+    replaced: previous !== undefined,
+  };
 }
 
 function countBy(findings: Finding[], key: 'domain' | 'severity') {
@@ -726,8 +801,9 @@ function countBy(findings: Finding[], key: 'domain' | 'severity') {
     .join(' ');
 }
 
-function renderFinding(finding: Finding) {
-  return `## [${finding.severity}] ${finding.id}\n\n- Location: ${finding.path}${finding.line === undefined ? '' : `:${finding.line}`}\n- Title: ${evidence(finding.title, 500)}\n- Problem: ${evidence(finding.problem, 2_000)}\n- Fix: ${evidence(finding.fix, 2_000)}\n- Fix prompt: ${evidence(finding.fix_prompt, 2_000)}`;
+function renderFinding(finding: Finding, decisions: string[]) {
+  const decision = finding.decision === undefined ? '' : `\n- Breaks decision ${finding.decision}: ${decisions[finding.decision - 1] ?? ''}`;
+  return `## [${finding.severity}] ${finding.id}\n\n- Location: ${finding.path}${finding.line === undefined ? '' : `:${finding.line}`}\n- Title: ${evidence(finding.title, 500)}\n- Problem: ${evidence(finding.problem, 2_000)}\n- Fix: ${evidence(finding.fix, 2_000)}\n- Fix prompt: ${evidence(finding.fix_prompt, 2_000)}${decision}`;
 }
 
 export async function recordReview(ws: Workspace, run: Run) {
@@ -739,7 +815,7 @@ export async function recordReview(ws: Workspace, run: Run) {
   const raw = readRecorded(validationFile(ws, run, review.id), review.validation);
   if (raw === undefined) throw new Error('The validator has not submitted. Spawn factory-review-validator.');
   const validation = validationSchema.parse(raw);
-  checkCoverage(findings, validation);
+  checkCoverage(findings, validation, review.decisions);
   if ((await snapshot(ws.root)) !== review.snapshot) {
     slice.review = undefined;
     slice.phase = 'checks';
@@ -756,21 +832,21 @@ export async function recordReview(ws: Workspace, run: Run) {
   const verdict = blocking.length > 0 ? 'CHANGES_REQUESTED' : 'APPROVED';
   writeAtomic(
     join(reviewDir(ws, run.feature, review.id), 'review.json'),
-    `${JSON.stringify({ downgraded: validation.downgrade, dropped: validation.dropped, findings: kept, verdict }, null, 2)}\n`,
+    `${JSON.stringify({ downgraded: validation.downgrade, dropped: validation.dropped, escalated: validation.escalate, findings: kept, verdict }, null, 2)}\n`,
   );
-  const detail = `${review.id} kept ${kept.length} (${countBy(kept, 'severity')}) downgraded ${validation.downgrade.length} dropped ${validation.dropped.length} by-domain ${countBy(kept, 'domain')}`;
+  const detail = `${review.id} kept ${kept.length} (${countBy(kept, 'severity')}) downgraded ${validation.downgrade.length} escalated ${validation.escalate.length} dropped ${validation.dropped.length} by-domain ${countBy(kept, 'domain')}`;
 
   if (blocking.length === 0) {
     slice.phase = 'ready';
     slice.greenSha = review.sha;
     addEvent(run, 'review-green', detail, slice);
-    return { green: true as const, observations: observations.map(renderFinding) };
+    return { green: true as const, observations: observations.map(finding => renderFinding(finding, run.decisions)) };
   }
   addEvent(run, 'review-blocking', `${detail}; blocking ${blocking.map(finding => finding.id).join(', ')}`, slice);
   return {
     blocking: blocking.length,
     green: false as const,
-    ...requestFix(ws, run, slice, `Blocking review findings from ${review.id}:\n\n${blocking.map(renderFinding).join('\n\n')}`),
+    ...requestFix(ws, run, slice, `Blocking review findings from ${review.id}:\n\n${blocking.map(finding => renderFinding(finding, run.decisions)).join('\n\n')}`),
   };
 }
 
@@ -994,7 +1070,7 @@ export function nextAction(run: Run): string {
       return `Call factory_checks for ${where}.`;
     case 'review':
       return slice.review === undefined
-        ? `Call factory_review_start for ${where}.`
+        ? `Pick the review domains for ${where} from its changed files, then call factory_review_start with the domains to skip.`
         : `Finish review ${slice.review.id}: every domain reviewer and the validator must submit, then call factory_review_record.`;
     case 'ready':
       return `Call factory_complete_slice for ${where}.`;
