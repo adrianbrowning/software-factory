@@ -1,8 +1,12 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { after, describe, it } from 'node:test';
 import type { ExtensionAPI } from '@oh-my-pi/pi-coding-agent';
 import softwareFactory, { MAX_IDLE_STOP_ATTEMPTS, stopDecision } from '../src/index.ts';
-import type { Run } from '../src/run.ts';
+import { readRun, type Run } from '../src/run.ts';
 
 type Registered = { execute: (...args: unknown[]) => Promise<unknown>; name: string; parameters: { properties?: Record<string, unknown> } };
 
@@ -10,11 +14,13 @@ type Registered = { execute: (...args: unknown[]) => Promise<unknown>; name: str
 function load() {
   const tools = new Map<string, Registered>();
   const pi = {
+    getActiveTools: () => [],
     on() {},
     registerCommand() {},
     registerTool(tool: Registered) {
       tools.set(tool.name, tool);
     },
+    setActiveTools: async () => {},
     setLabel() {},
   };
   softwareFactory(pi as unknown as ExtensionAPI);
@@ -37,6 +43,59 @@ describe('tool registration', () => {
     await assert.rejects(call('factory_review_submit', ctx('sub', 'factory-implementer')) ?? Promise.resolve(), /Only the factory-reviewer agent/);
     await assert.rejects(call('factory_review_validate', ctx('sub', 'factory-reviewer')) ?? Promise.resolve(), /Only the factory-review-validator agent/);
     await assert.rejects(call('factory_checks', ctx('sub', 'factory-implementer')) ?? Promise.resolve(), /Only the main agent/);
+  });
+});
+
+describe('factory_decide', () => {
+  process.env.GIT_CONFIG_GLOBAL = '/dev/null';
+  process.env.GIT_CONFIG_NOSYSTEM = '1';
+  const roots: string[] = [];
+  after(() => {
+    for (const root of roots) rmSync(root, { force: true, recursive: true });
+  });
+
+  /** A repository with `.omp/factory.json` and a started run, driven through the registered tools. */
+  async function started(config: Record<string, unknown>, answer: boolean) {
+    const root = mkdtempSync(join(tmpdir(), 'factory-tool-'));
+    roots.push(root);
+    const git = (...args: string[]) => execFileSync('git', args, { cwd: root });
+    git('init', '-q', '-b', 'main');
+    mkdirSync(join(root, '.omp'));
+    writeFileSync(join(root, '.omp', 'factory.json'), JSON.stringify({ baseRef: 'main', checks: ['true'], ...config }));
+    git('add', '.');
+    git('-c', 'user.email=t@e', '-c', 'user.name=T', 'commit', '-qm', 'base');
+    const asked: string[] = [];
+    const context = {
+      ...ctx('main', 'main'),
+      cwd: root,
+      hasUI: true,
+      sessionManager: { getSessionId: () => 'session-1' },
+      ui: {
+        confirm: async (title: string) => {
+          asked.push(title);
+          return answer;
+        },
+      },
+    };
+    const tools = load();
+    const call = (name: string, params: unknown) => tools.get(name)?.execute('id', params, undefined, undefined, context);
+    await call('factory_start', { feature: 'demo', source: { body: '', kind: 'text', ref: 'r', title: 'T' } });
+    const decided = () => readRun({ config: { scratchDir: '.scratch' } as never, root }, 'demo').decisions;
+    return { asked, decide: (decisions: string[]) => call('factory_decide', { decisions }), decided };
+  }
+
+  it('asks the user by default, and records nothing they reject', async () => {
+    const run = await started({}, false);
+    await run.decide(['Keep the tsx runner.']);
+    assert.deepEqual(run.asked, ['Record these decisions for reviewers?']);
+    assert.deepEqual(run.decided(), []);
+  });
+
+  it('records decisions without a dialog when confirmDecisions is false', async () => {
+    const run = await started({ confirmDecisions: false }, false);
+    await run.decide(['Keep the tsx runner.']);
+    assert.deepEqual(run.asked, []);
+    assert.deepEqual(run.decided(), ['Keep the tsx runner.']);
   });
 });
 
