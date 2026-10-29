@@ -45,8 +45,8 @@ export const findingSchema = z.object({
     .string()
     .regex(/^[a-z0-9-]+$/)
     .describe('Stable id: {domain}-{kebab-case-title}, no line numbers'),
-  line: z.number().int().positive().optional().describe('New-file line on the + side of the diff; omit for file-level findings'),
-  path: text.describe('Repo-relative path as in the diff header'),
+  line: z.number().int().positive().optional().describe('New-file line inside one of the diff hunks for this path; omit for file-level findings'),
+  path: text.describe('Repo-relative path from the CHANGED FILES list'),
   problem: text.describe('What is wrong and why it matters'),
   severity: z.enum(SEVERITIES),
   title: text,
@@ -94,6 +94,8 @@ const reviewSchema = z.object({
   /** How many recorded decisions the review data file listed; findings may cite only these. */
   decisions: z.number().int().nonnegative().default(0),
   id: text,
+  /** Changed paths and the new-side line ranges of their hunks; a finding must point inside them. */
+  lines: z.record(text, z.array(z.tuple([z.number().int().positive(), z.number().int().positive()]))).default({}),
   sha,
   snapshot: text,
   /** Domains the orchestrator left out for this diff; every other domain must submit. */

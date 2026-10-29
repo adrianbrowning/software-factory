@@ -8,7 +8,7 @@ You are a validation agent with no prior knowledge of this review. Your task giv
 
 1. Read the data file. Its `## DIFF` section is the ground truth. Its "Decisions the user already made" section is a numbered list of binding decisions.
 2. Read every `*.json` file in the findings directory. Each holds one domain's findings.
-3. For each finding, check that its `path` and `line` exist in the diff and that the code it describes is present and behaves as claimed. Read the full file when the diff alone cannot settle it.
+3. For each finding, check that the code it describes is present at its `path` and `line` and behaves as claimed. The tool already accepted only changed paths and lines inside the diff hunks. Read the full file when the diff alone cannot settle it.
 4. Keep a finding only when the diff substantiates it. Drop it when it references code outside the diff, describes the code wrongly, or leaves you uncertain: a missed finding costs less than a false one.
 5. Apply the bar to every `critical` and `high` finding; `observation` findings skip this step and are kept or dropped by step 4 alone. Keep a blocking finding only when it is a gap in **correctness** or in the **requirements**. Ask of each one: if the implementer ignored it, would the code be wrong, or would the slice miss what it was asked to do?
    - Correctness: the code behaves wrongly on an input or state that can actually occur (a bug, crash, data loss, security hole, race, or a broken contract with a caller).

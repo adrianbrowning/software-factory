@@ -27,12 +27,12 @@ const configSchema = z
      * peak above it is flagged for the retro. Default: 40% of a 1M window.
      */
     sliceTokenBudget: positiveInt.default(400_000),
-    /** Trunk branch the stack is based on when submitted. Defaults to `baseRef` without its remote. */
+    /** Trunk branch the stack is based on when submitted. Defaults to `baseRef` without its remote (resolved with git). */
     trunk: text.optional(),
   })
   .strict();
 
-export type FactoryConfig = Omit<z.infer<typeof configSchema>, 'checks' | 'trunk'> & { checks: string[]; trunk: string };
+export type FactoryConfig = Omit<z.infer<typeof configSchema>, 'checks'> & { checks: string[] };
 
 const manifestSchema = z.object({
   packageManager: z.string().optional(),
@@ -77,15 +77,10 @@ export function loadConfig(cwd: string): FactoryConfig {
   const path = join(cwd, CONFIG_PATH);
   const parsed = configSchema.safeParse(existsSync(path) ? readJson(path) : {});
   if (!parsed.success) throw new Error(`${CONFIG_PATH}: ${z.prettifyError(parsed.error)}`);
-  const { checks: configured, trunk, ...config } = parsed.data;
+  const { checks: configured, ...config } = parsed.data;
   const checks = configured ?? detectChecks(cwd);
   if (checks.length === 0) {
     throw new Error(`No checks found. Add lint/typecheck/test scripts to package.json or set "checks" in ${CONFIG_PATH}.`);
   }
-  return {
-    ...config,
-    checks,
-    scratchDir: normalizeScratchDir(config.scratchDir),
-    trunk: trunk ?? config.baseRef.replace(/^[^/]+\//, ''),
-  };
+  return { ...config, checks, scratchDir: normalizeScratchDir(config.scratchDir) };
 }

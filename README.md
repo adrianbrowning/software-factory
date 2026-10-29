@@ -137,7 +137,7 @@ working tree, and unknown keys are rejected.
 | `checkTimeoutMs` | `600000` | Per-check timeout; the whole process group is killed |
 | `maxRounds` | `3` | Fix rounds per slice before the user decides to continue or pause |
 | `sliceTokenBudget` | `400000` | Planned context per slice: 40% of a 1M window |
-| `baseRef` / `trunk` | `origin/main` / `main` | Default base: slice 01 branches from the commit `baseRef` points at when the plan is approved; the stack is based on `trunk`. A run that builds on unmerged work names that branch as `baseRef` in `factory_plan`, and its PRs then target it. The plan event in `state.json` records the pinned base |
+| `baseRef` / `trunk` | `origin/main` / `main` | Default base: slice 01 branches from the commit `baseRef` points at when the plan is approved; the stack is based on `trunk`, which defaults to `baseRef` without its git remote (`origin/main` → `main`; a local `feature/auth` stays `feature/auth`). A run that builds on unmerged work names that branch as `baseRef` in `factory_plan`, and its PRs then target it. The plan event in `state.json` records the pinned base |
 | `branchPrefix` | `factory` | Branches are `<prefix>/<feature>/<NN>-<slug>` |
 | `scratchDir` | `.scratch` | Run state; added to `.git/info/exclude` |
 | `factoryRepo` | `adrianbrowning/software-factory` | Where retro findings about the factory are filed |
@@ -158,8 +158,9 @@ task:
 `<scratchDir>/<feature>/` holds `state.json` (schema-validated on every read), `issue.md`, one ticket per slice
 under `issues/`, fix files under `fixes/`, review data, per-domain findings, validation and `review.json` under
 `reviews/<slice>-r<n>/`, and `retro.md`. The review data file lists the ticket, each check's result and duration on
-the reviewed commit, the diff, and the changed files. Each reviewer writes only its own domain file, so parallel
-reviewers never share a write.
+the reviewed commit, the blocking findings of the previous round (after a fix), the diff, and the changed files.
+Each reviewer writes only its own domain file, so parallel reviewers never share a write. The submit tool rejects a
+finding whose `path` the diff does not change, or whose `line` is outside that file's new-side hunks.
 
 The review gate snapshots `HEAD` plus `git status` when a review opens and rejects the review if either changes.
 A slice completes only when `HEAD` is still the commit that passed checks and review, and `/factory submit`
