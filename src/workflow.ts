@@ -427,7 +427,8 @@ export async function nextSlice(ws: Workspace, run: Run) {
   return slice;
 }
 
-function requestFix(ws: Workspace, run: Run, slice: Slice, body: string) {
+/** Writes the fix file and moves the slice to `fix`. `sha` is the commit the fix file describes. */
+function requestFix(ws: Workspace, run: Run, slice: Slice, body: string, sha: string) {
   const fixPath = join(runDir(ws, run.feature), 'fixes', `${slice.id}-f${slice.fixRounds + 1}.md`);
   const context = [
     `- Ticket (seams and acceptance criteria): ${ticketPath(ws, run.feature, slice)}`,
@@ -436,6 +437,7 @@ function requestFix(ws: Workspace, run: Run, slice: Slice, body: string) {
   ].join('\n');
   writeAtomic(fixPath, `# Fix slice ${slice.id}: ${slice.title}\n\n${context}\n\n${UNTRUSTED_NOTE}\n\n${body}\n`);
   slice.fixPath = fixPath;
+  slice.fixFromSha = sha;
   slice.phase = 'fix';
   slice.checkedSha = undefined;
   slice.checkResults = undefined;
@@ -527,7 +529,10 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
     );
   }
   const commits = (await git(ws.root, 'log', '--oneline', `${slice.parentBranch}..HEAD`)).trim();
+  if (commits === '') throw new Error(`Slice ${slice.id} has no commits past ${slice.parentBranch}. The implementer must commit the slice work first.`);
   const sha = await head(ws.root);
+  // A fix round that ends on the commit its fix file described: the implementer changed nothing.
+  const unchanged = slice.phase === 'fix' && slice.fixFromSha === sha;
   const results: { command: string; result: CommandResult }[] = [];
   for (const command of ws.config.checks) {
     signal?.throwIfAborted();
@@ -545,7 +550,7 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
     addEvent(run, 'checks-pass', summary.join('; '), slice);
     // The orchestrator picks the review domains from these changed files.
     const changed = (await git(ws.root, 'diff', '--stat', `${slice.parentBranch}...HEAD`)).trimEnd();
-    return { changed, commits, passed: true as const, summary };
+    return { changed, commits, passed: true as const, summary, unchanged };
   }
 
   const sections = failed.map(
@@ -559,7 +564,7 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
     [...failed.map(({ command }) => command), ...(dirty === '' ? [] : ['working tree changed'])].join('; '),
     slice,
   );
-  return { commits, passed: false as const, summary, ...requestFix(ws, run, slice, sections.join('\n\n')) };
+  return { commits, passed: false as const, summary, unchanged, ...requestFix(ws, run, slice, sections.join('\n\n'), sha) };
 }
 
 /**
@@ -918,7 +923,7 @@ export async function recordReview(ws: Workspace, run: Run) {
   return {
     blocking: blocking.length,
     green: false as const,
-    ...requestFix(ws, run, slice, `Blocking review findings from ${review.id}:\n\n${blocking.map(finding => renderFinding(finding, run.decisions)).join('\n\n')}`),
+    ...requestFix(ws, run, slice, `Blocking review findings from ${review.id}:\n\n${blocking.map(finding => renderFinding(finding, run.decisions)).join('\n\n')}`, review.sha),
   };
 }
 

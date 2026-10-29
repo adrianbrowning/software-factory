@@ -222,6 +222,29 @@ describe('slice loop gates', () => {
     assert.match(nextAction(readRun(ws, 'demo')), /retro/);
   });
 
+  it('refuses checks on an empty slice and flags a fix round that committed nothing', async () => {
+    const ws = workspace({ maxRounds: 5 });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    await assert.rejects(step(ws, run => runChecks(ws, run)), /Slice 01 has no commits past main/);
+    assert.equal(readRun(ws, 'demo').slices[0]?.fixRounds, 0);
+
+    commit(ws, 'work.txt');
+    const red = await step(ws, run => runChecks(ws, run));
+    assert.deepEqual([red.passed, red.unchanged], [false, false]);
+    const stillRed = await step(ws, run => runChecks(ws, run));
+    assert.deepEqual([stillRed.passed, stillRed.unchanged], [false, true]);
+
+    commit(ws, 'ok');
+    const fixed = await step(ws, run => runChecks(ws, run));
+    assert.deepEqual([fixed.passed, fixed.unchanged], [true, false]);
+    const { reviewId } = await step(ws, run => startReview(ws, run));
+    await review(ws, reviewId, [finding('bug', 'high', 'null-crash')]);
+    assert.ok(!(await step(ws, run => recordReview(ws, run))).green);
+    const afterReview = await step(ws, run => runChecks(ws, run));
+    assert.deepEqual([afterReview.passed, afterReview.unchanged], [true, true]);
+  });
+
   it('starts each later slice from the slice below it and reviews only its own diff', async () => {
     const ws = workspace();
     await newRun(ws, [slice('First'), slice('Second', ['First'])]);

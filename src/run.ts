@@ -111,6 +111,8 @@ const sliceSchema = sliceInputSchema.extend({
   checkResults: z.array(text).optional(),
   compactions: z.number().int().nonnegative(),
   fixPath: text.optional(),
+  /** Commit the current fix file describes; checks on the same commit mean the fix round changed nothing. */
+  fixFromSha: sha.optional(),
   fixRounds: z.number().int().nonnegative(),
   greenSha: sha.optional(),
   id: z.string().regex(/^\d{2}$/),

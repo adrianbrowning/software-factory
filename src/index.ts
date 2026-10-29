@@ -366,10 +366,13 @@ export default function softwareFactory(pi: ExtensionAPI) {
       const result = await withRun(ws, feature, run => runChecks(ws, run, signal));
       const summary = result.summary.join('\n');
       const run = readRun(ws, feature);
-      const commits = `Slice commits:\n${result.commits || '(none)'}`;
-      if (result.passed) return reply(`All checks passed.\n${summary}\n${commits}\nChanged files:\n${result.changed}\nNext: ${nextAction(run)}`);
+      const commits = `Slice commits:\n${result.commits}`;
+      const unchanged = result.unchanged
+        ? '\nNo new commits since the fix file. Each item in the implementer report must say "already fixed" or "not a defect"; a "fixed in <sha>" is not on this branch.'
+        : '';
+      if (result.passed) return reply(`All checks passed.\n${summary}\n${commits}${unchanged}\nChanged files:\n${result.changed}\nNext: ${nextAction(run)}`);
       const stall = result.stalled ? await decideStall(ctx, ws, feature) : '';
-      return reply(`Checks failed.\n${summary}\n${commits}\nFix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
+      return reply(`Checks failed.\n${summary}\n${commits}${unchanged}\nFix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
     },
   });
 
