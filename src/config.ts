@@ -17,7 +17,7 @@ const configSchema = z
     /** Ref the first slice branches from. */
     baseRef: text.default('origin/main'),
     branchPrefix: text.default('factory'),
-    /** Checks the setup dialog chooses by default, run in order. Defaults to the lint/typecheck/test scripts. */
+    /** Checks every run uses, in order. Unset: the first run asks the user and saves the choice in `scratchDir`. */
     checks: z.array(text).min(1).optional(),
     checkTimeoutMs: positiveInt.default(10 * 60 * 1_000),
     /** Repository that receives retro findings about the factory itself. */
@@ -76,9 +76,13 @@ export function detectChecks(cwd: string) {
   return DEFAULT_CHECK_SCRIPTS.filter(name => manifest.scripts.includes(name)).map(name => `${manifest.pm} run ${name}`);
 }
 
+/** A script line whose effect reaches later lines (control flow, directory, environment), so no line stands alone. */
+const STATEFUL_LINE = /^(if|then|else|elif|fi|for|while|until|do|done|case|esac|function|cd|pushd|popd|export|source|set|unset|\.|\{|\}|\(|\))(\s|;|$)|^[A-Za-z_][A-Za-z0-9_]*=/;
+
 /**
  * Shell commands of the `run:` steps in one GitHub Actions workflow: inline values, and each line of a `|` block
- * (a `>` block folds into one command). Lines that end in `\` continue on the next line.
+ * (a `>` block folds into one command). Lines that end in `\` continue on the next line. A block with control flow,
+ * a directory change, or variable setup gives no suggestions, since none of its lines runs alone.
  */
 export function runCommands(yaml: string) {
   const lines = yaml.split('\n');
@@ -99,6 +103,7 @@ export function runCommands(yaml: string) {
       index += 1;
     }
     const body = value.startsWith('>') ? [block.filter(Boolean).join(' ')] : block;
+    const script: string[] = [];
     let pending = '';
     for (const line of body) {
       if (line === '' || line.startsWith('#')) continue;
@@ -106,10 +111,11 @@ export function runCommands(yaml: string) {
         pending += `${line.slice(0, -1).trimEnd()} `;
         continue;
       }
-      commands.push(pending + line);
+      script.push(pending + line);
       pending = '';
     }
-    if (pending !== '') commands.push(pending.trimEnd());
+    if (pending !== '') script.push(pending.trimEnd());
+    commands.push(...(script.some(line => STATEFUL_LINE.test(line)) ? [] : script));
   }
   return commands;
 }

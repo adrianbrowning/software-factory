@@ -217,14 +217,34 @@ export function fileSource(ws: Workspace, ref: string): Source {
 }
 
 const checksSchema = z.array(z.string().trim().min(1)).min(1, 'Choose at least one check command.');
+const checksPath = (ws: Workspace) => join(ws.root, ws.config.scratchDir, 'checks.json');
 
-export async function startRun(ws: Workspace, input: { checks: string[]; feature: string; sessionId: string; source: Source }) {
+/**
+ * The checks every slice must pass: `checks` from the repository config, else the list the user chose for this
+ * repository. Empty until the user chooses.
+ */
+export function repoChecks(ws: Workspace): string[] {
+  if (ws.config.checks !== undefined) return ws.config.checks;
+  const path = checksPath(ws);
+  if (!existsSync(path)) return [];
+  return z.object({ checks: checksSchema }).parse(JSON.parse(readFileSync(path, 'utf8'))).checks;
+}
+
+/** Saves the user's choice of checks for this repository in the scratch dir, which git ignores. */
+export async function saveChecks(ws: Workspace, checks: string[]) {
+  const parsed = checksSchema.parse(checks);
+  await excludeScratch(ws);
+  writeAtomic(checksPath(ws), `${JSON.stringify({ checks: parsed }, null, 2)}\n`);
+  return parsed;
+}
+
+export async function startRun(ws: Workspace, input: { feature: string; sessionId: string; source: Source }) {
   requireFeatureName(input.feature);
   if (existsSync(statePath(ws, input.feature))) {
     throw new Error(`Run "${input.feature}" already exists. Use /factory resume ${input.feature}.`);
   }
   const source = sourceSchema.parse(input.source);
-  const checks = checksSchema.parse(input.checks);
+  const checks = checksSchema.parse(repoChecks(ws));
   // The base is resolved and pinned at plan approval, where the user can still pick a different one; the plan
   // event records it.
   const { baseRef } = ws.config;
@@ -245,8 +265,7 @@ export async function startRun(ws: Workspace, input: { checks: string[]; feature
     trunk,
     version: 1,
   };
-  addEvent(run, 'start', `${source.kind} ${source.ref}`);
-  addEvent(run, 'checks', checks.join('; '));
+  addEvent(run, 'start', `${source.kind} ${source.ref}; checks: ${checks.join('; ')}`);
   writeAtomic(
     join(runDir(ws, run.feature), 'issue.md'),
     `# ${source.title}\n\nSource: ${source.kind} ${source.ref}${source.url ? ` (${source.url})` : ''}\n\n${UNTRUSTED_NOTE}\n\n<untrusted-issue>\n${source.body}\n</untrusted-issue>\n`,
@@ -548,8 +567,10 @@ export function pauseRun(run: Run, reason: string) {
 /**
  * Resumes a run in a new owner session. A paused or stalled run runs again. The state was read from disk with no
  * in-process copy to compare against, so a slice past its checks goes back to `checks` and earns its review again.
+ * A run saved before runs kept their own checks gets the repository's checks.
  */
 export function resumeRun(ws: Workspace, run: Run, sessionId: string) {
+  if (run.checks.length === 0) run.checks = checksSchema.parse(repoChecks(ws));
   if (run.status === 'paused' || run.status === 'stalled') {
     run.status = 'running';
     resolveStall(ws, run, 'continue');
@@ -564,12 +585,6 @@ export function resumeRun(ws: Workspace, run: Run, sessionId: string) {
   }
   run.ownerSessionId = sessionId;
   addEvent(run, 'resume', `session ${sessionId}`);
-}
-
-/** Sets the check commands the user chose at setup, for a run that started before the setup dialog asked. */
-export function setChecks(run: Run, checks: string[]) {
-  run.checks = checksSchema.parse(checks);
-  addEvent(run, 'checks', run.checks.join('; '));
 }
 
 function describeCheck(command: string, result: CommandResult) {
@@ -611,7 +626,6 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   // A fix round that ends on the commit its fix file described: the implementer changed nothing.
   const unchanged = slice.phase === 'fix' && slice.fixFromSha === sha;
   const results: { command: string; result: CommandResult }[] = [];
-  if (run.checks.length === 0) throw new Error(`Run "${run.feature}" has no checks. Resume it with factory_start to choose them.`);
   for (const command of run.checks) {
     signal?.throwIfAborted();
     results.push({ command, result: await runShell(command, ws.root, ws.config.checkTimeoutMs, signal) });

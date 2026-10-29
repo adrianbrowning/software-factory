@@ -132,7 +132,7 @@ const runSchema = z.object({
   baseRef: text,
   /** Commit `baseRef` pointed at when the plan was approved; slice 01 branches from it. */
   baseSha: z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/).optional(),
-  /** Check commands the user chose at setup, run in order; every one must pass. Empty in runs from before the setup dialog. */
+  /** Check commands every slice must pass, fixed when the run starts. Empty in runs from before they were kept here. */
   checks: z.array(text).default([]),
   createdAt: text,
   /** Decisions the user made during the run (accepted tradeoffs, out-of-scope work). Reviewers read them. */

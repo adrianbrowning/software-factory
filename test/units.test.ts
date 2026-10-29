@@ -123,6 +123,11 @@ describe('check setup suggestions', () => {
     ]);
   });
 
+  it('offers nothing from a run block whose lines depend on each other', () => {
+    const steps = ['steps:', '  - run: |', '      cd app', '      pnpm test', '  - run: |', '      if [ -n "$CI" ]; then', '        pnpm e2e', '      fi', '  - run: |', '      export NODE_ENV=test', '      pnpm verify'];
+    assert.deepEqual(runCommands(steps.join('\n')), []);
+  });
+
   it('chooses lint/typecheck/test and offers other check scripts and CI commands not already covered', () => {
     const root = dir({
       '.github/workflows/build.yml': workflow,

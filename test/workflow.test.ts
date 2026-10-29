@@ -21,12 +21,14 @@ import {
   planSlices,
   recordDecisions,
   recordRetro,
+  repoChecks,
   resolveBase,
   recordReview,
   resolveStall,
   resumeRun,
   REVIEW_REFERENCE_DIR,
   runChecks,
+  saveChecks,
   startReview,
   startRun,
   submitDomain,
@@ -60,6 +62,8 @@ function workspace(overrides: Partial<FactoryConfig> = {}): Workspace {
     config: {
       baseRef: 'main',
       branchPrefix: 'factory',
+      // Passes only when the slice has committed a file named `ok`.
+      checks: ['test -f ok'],
       checkTimeoutMs: 10_000,
       factoryRepo: 'acme/factory',
       maxRounds: 1,
@@ -86,16 +90,12 @@ function finding(domain: Finding['domain'], severity: Finding['severity'], name:
   return { domain, fix: 'fix it', fix_prompt: 'fix it', id: `${domain}-${name}`, line: 1, path: 'ok', problem: 'wrong', severity, title: name };
 }
 
-// Passes only when the slice has committed a file named `ok`.
-const OK_CHECK = ['test -f ok'];
-
 function start(ws: Workspace) {
-  return startRun(ws, { checks: OK_CHECK, feature: 'demo', sessionId: 's', source: { body: '', kind: 'text', ref: 'r', title: 'T' } });
+  return startRun(ws, { feature: 'demo', sessionId: 's', source: { body: '', kind: 'text', ref: 'r', title: 'T' } });
 }
 
-async function newRun(ws: Workspace, inputs: SliceInput[], checks = OK_CHECK) {
+async function newRun(ws: Workspace, inputs: SliceInput[]) {
   await startRun(ws, {
-    checks,
     feature: 'demo',
     sessionId: 'session-1',
     source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' },
@@ -388,8 +388,8 @@ describe('slice loop gates', () => {
   });
 
   it('fails checks that leave the working tree changed', async () => {
-    const ws = workspace();
-    await newRun(ws, [slice('Feature')], ['touch ok stray.txt']);
+    const ws = workspace({ checks: ['touch ok stray.txt'] });
+    await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'work.txt');
     const result = await step(ws, run => runChecks(ws, run));
@@ -398,13 +398,26 @@ describe('slice loop gates', () => {
   });
 
   it('reports a check that runs past its timeout', async () => {
-    const ws = workspace({ checkTimeoutMs: 100 });
-    await newRun(ws, [slice('Feature')], ['sleep 5']);
+    const ws = workspace({ checks: ['sleep 5'], checkTimeoutMs: 100 });
+    await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'work.txt');
     const result = await step(ws, run => runChecks(ws, run));
     assert.ok(!result.passed);
     assert.match(readFileSync(result.fixPath, 'utf8'), /sleep 5: timed out/);
+  });
+
+  it('gates a run on the checks it started with; changed saved checks reach new runs only', async () => {
+    const ws = workspace({ checks: undefined });
+    await assert.rejects(start(ws), /Choose at least one check command/);
+    await saveChecks(ws, ['test -f ok']);
+    assert.equal(sh(ws.root, 'status', '--porcelain'), '');
+    await newRun(ws, [slice('Feature')]);
+    await saveChecks(ws, ['false']);
+    assert.deepEqual(repoChecks(ws), ['false']);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    assert.ok((await step(ws, run => runChecks(ws, run))).passed);
   });
 
   it('stalls when the fix budget is used, and each continue grants maxRounds more fixes', async () => {

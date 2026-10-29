@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from '@oh-my-pi/pi-coding-agent';
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { checksPrompt, loadConfig, parseChecks, suggestChecks } from './config.ts';
+import { CONFIG_PATH, checksPrompt, loadConfig, parseChecks, suggestChecks } from './config.ts';
 import { evidence } from './evidence.ts';
 import {
   activeSlice,
@@ -40,6 +40,7 @@ import {
   recordDecisions,
   recordRetro,
   recordReview,
+  repoChecks,
   repoRoot,
   requireFeatureName,
   resolveBase,
@@ -48,7 +49,7 @@ import {
   retroIssueBody,
   retroSchema,
   runChecks,
-  setChecks,
+  saveChecks,
   sourceInputSchema,
   type SourceInput,
   startReview,
@@ -169,14 +170,27 @@ async function loadSource(ctx: ExtensionContext, ws: Workspace, input: SourceInp
   );
 }
 
-/** Asks the user which check commands the run gates on, prefilled with the suggestions for this repository. */
+/** Shows the check dialog: the repository's current checks (or the default ones) chosen, other suggestions commented out. */
 async function chooseChecks(ctx: ExtensionContext, ws: Workspace) {
   if (!ctx.hasUI) throw new Error('Choosing the checks needs the interactive UI.');
-  const text = await ctx.ui.editor('Checks for this run (one command per line)', checksPrompt(suggestChecks(ws.root, ws.config)));
-  if (text === undefined) throw new Error('The user cancelled the check setup. Ask which checks to run, then call factory_start again.');
-  const checks = parseChecks(text);
-  if (checks.length === 0) throw new Error('The user chose no checks. Every run needs at least one; ask which to run, then call factory_start again.');
-  return checks;
+  const suggestions = suggestChecks(ws.root, ws.config);
+  const current = repoChecks(ws);
+  const chosen = current.length === 0 ? suggestions.chosen : current;
+  const prompt = checksPrompt({
+    chosen,
+    scripts: suggestions.scripts.filter(command => !chosen.includes(command)),
+    workflows: suggestions.workflows.filter(command => !chosen.includes(command)),
+  });
+  const text = await ctx.ui.editor('Checks for this repository (one command per line)', prompt);
+  return text === undefined ? [] : parseChecks(text);
+}
+
+/** The first run in a repository asks the user for its checks and saves them; later runs reuse them. */
+async function ensureChecks(ctx: ExtensionContext, ws: Workspace) {
+  if (repoChecks(ws).length > 0) return;
+  const checks = await chooseChecks(ctx, ws);
+  if (checks.length === 0) throw new Error('The user chose no checks. Every run needs at least one: ask which to run, then call factory_start again.');
+  await saveChecks(ws, checks);
 }
 
 /** Asks the user how to continue once a slice's fix budget is used up. Without a UI the run pauses. */
@@ -267,9 +281,8 @@ export default function softwareFactory(pi: ExtensionAPI) {
             throw new Error(`The user kept "${feature}" ${current.status}.`);
           }
         }
-        const checks = current.checks.length === 0 ? await chooseChecks(ctx, ws) : undefined;
+        if (current.checks.length === 0) await ensureChecks(ctx, ws);
         run = await withRun(ws, feature, latest => {
-          if (checks !== undefined) setChecks(latest, checks);
           resumeRun(ws, latest, sessionId);
           return latest;
         });
@@ -280,7 +293,8 @@ export default function softwareFactory(pi: ExtensionAPI) {
           throw new Error(`Run "${current}" is still running in this repository. Finish or /factory pause it first.`);
         }
         const source = await loadSource(ctx, ws, params.source);
-        run = await startRun(ws, { checks: await chooseChecks(ctx, ws), feature: params.feature, sessionId, source });
+        await ensureChecks(ctx, ws);
+        run = await startRun(ws, { feature: params.feature, sessionId, source });
       }
       activeRuns.set(ws.root, run.feature);
       await pi.setActiveTools([...new Set([...pi.getActiveTools(), ...ORCHESTRATION_TOOLS])]);
@@ -547,7 +561,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
   });
 
   pi.registerCommand('factory', {
-    description: 'Software factory: /factory <issue> | resume <feature> | pause | status | submit [feature]',
+    description: 'Software factory: /factory <issue> | resume <feature> | pause | status | checks | submit [feature]',
     async handler(args, ctx) {
       const [verb = '', ...rest] = args.trim().split(/\s+/);
       const argument = rest.join(' ');
@@ -558,6 +572,20 @@ export default function softwareFactory(pi: ExtensionAPI) {
         const known = existsSync(runsDir) ? readdirSync(runsDir).filter(name => existsSync(statePath(ws, name))) : [];
         const active = feature === undefined ? 'none' : `${feature}: ${nextAction(readRun(ws, feature))}`;
         ctx.ui.notify(`Active run: ${active}\nRuns: ${known.join(', ') || 'none'}`, 'info');
+        return;
+      }
+      if (verb === 'checks') {
+        if (ws.config.checks !== undefined) {
+          ctx.ui.notify(`Checks come from "checks" in ${CONFIG_PATH}: ${ws.config.checks.join('; ')}. Edit that file to change them.`, 'info');
+          return;
+        }
+        const checks = await chooseChecks(ctx, ws);
+        if (checks.length === 0) {
+          ctx.ui.notify(`Checks unchanged: ${repoChecks(ws).join('; ') || 'none chosen'}.`, 'info');
+          return;
+        }
+        await saveChecks(ws, checks);
+        ctx.ui.notify(`Saved checks: ${checks.join('; ')}. New runs use them; a run that already started keeps its checks.`, 'info');
         return;
       }
       if (verb === 'pause') {
