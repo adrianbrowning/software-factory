@@ -54,8 +54,11 @@ describe('factory_decide', () => {
     for (const root of roots) rmSync(root, { force: true, recursive: true });
   });
 
-  /** A repository with `.omp/factory.json` and a started run, driven through the registered tools. */
-  async function started(config: Record<string, unknown>, answer: boolean) {
+  /**
+   * A repository with `.omp/factory.json` and a started run, driven through the registered tools. `answer` is the
+   * user's reply to each dialog; `undefined` means a session without a UI.
+   */
+  async function started(config: Record<string, unknown>, answer: boolean | undefined) {
     const root = mkdtempSync(join(tmpdir(), 'factory-tool-'));
     roots.push(root);
     const git = (...args: string[]) => execFileSync('git', args, { cwd: root });
@@ -68,12 +71,12 @@ describe('factory_decide', () => {
     const context = {
       ...ctx('main', 'main'),
       cwd: root,
-      hasUI: true,
+      hasUI: answer !== undefined,
       sessionManager: { getSessionId: () => 'session-1' },
       ui: {
         confirm: async (title: string) => {
           asked.push(title);
-          return answer;
+          return answer ?? assert.fail('no UI in this session');
         },
       },
     };
@@ -89,10 +92,12 @@ describe('factory_decide', () => {
     await run.decide(['Keep the tsx runner.']);
     assert.deepEqual(run.asked, ['Record these decisions for reviewers?']);
     assert.deepEqual(run.decided(), []);
+    const unattended = await started({}, undefined);
+    await assert.rejects(unattended.decide(['Keep the tsx runner.']) ?? Promise.resolve(), /needs the interactive UI/);
   });
 
-  it('records decisions without a dialog when confirmDecisions is false', async () => {
-    const run = await started({ confirmDecisions: false }, false);
+  it('records decisions without a dialog, even with no UI, when confirmDecisions is false', async () => {
+    const run = await started({ confirmDecisions: false }, undefined);
     await run.decide(['Keep the tsx runner.']);
     assert.deepEqual(run.asked, []);
     assert.deepEqual(run.decided(), ['Keep the tsx runner.']);
