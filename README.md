@@ -64,16 +64,16 @@ its agents load.
 | --- | --- | --- |
 | `tdd` | `factory-implementer` (autoloaded) | `mattpocock/skills` |
 | `retro` | Orchestrator, retro step | `mattpocock/skills` |
-| `testing-best-practice` | testing reviewer | `tealiumlabs/agent-skills` |
-| `test-validity-review` | test-validity reviewer | `tealiumlabs/agent-skills` |
-| `thermo-nuclear-code-quality-review` | thermo reviewer | `tealiumlabs/agent-skills` |
+| `testing-best-practice` | testing reviewer | `adrianbrowning/agent-skills` |
+| `test-validity-review` | test-validity reviewer | `adrianbrowning/agent-skills` |
+| `thermo-nuclear-code-quality-review` | thermo reviewer | `adrianbrowning/agent-skills` |
 
 ```sh
 npx skills add mattpocock/skills -g -s tdd
 npx skills add mattpocock/skills -g -s retro
-npx skills add tealiumlabs/agent-skills -g -s testing-best-practice
-npx skills add tealiumlabs/agent-skills -g -s test-validity-review
-npx skills add tealiumlabs/agent-skills -g -s thermo-nuclear-code-quality-review
+npx skills add adrianbrowning/agent-skills -g -s testing-best-practice
+npx skills add adrianbrowning/agent-skills -g -s test-validity-review
+npx skills add adrianbrowning/agent-skills -g -s thermo-nuclear-code-quality-review
 ```
 
 The agents load these skills when present. A run without them still works, but its reviews and retro are weaker.
