@@ -87,9 +87,13 @@ async function excludeScratch(ws: Workspace) {
   appendFileSync(path, `${current === '' || current.endsWith('\n') ? '' : '\n'}${line}\n`);
 }
 
-/** `ref` without its remote (`origin/main` → `main`). A local branch such as `feature/auth` keeps its whole name. */
+/**
+ * `ref` without its remote (`origin/main` → `main`). A local branch such as `feature/auth` keeps its whole name.
+ * Remote names may hold `/`, so the longest matching remote wins.
+ */
 async function branchName(root: string, ref: string) {
-  const remote = (await git(root, 'remote')).split('\n').find(name => name !== '' && ref.startsWith(`${name}/`));
+  const matches = (await git(root, 'remote')).split('\n').filter(name => name !== '' && ref.startsWith(`${name}/`));
+  const remote = matches.reduce<string | undefined>((longest, name) => (longest === undefined || name.length > longest.length ? name : longest), undefined);
   return remote === undefined ? ref : ref.slice(remote.length + 1);
 }
 

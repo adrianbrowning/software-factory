@@ -136,6 +136,11 @@ describe('base resolution', () => {
     assert.equal((await resolveBase(ws, { baseRef: 'feature/auth' })).trunk, 'feature/auth');
     assert.equal((await resolveBase(ws, { landOn: 'feature/auth' })).trunk, 'feature/auth');
     assert.equal((await resolveBase(ws, { baseRef: 'upstream/dev' })).trunk, 'dev');
+    // `up` is listed before `up/stream` and also prefixes `up/stream/dev`.
+    sh(ws.root, 'remote', 'add', 'up', ws.root);
+    sh(ws.root, 'remote', 'add', 'up/stream', ws.root);
+    sh(ws.root, 'update-ref', 'refs/remotes/up/stream/dev', 'HEAD');
+    assert.equal((await resolveBase(ws, { baseRef: 'up/stream/dev' })).trunk, 'dev');
     await startRun(ws, { feature: 'demo', sessionId: 's', source: { body: '', kind: 'text', ref: 'r', title: 'T' } });
     assert.equal(readRun(ws, 'demo').trunk, 'dev');
   });
