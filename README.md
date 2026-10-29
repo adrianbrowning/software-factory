@@ -49,7 +49,7 @@ its agents load.
 
 | Tool | When | Install |
 | --- | --- | --- |
-| [omp](https://omp.sh) | Always | `brew install can1357/tap/omp` |
+| [omp](https://omp.sh) | Always | Homebrew: `brew install can1357/tap/omp`; other systems: see [omp.sh](https://omp.sh) |
 | Node.js 22.18 or later 22.x, or 23.6 and later (`engines`: `>=22.18.0 <23.0.0 \|\| >=23.6.0`) | Always: runs the plugin's TypeScript directly | [nodejs.org](https://nodejs.org) or your version manager |
 | pnpm 10 | Always: installs the plugin's dependencies | `corepack enable` (the repo pins the version in `packageManager`) |
 | `gh`, authenticated | GitHub issues, and filing retro findings on the factory repo | `brew install gh && gh auth login` |
