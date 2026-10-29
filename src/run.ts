@@ -19,6 +19,12 @@ export const REVIEW_DOMAINS = [
 ] as const;
 export type Domain = (typeof REVIEW_DOMAINS)[number];
 
+/**
+ * Domains that hold the correctness and requirements bar: a review never skips them, and never skips `testing` for a
+ * slice with test seams. Any other domain can be skipped with a reason.
+ */
+export const REQUIRED_REVIEW_DOMAINS = ['bug', 'scope'] as const satisfies readonly Domain[];
+
 const text = z.string().min(1);
 
 export const SEVERITIES = ['critical', 'high', 'observation'] as const;
@@ -26,6 +32,12 @@ export const SOURCE_KINDS = ['github', 'jira', 'file', 'text'] as const;
 
 /** One finding in the cc-pr-review-ci review.json shape. */
 export const findingSchema = z.object({
+  decision: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe('Number of the recorded user decision the code breaks; such a finding is critical or high'),
   domain: z.enum(REVIEW_DOMAINS).describe('Your review domain'),
   fix: text.describe('How to fix it'),
   fix_prompt: text.describe('Plain-text prompt an implementer can act on directly'),
@@ -71,14 +83,21 @@ const sha = z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/);
 
 /**
  * Who wrote a review artifact and the sha256 of what the tool wrote, so a later edit is detected. `amended` marks a
- * domain whose reviewer has used its one replacement.
+ * domain reviewer or validator that has used its one replacement.
  */
 const submissionSchema = z.object({ agentId: text, amended: z.boolean().optional(), hash: text });
 
+const skippedDomainSchema = z.object({ domain: z.enum(REVIEW_DOMAINS), reason: text.describe('Why the diff needs no review in this domain') });
+export const skippedDomainsSchema = z.array(skippedDomainSchema);
+
 const reviewSchema = z.object({
+  /** How many recorded decisions the review data file listed; findings may cite only these. */
+  decisions: z.number().int().nonnegative().default(0),
   id: text,
   sha,
   snapshot: text,
+  /** Domains the orchestrator left out for this diff; every other domain must submit. */
+  skipped: skippedDomainsSchema.default([]),
   submissions: z.partialRecord(z.enum(REVIEW_DOMAINS), submissionSchema),
   validation: submissionSchema.optional(),
 });

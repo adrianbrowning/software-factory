@@ -4,7 +4,11 @@ import type { ExtensionAPI } from '@oh-my-pi/pi-coding-agent';
 import softwareFactory, { MAX_IDLE_STOP_ATTEMPTS, stopDecision } from '../src/index.ts';
 import type { Run } from '../src/run.ts';
 
-type Registered = { execute: (...args: unknown[]) => Promise<unknown>; name: string; parameters: { properties?: Record<string, unknown> } };
+type Registered = {
+  execute: (...args: unknown[]) => Promise<unknown>;
+  name: string;
+  parameters: { properties?: Record<string, unknown>; required?: string[] };
+};
 
 /** Registers the extension against a recording `pi` and returns its tools by name. */
 function load() {
@@ -29,6 +33,10 @@ describe('tool registration', () => {
   it('advertises each tool schema as JSON Schema', () => {
     const submit = load().get('factory_review_submit');
     assert.deepEqual(Object.keys(submit?.parameters.properties ?? {}).toSorted(), ['domain', 'findings', 'reviewId']);
+  });
+
+  it('makes the orchestrator choose the review domains to skip', () => {
+    assert.deepEqual(load().get('factory_review_start')?.parameters.required, ['skip']);
   });
 
   it('lets only the named agent call each tool', async () => {

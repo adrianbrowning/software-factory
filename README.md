@@ -17,7 +17,7 @@ flowchart TD
   F --> G[factory_checks: lint, typecheck, test]
   G -->|red| H[fix file → implementer fix mode]
   H --> G
-  G -->|green| I[11 factory-reviewer domains + validator]
+  G -->|green| I[factory-reviewer per chosen domain + validator]
   I -->|critical/high| H
   I -->|green| J[factory_complete_slice]
   J -->|slices left| E
@@ -32,7 +32,7 @@ flowchart TD
 | Gates: checks, review verdict, round limits, approvals, branch/HEAD checks | TypeScript tools (`src/`) | Deterministic: they decide from git and from what the tools recorded, not from what an agent says |
 | Questions, slicing, deciding what to spawn | Orchestrator (main session) following `skills/software-factory/SKILL.md` | Judgement |
 | Implementation and fixes | `factory-implementer` subagent, `tdd` skill autoloaded, own advisor (`advisor: true`; override with `task.agentAdvisor.factory-implementer: "off"`) | Fresh context per slice and per fix; the advisor watches the session under the most context pressure |
-| Review | 11 `factory-reviewer` subagents (one per cc-pr-review domain) + `factory-review-validator` | Port of `cc-pr-review` onto omp's `task` tool. The validator, with a clean context, keeps a blocking (`critical`/`high`) finding only when it is a gap in correctness or the ticket's requirements. A supported blocking finding that fails that bar (a speculative abstraction, defensive code for an impossible state, a test for a case that cannot happen) is downgraded to an observation, not lost |
+| Review | Up to 11 `factory-reviewer` subagents (one per cc-pr-review domain) + `factory-review-validator` | Port of `cc-pr-review` onto omp's `task` tool. The orchestrator skips domains the diff gives nothing to review, each with a reason; `bug` and `scope` always review, and `testing` does too for a slice with test seams. The validator, with a clean context, keeps a blocking (`critical`/`high`) finding only when it is a gap in correctness or the ticket's requirements. A supported blocking finding that fails that bar (a speculative abstraction, defensive code for an impossible state, a test for a case that cannot happen) is downgraded to an observation, not lost. A finding that shows the code breaks a recorded decision blocks: the reviewer cites the decision number and the validator cannot downgrade it, and the validator escalates an observation that shows such a conflict to `high`. The tools enforce cited decisions only; an uncited conflict depends on the reviewer and validator seeing it |
 
 User gates: questions at intake, slice-plan approval, seam additions, re-slice approval, stalled fix loops,
 retro actions, and `/factory submit`. The plugin opens PRs only when you run `/factory submit`, and it never
@@ -139,8 +139,9 @@ slice trips this too; delete it, or keep backups under a name the check ignores 
 
 The gates stop model mistakes and limit what a misled agent can do. They are not a sandbox:
 
-- Reviewers and the validator have read-only tools plus their one submit tool. Each domain submits once, before
-  validation, and the tool records a hash of what it wrote; an edited findings or validation file fails the review.
+- Reviewers and the validator have read-only tools plus their one submit tool. Each domain reviewer and the validator
+  may replace its submission once (the validator until the review is recorded), and the tool records a hash of what
+  it wrote; an edited findings or validation file fails the review.
 - The implementer has `read`, `write`, `edit`, `grep`, `glob`, `bash`, and `lsp`, and runs on your machine with your
   credentials. Within one omp process, the tools reject a `state.json` changed outside them. After a restart,
   `/factory resume` trusts the file on disk but sends the active slice back through checks and review.

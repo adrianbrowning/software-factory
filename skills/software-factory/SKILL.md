@@ -54,10 +54,11 @@ Repeat until `factory_next` reports no slices left:
    - `MISSING DEPENDENCY`: show the user what is missing and where it lives. If the run must build on that branch, `/factory pause` this run and start a new run whose `factory_plan` sets that branch as `baseRef`. Otherwise record the user's decision with `factory_decide` and spawn the implementer again with it.
    - Check the implementer's report against the `Slice commits` list that `factory_checks` returns, not against the report alone.
 3. `factory_checks`. Red: spawn a fresh `factory-implementer` in fix mode with the returned fix file, then run `factory_checks` again. A refusal for commits from other branches is not a fix round: ask the user, as for `MISSING DEPENDENCY`.
-4. `factory_review_start`. Spawn one `factory-reviewer` per domain in a single `task` batch. Shared context: the review id and data file. Per task: the domain and its reference file (`<reference dir>/<domain>.md`).
-5. When every reviewer has finished, spawn one `factory-review-validator` with the review id, data file, and the findings dir from `factory_review_start`.
-6. `factory_review_record`. Blocking findings: spawn a fresh `factory-implementer` in fix mode with the fix file, then go back to step 3. Each fix gets a full new review.
-7. Green: `factory_complete_slice`.
+4. Pick the review domains from the `Changed files` list that `factory_checks` returns and the ticket. Skip each domain the diff gives nothing to review, and give the reason: for example `react-ts` for a diff with no TypeScript or React, `devops` for a diff with no CI, build, dependency, or deploy files, `performance` for a diff with no runtime hot path, `security` for a diff with no input handling, auth, secrets, shell, file, or network code, `comments` for a diff that adds or changes no comments, and `test-validity` for a diff that adds or changes no tests. For a small diff, skip more. `bug` and `scope` always review, and `testing` does too for a slice with test seams. When unsure, keep the domain.
+5. `factory_review_start` with those skips. Spawn one `factory-reviewer` per domain it lists, in a single `task` batch. Shared context: the review id and data file. Per task: the domain and its reference file (`<reference dir>/<domain>.md`).
+6. When every reviewer has finished, spawn one `factory-review-validator` with the review id, data file, and the findings dir from `factory_review_start`. Wait until the validator has finished; it may correct its validation once.
+7. `factory_review_record`. Blocking findings: spawn a fresh `factory-implementer` in fix mode with the fix file, then go back to step 3. Each fix gets a full new review. A finding that shows the code breaks a recorded decision blocks; to accept that gap instead, the user records a new decision with `factory_decide`, and the next review checks against it.
+8. Green: `factory_complete_slice`.
 
 When a slice uses up its fix rounds, the tool asks the user whether to continue or pause. Follow the reply.
 
