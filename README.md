@@ -41,9 +41,46 @@ the top slice, without a checkout or a merge commit.
 
 ## Install
 
-Prerequisites: `gh` (authenticated), the [`gh-stack`](https://github.com/github/gh-stack) extension for
-`/factory submit`, and the Atlassian MCP server for Jira issues. Reviewers and the implementer load these skills
-when present: `tdd`, `retro`, `testing-best-practice`, `test-validity-review`, `thermo-nuclear-code-quality-review`.
+A fresh install needs the tools and skills below, then the plugin. The plugin bundles its own extension
+(`src/index.ts`), orchestrator skill (`skills/software-factory/`), and three agents (`agents/`), but not the skills
+its agents load.
+
+### Tools
+
+| Tool | When | Install |
+| --- | --- | --- |
+| [omp](https://omp.sh) | Always | Homebrew: `brew install can1357/tap/omp`; other systems: see [omp.sh](https://omp.sh) |
+| Node.js 22.18 or later 22.x, or 23.6 and later (`engines`: `>=22.18.0 <23.0.0 \|\| >=23.6.0`) | Always: runs the plugin's TypeScript directly | [nodejs.org](https://nodejs.org) or your version manager |
+| pnpm 10 | Always: installs the plugin's dependencies | `corepack enable` (the repo pins the version in `packageManager`) |
+| `gh`, authenticated | GitHub issues, and filing retro findings on the factory repo | `brew install gh && gh auth login` |
+| [`gh-stack`](https://github.com/github/gh-stack) | Only for `/factory submit` that opens PRs; not for `landOn` runs | `gh extension install github/gh-stack` |
+| Atlassian MCP server | Only for Jira issues | Add it to omp's MCP servers |
+
+`npx` in the skill commands below comes with Node.js.
+
+### Skills
+
+| Skill | Used by | Source |
+| --- | --- | --- |
+| `tdd` | `factory-implementer` (autoloaded) | `mattpocock/skills` |
+| `retro` | Orchestrator, retro step | `mattpocock/skills` |
+| `testing-best-practice` | testing reviewer | `adrianbrowning/agent-skills` |
+| `test-validity-review` | test-validity reviewer | `adrianbrowning/agent-skills` |
+| `thermo-nuclear-code-quality-review` | thermo reviewer | `adrianbrowning/agent-skills` |
+
+```sh
+npx skills add mattpocock/skills -g -s tdd
+npx skills add mattpocock/skills -g -s retro
+npx skills add adrianbrowning/agent-skills -g -s testing-best-practice
+npx skills add adrianbrowning/agent-skills -g -s test-validity-review
+npx skills add adrianbrowning/agent-skills -g -s thermo-nuclear-code-quality-review
+```
+
+The agents load these skills when present. A run without them still works, but its reviews and retro are weaker.
+`retro` and `test-validity-review` set `disable-model-invocation: true`, so they do not appear in the session's
+skill list; the factory reads them by `skill://` URL, which still works.
+
+### Plugin
 
 ```sh
 git clone git@github.com:adrianbrowning/software-factory.git
@@ -51,8 +88,7 @@ cd software-factory && pnpm install --prod
 omp plugin link "$PWD"        # or add the path to `extensions:` in ~/.omp/agent/config.yml
 ```
 
-The package bundles the extension (`src/index.ts`), the skill (`skills/software-factory/`), and the three agents
-(`agents/`).
+Start a new omp session after you install or update. The link points at the clone, so `git pull` updates the plugin.
 
 ## Use
 
