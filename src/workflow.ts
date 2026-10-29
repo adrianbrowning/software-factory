@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { evidence } from './evidence.ts';
@@ -148,6 +148,72 @@ export async function resolveBase(
     );
   }
   return { baseRef, baseSha, landOn, trunk };
+}
+
+/** What `factory_start` takes: GitHub and file issues by reference (the tool loads them), Jira and pasted text in full. */
+export const sourceInputSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('github'), ref: z.string().min(1).describe('Issue number or URL; the tool loads it with gh') }),
+  z.object({ kind: z.literal('file'), ref: z.string().min(1).describe('Path of the issue file: absolute, or relative to the repository root; the tool reads it') }),
+  sourceSchema.extend({ kind: z.enum(['jira', 'text']) }),
+]);
+export type SourceInput = z.infer<typeof sourceInputSchema>;
+
+const ghLogin = z
+  .object({ login: z.string() })
+  .nullable()
+  .transform(author => author?.login ?? 'ghost');
+const ghIssueSchema = z.object({
+  author: ghLogin,
+  body: z.string(),
+  comments: z.array(z.object({ author: ghLogin, authorAssociation: z.string(), body: z.string() })),
+  title: z.string().min(1),
+  url: z.string(),
+});
+export type GithubIssue = z.infer<typeof ghIssueSchema> & { authorAssociation: string };
+
+/** Associations whose text the run uses without asking: people who can already change the repository. */
+const TRUSTED_ASSOCIATIONS = new Set(['COLLABORATOR', 'MEMBER', 'OWNER']);
+
+/** Loads a GitHub issue with its comments, and the issue author's association with the repository. */
+export async function fetchGithubIssue(ws: Workspace, ref: string): Promise<GithubIssue> {
+  if (ref.startsWith('-')) throw new Error(`"${ref}" is not an issue number or URL.`);
+  const issue = ghIssueSchema.parse(JSON.parse(await gh(ws.root, 'issue', 'view', ref, '--json', 'author,body,comments,title,url')));
+  const match = /github\.com\/([^/]+\/[^/]+)\/(?:issues|pull)\/(\d+)/.exec(issue.url);
+  if (match === null) throw new Error(`gh returned an issue URL the factory cannot read: ${issue.url}`);
+  const authorAssociation = (await gh(ws.root, 'api', `repos/${match[1]}/issues/${match[2]}`, '--jq', '.author_association')).trim();
+  return { ...issue, authorAssociation };
+}
+
+type OutsidePart = { association: string; author: string; text: string };
+
+/**
+ * The run source for a GitHub issue: its body and comments. Text by people outside the repository goes to `approve`
+ * (the user's dialog) and stays out unless it returns true; `approve` runs only when there is such text.
+ */
+export async function githubSource(ref: string, issue: GithubIssue, approve: (outside: OutsidePart[]) => Promise<boolean>): Promise<Source> {
+  const parts = [
+    { association: issue.authorAssociation, author: issue.author, text: `${issue.title}\n\n${issue.body}` },
+    ...issue.comments.map(comment => ({ association: comment.authorAssociation, author: comment.author, text: comment.body })),
+  ];
+  const outside = parts.filter(part => !TRUSTED_ASSOCIATIONS.has(part.association));
+  const include = outside.length > 0 && (await approve(outside));
+  const use = (association: string) => include || TRUSTED_ASSOCIATIONS.has(association);
+  const authored = use(issue.authorAssociation);
+  const body = authored ? issue.body : `(The issue title and text by @${issue.author}, who is not a repository collaborator, are left out.)`;
+  const comments = issue.comments
+    .filter(comment => use(comment.authorAssociation))
+    .map(comment => `### @${comment.author} (${comment.authorAssociation})\n\n${comment.body}`);
+  const title = authored ? issue.title : `GitHub issue ${ref}`;
+  return { body: comments.length === 0 ? body : `${body}\n\n## Comments\n\n${comments.join('\n\n')}`, kind: 'github', ref, title, url: issue.url };
+}
+
+/** The run source for an issue file; its title is the first `# ` heading, or the file name. */
+export function fileSource(ws: Workspace, ref: string): Source {
+  const path = resolve(ws.root, ref);
+  if (!existsSync(path)) throw new Error(`Issue file ${path} does not exist.`);
+  const body = readFileSync(path, 'utf8');
+  const title = /^#\s+(.+)$/m.exec(body)?.[1]?.trim() || basename(path);
+  return { body, kind: 'file', ref, title };
 }
 
 export async function startRun(ws: Workspace, input: { feature: string; sessionId: string; source: Source }) {
@@ -548,9 +614,10 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
     slice.phase = 'review';
     slice.review = undefined;
     addEvent(run, 'checks-pass', summary.join('; '), slice);
-    // The orchestrator picks the review domains from these changed files.
-    const changed = (await git(ws.root, 'diff', '--stat', `${slice.parentBranch}...HEAD`)).trimEnd();
-    return { changed, commits, passed: true as const, summary, unchanged };
+    // The orchestrator picks the review domains from these changed files and the path skips startReview applies.
+    const range = `${slice.parentBranch}...HEAD`;
+    const changed = (await git(ws.root, 'diff', '--stat', range)).trimEnd();
+    return { changed, commits, passed: true as const, pathSkipped: pathSkips(await changedPaths(ws.root, range)), summary, unchanged };
   }
 
   const sections = failed.map(
@@ -568,10 +635,38 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
 }
 
 /**
- * Opens a review of the slice diff. `skip` leaves out domains the diff gives nothing to review, each with a reason;
- * the required domains always run.
+ * Domains a diff gives nothing to review, decided from its changed paths alone. Each rule only fires when no changed
+ * file could hold that domain's subject.
  */
-export async function startReview(ws: Workspace, run: Run, skip: unknown = []) {
+const PATH_SKIPS: { domain: Domain; matches: RegExp; reason: string }[] = [
+  { domain: 'react-ts', matches: /\.[cm]?[jt]sx?$/, reason: 'no JavaScript or TypeScript file changed' },
+  {
+    domain: 'test-validity',
+    matches: /(^|\/)(__tests__|tests?|specs?)\/|[._-](test|spec)\.[^/]+$|(^|\/)test_[^/]+$/,
+    reason: 'no test file changed',
+  },
+  {
+    domain: 'devops',
+    matches:
+      /(^|\/)(\.github|\.gitlab|\.circleci|\.buildkite|helm|k8s|kubernetes|terraform|deploy|infra)\/|(^|\/)(Dockerfile[^/]*|docker-compose[^/]*|compose\.ya?ml|Jenkinsfile|Makefile|Procfile|\.gitlab-ci\.yml|package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|package-lock\.json|yarn\.lock|bun\.lockb?|\.npmrc|\.nvmrc|\.node-version|tsconfig[^/]*\.json|go\.mod|go\.sum|Cargo\.toml|Cargo\.lock|pyproject\.toml|requirements[^/]*\.txt|Gemfile(\.lock)?)$|(^|\/)[^/]*\.(tf|tfvars)$|(^|\/)(vite|vitest|webpack|rollup|esbuild|jest|babel|turbo|nx)\.config\.[^/]+$|(^|\/)(turbo|nx)\.json$/,
+    reason: 'no CI, build, dependency, or deploy file changed',
+  },
+];
+
+export function pathSkips(files: string[]) {
+  return PATH_SKIPS.filter(rule => !files.some(file => rule.matches.test(file))).map(({ domain, reason }) => ({ domain, reason: `${reason} (factory path rule)` }));
+}
+
+async function changedPaths(root: string, range: string) {
+  return (await git(root, 'diff', '--name-only', '-z', range)).split('\0').filter(Boolean);
+}
+
+/**
+ * Opens a review of the slice diff. Domains the changed paths rule out are skipped by the factory unless `keep`
+ * names them; `skip` leaves out further domains the diff gives nothing to review, each with a reason. The required
+ * domains always run.
+ */
+export async function startReview(ws: Workspace, run: Run, skip: unknown = [], keep: unknown = []) {
   const slice = requireActive(run);
   if (slice.phase !== 'review' || slice.checkedSha === undefined) throw new Error('Checks must pass first: call factory_checks.');
   await requireOnBranch(ws.root, slice);
@@ -582,17 +677,22 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = []) {
     slice.checkResults = undefined;
     throw new Invalidated('HEAD moved after checks passed. Call factory_checks again.');
   }
-  const skipped = skippedDomainsSchema.parse(skip);
-  const skippedNames = skipped.map(entry => entry.domain);
+  const chosen = skippedDomainsSchema.parse(skip);
+  const kept = z.array(z.enum(REVIEW_DOMAINS)).parse(keep);
+  const skippedNames = chosen.map(entry => entry.domain);
   const required: Domain[] = [...REQUIRED_REVIEW_DOMAINS, ...(slice.seams.length > 0 ? (['testing'] as const) : [])];
   const refused = skippedNames.filter(domain => required.includes(domain));
   if (refused.length > 0) throw new Error(`These domains always review this slice: ${refused.join(', ')}.`);
   if (new Set(skippedNames).size !== skippedNames.length) throw new Error('A skipped domain appears twice.');
+  const both = kept.filter(domain => skippedNames.includes(domain));
+  if (both.length > 0) throw new Error(`A domain cannot be both skipped and kept: ${both.join(', ')}.`);
   const range = `${slice.parentBranch}...HEAD`;
   const diff = await git(ws.root, '-c', 'core.quotePath=false', 'diff', '--no-ext-diff', range);
   if (diff.trim() === '') throw new Error(`No changes in ${range}; the implementer committed nothing.`);
   const files = (await git(ws.root, 'diff', '--name-only', '-z', range)).split('\0').filter(Boolean);
   const previous = previousBlocking(ws, run, slice);
+  const byPath = pathSkips(files).filter(entry => !kept.includes(entry.domain) && !skippedNames.includes(entry.domain));
+  const skipped = [...byPath, ...chosen];
   slice.reviews += 1;
   const id = `${slice.id}-r${slice.reviews}`;
   rmSync(reviewDir(ws, run.feature, id), { force: true, recursive: true });
@@ -609,6 +709,7 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = []) {
     dataFile,
     domains: reviewDomains(skipped),
     findingsDir: join(reviewDir(ws, run.feature, id), 'domains'),
+    pathSkipped: byPath,
     referenceDir: REVIEW_REFERENCE_DIR,
     reviewId: id,
   };

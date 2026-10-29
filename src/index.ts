@@ -3,6 +3,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { loadConfig } from './config.ts';
+import { evidence } from './evidence.ts';
 import {
   activeSlice,
   addEvent,
@@ -14,7 +15,7 @@ import {
   type Run,
   skippedDomainsSchema,
   sliceInputSchema,
-  sourceSchema,
+  type Source,
   statePath,
   ticketPath,
   withRun,
@@ -25,8 +26,11 @@ import {
   applyReslice,
   approvePlan,
   completeSlice,
+  fetchGithubIssue,
   fileFactoryIssues,
   type FiledIssues,
+  fileSource,
+  githubSource,
   nextAction,
   nextSlice,
   parseRetro,
@@ -44,6 +48,8 @@ import {
   retroIssueBody,
   retroSchema,
   runChecks,
+  sourceInputSchema,
+  type SourceInput,
   startReview,
   startRun,
   submitDomain,
@@ -79,7 +85,7 @@ type Caller = 'main' | typeof REVIEWER | typeof VALIDATOR;
 const startSchema = z.object({
   feature: z.string().optional().describe('kebab-case run name for a new run'),
   resume: z.string().optional().describe('Feature name of an existing run to resume instead of starting one'),
-  source: sourceSchema.optional().describe('The loaded issue, required for a new run'),
+  source: sourceInputSchema.optional().describe('The issue, required for a new run: github or file by ref (the tool loads it), jira or text in full'),
 });
 const decisionsSchema = z.object({
   decisions: z.array(z.string().min(1)).min(1).describe('Decisions the user made, each one self-contained sentence'),
@@ -102,8 +108,12 @@ const planToolSchema = planSchema.extend({
 });
 const seamsSchema = z.object({ seams: z.array(z.string().min(1)).min(1).describe('Seams the user agreed, as public interfaces') });
 const reviewStartSchema = z.object({
+  keep: z
+    .array(z.enum(REVIEW_DOMAINS))
+    .optional()
+    .describe('Domains to review although the factory path rules skip them (react-ts, test-validity, devops), for a changed file the rules miss'),
   skip: skippedDomainsSchema.describe(
-    'Required choice: the domains this diff gives nothing to review (for example react-ts for a diff with no TypeScript or React), each with a reason. An empty list reviews every domain.',
+    'Required choice: further domains this diff gives nothing to review (for example performance for a diff with no runtime hot path), each with a reason. The factory already skips react-ts, test-validity, and devops when no changed path could hold their subject. An empty list adds no skips.',
   ),
 });
 const submitSchema = z.object({ domain: z.enum(REVIEW_DOMAINS), findings: z.array(findingSchema), reviewId: z.string().min(1) });
@@ -143,6 +153,19 @@ function reply(text: string, details?: unknown): Reply {
 async function confirm(ctx: ExtensionContext, title: string, body: string) {
   if (!ctx.hasUI) throw new Error(`${title} needs the interactive UI.`);
   return ctx.ui.confirm(title, body);
+}
+
+/** The run source. The tool loads GitHub and file issues itself; the user decides on GitHub text from outside the repository. */
+async function loadSource(ctx: ExtensionContext, ws: Workspace, input: SourceInput): Promise<Source> {
+  if (input.kind === 'file') return fileSource(ws, input.ref);
+  if (input.kind !== 'github') return input;
+  return githubSource(input.ref, await fetchGithubIssue(ws, input.ref), outside =>
+    confirm(
+      ctx,
+      `Use ${outside.length} parts of the issue written outside the repository?`,
+      `These authors are not repository collaborators. Yes uses their text as evidence for the run; No leaves it out.\n\n${outside.map(part => `@${part.author} (${part.association}):\n${evidence(part.text, 1_000)}`).join('\n\n')}`,
+    ),
+  );
 }
 
 /** Asks the user how to continue once a slice's fix budget is used up. Without a UI the run pauses. */
@@ -243,7 +266,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         if (current !== undefined && readRun(ws, current).status === 'running') {
           throw new Error(`Run "${current}" is still running in this repository. Finish or /factory pause it first.`);
         }
-        run = await startRun(ws, { feature: params.feature, sessionId, source: params.source });
+        run = await startRun(ws, { feature: params.feature, sessionId, source: await loadSource(ctx, ws, params.source) });
       }
       activeRuns.set(ws.root, run.feature);
       await pi.setActiveTools([...new Set([...pi.getActiveTools(), ...ORCHESTRATION_TOOLS])]);
@@ -370,7 +393,10 @@ export default function softwareFactory(pi: ExtensionAPI) {
       const unchanged = result.unchanged
         ? '\nNo new commits since the fix file. Each item in the implementer report must say "already fixed" or "not a defect"; a "fixed in <sha>" is not on this branch.'
         : '';
-      if (result.passed) return reply(`All checks passed.\n${summary}\n${commits}${unchanged}\nChanged files:\n${result.changed}\nNext: ${nextAction(run)}`);
+      if (result.passed) {
+        const byPath = result.pathSkipped.length === 0 ? '' : `\nPath rules skip: ${result.pathSkipped.map(entry => `${entry.domain} (${entry.reason})`).join('; ')}. Pass a domain in factory_review_start keep when a changed file holds its subject after all.`;
+        return reply(`All checks passed.\n${summary}\n${commits}${unchanged}\nChanged files:\n${result.changed}${byPath}\nNext: ${nextAction(run)}`);
+      }
       const stall = result.stalled ? await decideStall(ctx, ws, feature) : '';
       return reply(`Checks failed.\n${summary}\n${commits}${unchanged}\nFix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
     },
@@ -378,15 +404,16 @@ export default function softwareFactory(pi: ExtensionAPI) {
 
   tool({
     caller: 'main',
-    description: `Freeze the reviewed state and write the review data file. Then spawn one factory-reviewer per domain. Skip a domain the diff gives nothing to review, with a reason; ${REQUIRED_REVIEW_DOMAINS.join(' and ')} always review, and testing does too for a slice with test seams.`,
+    description: `Freeze the reviewed state and write the review data file. Then spawn one factory-reviewer per domain. The factory skips react-ts, test-validity, and devops by changed paths unless kept; skip any other domain the diff gives nothing to review, with a reason. ${REQUIRED_REVIEW_DOMAINS.join(' and ')} always review, and testing does too for a slice with test seams.`,
     label: 'Factory: start review',
     name: 'factory_review_start',
     schema: reviewStartSchema,
     async run(params, ws) {
       return withRun(ws, activeFeature(ws), async run => {
-        const review = await startReview(ws, run, params.skip);
+        const review = await startReview(ws, run, params.skip, params.keep);
+        const byPath = review.pathSkipped.length === 0 ? '' : `\nSkipped by path: ${review.pathSkipped.map(entry => `${entry.domain} (${entry.reason})`).join('; ')}.`;
         return reply(
-          `Review ${review.reviewId} is open.\nData file: ${review.dataFile}\nReference dir: ${review.referenceDir}\nFindings dir: ${review.findingsDir}\nSpawn one ${REVIEWER} per domain, in one task batch: ${review.domains.join(', ')}. Give each its domain, the review id, the data file, and the reference file <reference dir>/<domain>.md. When all have submitted, spawn one ${VALIDATOR} with the review id, the data file, and the findings dir. Wait until it has finished (it may correct its validation once), then call factory_review_record.`,
+          `Review ${review.reviewId} is open.${byPath}\nData file: ${review.dataFile}\nReference dir: ${review.referenceDir}\nFindings dir: ${review.findingsDir}\nSpawn one ${REVIEWER} per domain, in one task batch: ${review.domains.join(', ')}. Give each its domain, the review id, the data file, and the reference file <reference dir>/<domain>.md. When all have submitted, spawn one ${VALIDATOR} with the review id, the data file, and the findings dir. Wait until it has finished (it may correct its validation once), then call factory_review_record.`,
           review,
         );
       });

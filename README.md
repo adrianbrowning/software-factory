@@ -32,7 +32,7 @@ flowchart TD
 | Gates: checks, review verdict, round limits, approvals, branch/HEAD checks | TypeScript tools (`src/`) | Deterministic: they decide from git and from what the tools recorded, not from what an agent says |
 | Questions, slicing, deciding what to spawn | Orchestrator (main session) following `skills/software-factory/SKILL.md` | Judgement |
 | Implementation and fixes | `factory-implementer` subagent, `tdd` skill autoloaded, own advisor (`advisor: true`; override with `task.agentAdvisor.factory-implementer: "off"`) | Fresh context per slice and per fix; the advisor watches the session under the most context pressure |
-| Review | Up to 11 `factory-reviewer` subagents (one per cc-pr-review domain) + `factory-review-validator` | Port of `cc-pr-review` onto omp's `task` tool. The orchestrator skips domains the diff gives nothing to review, each with a reason; `bug` and `scope` always review, and `testing` does too for a slice with test seams. The validator, with a clean context, keeps a blocking (`critical`/`high`) finding only when it is a gap in correctness or the ticket's requirements. A supported blocking finding that fails that bar (a speculative abstraction, defensive code for an impossible state, a test for a case that cannot happen) is downgraded to an observation, not lost. A finding that shows the code breaks a recorded decision blocks: the reviewer cites the decision number and the validator cannot downgrade it, and the validator escalates an observation that shows such a conflict to `high`. The tools enforce cited decisions only; an uncited conflict depends on the reviewer and validator seeing it |
+| Review | Up to 11 `factory-reviewer` subagents (one per cc-pr-review domain) + `factory-review-validator` | Port of `cc-pr-review` onto omp's `task` tool. The factory skips `react-ts`, `test-validity`, and `devops` when no changed path could hold their subject (the orchestrator can keep one back); the orchestrator skips other domains the diff gives nothing to review, each with a reason; `bug` and `scope` always review, and `testing` does too for a slice with test seams. The validator, with a clean context, keeps a blocking (`critical`/`high`) finding only when it is a gap in correctness or the ticket's requirements. A supported blocking finding that fails that bar (a speculative abstraction, defensive code for an impossible state, a test for a case that cannot happen) is downgraded to an observation, not lost. A finding that shows the code breaks a recorded decision blocks: the reviewer cites the decision number and the validator cannot downgrade it, and the validator escalates an observation that shows such a conflict to `high`. The tools enforce cited decisions only; an uncited conflict depends on the reviewer and validator seeing it |
 
 User gates: questions at intake, slice-plan approval, seam additions, re-slice approval, stalled fix loops,
 retro actions, and `/factory submit`. The plugin opens PRs only when you run `/factory submit`, and it never
@@ -182,9 +182,9 @@ The gates stop model mistakes and limit what a misled agent can do. They are not
 - The implementer has `read`, `write`, `edit`, `grep`, `glob`, `bash`, and `lsp`, and runs on your machine with your
   credentials. Within one omp process, the tools reject a `state.json` changed outside them. After a restart,
   `/factory resume` trusts the file on disk but sends the active slice back through checks and review.
-- Issue text and comments are marked as untrusted in `issue.md` and in the review data. The orchestrator asks you
-  before it uses text from GitHub users who are not collaborators. Unlike the earlier Sandcastle drop-in, nothing
-  runs in a container.
+- Issue text and comments are marked as untrusted in `issue.md` and in the review data. `factory_start` loads GitHub
+  issues itself with `gh` and asks you before the run uses the title, text, or comments of GitHub users who are not
+  collaborators. Unlike the earlier Sandcastle drop-in, nothing runs in a container.
 
 ## Develop
 
