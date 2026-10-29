@@ -84,28 +84,57 @@ async function excludeScratch(ws: Workspace) {
   appendFileSync(path, `${current === '' || current.endsWith('\n') ? '' : '\n'}${line}\n`);
 }
 
-/** The base slice 01 stacks on: the ref the user named, pinned to the commit it pointed at when the plan was approved. */
-export type Base = { baseRef: string; baseSha: string; trunk: string };
+/**
+ * The base slice 01 stacks on: the ref the user named, pinned to the commit it pointed at when the plan was approved.
+ * `landOn` is set when the user wants the stack landed on an existing local branch instead of opened as PRs.
+ */
+export type Base = { baseRef: string; baseSha: string; landOn?: string; trunk: string };
 
 /**
  * Resolves the run's base. `baseRef` overrides the configured base when the work builds on an unmerged branch; the
- * trunk then defaults to that branch, so the stack's PRs target it.
+ * trunk then defaults to that branch, so the stack's PRs target it. `landOn` names an existing local branch that
+ * `/factory submit` fast-forwards to the top slice; it is the base when `baseRef` is not given, and must be at or
+ * below the base so the fast-forward is possible.
  */
-export async function resolveBase(ws: Workspace, override: { baseRef?: string | undefined; trunk?: string | undefined } = {}): Promise<Base> {
-  const baseRef = override.baseRef ?? ws.config.baseRef;
-  const trunk = override.trunk ?? (override.baseRef === undefined ? ws.config.trunk : baseRef.replace(/^[^/]+\//, ''));
+export async function resolveBase(
+  ws: Workspace,
+  override: { baseRef?: string | undefined; landOn?: string | undefined; trunk?: string | undefined } = {},
+): Promise<Base> {
+  const { landOn } = override;
+  // An exact branch name, not a revision expression such as `main^{commit}` that rev-parse would also accept.
+  let landSha: string | undefined;
+  if (landOn !== undefined) {
+    try {
+      await git(ws.root, 'check-ref-format', `refs/heads/${landOn}`);
+      landSha = (await git(ws.root, 'show-ref', '--verify', '--hash', `refs/heads/${landOn}`)).trim();
+    } catch {
+      throw new Error(`"${landOn}" is not an existing local branch. Name it as \`git branch\` lists it.`);
+    }
+  }
+  const chosen = override.baseRef ?? landOn;
+  const baseRef = chosen ?? ws.config.baseRef;
+  const trunk = override.trunk ?? (chosen === undefined ? ws.config.trunk : baseRef.replace(/^[^/]+\//, ''));
+  let baseSha: string;
   try {
-    const baseSha = (await git(ws.root, 'rev-parse', '--verify', '--quiet', `${baseRef}^{commit}`)).trim();
-    return { baseRef, baseSha, trunk };
+    baseSha = (await git(ws.root, 'rev-parse', '--verify', '--quiet', `${baseRef}^{commit}`)).trim();
   } catch {
     throw new Error(
       `Base ref "${baseRef}" does not exist. ${
-        override.baseRef === undefined
+        chosen === undefined
           ? 'Fetch it, or set "baseRef" (and "trunk") in .omp/factory.json, for example "main".'
           : 'Fetch the branch the work builds on, then plan again.'
       }`,
     );
   }
+  if (landOn === undefined || landSha === undefined) return { baseRef, baseSha, trunk };
+  try {
+    await git(ws.root, 'merge-base', '--is-ancestor', landSha, baseSha);
+  } catch {
+    throw new Error(
+      `"${landOn}" is not at or below ${baseRef} (${baseSha.slice(0, 12)}), so /factory submit could not fast-forward it to the stack. Name a local branch the base builds on.`,
+    );
+  }
+  return { baseRef, baseSha, landOn, trunk };
 }
 
 export async function startRun(ws: Workspace, input: { feature: string; sessionId: string; source: Source }) {
@@ -114,7 +143,8 @@ export async function startRun(ws: Workspace, input: { feature: string; sessionI
     throw new Error(`Run "${input.feature}" already exists. Use /factory resume ${input.feature}.`);
   }
   const source = sourceSchema.parse(input.source);
-  // The base is resolved and pinned at plan approval, where the user can still pick a different one.
+  // The base is resolved and pinned at plan approval, where the user can still pick a different one; the plan
+  // event records it.
   const { baseRef, trunk } = ws.config;
   await excludeScratch(ws);
   const run: Run = {
@@ -131,7 +161,7 @@ export async function startRun(ws: Workspace, input: { feature: string; sessionI
     trunk,
     version: 1,
   };
-  addEvent(run, 'start', `${source.kind} ${source.ref}; base ${baseRef}, trunk ${trunk}`);
+  addEvent(run, 'start', `${source.kind} ${source.ref}`);
   writeAtomic(
     join(runDir(ws, run.feature), 'issue.md'),
     `# ${source.title}\n\nSource: ${source.kind} ${source.ref}${source.url ? ` (${source.url})` : ''}\n\n${UNTRUSTED_NOTE}\n\n<untrusted-issue>\n${source.body}\n</untrusted-issue>\n`,
@@ -312,7 +342,13 @@ export function approvePlan(ws: Workspace, run: Run, slices: Slice[], base?: Bas
   run.slices = slices;
   for (const slice of slices) writeTicket(ws, run, slice);
   run.status = 'running';
-  addEvent(run, 'plan', `${slices.length} slices approved: ${slices.map(slice => `${slice.id} ${slice.title}`).join('; ')}`);
+  const pinned = run.baseSha === undefined ? '' : ` (${run.baseSha.slice(0, 12)})`;
+  const target = run.landOn === undefined ? `PRs target ${run.trunk}` : `lands on ${run.landOn}`;
+  addEvent(
+    run,
+    'plan',
+    `${slices.length} slices approved on base ${run.baseRef}${pinned}, ${target}: ${slices.map(slice => `${slice.id} ${slice.title}`).join('; ')}`,
+  );
 }
 
 /**
@@ -387,6 +423,7 @@ function requestFix(ws: Workspace, run: Run, slice: Slice, body: string) {
   slice.fixPath = fixPath;
   slice.phase = 'fix';
   slice.checkedSha = undefined;
+  slice.checkResults = undefined;
   slice.greenSha = undefined;
   slice.review = undefined;
   if (slice.fixRounds >= slice.roundLimit) {
@@ -433,6 +470,7 @@ export function resumeRun(ws: Workspace, run: Run, sessionId: string) {
   if (slice !== undefined && (slice.phase === 'review' || slice.phase === 'ready')) {
     slice.phase = 'checks';
     slice.checkedSha = undefined;
+    slice.checkResults = undefined;
     slice.greenSha = undefined;
     slice.review = undefined;
   }
@@ -486,6 +524,7 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   const summary = results.map(({ command, result }) => describeCheck(command, result));
   if (failed.length === 0 && dirty === '') {
     slice.checkedSha = sha;
+    slice.checkResults = summary;
     slice.phase = 'review';
     slice.review = undefined;
     addEvent(run, 'checks-pass', summary.join('; '), slice);
@@ -514,6 +553,7 @@ export async function startReview(ws: Workspace, run: Run) {
   if ((await head(ws.root)) !== slice.checkedSha) {
     slice.phase = 'checks';
     slice.checkedSha = undefined;
+    slice.checkResults = undefined;
     throw new Invalidated('HEAD moved after checks passed. Call factory_checks again.');
   }
   const range = `${slice.parentBranch}...HEAD`;
@@ -526,7 +566,7 @@ export async function startReview(ws: Workspace, run: Run) {
   const dataFile = join(reviewDir(ws, run.feature, id), 'data.md');
   writeAtomic(
     dataFile,
-    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files}`,
+    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n## CHECKS\n\nThe factory ran every configured check on \`${slice.checkedSha}\` and all passed. Do not run them again.\n\n${(slice.checkResults ?? []).map(line => `- ${line}`).join('\n')}\n\n## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files}`,
   );
   slice.review = { id, sha: slice.checkedSha, snapshot: await snapshot(ws.root), submissions: {} };
   addEvent(run, 'review-start', id, slice);
@@ -704,6 +744,7 @@ export async function recordReview(ws: Workspace, run: Run) {
     slice.review = undefined;
     slice.phase = 'checks';
     slice.checkedSha = undefined;
+    slice.checkResults = undefined;
     addEvent(run, 'review-invalidated', `${review.id}: repository changed during review`, slice);
     throw new Invalidated('The repository changed during review. Restore the reviewed state, then call factory_checks.');
   }
@@ -872,7 +913,8 @@ export function settle(run: Run) {
 }
 
 /**
- * Adopts every slice branch into one gh-stack stack and opens draft PRs. Never merges.
+ * Submits the reviewed stack. By default it adopts every slice branch into one gh-stack stack and opens draft PRs.
+ * A run with `landOn` instead fast-forwards that local branch to the top slice; no PRs are opened. Never merges.
  * Only the user-invoked `/factory submit` command calls this; no model-callable tool does.
  */
 export async function submitStack(ws: Workspace, run: Run) {
@@ -886,6 +928,7 @@ export async function submitStack(ws: Workspace, run: Run) {
   if (unreviewed.length > 0) {
     throw new Error(`These branches moved after their green review and were not submitted: ${unreviewed.join(', ')}`);
   }
+  if (run.landOn !== undefined) return landStack(ws, run, run.landOn);
   const stacked = await gh(ws.root, 'stack', 'view', '--json').then(
     () => true,
     () => false,
@@ -896,10 +939,44 @@ export async function submitStack(ws: Workspace, run: Run) {
   return output;
 }
 
+/**
+ * Fast-forwards `landOn` to the top slice's green commit with a compare-and-swap ref update: no checkout, no merge
+ * commit, and a branch that moved since the ancestry check is left alone.
+ */
+async function landStack(ws: Workspace, run: Run, landOn: string) {
+  const top = run.slices.at(-1);
+  if (top?.greenSha === undefined) throw new Error(`Run "${run.feature}" has no reviewed slice to land.`);
+  const ref = `refs/heads/${landOn}`;
+  // Any worktree (this one or a linked one) with the branch checked out would be left behind by the ref update.
+  const worktree = (await git(ws.root, 'worktree', 'list', '--porcelain'))
+    .split('\n\n')
+    .map(block => block.split('\n'))
+    .find(lines => lines.includes(`branch ${ref}`));
+  if (worktree !== undefined) {
+    const path = worktree[0]?.replace(/^worktree /, '');
+    throw new Error(`${landOn} is checked out in ${path}, and moving it would leave that working tree behind. Switch it to another branch, then run /factory submit again.`);
+  }
+  let old: string;
+  try {
+    old = (await git(ws.root, 'rev-parse', '--verify', '--quiet', `${ref}^{commit}`)).trim();
+    await git(ws.root, 'merge-base', '--is-ancestor', old, top.greenSha);
+  } catch {
+    throw new Error(`${landOn} is gone or moved off the stack's base, so it cannot fast-forward to ${top.branch}. Nothing changed.`);
+  }
+  await git(ws.root, 'update-ref', '-m', `factory: land ${run.feature}`, ref, top.greenSha, old);
+  const landed = `${landOn} fast-forwarded to ${top.branch} (${top.greenSha.slice(0, 12)})`;
+  addEvent(run, 'submit', landed);
+  return `${landed}. No PRs were opened.\n`;
+}
+
 /** The one thing the orchestrator should do next, in words a model can act on. */
 export function nextAction(run: Run): string {
   if (run.status === 'intake') return 'Clarify the issue with the user, then propose slices with factory_plan.';
-  if (run.status === 'done') return `The stack is ready. Tell the user they can open draft PRs with /factory submit ${run.feature}.`;
+  if (run.status === 'done') {
+    return run.landOn === undefined
+      ? `The stack is ready. Tell the user they can open draft PRs with /factory submit ${run.feature}.`
+      : `The stack is ready. Tell the user that /factory submit ${run.feature} fast-forwards ${run.landOn} to the top slice.`;
+  }
   if (run.status !== 'running') return `The run is ${run.status}. The user resumes it with /factory resume ${run.feature}.`;
   const slice = activeSlice(run);
   if (slice === undefined) {

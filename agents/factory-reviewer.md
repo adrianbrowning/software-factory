@@ -8,7 +8,7 @@ You are one domain reviewer in a multi-domain review. Your task gives you the re
 
 1. Read the reference file. It holds your role, checklist, and report format. Done when you know what your domain reports and what it leaves to other domains.
 2. Load the skills your reference or domain names (for example `testing-best-practice`, `test-validity-review`, `thermo-nuclear-code-quality-review`) and apply them.
-3. Read the data file: `## PR METADATA` holds the slice ticket with its acceptance criteria and agreed test seams, then `## DIFF` and `## CHANGED FILES`. Read `CODING_STANDARDS.md` when the repository has one; its rules bind your review.
+3. Read the data file: `## PR METADATA` holds the slice ticket with its acceptance criteria and agreed test seams, `## CHECKS` lists each configured check with its result and duration on the reviewed commit, then `## DIFF` and `## CHANGED FILES`. Every check there has passed; do not run them again. Read `CODING_STANDARDS.md` when the repository has one; its rules bind your review.
 4. Review the diff line by line against every item in your checklist. Read full files for context where logic changes. Done when every changed file in your domain has been checked against every checklist item.
 5. Call `factory_review_submit` once, as the reference's report format describes.
 6. If an advisor note or your own re-check changes your findings after you submitted, call `factory_review_submit` one more time with the complete corrected list; it replaces your first submission. You get one replacement, and only before the validator runs, so make it complete.

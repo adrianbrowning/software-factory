@@ -89,6 +89,13 @@ const planToolSchema = planSchema.extend({
     .min(1)
     .optional()
     .describe('Only when the user chose it: the unmerged branch this work builds on. Slice 01 stacks on it'),
+  landOn: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      'Only when the user asked for no new PR branch: an existing local branch that /factory submit fast-forwards to the top slice instead of opening PRs. It is the base when baseRef is omitted',
+    ),
   trunk: z.string().min(1).optional().describe('Branch the stack PRs target; defaults to baseRef without its remote'),
 });
 const seamsSchema = z.object({ seams: z.array(z.string().min(1)).min(1).describe('Seams the user agreed, as public interfaces') });
@@ -249,9 +256,10 @@ export default function softwareFactory(pi: ExtensionAPI) {
     schema: planToolSchema,
     async run(params, ws, ctx) {
       const feature = activeFeature(ws);
-      const base = await resolveBase(ws, { baseRef: params.baseRef, trunk: params.trunk });
+      const base = await resolveBase(ws, { baseRef: params.baseRef, landOn: params.landOn, trunk: params.trunk });
       const slices = planSlices(ws, readRun(ws, feature), params.slices, base);
-      const where = `Slice 01 branches from ${base.baseRef} (${base.baseSha.slice(0, 12)}); PRs target ${base.trunk}.`;
+      const target = base.landOn === undefined ? `PRs target ${base.trunk}` : `/factory submit fast-forwards ${base.landOn} to the top slice; no PRs`;
+      const where = `Slice 01 branches from ${base.baseRef} (${base.baseSha.slice(0, 12)}); ${target}.`;
       if (!(await confirm(ctx, `Approve ${slices.length} slices for "${feature}"?`, `${where}\n\n${planSummary(slices)}`))) {
         return reply('The user rejected the plan. Ask what to change, then call factory_plan again.');
       }
@@ -512,8 +520,10 @@ export default function softwareFactory(pi: ExtensionAPI) {
         const feature = requireFeatureName(argument || activeFeature(ws));
         const run = readRun(ws, feature);
         const ok = await ctx.ui.confirm(
-          'Open draft PRs?',
-          `gh stack will adopt ${run.slices.length} branches onto ${run.trunk} and open one draft PR per slice:\n${run.slices.map(slice => slice.branch).join('\n')}`,
+          run.landOn === undefined ? 'Open draft PRs?' : `Fast-forward ${run.landOn}?`,
+          run.landOn === undefined
+            ? `gh stack will adopt ${run.slices.length} branches onto ${run.trunk} and open one draft PR per slice:\n${run.slices.map(slice => slice.branch).join('\n')}`
+            : `${run.landOn} will fast-forward to ${run.slices.at(-1)?.branch} (${run.slices.length} slices). No PRs are opened and your checkout is not changed.`,
         );
         if (!ok) return;
         const output = await withRun(ws, feature, current => submitStack(ws, current));

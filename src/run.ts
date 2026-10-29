@@ -86,6 +86,8 @@ const reviewSchema = z.object({
 const sliceSchema = sliceInputSchema.extend({
   branch: text,
   checkedSha: sha.optional(),
+  /** What each check reported when `checkedSha` passed; the review data file lists them for reviewers. */
+  checkResults: z.array(text).optional(),
   compactions: z.number().int().nonnegative(),
   fixPath: text.optional(),
   fixRounds: z.number().int().nonnegative(),
@@ -112,6 +114,8 @@ const runSchema = z.object({
   decisions: z.array(text).default([]),
   events: z.array(z.object({ at: text, detail: z.string(), kind: text, slice: z.string().optional() })),
   feature: text,
+  /** Existing local branch that `/factory submit` fast-forwards to the top slice, instead of opening PRs. */
+  landOn: text.optional(),
   ownerSessionId: text,
   retroRecorded: z.boolean(),
   slices: z.array(sliceSchema),
