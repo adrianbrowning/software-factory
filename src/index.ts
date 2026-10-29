@@ -391,7 +391,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
       const run = readRun(ws, feature);
       const commits = `Slice commits:\n${result.commits}`;
       const unchanged = result.unchanged
-        ? '\nNo new commits since the fix file. Each item in the implementer report must say "already fixed" or "not a defect"; a "fixed in <sha>" is not on this branch.'
+        ? '\nNo new commits since the fix file. The implementer report should explain, for each item, why no change was needed.'
         : '';
       if (result.passed) {
         const byPath = result.pathSkipped.length === 0 ? '' : `\nPath rules skip: ${result.pathSkipped.map(entry => `${entry.domain} (${entry.reason})`).join('; ')}. Pass a domain in factory_review_start keep when a changed file holds its subject after all.`;
