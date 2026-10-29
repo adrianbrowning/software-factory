@@ -314,13 +314,14 @@ export default function softwareFactory(pi: ExtensionAPI) {
   tool({
     caller: 'main',
     description:
-      'Record decisions the user made (accepted tradeoffs, out-of-scope work). The user confirms them; every later ticket and review data file lists them.',
+      'Record decisions the user made (accepted tradeoffs, out-of-scope work). The user confirms them unless confirmDecisions is false; every later ticket and review data file lists them.',
     label: 'Factory: record decisions',
     name: 'factory_decide',
     schema: decisionsSchema,
     async run(params, ws, ctx) {
       const feature = activeFeature(ws);
-      if (!(await confirm(ctx, 'Record these decisions for reviewers?', params.decisions.map(decision => `- ${decision}`).join('\n')))) {
+      const listed = params.decisions.map(decision => `- ${decision}`).join('\n');
+      if (ws.config.confirmDecisions && !(await confirm(ctx, 'Record these decisions for reviewers?', listed))) {
         return reply('The user rejected these decisions. Ask how to word them.');
       }
       const decisions = await withRun(ws, feature, run => recordDecisions(ws, run, params.decisions));

@@ -60,6 +60,7 @@ function workspace(overrides: Partial<FactoryConfig> = {}): Workspace {
       // Passes only when the slice has committed a file named `ok`.
       checks: ['test -f ok'],
       checkTimeoutMs: 10_000,
+      confirmDecisions: true,
       factoryRepo: 'acme/factory',
       maxRounds: 1,
       scratchDir: '.scratch',

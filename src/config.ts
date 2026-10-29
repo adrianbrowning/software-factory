@@ -16,6 +16,11 @@ const configSchema = z
     /** Deterministic checks, run in order; every one must pass. Defaults to the package.json scripts. */
     checks: z.array(text).min(1).optional(),
     checkTimeoutMs: positiveInt.default(10 * 60 * 1_000),
+    /**
+     * Ask the user to confirm each `factory_decide` call. Set false to record decisions without the dialog; the
+     * orchestrator still records only decisions the user made, and the run's events list each one.
+     */
+    confirmDecisions: z.boolean().default(true),
     /** Repository that receives retro findings about the factory itself. */
     factoryRepo: text.default('adrianbrowning/software-factory'),
     /** Fix rounds a slice gets before it stalls for a user decision; each "continue" grants this many more. */

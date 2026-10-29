@@ -99,6 +99,7 @@ working tree, and unknown keys are rejected.
 | --- | --- | --- |
 | `checks` | `lint`, `typecheck`, `test` scripts found in `package.json` | Commands run in order; all must pass |
 | `checkTimeoutMs` | `600000` | Per-check timeout; the whole process group is killed |
+| `confirmDecisions` | `true` | Ask before each `factory_decide` records a decision. Set `false` to record them without the dialog; they still show in the run's events, tickets, and review data |
 | `maxRounds` | `3` | Fix rounds per slice before the user decides to continue or pause |
 | `sliceTokenBudget` | `400000` | Planned context per slice: 40% of a 1M window |
 | `baseRef` / `trunk` | `origin/main` / `main` | Default base: slice 01 branches from the commit `baseRef` points at when the plan is approved; the stack is based on `trunk`. A run that builds on unmerged work names that branch as `baseRef` in `factory_plan`, and its PRs then target it. The plan event in `state.json` records the pinned base |
