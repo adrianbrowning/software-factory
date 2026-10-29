@@ -126,6 +126,19 @@ describe('base resolution', () => {
     assert.match(run.events.find(event => event.kind === 'plan')?.detail ?? '', new RegExp(`on base main \\(${pinned.slice(0, 12)}\\), PRs target main`));
     assert.doesNotMatch(run.events.find(event => event.kind === 'start')?.detail ?? '', /origin\/main/);
   });
+
+  it('strips only a git remote from the base when deriving the trunk', async () => {
+    const ws = workspace({ baseRef: 'upstream/dev', trunk: undefined });
+    sh(ws.root, 'remote', 'add', 'upstream', ws.root);
+    sh(ws.root, 'update-ref', 'refs/remotes/upstream/dev', 'HEAD');
+    sh(ws.root, 'branch', 'feature/auth');
+    assert.equal((await resolveBase(ws)).trunk, 'dev');
+    assert.equal((await resolveBase(ws, { baseRef: 'feature/auth' })).trunk, 'feature/auth');
+    assert.equal((await resolveBase(ws, { landOn: 'feature/auth' })).trunk, 'feature/auth');
+    assert.equal((await resolveBase(ws, { baseRef: 'upstream/dev' })).trunk, 'dev');
+    await startRun(ws, { feature: 'demo', sessionId: 's', source: { body: '', kind: 'text', ref: 'r', title: 'T' } });
+    assert.equal(readRun(ws, 'demo').trunk, 'dev');
+  });
 });
 
 describe('planSlices', () => {
@@ -193,6 +206,7 @@ describe('slice loop gates', () => {
     commit(ws, 'ok', 'fixed\n');
     assert.equal((await step(ws, run => runChecks(ws, run))).passed, true);
     const second = await step(ws, run => startReview(ws, run));
+    assert.match(readFileSync(second.dataFile, 'utf8'), /## PREVIOUS REVIEW\n\nReview 01-r1 [^\n]*\n\n- `bug-null-crash` \[high\] ok:1: null-crash\n\n## DIFF/);
     await review(ws, second.reviewId, [finding('thermo', 'observation', 'naming')]);
     const result = await step(ws, run => recordReview(ws, run));
     assert.ok(result.green);
@@ -403,6 +417,35 @@ describe('review submissions', () => {
 
     const result = await step(ws, run => recordReview(ws, run));
     assert.equal(result.green ? 0 : result.blocking, 1);
+  });
+
+  it('accepts a finding only on a changed path and inside a new-side hunk', async () => {
+    const ws = workspace();
+    commit(ws, 'long.txt', Array.from({ length: 20 }, (_, index) => `line ${index + 1}\n`).join(''));
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    writeFileSync(join(ws.root, 'long.txt'), Array.from({ length: 20 }, (_, index) => `line ${index === 9 ? 'ten' : index + 1}\n`).join(''));
+    writeFileSync(join(ws.root, 'a b.txt'), 'spaced\n');
+    writeFileSync(join(ws.root, 'bin'), Buffer.from([0, 1, 2, 0]));
+    rmSync(join(ws.root, 'README.md'));
+    commit(ws, 'ok');
+    sh(ws.root, 'add', '-A');
+    sh(ws.root, 'commit', '-qm', 'slice work');
+    await step(ws, run => runChecks(ws, run));
+    const { reviewId } = await step(ws, run => startReview(ws, run));
+    const at = (name: string, path: string, line?: number): Finding => {
+      const { line: _line, ...rest } = finding('bug', 'high', name);
+      return { ...rest, path, ...(line === undefined ? {} : { line }) };
+    };
+    const submit = (findings: Finding[]) => step(ws, run => submitDomain(ws, run, { agentId: 'r-bug', domain: 'bug', findings, reviewId }));
+
+    await assert.rejects(submit([at('above', 'long.txt', 6)]), /line 6 of long\.txt, outside the diff\. Its new-side hunk lines: 7-13\./);
+    await assert.rejects(submit([at('below', 'long.txt', 14)]), /outside the diff/);
+    await assert.rejects(submit([at('unchanged', 'other.txt')]), /names other\.txt, which the diff does not change/);
+    await assert.rejects(submit([at('binary-line', 'bin', 1)]), /file-level findings only: omit line/);
+    await assert.rejects(submit([at('deleted-line', 'README.md', 1)]), /file-level findings only/);
+    const valid = [at('first', 'long.txt', 7), at('last', 'long.txt', 13), at('spaced', 'a b.txt', 1), at('binary', 'bin'), at('deleted', 'README.md')];
+    assert.equal(await submit(valid), valid.length);
   });
 
   it('lets the validator correct its verdict once, so a confirmed blocking finding blocks', async () => {

@@ -90,10 +90,9 @@ describe('loadConfig', () => {
     assert.throws(() => loadConfig(config({ scratchDir: '../outside' })), /scratchDir/);
   });
 
-  it('derives the trunk from baseRef and normalizes scratchDir', () => {
-    const root = dir({ '.omp/factory.json': JSON.stringify({ baseRef: 'upstream/dev', scratchDir: './runs/' }), 'package.json': scripts(['test']) });
-    const config = loadConfig(root);
-    assert.deepEqual([config.trunk, config.scratchDir], ['dev', 'runs']);
+  it('normalizes scratchDir', () => {
+    const root = dir({ '.omp/factory.json': JSON.stringify({ scratchDir: './runs/' }), 'package.json': scripts(['test']) });
+    assert.equal(loadConfig(root).scratchDir, 'runs');
   });
 });
 

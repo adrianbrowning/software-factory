@@ -87,6 +87,12 @@ async function excludeScratch(ws: Workspace) {
   appendFileSync(path, `${current === '' || current.endsWith('\n') ? '' : '\n'}${line}\n`);
 }
 
+/** `ref` without its remote (`origin/main` → `main`). A local branch such as `feature/auth` keeps its whole name. */
+async function branchName(root: string, ref: string) {
+  const remote = (await git(root, 'remote')).split('\n').find(name => name !== '' && ref.startsWith(`${name}/`));
+  return remote === undefined ? ref : ref.slice(remote.length + 1);
+}
+
 /**
  * The base slice 01 stacks on: the ref the user named, pinned to the commit it pointed at when the plan was approved.
  * `landOn` is set when the user wants the stack landed on an existing local branch instead of opened as PRs.
@@ -116,7 +122,7 @@ export async function resolveBase(
   }
   const chosen = override.baseRef ?? landOn;
   const baseRef = chosen ?? ws.config.baseRef;
-  const trunk = override.trunk ?? (chosen === undefined ? ws.config.trunk : baseRef.replace(/^[^/]+\//, ''));
+  const trunk = override.trunk ?? (chosen === undefined ? ws.config.trunk : undefined) ?? (await branchName(ws.root, baseRef));
   let baseSha: string;
   try {
     baseSha = (await git(ws.root, 'rev-parse', '--verify', '--quiet', `${baseRef}^{commit}`)).trim();
@@ -148,7 +154,8 @@ export async function startRun(ws: Workspace, input: { feature: string; sessionI
   const source = sourceSchema.parse(input.source);
   // The base is resolved and pinned at plan approval, where the user can still pick a different one; the plan
   // event records it.
-  const { baseRef, trunk } = ws.config;
+  const { baseRef } = ws.config;
+  const trunk = ws.config.trunk ?? (await branchName(ws.root, baseRef));
   await excludeScratch(ws);
   const run: Run = {
     baseRef,
@@ -573,18 +580,20 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = []) {
   if (refused.length > 0) throw new Error(`These domains always review this slice: ${refused.join(', ')}.`);
   if (new Set(skippedNames).size !== skippedNames.length) throw new Error('A skipped domain appears twice.');
   const range = `${slice.parentBranch}...HEAD`;
-  const diff = await git(ws.root, 'diff', range);
+  const diff = await git(ws.root, '-c', 'core.quotePath=false', 'diff', '--no-ext-diff', range);
   if (diff.trim() === '') throw new Error(`No changes in ${range}; the implementer committed nothing.`);
-  const files = await git(ws.root, 'diff', '--name-only', range);
+  const files = (await git(ws.root, 'diff', '--name-only', '-z', range)).split('\0').filter(Boolean);
+  const previous = previousBlocking(ws, run, slice);
   slice.reviews += 1;
   const id = `${slice.id}-r${slice.reviews}`;
   rmSync(reviewDir(ws, run.feature, id), { force: true, recursive: true });
   const dataFile = join(reviewDir(ws, run.feature, id), 'data.md');
   writeAtomic(
     dataFile,
-    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n## CHECKS\n\nThe factory ran every configured check on \`${slice.checkedSha}\` and all passed. Do not run them again.\n\n${(slice.checkResults ?? []).map(line => `- ${line}`).join('\n')}\n\n## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files}`,
+    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n## CHECKS\n\nThe factory ran every configured check on \`${slice.checkedSha}\` and all passed. Do not run them again.\n\n${(slice.checkResults ?? []).map(line => `- ${line}`).join('\n')}\n\n${previous}## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files.join('\n')}\n`,
   );
-  slice.review = { decisions: run.decisions.length, id, sha: slice.checkedSha, skipped, snapshot: await snapshot(ws.root), submissions: {} };
+  const lines = changedLines(diff, files);
+  slice.review = { decisions: run.decisions.length, id, lines, sha: slice.checkedSha, skipped, snapshot: await snapshot(ws.root), submissions: {} };
   const skippedDetail = skipped.map(entry => `${entry.domain} (${entry.reason})`).join('; ');
   addEvent(run, 'review-start', skipped.length === 0 ? id : `${id} skipped ${skippedDetail}`, slice);
   return {
@@ -594,6 +603,52 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = []) {
     referenceDir: REVIEW_REFERENCE_DIR,
     reviewId: id,
   };
+}
+
+/**
+ * The blocking findings of the slice's last recorded review, as a data file section, so this round's reviewers check
+ * whether each problem remains and report it under the same id. Empty for a first review.
+ */
+function previousBlocking(ws: Workspace, run: Run, slice: Slice) {
+  if (slice.reviews === 0) return '';
+  const id = `${slice.id}-r${slice.reviews}`;
+  const path = join(reviewDir(ws, run.feature, id), 'review.json');
+  if (!existsSync(path)) return '';
+  const { findings } = z.object({ findings: findingListSchema }).parse(JSON.parse(readFileSync(path, 'utf8')));
+  const blocking = findings.filter(finding => finding.severity !== 'observation');
+  if (blocking.length === 0) return '';
+  const items = blocking.map(
+    finding => `- \`${finding.id}\` [${finding.severity}] ${finding.path}${finding.line === undefined ? '' : `:${finding.line}`}: ${evidence(finding.title, 500)}`,
+  );
+  return `## PREVIOUS REVIEW\n\nReview ${id} sent these blocking findings to the implementer, who has since committed a fix. Check whether the code still has each problem in your domain. Report a problem that remains under the same id; leave out one the fix resolved.\n\n${items.join('\n')}\n\n`;
+}
+
+/**
+ * Each changed path with the new-side line ranges of its hunks, context lines included. A path with no hunks (a
+ * binary, mode-only, or deleted file) maps to no ranges, so a finding on it can only be file-level.
+ */
+export function changedLines(diff: string, files: string[]) {
+  const lines: Record<string, [number, number][]> = Object.fromEntries(files.map(file => [file, []]));
+  let ranges: [number, number][] | undefined;
+  let header = false;
+  for (const line of diff.split('\n')) {
+    // Content lines start with ' ', '+', '-', or '\', so these prefixes only match headers.
+    if (line.startsWith('diff --git ')) {
+      header = true;
+      ranges = undefined;
+    } else if (header && line.startsWith('+++ ')) {
+      const name = line.slice(4).replace(/\t$/, '');
+      const path = (name.startsWith('"') ? (JSON.parse(name) as string) : name).replace(/^b\//, '');
+      ranges = name === '/dev/null' ? undefined : (lines[path] ??= []);
+    } else if (line.startsWith('@@ ')) {
+      header = false;
+      const match = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
+      const start = Number(match?.[1]);
+      const count = match?.[2] === undefined ? 1 : Number(match[2]);
+      if (ranges !== undefined && count > 0) ranges.push([start, start + count - 1]);
+    }
+  }
+  return lines;
 }
 
 /** The domains a review waits for: every domain it did not skip. */
@@ -622,6 +677,18 @@ function readRecorded(path: string, recorded: { hash: string } | undefined) {
   return JSON.parse(content) as unknown;
 }
 
+/** Throws unless the finding names a changed path and, when it gives a line, a new-side line inside one of its hunks. */
+function requireInDiff(lines: Record<string, [number, number][]>, finding: Finding) {
+  const ranges = lines[finding.path];
+  if (ranges === undefined) {
+    throw new Error(`Finding "${finding.id}" names ${finding.path}, which the diff does not change. Attach it to the changed file and line that cause the problem.`);
+  }
+  const { line } = finding;
+  if (line === undefined || ranges.some(([start, end]) => line >= start && line <= end)) return;
+  const shown = ranges.length === 0 ? 'none (file-level findings only: omit line)' : ranges.map(([start, end]) => `${start}-${end}`).join(', ');
+  throw new Error(`Finding "${finding.id}" names line ${line} of ${finding.path}, outside the diff. Its new-side hunk lines: ${shown}.`);
+}
+
 /**
  * Stores one domain reviewer's findings as its own file, so parallel reviewers never share a write. Each domain is
  * submitted by one agent, before validation; that agent may replace its submission once (for a late advisor note).
@@ -644,6 +711,7 @@ export function submitDomain(ws: Workspace, run: Run, input: { agentId: string; 
     if (!finding.id.startsWith(`${domain}-`)) throw new Error(`Finding "${finding.id}" must have an id starting "${domain}-".`);
     if (ids.has(finding.id)) throw new Error(`Duplicate finding id "${finding.id}"`);
     ids.add(finding.id);
+    requireInDiff(review.lines, finding);
     if (finding.decision !== undefined) {
       if (finding.severity === 'observation') throw new Error(`Finding "${finding.id}" breaks a recorded decision, so it must be critical or high.`);
       if (finding.decision > review.decisions) {
