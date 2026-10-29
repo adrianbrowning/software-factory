@@ -69,6 +69,27 @@ The package bundles the extension (`src/index.ts`), the skill (`skills/software-
 While a run is active, the session cannot end until the run is done, paused, or stalled. The third stop attempt in a
 row without progress pauses the run instead.
 
+### Land on an existing branch
+
+Use this when you want the work on a branch that you already have, and you do not want new PRs. At intake, tell
+the orchestrator, for example: "Put this on my branch `EXT2-953-closeOrReload`. Do not open PRs." It passes that
+branch to `factory_plan` as `landOn`.
+
+- Give the branch name as `git branch` lists it. The plan refuses `origin/…`, `refs/heads/…`, revision expressions
+  such as `main^{commit}`, and branches that do not exist.
+- The branch is also the base, unless you pick a different base. Then the branch must be at or below that base.
+- The plan dialog shows `/factory submit fast-forwards <branch> to the top slice; no PRs`.
+- The factory still builds and reviews each slice on its own `<prefix>/<feature>/<NN>-<slug>` branch.
+
+When the run is done, run `/factory submit` and confirm `Fast-forward <branch>?`. The factory moves your branch to
+the reviewed commit of the top slice. It does not check out, merge, or push. It refuses, and changes nothing, when:
+
+- a slice branch moved after its review;
+- your branch is checked out in a worktree (switch that worktree to a different branch first);
+- your branch is gone, or has commits that are not in the stack.
+
+Then push your branch. You can delete the slice branches.
+
 ## Configure
 
 Optional `.omp/factory.json` in the target repository. Commit it on the base branch: every gate needs a clean
