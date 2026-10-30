@@ -532,6 +532,7 @@ function requestFix(ws: Workspace, run: Run, slice: Slice, body: string, sha: st
   slice.checkedSha = undefined;
   slice.checkResults = undefined;
   slice.greenSha = undefined;
+  slice.greenDecisions = undefined;
   slice.review = undefined;
   if (slice.fixRounds >= slice.roundLimit) {
     slice.stalled = true;
@@ -581,6 +582,7 @@ export function resumeRun(ws: Workspace, run: Run, sessionId: string) {
     slice.checkedSha = undefined;
     slice.checkResults = undefined;
     slice.greenSha = undefined;
+    slice.greenDecisions = undefined;
     slice.review = undefined;
   }
   run.ownerSessionId = sessionId;
@@ -1049,6 +1051,11 @@ export async function recordReview(ws: Workspace, run: Run) {
     addEvent(run, 'review-invalidated', `${review.id}: repository changed during review`, slice);
     throw new Invalidated('The repository changed during review. Restore the reviewed state, then call factory_checks.');
   }
+  if (run.decisions.length > review.decisions) {
+    slice.review = undefined;
+    addEvent(run, 'review-invalidated', `${review.id}: decisions recorded during review`, slice);
+    throw new Invalidated(`${newerDecisions(run, review.decisions)} newer than review ${review.id}, so its reviewers did not check the code against them. Call factory_review_start for a new review.`);
+  }
 
   const kept = keptFindings(findings, validation);
   const blocking = kept.filter(finding => finding.severity !== 'observation');
@@ -1064,6 +1071,7 @@ export async function recordReview(ws: Workspace, run: Run) {
   if (blocking.length === 0) {
     slice.phase = 'ready';
     slice.greenSha = review.sha;
+    slice.greenDecisions = review.decisions;
     addEvent(run, 'review-green', detail, slice);
     return { green: true as const, observations: observations.map(finding => renderFinding(finding, run.decisions)) };
   }
@@ -1083,7 +1091,19 @@ export async function completeSlice(ws: Workspace, run: Run) {
   if ((await head(ws.root)) !== slice.greenSha) {
     slice.phase = 'checks';
     slice.greenSha = undefined;
+    slice.greenDecisions = undefined;
     throw new Invalidated('HEAD moved after the green review. Call factory_checks again.');
+  }
+  // State files from before greenDecisions have no count; their green reviews stay valid.
+  if (slice.greenDecisions !== undefined && run.decisions.length > slice.greenDecisions) {
+    const covered = slice.greenDecisions;
+    slice.phase = 'review';
+    slice.checkedSha = slice.greenSha;
+    slice.greenSha = undefined;
+    slice.greenDecisions = undefined;
+    slice.review = undefined;
+    addEvent(run, 'review-invalidated', 'decisions recorded after the green review', slice);
+    throw new Invalidated(`${newerDecisions(run, covered)} newer than the green review, so its reviewers did not check the code against them. Call factory_review_start for a new review.`);
   }
   slice.status = 'done';
   writeTicket(ws, run, slice);
@@ -1093,6 +1113,12 @@ export async function completeSlice(ws: Workspace, run: Run) {
   addEvent(run, 'slice-done', `${slice.fixRounds} fix rounds, ${slice.reviews} reviews`, slice);
   settle(run);
   return slice;
+}
+
+function newerDecisions(run: Run, covered: number) {
+  const first = covered + 1;
+  const last = run.decisions.length;
+  return first === last ? `Decision ${first} is` : `Decisions ${first}–${last} are`;
 }
 
 export const RETRO_CATEGORIES = [
