@@ -470,6 +470,45 @@ describe('slice loop gates', () => {
     await assert.rejects(step(ws, run => completeSlice(ws, run)), /HEAD moved after the green review/);
     assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'checks');
   });
+
+  it('sends a review back to factory_review_start on the same commit when a decision lands during it', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const checked = readRun(ws, 'demo').slices[0]?.checkedSha;
+    const opened = await step(ws, run => startReview(ws, run));
+    await review(ws, opened.reviewId, []);
+    await step(ws, run => recordDecisions(ws, run, ['Late decision.']));
+
+    await assert.rejects(step(ws, run => recordReview(ws, run)), /Decision 1 is newer than review/);
+    const invalidated = readRun(ws, 'demo').slices[0];
+    assert.equal(invalidated?.phase, 'review');
+    assert.equal(invalidated?.review, undefined);
+    assert.equal(invalidated?.checkedSha, checked);
+
+    const again = await step(ws, run => startReview(ws, run));
+    assert.equal(readRun(ws, 'demo').slices[0]?.review?.decisions, 1);
+    await review(ws, again.reviewId, []);
+    assert.equal((await step(ws, run => recordReview(ws, run))).green, true);
+  });
+
+  it('refuses to complete a slice when a decision lands after its green review, until a new review goes green', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await green(ws);
+    await step(ws, run => recordDecisions(ws, run, ['Late decision.']));
+
+    await assert.rejects(step(ws, run => completeSlice(ws, run)), /Decision 1 is newer than the green review/);
+    assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'review');
+    const opened = await step(ws, run => startReview(ws, run));
+    await review(ws, opened.reviewId, []);
+    await step(ws, run => recordReview(ws, run));
+    assert.equal((await step(ws, run => completeSlice(ws, run))).status, 'done');
+  });
 });
 
 describe('review submissions', () => {
@@ -616,8 +655,6 @@ describe('review submissions', () => {
 
   it('blocks on findings that break a recorded decision', async () => {
     const { reviewId, ws } = await openReview(['The shared field is a non-optional record.']);
-    // Decided after the review data was written, so no reviewer saw it.
-    await step(ws, run => recordDecisions(ws, run, ['Later decision.']));
     const submit = (domain: Finding['domain'], findings: Finding[]) =>
       step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings, reviewId }));
     const declared = { ...finding('react-ts', 'high', 'undefined-field'), decision: 1 };

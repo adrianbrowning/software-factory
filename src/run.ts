@@ -114,6 +114,8 @@ const sliceSchema = sliceInputSchema.extend({
   /** Commit the current fix file describes; checks on the same commit mean the fix round changed nothing. */
   fixFromSha: sha.optional(),
   fixRounds: z.number().int().nonnegative(),
+  /** How many recorded decisions the green review covered; a newer decision needs a new review. */
+  greenDecisions: z.number().int().nonnegative().optional(),
   greenSha: sha.optional(),
   id: z.string().regex(/^\d{2}$/),
   parentBranch: text,
