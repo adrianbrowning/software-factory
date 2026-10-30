@@ -111,6 +111,9 @@ to run one):
 - `run:` commands from `.github/workflows`, except installs, commands a script already covers, and multi-line
   scripts with `cd`, `export`, or control flow.
 
+When there are no suggestions, the editor tells the user to type the commands. If the user submits the editor
+empty, it opens again. If the user cancels it, `factory_start` fails.
+
 The factory saves the choice in the scratch dir, and later runs use it with no dialog. To change it, run
 `/factory checks`: new runs use the new list, and a run that already started keeps its checks. To share one list
 with the whole team, set `checks` in `.omp/factory.json` instead; then the factory does not ask.

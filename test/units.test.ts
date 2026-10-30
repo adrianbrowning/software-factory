@@ -150,6 +150,11 @@ describe('check setup suggestions', () => {
     assert.deepEqual(parseChecks(prompt), ['pnpm run lint']);
     assert.deepEqual(parseChecks(prompt.replace('# pnpm run check:build', 'pnpm run check:build')), ['pnpm run lint', 'pnpm run check:build']);
   });
+
+  it('tells the user to type the checks only when nothing is suggested', () => {
+    assert.match(checksPrompt({ chosen: [], scripts: [], workflows: [] }), /No check commands were found/);
+    assert.doesNotMatch(checksPrompt({ chosen: [], scripts: [], workflows: ['make e2e'] }), /No check commands were found/);
+  });
 });
 
 describe('evidence', () => {
