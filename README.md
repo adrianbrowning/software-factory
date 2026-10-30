@@ -22,6 +22,8 @@ flowchart TD
   I -->|green| J[factory_complete_slice]
   J -->|slices left| E
   J -->|all done| K[Retro: repo slice + factory issues]
+  J -->|bug in a done slice| O[factory_reopen: user approves, fix file for that slice]
+  O --> H
   K --> L[Stack ready: /factory submit opens draft PRs]
 ```
 
@@ -35,9 +37,9 @@ flowchart TD
 | Review | Up to 11 `factory-reviewer` subagents (one per cc-pr-review domain) + `factory-review-validator` | Port of `cc-pr-review` onto omp's `task` tool. The factory skips `react-ts`, `test-validity`, and `devops` when no changed path could hold their subject (the orchestrator can keep one back); the orchestrator skips other domains the diff gives nothing to review, each with a reason; `bug` and `scope` always review, and `testing` does too for a slice with test seams. The validator, with a clean context, keeps a blocking (`critical`/`high`) finding only when it is a gap in correctness or the ticket's requirements. A supported blocking finding that fails that bar (a speculative abstraction, defensive code for an impossible state, a test for a case that cannot happen) is downgraded to an observation, not lost. A finding that shows the code breaks a recorded decision blocks: the reviewer cites the decision number and the validator cannot downgrade it, and the validator escalates an observation that shows such a conflict to `high`. The tools enforce cited decisions only; an uncited conflict depends on the reviewer and validator seeing it |
 
 User gates: questions at intake, slice-plan approval, seam additions, re-slice approval, stalled fix loops,
-retro actions, and `/factory submit`. The plugin opens PRs only when you run `/factory submit`, and it never
-merges. A run planned with `landOn` opens no PRs: `/factory submit` fast-forwards that existing local branch to
-the top slice, without a checkout or a merge commit.
+reopening a done slice, retro actions, and `/factory submit`. The plugin opens PRs only when you run
+`/factory submit`, and it never merges. A run planned with `landOn` opens no PRs: `/factory submit` fast-forwards
+that existing local branch to the top slice, without a checkout or a merge commit.
 
 ## Install
 
@@ -141,6 +143,24 @@ the reviewed commit of the top slice. It does not check out, merge, or push. It 
 - your branch is gone, or has commits that are not in the stack.
 
 Then push your branch. You can delete the slice branches.
+
+### Reopen a done slice
+
+When the orchestrator finds a bug in a slice that is done, it asks you. When you agree, `factory_reopen` (slice id
+and the bug as `reason`) opens a dialog. After you confirm, the fix goes into that slice, so its PR does not keep the
+bug:
+
+- The working tree must be clean, the run must be running or done, and the slice must be done. One slice at a time
+  can be reopened.
+- The active slice goes back to pending. Its branch keeps its commits.
+- The reopened slice gets a fix file with the bug and goes through fix, checks, and review again. The fix round counts
+  against its round limit.
+- When the reopened slice is complete again, the factory rebases every later slice branch onto the fix, bottom up.
+  Each branch keeps only its own commits on top of its parent. Backup refs `refs/factory/<feature>/backup/<NN>` hold
+  the old tips until every rebase passes. Each later slice goes back to pending and starts again at checks.
+- If a rebase conflicts, the factory aborts it, puts every later branch back at its old tip, and pauses the run. The
+  error names the branch. Resolve it, then run `/factory resume <feature>`.
+- A done run runs again, and it needs a new retro before `/factory submit`.
 
 ## Configure
 

@@ -63,6 +63,8 @@ Repeat until `factory_next` reports no slices left:
 
 When a slice uses up its fix rounds, the tool asks the user whether to continue or pause. Follow the reply.
 
+When you find a bug in a slice that is done, do not fix it in a later slice, and do not record that as a decision. The fix must go into the PR of the slice that has the bug. Show the bug to the user with `ask`. When the user agrees, call `factory_reopen` with the slice id and the bug as `reason`; its dialog is the confirmation. The active slice goes back to pending with its commits. The reopened slice is active in fix mode: spawn a fresh `factory-implementer` in fix mode with the returned fix file, then continue at step 3. When it is green, `factory_complete_slice` rebases every later slice branch onto the fix. Those slices go back to pending, and `factory_next` starts each one at `checks`, so each earns its checks and review again. If a rebase conflicts, every branch goes back to its old tip and the run pauses. Tell the user the branch the error names; the user resolves it. A reopened run needs a new retro (step 5) before `/factory submit`.
+
 ## 5. Retro
 
 Read `skill://retro` and apply it to this run. Primary sources: this session, `history://<id>` for the factory subagents, `factory_status` (fix rounds, check failures, findings by domain, peak implementer context, compactions, re-slices), and the run directory (`fixes/`, `reviews/`).

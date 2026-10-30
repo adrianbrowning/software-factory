@@ -110,6 +110,8 @@ const sliceSchema = sliceInputSchema.extend({
   /** What each check reported when `checkedSha` passed; the review data file lists them for reviewers. */
   checkResults: z.array(text).optional(),
   compactions: z.number().int().nonnegative(),
+  /** Branch tip when a done slice was reopened; completing it restacks every later slice from this commit. */
+  doneSha: sha.optional(),
   fixPath: text.optional(),
   /** Commit the current fix file describes; checks on the same commit mean the fix round changed nothing. */
   fixFromSha: sha.optional(),
