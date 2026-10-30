@@ -40,6 +40,7 @@ import {
   recordDecisions,
   recordRetro,
   recordReview,
+  reopenSlice,
   repoChecks,
   repoRoot,
   requireFeatureName,
@@ -76,6 +77,7 @@ const ORCHESTRATION_TOOLS = [
   'factory_review_start',
   'factory_review_record',
   'factory_complete_slice',
+  'factory_reopen',
   'factory_status',
   'factory_retro',
 ];
@@ -120,6 +122,10 @@ const reviewStartSchema = z.object({
 });
 const submitSchema = z.object({ domain: z.enum(REVIEW_DOMAINS), findings: z.array(findingSchema), reviewId: z.string().min(1) });
 const validateSchema = validationSchema.extend({ reviewId: z.string().min(1) });
+const reopenSchema = z.object({
+  reason: z.string().min(1).describe('The bug found in the done slice, as the fix file for its implementer'),
+  slice: z.string().regex(/^\d{2}$/).describe('Id of the done slice, for example "04"'),
+});
 const emptySchema = z.object({});
 
 export function callerOf(ctx: Pick<ExtensionContext, 'agent'>) {
@@ -500,15 +506,42 @@ export default function softwareFactory(pi: ExtensionAPI) {
 
   tool({
     caller: 'main',
-    description: 'Mark the green slice done. HEAD must be the reviewed commit.',
+    description: 'Mark the green slice done. HEAD must be the reviewed commit. A reopened slice rebases every later slice branch onto its fix.',
     label: 'Factory: complete slice',
     name: 'factory_complete_slice',
     schema: emptySchema,
     async run(_params, ws) {
       return withRun(ws, activeFeature(ws), async run => {
+        const reopened = activeSlice(run)?.doneSha !== undefined;
         const slice = await completeSlice(ws, run);
-        return reply(`Slice ${slice.id} is done on ${slice.branch}.\nNext: ${nextAction(run)}`);
+        const restacked = reopened ? ' Every later slice branch is rebased onto it and earns its checks and review again.' : '';
+        return reply(`Slice ${slice.id} is done on ${slice.branch}.${restacked}\nNext: ${nextAction(run)}`);
       });
+    },
+  });
+
+  tool({
+    caller: 'main',
+    description:
+      'Reopen a done slice to fix a bug found in it, after the user agreed. The fix goes into that slice; completing it rebases every later slice onto the fix, and those slices earn their checks and review again.',
+    label: 'Factory: reopen slice',
+    name: 'factory_reopen',
+    schema: reopenSchema,
+    async run(params, ws, ctx) {
+      const feature = activeFeature(ws);
+      const target = readRun(ws, feature).slices.find(slice => slice.id === params.slice);
+      // Anything but a done slice is refused by reopenSlice, without a dialog.
+      if (target?.status === 'done') {
+        const body = `${params.reason}\n\nThe active slice goes back to pending with its commits. When slice ${target.id} is done again, every later slice branch is rebased onto the fix and earns its checks and review again. The run needs a new retro before /factory submit.`;
+        if (!(await confirm(ctx, `Reopen slice ${target.id} "${target.title}"?`, body))) {
+          return reply(`The user kept slice ${target.id} done. Ask how to handle the bug.`);
+        }
+      }
+      const result = await withRun(ws, feature, run => reopenSlice(ws, run, params.slice, params.reason));
+      const stall = result.stalled ? await decideStall(ctx, ws, feature) : '';
+      return reply(
+        `Slice ${result.slice.id} "${result.slice.title}" is reopened on ${result.slice.branch}. Fix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`,
+      );
     },
   });
 

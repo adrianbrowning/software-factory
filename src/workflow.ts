@@ -500,7 +500,10 @@ export function appendSlice(ws: Workspace, run: Run, proposed: Omit<SliceInput, 
   return pushSlice(ws, run, planAppend(ws, run, proposed));
 }
 
-/** Returns the active slice, or checks out the next pending slice's branch. `undefined` when every slice is done. */
+/**
+ * Returns the active slice, or checks out the next pending slice's branch. `undefined` when every slice is done. A
+ * pending slice at `checks` (sent back by a reopen or a restack) keeps the commits on its branch and starts at checks.
+ */
 export async function nextSlice(ws: Workspace, run: Run) {
   const active = activeSlice(run);
   if (active !== undefined) return active;
@@ -511,9 +514,10 @@ export async function nextSlice(ws: Workspace, run: Run) {
   const exists = (await git(ws.root, 'branch', '--list', slice.branch)).trim() !== '';
   if (exists) await git(ws.root, 'switch', slice.branch);
   else await git(ws.root, 'switch', '--no-track', '-c', slice.branch, slice.parentBranch);
+  const restart = exists && slice.phase === 'checks';
   slice.status = 'active';
-  slice.phase = 'implement';
-  addEvent(run, 'slice-start', `${slice.branch} from ${slice.parentBranch}`, slice);
+  slice.phase = restart ? 'checks' : 'implement';
+  addEvent(run, 'slice-start', `${slice.branch} from ${slice.parentBranch}${restart ? ', restarts at checks' : ''}`, slice);
   return slice;
 }
 
@@ -541,6 +545,53 @@ function requestFix(ws: Workspace, run: Run, slice: Slice, body: string, sha: st
   }
   slice.fixRounds += 1;
   return { fixPath, stalled: false };
+}
+
+/**
+ * Sends a slice back to pending and clears its checks and review. A slice with commits past its parent restarts at
+ * checks on its existing branch (see nextSlice); one without starts again at implement.
+ */
+async function restartSlice(ws: Workspace, run: Run, slice: Slice) {
+  const own = (await git(ws.root, 'rev-list', '--count', `${slice.parentBranch}..refs/heads/${slice.branch}`)).trim();
+  slice.status = 'pending';
+  slice.phase = own === '0' ? 'implement' : 'checks';
+  slice.checkedSha = undefined;
+  slice.checkResults = undefined;
+  slice.fixPath = undefined;
+  slice.fixFromSha = undefined;
+  slice.greenSha = undefined;
+  slice.greenDecisions = undefined;
+  slice.review = undefined;
+  writeTicket(ws, run, slice);
+}
+
+/**
+ * Reopens a done slice to fix a bug found after it was done, so the fix lands in that slice's own PR. The active slice
+ * goes back to pending with its commits. The reopened slice is active again in `fix`, with `reason` as its fix file;
+ * the fix round counts against its round limit. Completing it restacks every later slice on the fix (see restack).
+ * The run runs again and needs a new retro before submit.
+ */
+export async function reopenSlice(ws: Workspace, run: Run, id: string, reason: string) {
+  if (run.status !== 'running' && run.status !== 'done') throw new Error(`Run is ${run.status}; only a running or done run reopens a slice.`);
+  const slice = run.slices.find(candidate => candidate.id === id);
+  if (slice === undefined) throw new Error(`No slice ${id}. Slices: ${run.slices.map(candidate => candidate.id).join(', ')}.`);
+  if (slice.status !== 'done') throw new Error(`Slice ${id} is ${slice.status}; only a done slice reopens.`);
+  const reopened = run.slices.find(candidate => candidate.doneSha !== undefined);
+  if (reopened !== undefined) throw new Error(`Slice ${reopened.id} is already reopened. Complete it before you reopen another slice.`);
+  const active = activeSlice(run);
+  if (active?.stalled) throw new Error(`Slice ${active.id} is stalled; the user must decide how to continue first.`);
+  await requireClean(ws.root, `Cannot reopen slice ${id}`);
+  const doneSha = (await git(ws.root, 'rev-parse', '--verify', `refs/heads/${slice.branch}^{commit}`)).trim();
+  await git(ws.root, 'switch', slice.branch);
+  if (active !== undefined) await restartSlice(ws, run, active);
+  slice.doneSha = doneSha;
+  slice.status = 'active';
+  writeTicket(ws, run, slice);
+  if (run.status === 'done') run.status = 'running';
+  run.retroRecorded = false;
+  const paused = active === undefined ? '' : `; slice ${active.id} back to pending at ${active.phase}`;
+  addEvent(run, 'reopen', `${slice.branch} at ${doneSha.slice(0, 12)}${paused}`, slice);
+  return { slice, ...requestFix(ws, run, slice, `## Bug found after slice ${id} was done\n\n${evidence(reason, 4_000)}`, doneSha) };
 }
 
 export function resolveStall(ws: Workspace, run: Run, choice: 'continue' | 'pause') {
@@ -1083,6 +1134,72 @@ export async function recordReview(ws: Workspace, run: Run) {
   };
 }
 
+/**
+ * Moves every later slice branch onto the reopened slice's fixed tip, bottom up: each child goes from its parent's old
+ * tip onto the parent's new tip, so it keeps only its own commits. Every old tip is snapshotted into a backup ref
+ * before the first rebase. A child already on its parent's new tip (rebased by hand) stays as it is. A failed rebase
+ * puts every branch back at its old tip, pauses the run, and throws. Each later slice that moved, or was not done,
+ * goes back to pending.
+ */
+async function restack(ws: Workspace, run: Run, reopened: Slice, doneSha: string) {
+  const later: { old: string; slice: Slice }[] = [];
+  // nextSlice creates each branch from its parent, so the existing branches are the bottom of the later slices.
+  for (const slice of run.slices.slice(run.slices.indexOf(reopened) + 1)) {
+    const old = (await git(ws.root, 'branch', '--list', '--format=%(objectname)', slice.branch)).trim();
+    if (old === '') break;
+    later.push({ old, slice });
+  }
+  const backup = (slice: Slice) => `refs/factory/${run.feature}/backup/${slice.id}`;
+  for (const { old, slice } of later) await git(ws.root, 'update-ref', backup(slice), old);
+  const moved: { old: string; slice: Slice; tip: string }[] = [];
+  let parentOld = doneSha;
+  let parentNew = await head(ws.root);
+  for (const child of later) {
+    const onParent = await git(ws.root, 'merge-base', '--is-ancestor', parentNew, child.old).then(
+      () => true,
+      () => false,
+    );
+    if (!onParent) {
+      try {
+        await git(ws.root, 'rebase', '--onto', parentNew, parentOld, child.slice.branch);
+      } catch (error) {
+        await git(ws.root, 'rebase', '--abort').catch(() => {});
+        // No restacked branch may be checked out while its ref is reset.
+        await git(ws.root, 'switch', reopened.branch);
+        // Compare-and-swap: reset a branch only while it is still at the tip the restack gave it. A branch that moved,
+        // or a reset that failed, keeps every backup ref so the user can recover the old tips.
+        const stuck: string[] = [];
+        for (const { old, slice, tip } of moved) {
+          await git(ws.root, 'update-ref', `refs/heads/${slice.branch}`, old, tip).catch(() => stuck.push(slice.branch));
+        }
+        const current = (await git(ws.root, 'rev-parse', `refs/heads/${child.slice.branch}`)).trim();
+        if (current !== child.old) stuck.push(child.slice.branch);
+        if (stuck.length === 0) for (const { slice } of later) await git(ws.root, 'update-ref', '-d', backup(slice));
+        const reason = `restacking ${child.slice.branch} onto ${child.slice.parentBranch} failed`;
+        if (run.status === 'running') pauseRun(run, reason);
+        addEvent(run, 'restack-conflict', stuck.length === 0 ? reason : `${reason}; not reset: ${stuck.join(', ')}`, child.slice);
+        const state =
+          stuck.length === 0
+            ? 'Every later slice branch is back at its old tip'
+            : `These branches could not be reset to their old tips: ${stuck.join(', ')}. The old tips are kept in ${later.map(({ slice }) => backup(slice)).join(', ')}`;
+        throw new Invalidated(
+          `Restacking ${child.slice.branch} onto the fixed ${child.slice.parentBranch} failed:\n${evidence(error instanceof Error ? error.message : String(error), 2_000)}\n${state}, and the run is paused. The user must resolve the conflict: rebase each later slice branch onto the one below it by hand, bottom up (git rebase --onto <parent> <old parent tip> <branch>), then /factory resume ${run.feature}. Completing slice ${reopened.id} again keeps the branches that are already on their parent.`,
+        );
+      }
+      moved.push({ ...child, tip: (await git(ws.root, 'rev-parse', `refs/heads/${child.slice.branch}`)).trim() });
+    }
+    parentOld = child.old;
+    parentNew = (await git(ws.root, 'rev-parse', `refs/heads/${child.slice.branch}`)).trim();
+  }
+  await git(ws.root, 'switch', reopened.branch);
+  for (const { slice } of later) await git(ws.root, 'update-ref', '-d', backup(slice));
+  for (const { slice } of later) {
+    const tip = (await git(ws.root, 'rev-parse', `refs/heads/${slice.branch}`)).trim();
+    if (slice.status !== 'done' || tip !== slice.greenSha) await restartSlice(ws, run, slice);
+  }
+  if (moved.length > 0) addEvent(run, 'restack', `${moved.map(({ slice }) => slice.branch).join(', ')} onto ${reopened.branch}`, reopened);
+}
+
 export async function completeSlice(ws: Workspace, run: Run) {
   const slice = requireActive(run);
   if (slice.phase !== 'ready' || slice.greenSha === undefined) throw new Error('The slice has no green review yet.');
@@ -1104,6 +1221,10 @@ export async function completeSlice(ws: Workspace, run: Run) {
     slice.review = undefined;
     addEvent(run, 'review-invalidated', 'decisions recorded after the green review', slice);
     throw new Invalidated(`${newerDecisions(run, covered)} newer than the green review, so its reviewers did not check the code against them. Call factory_review_start for a new review.`);
+  }
+  if (slice.doneSha !== undefined) {
+    await restack(ws, run, slice, slice.doneSha);
+    slice.doneSha = undefined;
   }
   slice.status = 'done';
   writeTicket(ws, run, slice);

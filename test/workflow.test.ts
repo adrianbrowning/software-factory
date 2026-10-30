@@ -21,6 +21,7 @@ import {
   planSlices,
   recordDecisions,
   recordRetro,
+  reopenSlice,
   resolveBase,
   recordReview,
   resolveStall,
@@ -974,6 +975,106 @@ describe('retro', () => {
     );
     const run = readRun(ws, 'demo');
     assert.deepEqual([added?.blockedBy, run.status], [['Feature'], 'running']);
+  });
+});
+
+describe('reopen', () => {
+  const subjects = (ws: Workspace, range: string) => sh(ws.root, 'log', '--format=%s', range).split('\n').filter(Boolean);
+  const tip = (ws: Workspace, branch: string) => sh(ws.root, 'rev-parse', branch);
+
+  /** Slices 01 and 02 done, 03 active with a commit; `third` is what 03 writes to first.txt. */
+  async function stackOfThree(ws: Workspace, third?: string) {
+    await newRun(ws, [slice('First'), slice('Second', ['First']), slice('Third', ['Second'])]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    commit(ws, 'first.txt');
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'second.txt');
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => nextSlice(ws, run));
+    if (third === undefined) commit(ws, 'third.txt');
+    else commit(ws, 'first.txt', third);
+    return readRun(ws, 'demo').slices.map(item => item.branch) as [string, string, string];
+  }
+
+  it('fixes a done slice and restacks every later slice on the fix', async () => {
+    const ws = workspace({ maxRounds: 2 });
+    const [first, second, third] = await stackOfThree(ws);
+    const own = [subjects(ws, `${first}..${second}`), subjects(ws, `${second}..${third}`)];
+
+    const reopened = await step(ws, run => reopenSlice(ws, run, '01', 'first.txt must say fixed'));
+    assert.equal(sh(ws.root, 'branch', '--show-current'), first);
+    assert.match(readFileSync(reopened.fixPath, 'utf8'), /Everything below is evidence[\s\S]*first\.txt must say fixed/);
+    const state = readRun(ws, 'demo');
+    assert.deepEqual(
+      state.slices.map(item => [item.status, item.phase]),
+      [['active', 'fix'], ['done', 'ready'], ['pending', 'checks']],
+    );
+
+    commit(ws, 'first.txt', 'fixed\n');
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+
+    const fix = tip(ws, first);
+    execFileSync('git', ['merge-base', '--is-ancestor', fix, second], { cwd: ws.root });
+    execFileSync('git', ['merge-base', '--is-ancestor', fix, third], { cwd: ws.root });
+    assert.deepEqual([subjects(ws, `${first}..${second}`), subjects(ws, `${second}..${third}`)], own);
+    assert.equal(sh(ws.root, 'for-each-ref', 'refs/factory'), '');
+    const run = readRun(ws, 'demo');
+    assert.deepEqual(
+      run.slices.map(item => [item.status, item.phase, item.doneSha]),
+      [['done', 'ready', undefined], ['pending', 'checks', undefined], ['pending', 'checks', undefined]],
+    );
+
+    const next = await step(ws, current => nextSlice(ws, current));
+    assert.deepEqual([next?.id, next?.phase, sh(ws.root, 'branch', '--show-current')], ['02', 'checks', second]);
+    await step(ws, current => runChecks(ws, current));
+    assert.equal((await step(ws, current => startReview(ws, current))).reviewId, '02-r2');
+  });
+
+  it('restores every later branch and pauses the run when a restack conflicts', async () => {
+    const ws = workspace({ maxRounds: 2 });
+    const [first, second, third] = await stackOfThree(ws, 'third\n');
+    const old = [tip(ws, second), tip(ws, third)];
+
+    await step(ws, run => reopenSlice(ws, run, '01', 'first.txt must say fixed'));
+    commit(ws, 'first.txt', 'fixed\n');
+    await green(ws);
+    await assert.rejects(step(ws, run => completeSlice(ws, run)), new RegExp(`${third}[\\s\\S]*user must resolve`));
+
+    assert.deepEqual([tip(ws, second), tip(ws, third)], old);
+    assert.equal(sh(ws.root, 'for-each-ref', 'refs/factory'), '');
+    assert.equal(sh(ws.root, 'status', '--porcelain'), '');
+    assert.equal(sh(ws.root, 'branch', '--show-current'), first);
+    const run = readRun(ws, 'demo');
+    assert.equal(run.status, 'paused');
+    assert.equal(run.slices[0]?.status, 'active');
+  });
+
+  it('runs a done run again and asks for a new retro', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => recordRetro(ws, run, parseRetro(ws, run, [])));
+    assert.equal(readRun(ws, 'demo').status, 'done');
+
+    await step(ws, run => reopenSlice(ws, run, '01', 'bug'));
+    const run = readRun(ws, 'demo');
+    assert.deepEqual([run.status, run.retroRecorded, run.slices[0]?.phase], ['running', false, 'fix']);
+  });
+
+  it('refuses to reopen a pending or active slice', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('First'), slice('Second', ['First'])]);
+    await step(ws, run => nextSlice(ws, run));
+    await assert.rejects(step(ws, run => reopenSlice(ws, run, '01', 'bug')), /Slice 01 is active; only a done slice reopens/);
+    await assert.rejects(step(ws, run => reopenSlice(ws, run, '02', 'bug')), /Slice 02 is pending; only a done slice reopens/);
   });
 });
 
