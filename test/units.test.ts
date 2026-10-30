@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
 import { checksPrompt, detectChecks, loadConfig, parseChecks, runCommands, suggestChecks } from '../src/config.ts';
@@ -84,6 +84,12 @@ describe('loadConfig', () => {
     assert.throws(() => loadConfig(config(null)), /factory\.json/);
     assert.throws(() => loadConfig(dir({ '.omp/factory.json': '{ nope', 'package.json': scripts(['test']) })), /factory\.json: invalid JSON/);
     assert.throws(() => loadConfig(config({ scratchDir: '../outside' })), /scratchDir/);
+  });
+
+  it('expands ~/ in checkPath and rejects relative entries', () => {
+    const config = (value: unknown) => dir({ '.omp/factory.json': JSON.stringify(value), 'package.json': scripts(['test']) });
+    assert.deepEqual(loadConfig(config({ checkPath: ['~/Library/pnpm/bin', '/opt/bin'] })).checkPath, [join(homedir(), 'Library/pnpm/bin'), '/opt/bin']);
+    assert.throws(() => loadConfig(config({ checkPath: ['node_modules/.bin'] })), /factory\.json: "checkPath" entry "node_modules\/\.bin"/);
   });
 
   it('normalizes scratchDir', () => {

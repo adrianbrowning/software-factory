@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { evidence } from './evidence.ts';
@@ -626,11 +626,22 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   // A fix round that ends on the commit its fix file described: the implementer changed nothing.
   const unchanged = slice.phase === 'fix' && slice.fixFromSha === sha;
   const results: { command: string; result: CommandResult }[] = [];
+  const checkPath = [...ws.config.checkPath, process.env.PATH ?? ''].join(delimiter);
+  const env = { ...process.env, PATH: checkPath };
   for (const command of run.checks) {
     signal?.throwIfAborted();
-    results.push({ command, result: await runShell(command, ws.root, ws.config.checkTimeoutMs, signal) });
+    results.push({ command, result: await runShell(command, ws.root, ws.config.checkTimeoutMs, signal, env) });
   }
   signal?.throwIfAborted();
+  // sh exits 127 when it cannot find the command: the PATH is wrong, not the code.
+  const missing = results.filter(({ result }) => result.exitCode === 127 && !result.timedOut);
+  if (missing.length > 0) {
+    const listed = missing.map(({ command, result }) => `- ${command}:\n${evidence(result.stderr, 500)}`).join('\n');
+    const tool = missing[0]?.command.split(/\s+/)[0] ?? '<tool>';
+    throw new Error(
+      `Checks could not find a command (exit 127):\n${listed}\nPATH used: ${checkPath}\nThis is an environment error, not a code fault. Add the directory that holds the command (find it with \`command -v ${tool}\` in the user's terminal) to "checkPath" in .omp/factory.json, then call factory_checks again.`,
+    );
+  }
   const dirty = (await porcelain(ws.root)).trim();
   const failed = results.filter(({ result }) => result.exitCode !== 0 || result.timedOut);
   const summary = results.map(({ command, result }) => describeCheck(command, result));
