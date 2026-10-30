@@ -27,6 +27,14 @@ Your task gives you the review id and the data file (PR metadata, full diff, cha
 - CSRF protection on mutations
 - Flag any obviously risky dependency patterns
 
+**CI that runs on untrusted code**
+
+When the diff adds or changes a CI workflow, script, or action, check both conditions. First: a step checks out, downloads, or runs files that a contributor controls, for example the PR head ref or a fork's files under `pull_request_target` or `workflow_run`, or artifacts that such a run uploaded. The event name alone does not make a checkout untrusted: trace which ref or path the step uses. Second: secrets or a write token are available to that step or to a later step that uses those files. When both are true, do not stop at the first problem. Find every problem in one pass:
+
+1. List every step and tool that runs in that checkout or reads files from it: package managers, linters, formatters, test runners, build tools, and agents such as Claude Code.
+2. For each one, list the config it loads by itself from the working directory or the repository: for example `.npmrc`, `.yarnrc.yml`, lifecycle scripts in `package.json`, tool config files that can hold code (`*.config.js`, `.jscpdrc`, plugin or reporter modules), `.claude/settings.json`, and `.mcp.json`.
+3. Report each config path that untrusted code can control while secrets are present as its own finding, in this review. A later review round must not find one that this round could have found.
+
 ---
 
 ## Report Format
