@@ -1151,7 +1151,7 @@ async function restack(ws: Workspace, run: Run, reopened: Slice, doneSha: string
   }
   const backup = (slice: Slice) => `refs/factory/${run.feature}/backup/${slice.id}`;
   for (const { old, slice } of later) await git(ws.root, 'update-ref', backup(slice), old);
-  const moved: typeof later = [];
+  const moved: { old: string; slice: Slice; tip: string }[] = [];
   let parentOld = doneSha;
   let parentNew = await head(ws.root);
   for (const child of later) {
@@ -1166,16 +1166,27 @@ async function restack(ws: Workspace, run: Run, reopened: Slice, doneSha: string
         await git(ws.root, 'rebase', '--abort').catch(() => {});
         // No restacked branch may be checked out while its ref is reset.
         await git(ws.root, 'switch', reopened.branch);
-        for (const { old, slice } of [...moved, child]) await git(ws.root, 'update-ref', `refs/heads/${slice.branch}`, old);
-        for (const { slice } of later) await git(ws.root, 'update-ref', '-d', backup(slice));
+        // Compare-and-swap: reset a branch only while it is still at the tip the restack gave it. A branch that moved,
+        // or a reset that failed, keeps every backup ref so the user can recover the old tips.
+        const stuck: string[] = [];
+        for (const { old, slice, tip } of moved) {
+          await git(ws.root, 'update-ref', `refs/heads/${slice.branch}`, old, tip).catch(() => stuck.push(slice.branch));
+        }
+        const current = (await git(ws.root, 'rev-parse', `refs/heads/${child.slice.branch}`)).trim();
+        if (current !== child.old) stuck.push(child.slice.branch);
+        if (stuck.length === 0) for (const { slice } of later) await git(ws.root, 'update-ref', '-d', backup(slice));
         const reason = `restacking ${child.slice.branch} onto ${child.slice.parentBranch} failed`;
         if (run.status === 'running') pauseRun(run, reason);
-        addEvent(run, 'restack-conflict', reason, child.slice);
+        addEvent(run, 'restack-conflict', stuck.length === 0 ? reason : `${reason}; not reset: ${stuck.join(', ')}`, child.slice);
+        const state =
+          stuck.length === 0
+            ? 'Every later slice branch is back at its old tip'
+            : `These branches could not be reset to their old tips: ${stuck.join(', ')}. The old tips are kept in ${later.map(({ slice }) => backup(slice)).join(', ')}`;
         throw new Invalidated(
-          `Restacking ${child.slice.branch} onto the fixed ${child.slice.parentBranch} failed:\n${evidence(error instanceof Error ? error.message : String(error), 2_000)}\nEvery later slice branch is back at its old tip, and the run is paused. The user must resolve the conflict: rebase each later slice branch onto the one below it by hand, bottom up (git rebase --onto <parent> <old parent tip> <branch>), then /factory resume ${run.feature}. Completing slice ${reopened.id} again keeps the branches that are already on their parent.`,
+          `Restacking ${child.slice.branch} onto the fixed ${child.slice.parentBranch} failed:\n${evidence(error instanceof Error ? error.message : String(error), 2_000)}\n${state}, and the run is paused. The user must resolve the conflict: rebase each later slice branch onto the one below it by hand, bottom up (git rebase --onto <parent> <old parent tip> <branch>), then /factory resume ${run.feature}. Completing slice ${reopened.id} again keeps the branches that are already on their parent.`,
         );
       }
-      moved.push(child);
+      moved.push({ ...child, tip: (await git(ws.root, 'rev-parse', `refs/heads/${child.slice.branch}`)).trim() });
     }
     parentOld = child.old;
     parentNew = (await git(ws.root, 'rev-parse', `refs/heads/${child.slice.branch}`)).trim();
