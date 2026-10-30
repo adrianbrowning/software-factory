@@ -417,6 +417,26 @@ describe('slice loop gates', () => {
     assert.equal((await step(ws, run => runChecks(ws, run))).passed, true);
   });
 
+  it('refuses a wrapped command-not-found that exits with another code, in bash and dash wording', async () => {
+    for (const line of ['sh: pnpm: command not found', 'sh: 1: pnpm: not found', '/bin/sh: line 1: pnpm: command not found']) {
+      const ws = workspace({ checks: [`printf '%s\\n' '${line}' >&2; exit 1`] });
+      await newRun(ws, [slice('Feature')]);
+      await step(ws, run => nextSlice(ws, run));
+      commit(ws, 'work.txt');
+      await assert.rejects(step(ws, run => runChecks(ws, run)), /environment error[\s\S]*command -v pnpm/, line);
+      assert.equal(readRun(ws, 'demo').slices[0]?.fixRounds, 0, line);
+    }
+  });
+
+  it('counts an ordinary failure that mentions "not found" as a fix round', async () => {
+    const ws = workspace({ checks: [`printf 'error: module not found\\n' >&2; exit 1`] });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'work.txt');
+    assert.equal((await step(ws, run => runChecks(ws, run))).passed, false);
+    assert.equal(readRun(ws, 'demo').slices[0]?.fixRounds, 1);
+  });
+
   it('reports a check that runs past its timeout', async () => {
     const ws = workspace({ checks: ['sleep 5'], checkTimeoutMs: 100 });
     await newRun(ws, [slice('Feature')]);

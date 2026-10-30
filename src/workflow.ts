@@ -587,6 +587,9 @@ export function resumeRun(ws: Workspace, run: Run, sessionId: string) {
   addEvent(run, 'resume', `session ${sessionId}`);
 }
 
+/** The shell's own diagnostic for a command it cannot find (bash and dash wording). */
+const COMMAND_NOT_FOUND = /^[\w./-]*sh(?:: line \d+)?: (?:\d+: )?(\S+): (?:command )?not found$/m;
+
 function describeCheck(command: string, result: CommandResult) {
   if (result.timedOut) return `${command}: timed out`;
   return `${command}: ${result.exitCode === 0 ? 'passed' : `failed (exit ${result.exitCode})`} in ${result.durationMs}ms`;
@@ -633,13 +636,16 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
     results.push({ command, result: await runShell(command, ws.root, ws.config.checkTimeoutMs, signal, env) });
   }
   signal?.throwIfAborted();
-  // sh exits 127 when it cannot find the command: the PATH is wrong, not the code.
-  const missing = results.filter(({ result }) => result.exitCode === 127 && !result.timedOut);
+  // A shell that cannot find a command exits 127 and prints `sh: <cmd>: command not found` (dash: `sh: 1: <cmd>: not
+  // found`). A wrapper such as a package manager can print the shell's line and exit with another code. Either way
+  // the PATH is wrong, not the code.
+  const missing = results.filter(({ result }) => !result.timedOut && (result.exitCode === 127 || COMMAND_NOT_FOUND.test(result.stderr)));
   if (missing.length > 0) {
     const listed = missing.map(({ command, result }) => `- ${command}:\n${evidence(result.stderr, 500)}`).join('\n');
-    const tool = missing[0]?.command.split(/\s+/)[0] ?? '<tool>';
+    const first = missing[0];
+    const tool = first?.result.stderr.match(COMMAND_NOT_FOUND)?.[1] ?? first?.command.split(/\s+/)[0] ?? '<tool>';
     throw new Error(
-      `Checks could not find a command (exit 127):\n${listed}\nPATH used: ${checkPath}\nThis is an environment error, not a code fault. Add the directory that holds the command (find it with \`command -v ${tool}\` in the user's terminal) to "checkPath" in .omp/factory.json, then call factory_checks again.`,
+      `Checks could not find a command:\n${listed}\nPATH used: ${checkPath}\nThis is an environment error, not a code fault. Add the directory that holds the command (find it with \`command -v ${tool}\` in the user's terminal) to "checkPath" in .omp/factory.json, then call factory_checks again.`,
     );
   }
   const dirty = (await porcelain(ws.root)).trim();
