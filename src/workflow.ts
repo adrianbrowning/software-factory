@@ -1080,6 +1080,7 @@ export async function completeSlice(ws: Workspace, run: Run) {
     slice.checkedSha = slice.greenSha;
     slice.greenSha = undefined;
     slice.greenDecisions = undefined;
+    slice.review = undefined;
     addEvent(run, 'review-invalidated', 'decisions recorded after the green review', slice);
     throw new Invalidated(`${newerDecisions(run, covered)} newer than the green review, so its reviewers did not check the code against them. Call factory_review_start for a new review.`);
   }

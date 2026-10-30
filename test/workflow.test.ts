@@ -504,6 +504,7 @@ describe('slice loop gates', () => {
 
     await assert.rejects(step(ws, run => completeSlice(ws, run)), /Decision 1 is newer than the green review/);
     assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'review');
+    assert.equal(readRun(ws, 'demo').slices[0]?.review, undefined);
     const opened = await step(ws, run => startReview(ws, run));
     await review(ws, opened.reviewId, []);
     await step(ws, run => recordReview(ws, run));
