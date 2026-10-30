@@ -423,7 +423,7 @@ describe('slice loop gates', () => {
       await newRun(ws, [slice('Feature')]);
       await step(ws, run => nextSlice(ws, run));
       commit(ws, 'work.txt');
-      await assert.rejects(step(ws, run => runChecks(ws, run)), /environment error[\s\S]*command -v pnpm/, line);
+      await assert.rejects(step(ws, run => runChecks(ws, run)), /environment error[\s\S]*command -v pnpm[\s\S]*install the dependencies/, line);
       assert.equal(readRun(ws, 'demo').slices[0]?.fixRounds, 0, line);
     }
   });

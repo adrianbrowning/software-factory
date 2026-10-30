@@ -637,15 +637,19 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   }
   signal?.throwIfAborted();
   // A shell that cannot find a command exits 127 and prints `sh: <cmd>: command not found` (dash: `sh: 1: <cmd>: not
-  // found`). A wrapper such as a package manager can print the shell's line and exit with another code. Either way
-  // the PATH is wrong, not the code.
+  // found`). A wrapper such as a package manager can print the shell's line and exit with another code. Either way a
+  // command is missing from the environment (PATH, or an uninstalled dependency), which a code fix cannot change.
   const missing = results.filter(({ result }) => !result.timedOut && (result.exitCode === 127 || COMMAND_NOT_FOUND.test(result.stderr)));
   if (missing.length > 0) {
     const listed = missing.map(({ command, result }) => `- ${command}:\n${evidence(result.stderr, 500)}`).join('\n');
     const first = missing[0];
     const tool = first?.result.stderr.match(COMMAND_NOT_FOUND)?.[1] ?? first?.command.split(/\s+/)[0] ?? '<tool>';
+    const wrapped = missing.some(({ result }) => result.exitCode !== 127);
+    const dependency = wrapped
+      ? ` When the missing command is a project dependency (a binary that package scripts call), install the dependencies instead (for example \`pnpm install\`); if the dependency is not declared, ask the user.`
+      : '';
     throw new Error(
-      `Checks could not find a command:\n${listed}\nPATH used: ${checkPath}\nThis is an environment error, not a code fault. Add the directory that holds the command (find it with \`command -v ${tool}\` in the user's terminal) to "checkPath" in .omp/factory.json, then call factory_checks again.`,
+      `Checks could not find a command:\n${listed}\nPATH used: ${checkPath}\nThis is an environment error, not a code fault. When the command is a tool installed on the user's machine, add the directory that holds it (find it with \`command -v ${tool}\` in the user's terminal) to "checkPath" in .omp/factory.json.${dependency} Then call factory_checks again.`,
     );
   }
   const dirty = (await porcelain(ws.root)).trim();
