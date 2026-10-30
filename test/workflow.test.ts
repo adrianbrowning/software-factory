@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
@@ -63,6 +63,7 @@ function workspace(overrides: Partial<FactoryConfig> = {}): Workspace {
       branchPrefix: 'factory',
       // Passes only when the slice has committed a file named `ok`.
       checks: ['test -f ok'],
+      checkPath: [],
       checkTimeoutMs: 10_000,
       factoryRepo: 'acme/factory',
       maxRounds: 1,
@@ -394,6 +395,46 @@ describe('slice loop gates', () => {
     const result = await step(ws, run => runChecks(ws, run));
     assert.ok(!result.passed);
     assert.match(readFileSync(result.fixPath, 'utf8'), /Checks changed the working tree[\s\S]*stray\.txt/);
+  });
+
+  it('refuses a check whose command is not found as an environment error, not a fix round', async () => {
+    const ws = workspace({ checks: ['factory-missing-tool --run'] });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'work.txt');
+    await assert.rejects(step(ws, run => runChecks(ws, run)), /factory-missing-tool --run[\s\S]*PATH used:[\s\S]*environment error[\s\S]*checkPath/);
+    const after = readRun(ws, 'demo').slices[0];
+    assert.equal(after?.fixRounds, 0);
+    assert.equal(after?.phase, 'implement');
+    assert.equal(after?.fixPath, undefined);
+    assert.equal(existsSync(join(ws.root, '.scratch', 'demo', 'fixes')), false);
+
+    const bin = mkdtempSync(join(tmpdir(), 'factory-bin-'));
+    roots.push(bin);
+    writeFileSync(join(bin, 'factory-missing-tool'), '#!/bin/sh\nexit 0\n');
+    chmodSync(join(bin, 'factory-missing-tool'), 0o755);
+    ws.config.checkPath = [bin];
+    assert.equal((await step(ws, run => runChecks(ws, run))).passed, true);
+  });
+
+  it('refuses a wrapped command-not-found that exits with another code, in bash and dash wording', async () => {
+    for (const line of ['sh: pnpm: command not found', 'sh: 1: pnpm: not found', '/bin/sh: line 1: pnpm: command not found']) {
+      const ws = workspace({ checks: [`printf '%s\\n' '${line}' >&2; exit 1`] });
+      await newRun(ws, [slice('Feature')]);
+      await step(ws, run => nextSlice(ws, run));
+      commit(ws, 'work.txt');
+      await assert.rejects(step(ws, run => runChecks(ws, run)), /environment error[\s\S]*command -v pnpm[\s\S]*install the dependencies/, line);
+      assert.equal(readRun(ws, 'demo').slices[0]?.fixRounds, 0, line);
+    }
+  });
+
+  it('counts an ordinary failure that mentions "not found" as a fix round', async () => {
+    const ws = workspace({ checks: [`printf 'error: module not found\\n' >&2; exit 1`] });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'work.txt');
+    assert.equal((await step(ws, run => runChecks(ws, run))).passed, false);
+    assert.equal(readRun(ws, 'demo').slices[0]?.fixRounds, 1);
   });
 
   it('reports a check that runs past its timeout', async () => {

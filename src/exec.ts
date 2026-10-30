@@ -29,16 +29,16 @@ class Tail {
 }
 
 /**
- * Runs `command` through `sh -c` in its own process group, so a timeout or `signal` abort kills the whole tree.
+ * Runs `command` through `sh -c` (with `env`, default the process environment) in its own process group, so a timeout or `signal` abort kills the whole tree.
  */
-export function runShell(command: string, cwd: string, timeoutMs: number, signal?: AbortSignal): Promise<CommandResult> {
+export function runShell(command: string, cwd: string, timeoutMs: number, signal?: AbortSignal, env?: NodeJS.ProcessEnv): Promise<CommandResult> {
   const started = Date.now();
   const { promise, resolve } = Promise.withResolvers<CommandResult>();
   const stdout = new Tail();
   const stderr = new Tail();
   let timedOut = false;
   let settled = false;
-  const child = spawn('sh', ['-c', command], { cwd, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn('sh', ['-c', command], { cwd, detached: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
   const killGroup = (killSignal: NodeJS.Signals) => {
     if (child.pid === undefined) return;
     try {

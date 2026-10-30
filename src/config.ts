@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { isAbsolute, join, posix } from 'node:path';
 import { z } from 'zod';
 
@@ -19,6 +20,8 @@ const configSchema = z
     branchPrefix: text.default('factory'),
     /** Checks a new run starts with, in order. Unset: the first run asks the user and saves the choice in `scratchDir`. */
     checks: z.array(text).min(1).optional(),
+    /** Directories put before the omp process PATH when checks run. Each is absolute or starts with `~/`. */
+    checkPath: z.array(text).default([]),
     checkTimeoutMs: positiveInt.default(10 * 60 * 1_000),
     /** Repository that receives retro findings about the factory itself. */
     factoryRepo: text.default('adrianbrowning/software-factory'),
@@ -175,9 +178,17 @@ function normalizeScratchDir(value: string) {
   return normalized;
 }
 
+function resolveCheckPath(entries: string[]) {
+  return entries.map(entry => {
+    const resolved = entry.startsWith('~/') ? join(homedir(), entry.slice(2)) : entry;
+    if (!isAbsolute(resolved)) throw new Error(`${CONFIG_PATH}: "checkPath" entry "${entry}" must be an absolute path or start with ~/`);
+    return resolved;
+  });
+}
+
 export function loadConfig(cwd: string): FactoryConfig {
   const path = join(cwd, CONFIG_PATH);
   const parsed = configSchema.safeParse(existsSync(path) ? readJson(path) : {});
   if (!parsed.success) throw new Error(`${CONFIG_PATH}: ${z.prettifyError(parsed.error)}`);
-  return { ...parsed.data, scratchDir: normalizeScratchDir(parsed.data.scratchDir) };
+  return { ...parsed.data, checkPath: resolveCheckPath(parsed.data.checkPath), scratchDir: normalizeScratchDir(parsed.data.scratchDir) };
 }
