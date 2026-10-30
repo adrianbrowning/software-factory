@@ -158,6 +158,9 @@ export function checksPrompt(suggestions: CheckSuggestions) {
     '# One check command per line. They run in this order before each review, and every one must pass.',
     '# Lines that start with # are ignored: uncomment a suggestion to run it.',
     ...suggestions.chosen,
+    ...(suggestions.chosen.length + suggestions.scripts.length + suggestions.workflows.length === 0
+      ? ['# No check commands were found in package.json or .github/workflows.', '# Type the commands that lint, type-check, and test this repository, one per line.']
+      : []),
     ...section('Other package.json scripts', suggestions.scripts),
     ...section('Commands from .github/workflows', suggestions.workflows),
   ].join('\n');

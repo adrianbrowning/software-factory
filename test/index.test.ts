@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { after, describe, it } from 'node:test';
 import type { ExtensionAPI } from '@oh-my-pi/pi-coding-agent';
 import softwareFactory, { MAX_IDLE_STOP_ATTEMPTS, stopDecision } from '../src/index.ts';
 import type { Run } from '../src/run.ts';
@@ -14,11 +18,13 @@ type Registered = {
 function load() {
   const tools = new Map<string, Registered>();
   const pi = {
+    getActiveTools: () => [],
     on() {},
     registerCommand() {},
     registerTool(tool: Registered) {
       tools.set(tool.name, tool);
     },
+    setActiveTools: async () => {},
     setLabel() {},
   };
   softwareFactory(pi as unknown as ExtensionAPI);
@@ -70,5 +76,49 @@ describe('stopDecision', () => {
   it('restarts the count when the run made progress', () => {
     const decision = stopDecision(run(), 'owner', { count: MAX_IDLE_STOP_ATTEMPTS - 1, events: 1 });
     assert.equal(decision.action, 'block');
+  });
+});
+
+describe('first-run checks dialog', () => {
+  process.env.GIT_CONFIG_GLOBAL = '/dev/null';
+  process.env.GIT_CONFIG_NOSYSTEM = '1';
+  const roots: string[] = [];
+  after(() => {
+    for (const root of roots) rmSync(root, { force: true, recursive: true });
+  });
+
+  /** A git repository with no package.json and no workflows. */
+  function emptyRepo() {
+    const root = mkdtempSync(join(tmpdir(), 'factory-index-'));
+    roots.push(root);
+    const sh = (...args: string[]) => execFileSync('git', args, { cwd: root });
+    sh('init', '-q', '-b', 'main');
+    sh('config', 'user.email', 'test@example.com');
+    sh('config', 'user.name', 'Test');
+    writeFileSync(join(root, 'README.md'), 'base\n');
+    sh('add', '.');
+    sh('commit', '-qm', 'base');
+    return root;
+  }
+
+  const start = (root: string, answers: (string | undefined)[]) => {
+    const caller = {
+      ...ctx('main', 'main'),
+      cwd: root,
+      hasUI: true,
+      sessionManager: { getSessionId: () => 'session' },
+      ui: { editor: async () => answers.shift(), notify() {} },
+    };
+    const params = { feature: 'demo', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } };
+    return load().get('factory_start')?.execute('id', params, undefined, undefined, caller) ?? Promise.reject(new Error('no tool'));
+  };
+
+  it('asks again after an empty submission and starts the run with the typed checks', async () => {
+    const reply = JSON.stringify(await start(emptyRepo(), ['', 'make test']));
+    assert.match(reply, /Run \\"demo\\" is intake\. Checks: make test\./);
+  });
+
+  it('rejects when the user cancels the dialog', async () => {
+    await assert.rejects(start(emptyRepo(), [undefined]), /cancelled the checks dialog/);
   });
 });

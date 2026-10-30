@@ -182,15 +182,18 @@ async function chooseChecks(ctx: ExtensionContext, ws: Workspace) {
     workflows: suggestions.workflows.filter(command => !chosen.includes(command)),
   });
   const text = await ctx.ui.editor('Checks for this repository (one command per line)', prompt);
-  return text === undefined ? [] : parseChecks(text);
+  return text === undefined ? undefined : parseChecks(text);
 }
 
 /** The first run in a repository asks the user for its checks and saves them; later runs reuse them. */
 async function ensureChecks(ctx: ExtensionContext, ws: Workspace) {
   if (repoChecks(ws).length > 0) return;
-  const checks = await chooseChecks(ctx, ws);
-  if (checks.length === 0) throw new Error('The user chose no checks. Every run needs at least one: ask which to run, then call factory_start again.');
-  await saveChecks(ws, checks);
+  for (;;) {
+    const checks = await chooseChecks(ctx, ws);
+    if (checks === undefined) throw new Error('The user cancelled the checks dialog. Every run needs at least one check: ask which checks to run, then call factory_start again.');
+    if (checks.length > 0) return saveChecks(ws, checks);
+    ctx.ui.notify('Every run needs at least one check. Type at least one command, or cancel.', 'warning');
+  }
 }
 
 /** Asks the user how to continue once a slice's fix budget is used up. Without a UI the run pauses. */
@@ -580,7 +583,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
           return;
         }
         const checks = await chooseChecks(ctx, ws);
-        if (checks.length === 0) {
+        if (checks === undefined || checks.length === 0) {
           ctx.ui.notify(`Checks unchanged: ${repoChecks(ws).join('; ') || 'none chosen'}.`, 'info');
           return;
         }
