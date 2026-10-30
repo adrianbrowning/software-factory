@@ -216,12 +216,35 @@ export function fileSource(ws: Workspace, ref: string): Source {
   return { body, kind: 'file', ref, title };
 }
 
+const checksSchema = z.array(z.string().trim().min(1)).min(1, 'Choose at least one check command.');
+const checksPath = (ws: Workspace) => join(ws.root, ws.config.scratchDir, 'checks.json');
+
+/**
+ * The checks every slice must pass: `checks` from the repository config, else the list the user chose for this
+ * repository. Empty until the user chooses.
+ */
+export function repoChecks(ws: Workspace): string[] {
+  if (ws.config.checks !== undefined) return ws.config.checks;
+  const path = checksPath(ws);
+  if (!existsSync(path)) return [];
+  return z.object({ checks: checksSchema }).parse(JSON.parse(readFileSync(path, 'utf8'))).checks;
+}
+
+/** Saves the user's choice of checks for this repository in the scratch dir, which git ignores. */
+export async function saveChecks(ws: Workspace, checks: string[]) {
+  const parsed = checksSchema.parse(checks);
+  await excludeScratch(ws);
+  writeAtomic(checksPath(ws), `${JSON.stringify({ checks: parsed }, null, 2)}\n`);
+  return parsed;
+}
+
 export async function startRun(ws: Workspace, input: { feature: string; sessionId: string; source: Source }) {
   requireFeatureName(input.feature);
   if (existsSync(statePath(ws, input.feature))) {
     throw new Error(`Run "${input.feature}" already exists. Use /factory resume ${input.feature}.`);
   }
   const source = sourceSchema.parse(input.source);
+  const checks = checksSchema.parse(repoChecks(ws));
   // The base is resolved and pinned at plan approval, where the user can still pick a different one; the plan
   // event records it.
   const { baseRef } = ws.config;
@@ -229,6 +252,7 @@ export async function startRun(ws: Workspace, input: { feature: string; sessionI
   await excludeScratch(ws);
   const run: Run = {
     baseRef,
+    checks,
     createdAt: new Date().toISOString(),
     decisions: [],
     events: [],
@@ -241,7 +265,7 @@ export async function startRun(ws: Workspace, input: { feature: string; sessionI
     trunk,
     version: 1,
   };
-  addEvent(run, 'start', `${source.kind} ${source.ref}`);
+  addEvent(run, 'start', `${source.kind} ${source.ref}; checks: ${checks.join('; ')}`);
   writeAtomic(
     join(runDir(ws, run.feature), 'issue.md'),
     `# ${source.title}\n\nSource: ${source.kind} ${source.ref}${source.url ? ` (${source.url})` : ''}\n\n${UNTRUSTED_NOTE}\n\n<untrusted-issue>\n${source.body}\n</untrusted-issue>\n`,
@@ -499,7 +523,7 @@ function requestFix(ws: Workspace, run: Run, slice: Slice, body: string, sha: st
   const context = [
     `- Ticket (seams and acceptance criteria): ${ticketPath(ws, run.feature, slice)}`,
     `- Branch: ${slice.branch}`,
-    `- Checks to run before committing: ${ws.config.checks.join('; ')}`,
+    `- Checks to run before committing: ${run.checks.join('; ')}`,
   ].join('\n');
   writeAtomic(fixPath, `# Fix slice ${slice.id}: ${slice.title}\n\n${context}\n\n${UNTRUSTED_NOTE}\n\n${body}\n`);
   slice.fixPath = fixPath;
@@ -543,8 +567,10 @@ export function pauseRun(run: Run, reason: string) {
 /**
  * Resumes a run in a new owner session. A paused or stalled run runs again. The state was read from disk with no
  * in-process copy to compare against, so a slice past its checks goes back to `checks` and earns its review again.
+ * A run saved before runs kept their own checks gets the repository's checks.
  */
 export function resumeRun(ws: Workspace, run: Run, sessionId: string) {
+  if (run.checks.length === 0) run.checks = checksSchema.parse(repoChecks(ws));
   if (run.status === 'paused' || run.status === 'stalled') {
     run.status = 'running';
     resolveStall(ws, run, 'continue');
@@ -600,7 +626,7 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   // A fix round that ends on the commit its fix file described: the implementer changed nothing.
   const unchanged = slice.phase === 'fix' && slice.fixFromSha === sha;
   const results: { command: string; result: CommandResult }[] = [];
-  for (const command of ws.config.checks) {
+  for (const command of run.checks) {
     signal?.throwIfAborted();
     results.push({ command, result: await runShell(command, ws.root, ws.config.checkTimeoutMs, signal) });
   }

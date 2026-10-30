@@ -14,7 +14,7 @@ flowchart TD
   E --> F[factory-implementer: red → green at agreed seams, commit]
   F -->|SLICE TOO BIG| R[factory_reslice: user approves split]
   R --> F
-  F --> G[factory_checks: lint, typecheck, test]
+  F --> G[factory_checks: the checks chosen at setup]
   G -->|red| H[fix file → implementer fix mode]
   H --> G
   G -->|green| I[factory-reviewer per chosen domain + validator]
@@ -98,9 +98,22 @@ Start a new omp session after you install or update. The link points at the clon
 /factory <pasted issue text>
 /factory status
 /factory pause
+/factory checks
 /factory resume <feature>
 /factory submit [feature]
 ```
+
+The first run in a repository asks which check commands every slice must pass. The editor has the `lint`,
+`typecheck`, and `test` scripts on their own lines (they run), and other suggestions as `#` comments (remove the `#`
+to run one):
+
+- other `package.json` scripts that look like checks, such as `build`, `check:*`, `e2e`, or `verify`;
+- `run:` commands from `.github/workflows`, except installs, commands a script already covers, and multi-line
+  scripts with `cd`, `export`, or control flow.
+
+The factory saves the choice in the scratch dir, and later runs use it with no dialog. To change it, run
+`/factory checks`: new runs use the new list, and a run that already started keeps its checks. To share one list
+with the whole team, set `checks` in `.omp/factory.json` instead; then the factory does not ask.
 
 While a run is active, the session cannot end until the run is done, paused, or stalled. The third stop attempt in a
 row without progress pauses the run instead.
@@ -133,7 +146,7 @@ working tree, and unknown keys are rejected.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `checks` | `lint`, `typecheck`, `test` scripts found in `package.json` | Commands run in order; all must pass |
+| `checks` | Asked on the first run | Check commands every slice must pass, in order. Unset: the first `factory_start` in the repository opens a dialog with the `lint`, `typecheck`, `test` scripts chosen, and other check-like `package.json` scripts and `.github/workflows` `run:` commands as commented suggestions. The choice is saved in `scratchDir`, and later runs reuse it with no dialog. `/factory checks` changes it for new runs; a run keeps the checks it started with |
 | `checkTimeoutMs` | `600000` | Per-check timeout; the whole process group is killed |
 | `maxRounds` | `3` | Fix rounds per slice before the user decides to continue or pause |
 | `sliceTokenBudget` | `400000` | Planned context per slice: 40% of a 1M window |

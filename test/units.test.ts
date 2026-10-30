@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
-import { detectChecks, loadConfig } from '../src/config.ts';
+import { checksPrompt, detectChecks, loadConfig, parseChecks, runCommands, suggestChecks } from '../src/config.ts';
 import { evidence } from '../src/evidence.ts';
 import { runShell } from '../src/exec.ts';
 
@@ -76,10 +76,6 @@ describe('loadConfig', () => {
     assert.deepEqual(detectChecks(dir({ 'package.json': scripts(['test']) })), ['npm run test']);
   });
 
-  it('errors when no checks exist', () => {
-    assert.throws(() => loadConfig(dir({ 'package.json': scripts(['build']) })), /No checks found/);
-  });
-
   it('rejects invalid and unknown keys, naming the file', () => {
     const config = (value: unknown) => dir({ '.omp/factory.json': JSON.stringify(value), 'package.json': scripts(['test']) });
     assert.throws(() => loadConfig(config({ maxRounds: 0 })), /factory\.json[\s\S]*maxRounds/);
@@ -93,6 +89,66 @@ describe('loadConfig', () => {
   it('normalizes scratchDir', () => {
     const root = dir({ '.omp/factory.json': JSON.stringify({ scratchDir: './runs/' }), 'package.json': scripts(['test']) });
     assert.equal(loadConfig(root).scratchDir, 'runs');
+  });
+});
+
+describe('check setup suggestions', () => {
+  const workflow = [
+    'jobs:',
+    '  build:',
+    '    steps:',
+    '      - uses: actions/checkout@v4',
+    '      - run: pnpm install --frozen-lockfile',
+    '      - name: Build',
+    '        run: |',
+    '          pnpm check:build',
+    '          # a comment',
+    '          pnpm exec playwright test \\',
+    '            --project=chromium',
+    '      - run: >-',
+    '          node scripts/verify.js',
+    '          --strict',
+    '      - run: "pnpm run lint"',
+    '    env:',
+    '      CI: true',
+  ].join('\n');
+
+  it('reads inline, literal block, and folded block run steps', () => {
+    assert.deepEqual(runCommands(workflow), [
+      'pnpm install --frozen-lockfile',
+      'pnpm check:build',
+      'pnpm exec playwright test --project=chromium',
+      'node scripts/verify.js --strict',
+      'pnpm run lint',
+    ]);
+  });
+
+  it('offers nothing from a run block whose lines depend on each other', () => {
+    const steps = ['steps:', '  - run: |', '      cd app', '      pnpm test', '  - run: |', '      if [ -n "$CI" ]; then', '        pnpm e2e', '      fi', '  - run: |', '      export NODE_ENV=test', '      pnpm verify'];
+    assert.deepEqual(runCommands(steps.join('\n')), []);
+  });
+
+  it('chooses lint/typecheck/test and offers other check scripts and CI commands not already covered', () => {
+    const root = dir({
+      '.github/workflows/build.yml': workflow,
+      'package.json': scripts(['lint', 'test', 'test:watch', 'lint:fix', 'check:build', 'dev'], { packageManager: 'pnpm@10.0.0' }),
+    });
+    assert.deepEqual(suggestChecks(root, {}), {
+      chosen: ['pnpm run lint', 'pnpm run test'],
+      scripts: ['pnpm run check:build'],
+      workflows: ['pnpm exec playwright test --project=chromium', 'node scripts/verify.js --strict'],
+    });
+  });
+
+  it('chooses the configured checks, and works with no package.json', () => {
+    assert.deepEqual(suggestChecks(dir(), { checks: ['make test'] }), { chosen: ['make test'], scripts: [], workflows: [] });
+    assert.deepEqual(suggestChecks(dir(), {}), { chosen: [], scripts: [], workflows: [] });
+  });
+
+  it('runs the chosen lines and ignores the commented suggestions until uncommented', () => {
+    const prompt = checksPrompt({ chosen: ['pnpm run lint'], scripts: ['pnpm run check:build'], workflows: ['make e2e'] });
+    assert.deepEqual(parseChecks(prompt), ['pnpm run lint']);
+    assert.deepEqual(parseChecks(prompt.replace('# pnpm run check:build', 'pnpm run check:build')), ['pnpm run lint', 'pnpm run check:build']);
   });
 });
 

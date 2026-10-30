@@ -27,6 +27,7 @@ import {
   resumeRun,
   REVIEW_REFERENCE_DIR,
   runChecks,
+  saveChecks,
   startReview,
   startRun,
   submitDomain,
@@ -88,6 +89,10 @@ function finding(domain: Finding['domain'], severity: Finding['severity'], name:
   return { domain, fix: 'fix it', fix_prompt: 'fix it', id: `${domain}-${name}`, line: 1, path: 'ok', problem: 'wrong', severity, title: name };
 }
 
+function start(ws: Workspace) {
+  return startRun(ws, { feature: 'demo', sessionId: 's', source: { body: '', kind: 'text', ref: 'r', title: 'T' } });
+}
+
 async function newRun(ws: Workspace, inputs: SliceInput[]) {
   await startRun(ws, {
     feature: 'demo',
@@ -120,7 +125,7 @@ async function green(ws: Workspace) {
 describe('base resolution', () => {
   it('starts a run without the default base, and plans on a base the user chooses', async () => {
     const ws = workspace({ baseRef: 'origin/main' });
-    await startRun(ws, { feature: 'demo', sessionId: 's', source: { body: '', kind: 'text', ref: 'r', title: 'T' } });
+    await start(ws);
     await assert.rejects(resolveBase(ws), /Base ref "origin\/main" does not exist/);
     const base = await resolveBase(ws, { baseRef: 'main' });
     await step(ws, run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')], base), base));
@@ -145,7 +150,7 @@ describe('base resolution', () => {
     sh(ws.root, 'remote', 'add', 'up/stream', ws.root);
     sh(ws.root, 'update-ref', 'refs/remotes/up/stream/dev', 'HEAD');
     assert.equal((await resolveBase(ws, { baseRef: 'up/stream/dev' })).trunk, 'dev');
-    await startRun(ws, { feature: 'demo', sessionId: 's', source: { body: '', kind: 'text', ref: 'r', title: 'T' } });
+    await start(ws);
     assert.equal(readRun(ws, 'demo').trunk, 'dev');
   });
 });
@@ -195,7 +200,7 @@ describe('issue sources', () => {
 describe('planSlices', () => {
   it('orders slices blockers first into one linear stack', async () => {
     const ws = workspace();
-    await startRun(ws, { feature: 'demo', sessionId: 's', source: { body: '', kind: 'text', ref: 'r', title: 'T' } });
+    await start(ws);
     const slices = planSlices(ws, readRun(ws, 'demo'), [slice('UI', ['API']), slice('API', ['Schema']), slice('Schema')]);
     assert.deepEqual(
       slices.map(item => [item.id, item.title, item.parentBranch]),
@@ -209,7 +214,7 @@ describe('planSlices', () => {
 
   it('rejects cycles, unknown blockers, oversized slices, and slices without seams or a reason', async () => {
     const ws = workspace();
-    await startRun(ws, { feature: 'demo', sessionId: 's', source: { body: '', kind: 'text', ref: 'r', title: 'T' } });
+    await start(ws);
     const run = readRun(ws, 'demo');
     assert.throws(() => planSlices(ws, run, [slice('A', ['B']), slice('B', ['A'])]), /cycle/);
     assert.throws(() => planSlices(ws, run, [slice('A', ['Missing'])]), /unknown slice "Missing"/);
@@ -316,7 +321,7 @@ describe('slice loop gates', () => {
     commit(ws, 'ext.txt');
     const pinned = sh(ws.root, 'rev-parse', 'HEAD');
     sh(ws.root, 'switch', '-q', 'main');
-    await startRun(ws, { feature: 'demo', sessionId: 's', source: { body: '', kind: 'text', ref: 'r', title: 'T' } });
+    await start(ws);
     const base = await resolveBase(ws, { baseRef: 'ext-950' });
     await step(ws, run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')], base), base));
 
@@ -399,6 +404,20 @@ describe('slice loop gates', () => {
     const result = await step(ws, run => runChecks(ws, run));
     assert.ok(!result.passed);
     assert.match(readFileSync(result.fixPath, 'utf8'), /sleep 5: timed out/);
+  });
+
+  it('gates a run on the checks it started with; changed saved checks reach new runs only', async () => {
+    const ws = workspace({ checks: undefined });
+    await assert.rejects(start(ws), /Choose at least one check command/);
+    await saveChecks(ws, ['test -f ok']);
+    assert.equal(sh(ws.root, 'status', '--porcelain'), '');
+    await newRun(ws, [slice('Feature')]);
+    await saveChecks(ws, ['false']);
+    await startRun(ws, { feature: 'later', sessionId: 's', source: { body: '', kind: 'text', ref: 'r', title: 'T' } });
+    assert.deepEqual(readRun(ws, 'later').checks, ['false']);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    assert.ok((await step(ws, run => runChecks(ws, run))).passed);
   });
 
   it('stalls when the fix budget is used, and each continue grants maxRounds more fixes', async () => {
@@ -804,7 +823,7 @@ describe('re-slice', () => {
 describe('pause and resume', () => {
   it('pauses only a running run and resumes it to running', async () => {
     const ws = workspace();
-    await startRun(ws, { feature: 'demo', sessionId: 's', source: { body: '', kind: 'text', ref: 'r', title: 'T' } });
+    await start(ws);
     await assert.rejects(step(ws, run => pauseRun(run, 'test')), /intake; only a running run pauses/);
 
     await step(ws, run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')])));
@@ -899,7 +918,7 @@ describe('submit', () => {
     commit(ws, 'ext.txt');
     sh(ws.root, 'switch', '-q', 'main');
     await assert.rejects(resolveBase(ws, { baseRef: 'main', landOn: 'ext-953' }), /"ext-953" is not at or below main/);
-    await startRun(ws, { feature: 'demo', sessionId: 's', source: { body: '', kind: 'text', ref: 'r', title: 'T' } });
+    await start(ws);
     const base = await resolveBase(ws, { landOn: 'ext-953' });
     assert.equal(base.baseRef, 'ext-953');
     await step(ws, run => approvePlan(ws, run, planSlices(ws, run, [slice('One'), slice('Two', ['One'])], base), base));
@@ -942,7 +961,7 @@ describe('submit', () => {
   it('refuses to land when the target branch moved off the stack', async () => {
     const ws = workspace();
     sh(ws.root, 'branch', 'target');
-    await startRun(ws, { feature: 'demo', sessionId: 's', source: { body: '', kind: 'text', ref: 'r', title: 'T' } });
+    await start(ws);
     const base = await resolveBase(ws, { landOn: 'target' });
     await step(ws, run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')], base), base));
     await step(ws, run => nextSlice(ws, run));
