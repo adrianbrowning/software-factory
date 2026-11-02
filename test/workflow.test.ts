@@ -1122,7 +1122,9 @@ describe('submit', () => {
     await assert.rejects(step(ws, run => submitStack(ws, run)), /ext-953 is checked out in .*factory-wt-/);
     sh(ws.root, 'worktree', 'remove', linked);
 
-    const output = await step(ws, run => submitStack(ws, run));
+    const steps: string[] = [];
+    const output = await step(ws, run => submitStack(ws, run, message => steps.push(message)));
+    assert.deepEqual(steps, ['checking the working tree and the slice branches', 'fast-forwarding ext-953 to the top slice']);
     assert.match(output, /ext-953 fast-forwarded to .*No PRs were opened/);
     assert.equal(sh(ws.root, 'rev-parse', 'ext-953'), top?.greenSha);
     assert.equal(sh(ws.root, 'branch', '--show-current'), checkedOut, 'the checkout is unchanged');

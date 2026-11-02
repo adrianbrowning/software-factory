@@ -1363,10 +1363,12 @@ export function settle(run: Run) {
 /**
  * Submits the reviewed stack. By default it adopts every slice branch into one gh-stack stack and opens draft PRs.
  * A run with `landOn` instead fast-forwards that local branch to the top slice; no PRs are opened. Never merges.
- * Only the user-invoked `/factory submit` command calls this; no model-callable tool does.
+ * Only the user-invoked `/factory submit` command calls this; no model-callable tool does. `progress` names each step
+ * before it starts, so the user sees what the submit is waiting on.
  */
-export async function submitStack(ws: Workspace, run: Run) {
+export async function submitStack(ws: Workspace, run: Run, progress: (step: string) => void = () => {}) {
   if (run.status !== 'done') throw new Error(`Run "${run.feature}" is ${run.status}; its stack is not ready.`);
+  progress('checking the working tree and the slice branches');
   await requireClean(ws.root, 'Cannot submit the stack');
   const unreviewed: string[] = [];
   for (const slice of run.slices) {
@@ -1376,12 +1378,20 @@ export async function submitStack(ws: Workspace, run: Run) {
   if (unreviewed.length > 0) {
     throw new Error(`These branches moved after their green review and were not submitted: ${unreviewed.join(', ')}`);
   }
-  if (run.landOn !== undefined) return landStack(ws, run, run.landOn);
+  if (run.landOn !== undefined) {
+    progress(`fast-forwarding ${run.landOn} to the top slice`);
+    return landStack(ws, run, run.landOn);
+  }
+  progress('reading the gh stack');
   const stacked = await gh(ws.root, 'stack', 'view', '--json').then(
     () => true,
     () => false,
   );
-  if (!stacked) await gh(ws.root, 'stack', 'init', '--base', run.trunk, ...run.slices.map(slice => slice.branch));
+  if (!stacked) {
+    progress(`adopting ${run.slices.length} branches into a gh stack onto ${run.trunk}`);
+    await gh(ws.root, 'stack', 'init', '--base', run.trunk, ...run.slices.map(slice => slice.branch));
+  }
+  progress(`pushing ${run.slices.length} branches and opening draft PRs (gh stack submit; this can take a few minutes)`);
   const output = await gh(ws.root, 'stack', 'submit', '--auto');
   addEvent(run, 'submit', 'stack submitted as draft PRs');
   return output;
