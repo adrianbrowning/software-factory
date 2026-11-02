@@ -7,6 +7,7 @@ import { after, describe, it } from 'node:test';
 import type { FactoryConfig } from '../src/config.ts';
 import { type Finding, forgetRun, readRun, REVIEW_DOMAINS, type SliceInput, type Workspace, withRun } from '../src/run.ts';
 import {
+  addFollowUp,
   applyReslice,
   approvePlan,
   completeSlice,
@@ -1075,6 +1076,57 @@ describe('reopen', () => {
     await step(ws, run => nextSlice(ws, run));
     await assert.rejects(step(ws, run => reopenSlice(ws, run, '01', 'bug')), /Slice 01 is active; only a done slice reopens/);
     await assert.rejects(step(ws, run => reopenSlice(ws, run, '02', 'bug')), /Slice 02 is pending; only a done slice reopens/);
+  });
+
+  it('re-gates a commit made on a done slice after its review, and restacks later slices without copying it', async () => {
+    const ws = workspace({ maxRounds: 2 });
+    const [first, second, third] = await stackOfThree(ws);
+    sh(ws.root, 'switch', '-q', second);
+    commit(ws, 'late.txt');
+    sh(ws.root, 'switch', '-q', third);
+
+    const reopened = await step(ws, run => reopenSlice(ws, run, '02', 'apply the observation'));
+    assert.match(readFileSync(reopened.fixPath, 'utf8'), /## Commits after the green review[\s\S]*add late\.txt/);
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+
+    execFileSync('git', ['merge-base', '--is-ancestor', tip(ws, second), third], { cwd: ws.root });
+    assert.deepEqual(subjects(ws, `${first}..${second}`), ['add late.txt', 'add second.txt']);
+    assert.deepEqual(subjects(ws, `${second}..${third}`), ['add third.txt']);
+  });
+});
+
+describe('follow-up slice', () => {
+  const followUp = { acceptance: ['Late works'], estimateTokens: 500, seams: ['cli'], title: 'Late', whatToBuild: 'late' };
+
+  it('adds a slice on top of a done run, which runs again from the top slice and needs a new retro', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await green(ws);
+    const done = await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => recordRetro(ws, run, parseRetro(ws, run, [])));
+
+    await step(ws, run => addFollowUp(ws, run, followUp));
+    const run = readRun(ws, 'demo');
+    assert.deepEqual([run.status, run.retroRecorded], ['running', false]);
+    assert.deepEqual(
+      run.slices.map(item => [item.id, item.status, item.parentBranch, item.blockedBy, item.greenSha]),
+      [
+        ['01', 'done', run.slices[0]?.parentBranch, [], done.greenSha],
+        ['02', 'pending', done.branch, ['Feature'], undefined],
+      ],
+    );
+
+    const next = await step(ws, current => nextSlice(ws, current));
+    assert.deepEqual([next?.id, next?.phase, sh(ws.root, 'rev-parse', 'HEAD')], ['02', 'implement', done.greenSha]);
+  });
+
+  it('refuses a follow-up slice on a run that is not running or done', async () => {
+    const ws = workspace();
+    await start(ws);
+    await assert.rejects(step(ws, run => addFollowUp(ws, run, followUp)), /Run is intake; only a running or done run takes a follow-up slice/);
   });
 });
 
