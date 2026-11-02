@@ -40,6 +40,8 @@ User gates: questions at intake, slice-plan approval, seam additions, re-slice a
 reopening a done slice, retro actions, and `/factory submit`. The plugin opens PRs only when you run
 `/factory submit`, and it never merges. A run planned with `landOn` opens no PRs: `/factory submit` fast-forwards
 that existing local branch to the top slice, without a checkout or a merge commit.
+While `/factory submit` runs, the status line shows its current step, for example the `gh stack submit` push,
+which can take a few minutes.
 
 ## Install
 

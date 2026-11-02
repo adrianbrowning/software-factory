@@ -645,8 +645,14 @@ export default function softwareFactory(pi: ExtensionAPI) {
             : `${run.landOn} will fast-forward to ${run.slices.at(-1)?.branch} (${run.slices.length} slices). No PRs are opened and your checkout is not changed.`,
         );
         if (!ok) return;
-        const output = await withRun(ws, feature, current => submitStack(ws, current));
-        ctx.ui.notify(output.trim() || 'Stack submitted.', 'info');
+        const progress = (step: string) => ctx.ui.setStatus('factory-submit', `Factory submit: ${step}…`);
+        ctx.ui.notify(`Submitting "${feature}". The status line shows each step.`, 'info');
+        try {
+          const output = await withRun(ws, feature, current => submitStack(ws, current, progress));
+          ctx.ui.notify(output.trim() || 'Stack submitted.', 'info');
+        } finally {
+          ctx.ui.setStatus('factory-submit', undefined);
+        }
         return;
       }
       pi.sendUserMessage(`Start a software-factory run for: ${args.trim()}\nRead skill://software-factory and follow it.`);
