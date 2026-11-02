@@ -1124,7 +1124,7 @@ describe('submit', () => {
 
     const steps: string[] = [];
     const output = await step(ws, run => submitStack(ws, run, message => steps.push(message)));
-    assert.deepEqual(steps, ['checking that the slice branches are as reviewed', 'fast-forwarding ext-953 to the top slice']);
+    assert.deepEqual(steps, ['checking the working tree and the slice branches', 'fast-forwarding ext-953 to the top slice']);
     assert.match(output, /ext-953 fast-forwarded to .*No PRs were opened/);
     assert.equal(sh(ws.root, 'rev-parse', 'ext-953'), top?.greenSha);
     assert.equal(sh(ws.root, 'branch', '--show-current'), checkedOut, 'the checkout is unchanged');

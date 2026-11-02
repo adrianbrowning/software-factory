@@ -1368,7 +1368,7 @@ export function settle(run: Run) {
  */
 export async function submitStack(ws: Workspace, run: Run, progress: (step: string) => void = () => {}) {
   if (run.status !== 'done') throw new Error(`Run "${run.feature}" is ${run.status}; its stack is not ready.`);
-  progress('checking that the slice branches are as reviewed');
+  progress('checking the working tree and the slice branches');
   await requireClean(ws.root, 'Cannot submit the stack');
   const unreviewed: string[] = [];
   for (const slice of run.slices) {

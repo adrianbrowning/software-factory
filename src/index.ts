@@ -645,8 +645,11 @@ export default function softwareFactory(pi: ExtensionAPI) {
             : `${run.landOn} will fast-forward to ${run.slices.at(-1)?.branch} (${run.slices.length} slices). No PRs are opened and your checkout is not changed.`,
         );
         if (!ok) return;
-        const progress = (step: string) => ctx.ui.setStatus('factory-submit', `Factory submit: ${step}…`);
-        ctx.ui.notify(`Submitting "${feature}". The status line shows each step.`, 'info');
+        // The status line can be hidden in the omp settings, so each step is also a notification.
+        const progress = (step: string) => {
+          ctx.ui.setStatus('factory-submit', `Factory submit: ${step}…`);
+          ctx.ui.notify(`Factory submit: ${step}…`, 'info');
+        };
         try {
           const output = await withRun(ws, feature, current => submitStack(ws, current, progress));
           ctx.ui.notify(output.trim() || 'Stack submitted.', 'info');
