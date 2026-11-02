@@ -1112,8 +1112,11 @@ describe('follow-up slice', () => {
     const run = readRun(ws, 'demo');
     assert.deepEqual([run.status, run.retroRecorded], ['running', false]);
     assert.deepEqual(
-      run.slices.map(item => [item.id, item.status, item.parentBranch]),
-      [['01', 'done', run.slices[0]?.parentBranch], ['02', 'pending', done.branch]],
+      run.slices.map(item => [item.id, item.status, item.parentBranch, item.blockedBy, item.greenSha]),
+      [
+        ['01', 'done', run.slices[0]?.parentBranch, [], done.greenSha],
+        ['02', 'pending', done.branch, ['Feature'], undefined],
+      ],
     );
 
     const next = await step(ws, current => nextSlice(ws, current));

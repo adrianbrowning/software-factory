@@ -36,6 +36,7 @@ import {
   nextSlice,
   parseRetro,
   pauseRun,
+  planFollowUp,
   planReslice,
   planSlices,
   recordDecisions,
@@ -557,8 +558,8 @@ export default function softwareFactory(pi: ExtensionAPI) {
     schema: followUpSchema,
     async run(params, ws, ctx) {
       const feature = activeFeature(ws);
-      const top = readRun(ws, feature).slices.at(-1);
-      const body = `${params.whatToBuild}\n\nAcceptance:\n${params.acceptance.map(item => `- ${item}`).join('\n')}\n\nThe slice branches from ${top?.branch ?? 'the base'}. The slices below it are not changed. The run needs a new retro before /factory submit.`;
+      const planned = planFollowUp(ws, readRun(ws, feature), params);
+      const body = `${params.whatToBuild}\n\nAcceptance:\n${params.acceptance.map(item => `- ${item}`).join('\n')}\n\nThe slice branches from ${planned.parentBranch}. The slices below it are not changed. The run needs a new retro before /factory submit.`;
       if (!(await confirm(ctx, `Add follow-up slice "${params.title}"?`, body))) {
         return reply('The user did not add the follow-up slice. Ask how to handle the work.');
       }

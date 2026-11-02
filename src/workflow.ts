@@ -499,14 +499,19 @@ function pushSlice(ws: Workspace, run: Run, slice: Slice) {
   return slice;
 }
 
+/** Validates a follow-up slice for `addFollowUp` without changing the run, so a dialog only offers one that can be added. */
+export function planFollowUp(ws: Workspace, run: Run, proposed: Omit<SliceInput, 'blockedBy'>) {
+  if (run.status !== 'running' && run.status !== 'done') throw new Error(`Run is ${run.status}; only a running or done run takes a follow-up slice.`);
+  return planAppend(ws, run, proposed);
+}
+
 /**
  * Adds one slice on top of the stack, blocked by every existing slice, for work the user wants after the earlier
  * slices are done (for example a non-blocking review observation). The done slices and their PRs stay as reviewed.
  * A done run runs again and needs a new retro before submit.
  */
 export function addFollowUp(ws: Workspace, run: Run, proposed: Omit<SliceInput, 'blockedBy'>) {
-  if (run.status !== 'running' && run.status !== 'done') throw new Error(`Run is ${run.status}; only a running or done run takes a follow-up slice.`);
-  const slice = pushSlice(ws, run, planAppend(ws, run, proposed));
+  const slice = pushSlice(ws, run, planFollowUp(ws, run, proposed));
   if (run.status === 'done') run.status = 'running';
   run.retroRecorded = false;
   return slice;
