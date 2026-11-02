@@ -73,7 +73,11 @@ async function snapshot(root: string) {
 
 function requireActive(run: Run) {
   const slice = activeSlice(run);
-  if (slice === undefined) throw new Error('No active slice. Call factory_next.');
+  if (slice === undefined) {
+    throw new Error(
+      'No active slice. Call factory_next. To change a slice that is done, ask the user: factory_reopen fixes a bug in that slice, factory_follow_up adds a slice on top of the stack.',
+    );
+  }
   if (slice.stalled) throw new Error(`Slice ${slice.id} is stalled; the user must decide how to continue.`);
   return slice;
 }
@@ -479,7 +483,7 @@ export function amendSeams(ws: Workspace, run: Run, seams: string[]) {
   return slice;
 }
 
-/** Builds the slice `appendSlice` would add, validated, without changing the run. */
+/** Builds the slice `addFollowUp` or a retro adds on top of the stack, validated, without changing the run. */
 function planAppend(ws: Workspace, run: Run, proposed: Omit<SliceInput, 'blockedBy'>) {
   const existing = run.slices.map(slice => slice.title);
   const [input] = orderInputs(ws, [{ ...proposed, blockedBy: existing }], new Set(existing), new Set());
@@ -495,9 +499,17 @@ function pushSlice(ws: Workspace, run: Run, slice: Slice) {
   return slice;
 }
 
-/** Adds one slice on top of the stack, blocked by every existing slice. */
-export function appendSlice(ws: Workspace, run: Run, proposed: Omit<SliceInput, 'blockedBy'>) {
-  return pushSlice(ws, run, planAppend(ws, run, proposed));
+/**
+ * Adds one slice on top of the stack, blocked by every existing slice, for work the user wants after the earlier
+ * slices are done (for example a non-blocking review observation). The done slices and their PRs stay as reviewed.
+ * A done run runs again and needs a new retro before submit.
+ */
+export function addFollowUp(ws: Workspace, run: Run, proposed: Omit<SliceInput, 'blockedBy'>) {
+  if (run.status !== 'running' && run.status !== 'done') throw new Error(`Run is ${run.status}; only a running or done run takes a follow-up slice.`);
+  const slice = pushSlice(ws, run, planAppend(ws, run, proposed));
+  if (run.status === 'done') run.status = 'running';
+  run.retroRecorded = false;
+  return slice;
 }
 
 /**
@@ -569,7 +581,8 @@ async function restartSlice(ws: Workspace, run: Run, slice: Slice) {
  * Reopens a done slice to fix a bug found after it was done, so the fix lands in that slice's own PR. The active slice
  * goes back to pending with its commits. The reopened slice is active again in `fix`, with `reason` as its fix file;
  * the fix round counts against its round limit. Completing it restacks every later slice on the fix (see restack).
- * The run runs again and needs a new retro before submit.
+ * The run runs again and needs a new retro before submit. Commits already on the branch after the green review are
+ * listed in the fix file: they are part of this fix round and get its checks and review.
  */
 export async function reopenSlice(ws: Workspace, run: Run, id: string, reason: string) {
   if (run.status !== 'running' && run.status !== 'done') throw new Error(`Run is ${run.status}; only a running or done run reopens a slice.`);
@@ -582,6 +595,12 @@ export async function reopenSlice(ws: Workspace, run: Run, id: string, reason: s
   if (active?.stalled) throw new Error(`Slice ${active.id} is stalled; the user must decide how to continue first.`);
   await requireClean(ws.root, `Cannot reopen slice ${id}`);
   const doneSha = (await git(ws.root, 'rev-parse', '--verify', `refs/heads/${slice.branch}^{commit}`)).trim();
+  const unreviewed =
+    slice.greenSha === undefined || slice.greenSha === doneSha ? '' : (await git(ws.root, 'log', '--oneline', `${slice.greenSha}..${doneSha}`)).trim();
+  const listed =
+    unreviewed === ''
+      ? ''
+      : `\n\n## Commits after the green review\n\nThese commits are on the branch already, but no check or review saw them. They are part of this fix round: keep them when they fix the bug.\n\n\`\`\`\n${evidence(unreviewed, 2_000)}\n\`\`\``;
   await git(ws.root, 'switch', slice.branch);
   if (active !== undefined) await restartSlice(ws, run, active);
   slice.doneSha = doneSha;
@@ -591,7 +610,7 @@ export async function reopenSlice(ws: Workspace, run: Run, id: string, reason: s
   run.retroRecorded = false;
   const paused = active === undefined ? '' : `; slice ${active.id} back to pending at ${active.phase}`;
   addEvent(run, 'reopen', `${slice.branch} at ${doneSha.slice(0, 12)}${paused}`, slice);
-  return { slice, ...requestFix(ws, run, slice, `## Bug found after slice ${id} was done\n\n${evidence(reason, 4_000)}`, doneSha) };
+  return { slice, ...requestFix(ws, run, slice, `## Bug found after slice ${id} was done\n\n${evidence(reason, 4_000)}${listed}`, doneSha) };
 }
 
 export function resolveStall(ws: Workspace, run: Run, choice: 'continue' | 'pause') {
@@ -1374,7 +1393,9 @@ export async function submitStack(ws: Workspace, run: Run) {
     if (tip !== slice.greenSha) unreviewed.push(slice.branch);
   }
   if (unreviewed.length > 0) {
-    throw new Error(`These branches moved after their green review and were not submitted: ${unreviewed.join(', ')}`);
+    throw new Error(
+      `These branches moved after their green review and were not submitted: ${unreviewed.join(', ')}. To keep the new commits, ask the orchestrator to re-gate them: factory_reopen on that slice gives them checks and a full review. Otherwise reset each branch to its reviewed commit.`,
+    );
   }
   if (run.landOn !== undefined) return landStack(ws, run, run.landOn);
   const stacked = await gh(ws.root, 'stack', 'view', '--json').then(

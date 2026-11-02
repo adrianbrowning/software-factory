@@ -22,6 +22,7 @@ import {
   type Workspace,
 } from './run.ts';
 import {
+  addFollowUp,
   amendSeams,
   applyReslice,
   approvePlan,
@@ -78,6 +79,7 @@ const ORCHESTRATION_TOOLS = [
   'factory_review_record',
   'factory_complete_slice',
   'factory_reopen',
+  'factory_follow_up',
   'factory_status',
   'factory_retro',
 ];
@@ -126,6 +128,7 @@ const reopenSchema = z.object({
   reason: z.string().min(1).describe('The bug found in the done slice, as the fix file for its implementer'),
   slice: z.string().regex(/^\d{2}$/).describe('Id of the done slice, for example "04"'),
 });
+const followUpSchema = sliceInputSchema.omit({ blockedBy: true });
 const emptySchema = z.object({});
 
 export function callerOf(ctx: Pick<ExtensionContext, 'agent'>) {
@@ -542,6 +545,27 @@ export default function softwareFactory(pi: ExtensionAPI) {
       return reply(
         `Slice ${result.slice.id} "${result.slice.title}" is reopened on ${result.slice.branch}. Fix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`,
       );
+    },
+  });
+
+  tool({
+    caller: 'main',
+    description:
+      'Add one slice on top of the stack, after the user agreed, for work found after a slice was done (for example a non-blocking review observation). The done slices and their PRs stay as reviewed; the new slice comes last and gets its own checks, review, and PR.',
+    label: 'Factory: follow-up slice',
+    name: 'factory_follow_up',
+    schema: followUpSchema,
+    async run(params, ws, ctx) {
+      const feature = activeFeature(ws);
+      const top = readRun(ws, feature).slices.at(-1);
+      const body = `${params.whatToBuild}\n\nAcceptance:\n${params.acceptance.map(item => `- ${item}`).join('\n')}\n\nThe slice branches from ${top?.branch ?? 'the base'}. The slices below it are not changed. The run needs a new retro before /factory submit.`;
+      if (!(await confirm(ctx, `Add follow-up slice "${params.title}"?`, body))) {
+        return reply('The user did not add the follow-up slice. Ask how to handle the work.');
+      }
+      return withRun(ws, feature, run => {
+        const slice = addFollowUp(ws, run, params);
+        return reply(`Slice ${slice.id} "${slice.title}" is added on ${slice.branch}.\nNext: ${nextAction(run)}`);
+      });
     },
   });
 

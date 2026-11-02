@@ -24,6 +24,8 @@ flowchart TD
   J -->|all done| K[Retro: repo slice + factory issues]
   J -->|bug in a done slice| O[factory_reopen: user approves, fix file for that slice]
   O --> H
+  J -->|other work after a slice is done| P[factory_follow_up: user approves a slice on top]
+  P --> E
   K --> L[Stack ready: /factory submit opens draft PRs]
 ```
 
@@ -160,6 +162,20 @@ bug:
   the old tips until every rebase passes. Each later slice goes back to pending and starts again at checks.
 - If a rebase conflicts, the factory aborts it, puts every later branch back at its old tip, and pauses the run. The
   error names the branch. Resolve it, then run `/factory resume <feature>`.
+- A done run runs again, and it needs a new retro before `/factory submit`.
+- Commits on the slice branch after its green review are listed in the fix file. They are part of the fix round, so
+  they get checks and a full review. This is how to keep a commit made on a done slice: `/factory submit` refuses a
+  branch that moved after its review.
+
+### Add a follow-up slice
+
+For other work found after a slice is done, for example a non-blocking review observation you want fixed, the
+orchestrator asks you where it goes: into that slice (`factory_reopen`), or into a new slice on top of the stack.
+`factory_follow_up` (title, what to build, acceptance, seams or `noTestReason`, estimate) opens a dialog. After you
+confirm:
+
+- The new slice comes last and branches from the slice below it. The other slices and their PRs are not changed.
+- It goes through implement, checks, and review like any other slice, and gets its own PR.
 - A done run runs again, and it needs a new retro before `/factory submit`.
 
 ## Configure
