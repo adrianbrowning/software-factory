@@ -6,7 +6,7 @@ import { gh, git } from './exec.ts';
 import {
   activeSlice,
   addEvent,
-  decisionsBeforeNewer,
+  outdatedGreenCount,
   runDir,
   type Run,
   saveRun,
@@ -847,7 +847,7 @@ export function nextAction(run: Run): string {
     case 'ready':
       // LEGACY-STATE(decision-before-reset): only a state file written before factory_decide reset reviews keeps
       // decisions newer than a green review; remove with the matching branches in review.ts.
-      return decisionsBeforeNewer(run, slice) === undefined
+      return outdatedGreenCount(run, slice) === undefined
         ? `Call factory_complete_slice for ${where}.`
         : `Decisions landed after the green review of ${where}: pick the review domains, then call factory_review_start for a new review of the same commit. The checks do not run again.`;
     default:

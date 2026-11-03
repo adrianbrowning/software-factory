@@ -242,7 +242,7 @@ export function activeSlice(run: Run) {
  * factory_decide reopens such a slice at once, only a state file written before it did keeps this state; one from
  * before greenDecisions has no count, and its green review stays valid.
  */
-export function decisionsBeforeNewer(run: Run, slice: Slice) {
+export function outdatedGreenCount(run: Run, slice: Slice) {
   if (slice.phase !== 'ready' || slice.greenDecisions === undefined) return undefined;
   return run.decisions.length > slice.greenDecisions ? slice.greenDecisions : undefined;
 }

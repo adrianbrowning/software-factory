@@ -128,8 +128,9 @@ describe('first-run checks dialog', () => {
 });
 
 describe('factory_decide', () => {
-  it('tells the orchestrator in its Next line to stop the discarded review, then call factory_review_start', async t => {
-    const root = tempRepo(t, 'factory-decide-', { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) });
+  it('tells the orchestrator in its Next line to stop the discarded review, then call factory_review_start', async () => {
+    using repo = tempRepo('factory-decide-', { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) });
+    const { root } = repo;
     const caller = {
       ...ctx('main', 'main'),
       cwd: root,

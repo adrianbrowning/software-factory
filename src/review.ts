@@ -12,7 +12,7 @@ import { git, runShell, type CommandResult } from './exec.ts';
 import {
   activeSlice,
   addEvent,
-  decisionsBeforeNewer,
+  outdatedGreenCount,
   type Domain,
   type Finding,
   findingListSchema,
@@ -56,7 +56,7 @@ export function recordDecisions(ws: Workspace, run: Run, decisions: string[]) {
   const active = activeSlice(run);
   const open = active?.phase === 'review' ? active.review : undefined;
   if (active !== undefined && open !== undefined) discardReview(run, active, open);
-  if (active !== undefined && decisionsBeforeNewer(run, active) !== undefined) reopenReview(run, active);
+  if (active !== undefined && outdatedGreenCount(run, active) !== undefined) reopenReview(run, active);
   return { decisions: run.decisions, discarded: open?.id };
 }
 
@@ -235,7 +235,7 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   const slice = requireActive(run);
   // factory_decide reopens a green review that newer decisions outdate; only a state file written before it did is
   // still ready here.
-  const outdated = decisionsBeforeNewer(run, slice) !== undefined;
+  const outdated = outdatedGreenCount(run, slice) !== undefined;
   if (!outdated && (slice.phase !== 'review' || slice.checkedSha === undefined)) throw new Error('Checks must pass first: call factory_checks.');
   await requireOnBranch(ws.root, slice);
   await requireClean(ws.root, 'Review needs committed work');
@@ -729,7 +729,7 @@ export async function completeSlice(ws: Workspace, run: Run) {
   }
   // LEGACY-STATE(decision-before-reset): factory_decide reopens such a slice at once, so only a state file written
   // before it did reaches this; remove with the matching branches in recordReview and nextAction.
-  const covered = decisionsBeforeNewer(run, slice);
+  const covered = outdatedGreenCount(run, slice);
   if (covered !== undefined) {
     reopenReview(run, slice);
     throw new Invalidated(`${newerDecisions(run, covered)} newer than the green review, so its reviewers did not check the code against them. Call factory_review_start for a new review.`);
