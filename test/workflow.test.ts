@@ -630,17 +630,49 @@ describe('review submissions', () => {
     assert.equal(await submit(valid), valid.length);
   });
 
-  it('skips a path-ruled domain only when no changed file could hold its subject', () => {
-    const skipsFor = (files: string[]) => pathSkips(files).map(entry => entry.domain);
-    assert.deepEqual(skipsFor(['README.md', 'docs/guide.md']), ['react-ts', 'test-validity', 'devops']);
-    for (const file of ['src/app.ts', 'ui/View.tsx', 'lib/a.mjs', 'b.cjs', 'c.jsx']) assert.ok(!skipsFor([file]).includes('react-ts'), file);
+  it('skips a path-ruled domain only when no changed file could hold its subject', async () => {
+    const contents: Record<string, string> = {
+      'src/plain.js': "const fs = require('fs');\nmodule.exports = () => fs.readFileSync('reactor.txt');\n",
+      'src/View.js': "import React from 'react';\nexport const View = () => React.createElement('div');\n",
+      'src/client.mjs': 'import { createRoot } from "react-dom/client";\n',
+      'src/legacy.cjs': "const { jsx } = require('react/jsx-runtime');\n",
+    };
+    const skipsFor = async (files: string[]) => (await pathSkips(files, async file => contents[file])).map(entry => entry.domain);
+    assert.deepEqual(await skipsFor(['README.md', 'docs/guide.md']), ['react-ts', 'test-validity', 'devops']);
+    for (const file of ['src/app.ts', 'ui/View.tsx', 'lib/a.mts', 'b.cts', 'c.jsx', 'src/View.js', 'src/client.mjs', 'src/legacy.cjs']) {
+      assert.ok(!(await skipsFor([file])).includes('react-ts'), file);
+    }
+    for (const file of ['src/plain.js', 'lib/a.mjs', 'b.cjs']) assert.ok((await skipsFor([file])).includes('react-ts'), file);
+    assert.deepEqual(
+      (await pathSkips(['src/plain.js'], async file => contents[file])).find(entry => entry.domain === 'react-ts')?.reason,
+      'no TypeScript, JSX, or React file changed (factory path rule)',
+    );
     for (const file of ['test/a.ts', 'src/__tests__/b.ts', 'a.test.ts', 'b.spec.js', 'pkg/c_test.go', 'tests/test_d.py', 'spec/e.rb']) {
-      assert.ok(!skipsFor([file]).includes('test-validity'), file);
+      assert.ok(!(await skipsFor([file])).includes('test-validity'), file);
     }
     for (const file of ['.github/workflows/ci.yml', 'Dockerfile', 'api/Dockerfile.prod', 'docker-compose.yml', 'Jenkinsfile', 'Makefile', 'package.json', 'pnpm-lock.yaml', 'yarn.lock', 'tsconfig.build.json', 'go.mod', 'Cargo.toml', 'pyproject.toml', 'requirements-dev.txt', 'infra/main.tf', 'vite.config.ts', 'helm/chart.yaml']) {
-      assert.ok(!skipsFor([file]).includes('devops'), file);
+      assert.ok(!(await skipsFor([file])).includes('devops'), file);
     }
-    assert.deepEqual(skipsFor(['src/contest.md', 'src/latest.ts']), ['test-validity', 'devops']);
+    assert.deepEqual(await skipsFor(['src/contest.md', 'src/latest.ts']), ['test-validity', 'devops']);
+  });
+
+  it('keeps react-ts for a JavaScript file that imports React at the checked commit, not for plain or deleted ones', async () => {
+    const ws = workspace();
+    commit(ws, 'gone.js', "import React from 'react';\n");
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    rmSync(join(ws.root, 'gone.js'));
+    sh(ws.root, 'add', '-A');
+    commit(ws, 'ok');
+    commit(ws, 'plain.js', 'module.exports = 1;\n');
+    const plain = await step(ws, run => runChecks(ws, run));
+    assert.ok(plain.passed && plain.pathSkipped.some(entry => entry.domain === 'react-ts'));
+    assert.ok((await step(ws, run => startReview(ws, run))).pathSkipped.some(entry => entry.domain === 'react-ts'));
+
+    commit(ws, 'view.js', "const React = require('react');\n");
+    const react = await step(ws, run => runChecks(ws, run));
+    assert.ok(react.passed && !react.pathSkipped.some(entry => entry.domain === 'react-ts'));
+    assert.ok(!(await step(ws, run => startReview(ws, run))).pathSkipped.some(entry => entry.domain === 'react-ts'));
   });
 
   it('skips path-ruled-out domains unless kept, alongside the orchestrator skips', async () => {
