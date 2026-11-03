@@ -404,8 +404,14 @@ export default function softwareFactory(pi: ExtensionAPI) {
       if (!(await confirm(ctx, 'Record these decisions for reviewers?', params.decisions.map(decision => `- ${decision}`).join('\n')))) {
         return reply('The user rejected these decisions. Ask how to word them.');
       }
-      const decisions = await withRun(ws, feature, run => recordDecisions(ws, run, params.decisions));
-      return reply(`Decisions recorded (${decisions.length} in total). Reviews from now on include them.`);
+      return withRun(ws, feature, run => {
+        const { decisions, discarded } = recordDecisions(ws, run, params.decisions);
+        const stop =
+          discarded === undefined
+            ? ''
+            : `\nReview ${discarded} is discarded: its reviewers did not check the code against these decisions. Stop its running reviewers and validator; their submissions are refused.`;
+        return reply(`Decisions recorded (${decisions.length} in total). Reviews from now on include them.${stop}\nNext: ${nextAction(run)}`);
+      });
     },
   });
 

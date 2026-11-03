@@ -531,7 +531,7 @@ describe('slice loop gates', () => {
     assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'checks');
   });
 
-  it('sends a review back to factory_review_start on the same commit when a decision lands during it', async () => {
+  it('discards an open review when a decision lands during it, and reopens review on the same commit', async () => {
     const ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
@@ -539,17 +539,32 @@ describe('slice loop gates', () => {
     await step(ws, run => runChecks(ws, run));
     const checked = readRun(ws, 'demo').slices[0]?.checkedSha;
     const opened = await step(ws, run => startReview(ws, run));
-    await review(ws, opened.reviewId, []);
-    await step(ws, run => recordDecisions(ws, run, ['Late decision.']));
+    await step(ws, run => submitDomain(ws, run, { agentId: 'r-bug', domain: 'bug', findings: [], reviewId: opened.reviewId }));
 
-    await assert.rejects(step(ws, run => recordReview(ws, run)), /Decision 1 is newer than review/);
-    const invalidated = readRun(ws, 'demo').slices[0];
-    assert.equal(invalidated?.phase, 'review');
-    assert.equal(invalidated?.review, undefined);
-    assert.equal(invalidated?.checkedSha, checked);
+    const recorded = await step(ws, run => recordDecisions(ws, run, ['Late decision.']));
+    assert.equal(recorded.discarded, opened.reviewId);
+    const invalidated = readRun(ws, 'demo');
+    assert.equal(invalidated.slices[0]?.phase, 'review');
+    assert.equal(invalidated.slices[0]?.review, undefined);
+    assert.equal(invalidated.slices[0]?.checkedSha, checked);
+    assert.match(invalidated.events.at(-1)?.detail ?? '', new RegExp(`${opened.reviewId}: decisions recorded during review`));
+    assert.equal(invalidated.events.at(-1)?.kind, 'review-invalidated');
+    assert.match(nextAction(invalidated), /factory_review_start/);
+
+    await assert.rejects(
+      step(ws, run => submitDomain(ws, run, { agentId: 'r-scope', domain: 'scope', findings: [], reviewId: opened.reviewId })),
+      /is not the active review/,
+    );
+    await assert.rejects(
+      step(ws, run => submitValidation(ws, run, { agentId: 'validator', dropped: [], keep: [], reviewId: opened.reviewId })),
+      /is not the active review/,
+    );
+    await assert.rejects(step(ws, run => recordReview(ws, run)), /No review in progress/);
 
     const again = await step(ws, run => startReview(ws, run));
+    assert.notEqual(again.reviewId, opened.reviewId);
     assert.equal(readRun(ws, 'demo').slices[0]?.review?.decisions, 1);
+    assert.match(readFileSync(again.dataFile, 'utf8'), /Late decision\./);
     await review(ws, again.reviewId, []);
     assert.equal((await step(ws, run => recordReview(ws, run))).green, true);
   });
@@ -569,6 +584,64 @@ describe('slice loop gates', () => {
     await review(ws, opened.reviewId, []);
     await step(ws, run => recordReview(ws, run));
     assert.equal((await step(ws, run => completeSlice(ws, run))).status, 'done');
+  });
+
+  it('opens a new review on the green commit without checks when a decision lands after the green review', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => recordDecisions(ws, run, ['Early decision.']));
+    await green(ws);
+    const first = readRun(ws, 'demo').slices[0];
+    const checkRuns = readRun(ws, 'demo').events.filter(event => event.kind.startsWith('checks')).length;
+    await step(ws, run => recordDecisions(ws, run, ['Late decision.']));
+    assert.match(nextAction(readRun(ws, 'demo')), /factory_review_start/);
+
+    const opened = await step(ws, run => startReview(ws, run));
+    const state = readRun(ws, 'demo');
+    assert.notEqual(opened.reviewId, `${first?.id}-r${first?.reviews}`);
+    assert.equal(state.slices[0]?.phase, 'review');
+    assert.equal(state.slices[0]?.checkedSha, first?.greenSha);
+    assert.equal(state.slices[0]?.greenSha, undefined);
+    assert.equal(state.slices[0]?.review?.decisions, 2);
+    assert.equal(state.events.filter(event => event.kind.startsWith('checks')).length, checkRuns);
+    const data = readFileSync(opened.dataFile, 'utf8');
+    assert.match(data, /Early decision\./);
+    assert.match(data, /Late decision\./);
+    await review(ws, opened.reviewId, []);
+    assert.equal((await step(ws, run => recordReview(ws, run))).green, true);
+    assert.equal((await step(ws, run => completeSlice(ws, run))).status, 'done');
+  });
+
+  it('still refuses a review of a green slice with no newer decision, and sends a moved HEAD back to checks', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await green(ws);
+    await assert.rejects(step(ws, run => startReview(ws, run)), /Checks must pass first/);
+    assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'ready');
+
+    await step(ws, run => recordDecisions(ws, run, ['Late decision.']));
+    commit(ws, 'late.txt');
+    await assert.rejects(step(ws, run => startReview(ws, run)), /HEAD moved after the green review/);
+    const reset = readRun(ws, 'demo').slices[0];
+    assert.equal(reset?.phase, 'checks');
+    assert.equal(reset?.greenSha, undefined);
+    assert.equal(reset?.greenDecisions, undefined);
+  });
+
+  it('leaves the slice untouched when a decision lands with no open or green review', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const before = readRun(ws, 'demo').slices[0];
+    const recorded = await step(ws, run => recordDecisions(ws, run, ['Early decision.']));
+    assert.equal(recorded.discarded, undefined);
+    assert.deepEqual(readRun(ws, 'demo').slices[0], before);
   });
 
   it('fixes observations the user chose from a green review in a tracked round that needs new checks and a new review', async () => {

@@ -478,14 +478,21 @@ export function approvePlan(ws: Workspace, run: Run, slices: Slice[], base?: Bas
 /**
  * Records decisions the user confirmed (accepted tradeoffs, out-of-scope work) so every later ticket and review
  * data file carries them. Reviewers check the code against them: they report code that breaks a decision, and do
- * not re-raise a tradeoff the user already accepted.
+ * not re-raise a tradeoff the user already accepted. An open review of the active slice froze the older decisions,
+ * so it is discarded; the slice stays in review on the checked commit, and `discarded` names the review.
  */
 export function recordDecisions(ws: Workspace, run: Run, decisions: string[]) {
   const added = z.array(z.string().min(1)).min(1).parse(decisions);
   run.decisions.push(...added);
   for (const slice of run.slices.filter(candidate => candidate.status !== 'done')) writeTicket(ws, run, slice);
   addEvent(run, 'decision', added.join('; '));
-  return run.decisions;
+  const active = activeSlice(run);
+  const discarded = active?.phase === 'review' ? active.review?.id : undefined;
+  if (active !== undefined && discarded !== undefined) {
+    active.review = undefined;
+    addEvent(run, 'review-invalidated', `${discarded}: decisions recorded during review`, active);
+  }
+  return { decisions: run.decisions, discarded };
 }
 
 /** Adds user-agreed test seams to the active slice; the tdd skill tests only at agreed seams. */
@@ -836,10 +843,16 @@ function committedContent(root: string, range: string, sha: string) {
  */
 export async function startReview(ws: Workspace, run: Run, skip: unknown = [], keep: unknown = []) {
   const slice = requireActive(run);
-  if (slice.phase !== 'review' || slice.checkedSha === undefined) throw new Error('Checks must pass first: call factory_checks.');
+  const covered = decisionsBeforeNewer(run, slice);
+  if (covered === undefined && (slice.phase !== 'review' || slice.checkedSha === undefined)) throw new Error('Checks must pass first: call factory_checks.');
   await requireOnBranch(ws.root, slice);
   await requireClean(ws.root, 'Review needs committed work');
-  if ((await head(ws.root)) !== slice.checkedSha) {
+  const current = await head(ws.root);
+  if (covered !== undefined) {
+    requireGreenHead(slice, current);
+    reopenReview(run, slice);
+  }
+  if (current !== slice.checkedSha) {
     slice.phase = 'checks';
     slice.checkedSha = undefined;
     slice.checkResults = undefined;
@@ -1178,6 +1191,7 @@ export async function recordReview(ws: Workspace, run: Run) {
     addEvent(run, 'review-invalidated', `${review.id}: repository changed during review`, slice);
     throw new Invalidated('The repository changed during review. Restore the reviewed state, then call factory_checks.');
   }
+  // factory_decide discards an open review; a state file from before that still guards here.
   if (run.decisions.length > review.decisions) {
     slice.review = undefined;
     addEvent(run, 'review-invalidated', `${review.id}: decisions recorded during review`, slice);
@@ -1315,21 +1329,10 @@ export async function completeSlice(ws: Workspace, run: Run) {
   if (slice.phase !== 'ready' || slice.greenSha === undefined) throw new Error('The slice has no green review yet.');
   await requireOnBranch(ws.root, slice);
   await requireClean(ws.root, 'Cannot complete the slice');
-  if ((await head(ws.root)) !== slice.greenSha) {
-    slice.phase = 'checks';
-    slice.greenSha = undefined;
-    slice.greenDecisions = undefined;
-    throw new Invalidated('HEAD moved after the green review. Call factory_checks again.');
-  }
-  // State files from before greenDecisions have no count; their green reviews stay valid.
-  if (slice.greenDecisions !== undefined && run.decisions.length > slice.greenDecisions) {
-    const covered = slice.greenDecisions;
-    slice.phase = 'review';
-    slice.checkedSha = slice.greenSha;
-    slice.greenSha = undefined;
-    slice.greenDecisions = undefined;
-    slice.review = undefined;
-    addEvent(run, 'review-invalidated', 'decisions recorded after the green review', slice);
+  requireGreenHead(slice, await head(ws.root));
+  const covered = decisionsBeforeNewer(run, slice);
+  if (covered !== undefined) {
+    reopenReview(run, slice);
     throw new Invalidated(`${newerDecisions(run, covered)} newer than the green review, so its reviewers did not check the code against them. Call factory_review_start for a new review.`);
   }
   if (slice.doneSha !== undefined) {
@@ -1344,6 +1347,34 @@ export async function completeSlice(ws: Workspace, run: Run) {
   addEvent(run, 'slice-done', `${slice.fixRounds} fix rounds, ${slice.reviews} reviews`, slice);
   settle(run);
   return slice;
+}
+
+/**
+ * The decision count a green slice's review covered, when decisions landed after it; otherwise undefined. State
+ * files from before greenDecisions have no count; their green reviews stay valid.
+ */
+function decisionsBeforeNewer(run: Run, slice: Slice) {
+  if (slice.phase !== 'ready' || slice.greenDecisions === undefined) return undefined;
+  return run.decisions.length > slice.greenDecisions ? slice.greenDecisions : undefined;
+}
+
+/** A green review covers only its commit: a moved HEAD sends the slice back to checks. */
+function requireGreenHead(slice: Slice, current: string) {
+  if (current === slice.greenSha) return;
+  slice.phase = 'checks';
+  slice.greenSha = undefined;
+  slice.greenDecisions = undefined;
+  throw new Invalidated('HEAD moved after the green review. Call factory_checks again.');
+}
+
+/** Sends a green slice back to review on its green commit, for decisions newer than the review; its checks stand. */
+function reopenReview(run: Run, slice: Slice) {
+  slice.phase = 'review';
+  slice.checkedSha = slice.greenSha;
+  slice.greenSha = undefined;
+  slice.greenDecisions = undefined;
+  slice.review = undefined;
+  addEvent(run, 'review-invalidated', 'decisions recorded after the green review', slice);
 }
 
 function newerDecisions(run: Run, covered: number) {
@@ -1567,7 +1598,9 @@ export function nextAction(run: Run): string {
         ? `Pick the review domains for ${where} from its changed files, then call factory_review_start with the domains to skip.`
         : `Finish review ${slice.review.id}: every domain reviewer and the validator must submit, then call factory_review_record.`;
     case 'ready':
-      return `Call factory_complete_slice for ${where}.`;
+      return decisionsBeforeNewer(run, slice) === undefined
+        ? `Call factory_complete_slice for ${where}.`
+        : `Decisions landed after the green review of ${where}: pick the review domains, then call factory_review_start for a new review of the same commit. The checks do not run again.`;
     default:
       return slice.phase satisfies never;
   }
