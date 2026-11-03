@@ -299,13 +299,16 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
 
 /**
  * The blocking findings of the slice's last recorded review, as a data file section, so this round's reviewers check
- * whether each problem remains and report it under the same id. Empty for a first review.
+ * whether each problem remains and report it under the same id. Walks back past reviews discarded before they were
+ * recorded (no review.json). Empty for a first review.
  */
 function previousBlocking(ws: Workspace, run: Run, slice: Slice) {
-  if (slice.reviews === 0) return '';
-  const id = `${slice.id}-r${slice.reviews}`;
-  const path = join(reviewDir(ws, run.feature, id), 'review.json');
-  if (!existsSync(path)) return '';
+  const recorded = (n: number) => join(reviewDir(ws, run.feature, `${slice.id}-r${n}`), 'review.json');
+  let n = slice.reviews;
+  while (n > 0 && !existsSync(recorded(n))) n--;
+  if (n === 0) return '';
+  const id = `${slice.id}-r${n}`;
+  const path = recorded(n);
   const { findings } = z.object({ findings: findingListSchema }).parse(JSON.parse(readFileSync(path, 'utf8')));
   const blocking = findings.filter(finding => finding.severity !== 'observation');
   if (blocking.length === 0) return '';

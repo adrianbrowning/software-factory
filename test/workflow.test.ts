@@ -571,6 +571,27 @@ describe('slice loop gates', () => {
     assert.equal((await step(ws, run => recordReview(ws, run))).green, true);
   });
 
+  it('keeps the last recorded blocking findings in the next review after a decision discards the review in between', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const first = await step(ws, run => startReview(ws, run));
+    await review(ws, first.reviewId, [finding('bug', 'high', 'null-crash')]);
+    assert.ok(!(await step(ws, run => recordReview(ws, run))).green);
+
+    commit(ws, 'ok', 'fixed\n');
+    assert.equal((await step(ws, run => runChecks(ws, run))).passed, true);
+    const second = await step(ws, run => startReview(ws, run));
+    const discarded = await step(ws, run => recordDecisions(ws, run, ['Late decision.']));
+    assert.equal(discarded.discarded, second.reviewId);
+
+    const third = await step(ws, run => startReview(ws, run));
+    assert.equal(third.reviewId, '01-r3');
+    assert.match(readFileSync(third.dataFile, 'utf8'), /## PREVIOUS REVIEW\n\nReview 01-r1 [^\n]*\n\n- `bug-null-crash` \[high\] ok:1: null-crash\n\n## DIFF/);
+  });
+
   it('refuses to complete a slice when a decision lands after its green review, until a new review goes green', async () => {
     const ws = workspace();
     await newRun(ws, [slice('Feature')]);
