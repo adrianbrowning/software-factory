@@ -130,7 +130,7 @@ describe('base resolution', () => {
   it('starts a run without the default base, and plans on a base the user chooses', async () => {
     const ws = workspace({ baseRef: 'origin/main' });
     await start(ws);
-    await assert.rejects(resolveBase(ws), /Base ref "origin\/main" does not exist/);
+    await assert.rejects(resolveBase(ws), /Base ref "origin\/main" does not exist\. Pass the branch the work builds on as "baseRef".* to factory_plan/);
     const base = await resolveBase(ws, { baseRef: 'main' });
     await step(ws, run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')], base), base));
     const pinned = sh(ws.root, 'rev-parse', 'main');
@@ -156,6 +156,22 @@ describe('base resolution', () => {
     assert.equal((await resolveBase(ws, { baseRef: 'up/stream/dev' })).trunk, 'dev');
     await start(ws);
     assert.equal(readRun(ws, 'demo').trunk, 'dev');
+  });
+
+  it('defaults the base to the remote default branch from origin/HEAD, else origin/main', async () => {
+    const ws = workspace({ baseRef: undefined, trunk: undefined });
+    await assert.rejects(resolveBase(ws), /Base ref "origin\/main" does not exist/);
+    sh(ws.root, 'remote', 'add', 'origin', ws.root);
+    sh(ws.root, 'update-ref', 'refs/remotes/origin/master', 'HEAD');
+    sh(ws.root, 'symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/master');
+    const base = await resolveBase(ws);
+    assert.deepEqual([base.baseRef, base.trunk], ['origin/master', 'master']);
+    await start(ws);
+    const run = readRun(ws, 'demo');
+    assert.deepEqual([run.baseRef, run.trunk], ['origin/master', 'master']);
+    // A configured base still wins over origin/HEAD, and a missing one fails instead of falling back to it.
+    assert.equal((await resolveBase({ ...ws, config: { ...ws.config, baseRef: 'main' } })).baseRef, 'main');
+    await assert.rejects(resolveBase({ ...ws, config: { ...ws.config, baseRef: 'origin/main' } }), /Base ref "origin\/main" does not exist/);
   });
 });
 
