@@ -102,6 +102,21 @@ async function branchName(root: string, ref: string) {
 }
 
 /**
+ * The base a run uses when `factory_plan` names none: `baseRef` from the config, else the remote default branch that
+ * `origin/HEAD` points at (`origin/master` in a repository whose trunk is master), else `origin/main`.
+ */
+async function configuredBase(ws: Workspace) {
+  if (ws.config.baseRef !== undefined) return ws.config.baseRef;
+  try {
+    const ref = (await git(ws.root, 'symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD')).trim();
+    if (ref.startsWith('refs/remotes/')) return ref.slice('refs/remotes/'.length);
+  } catch {
+    // No origin remote, or no origin/HEAD (a fetch without `git remote set-head`).
+  }
+  return 'origin/main';
+}
+
+/**
  * The base slice 01 stacks on: the ref the user named, pinned to the commit it pointed at when the plan was approved.
  * `landOn` is set when the user wants the stack landed on an existing local branch instead of opened as PRs.
  */
@@ -129,7 +144,7 @@ export async function resolveBase(
     }
   }
   const chosen = override.baseRef ?? landOn;
-  const baseRef = chosen ?? ws.config.baseRef;
+  const baseRef = chosen ?? (await configuredBase(ws));
   const trunk = override.trunk ?? (chosen === undefined ? ws.config.trunk : undefined) ?? (await branchName(ws.root, baseRef));
   let baseSha: string;
   try {
@@ -138,7 +153,7 @@ export async function resolveBase(
     throw new Error(
       `Base ref "${baseRef}" does not exist. ${
         chosen === undefined
-          ? 'Fetch it, or set "baseRef" (and "trunk") in .omp/factory.json, for example "main".'
+          ? 'Pass the branch the work builds on as "baseRef" (and "trunk", the branch the PRs target) to factory_plan. To change the default for every run, set them in .omp/factory.json and commit it on the base branch.'
           : 'Fetch the branch the work builds on, then plan again.'
       }`,
     );
@@ -251,7 +266,7 @@ export async function startRun(ws: Workspace, input: { feature: string; sessionI
   const checks = checksSchema.parse(repoChecks(ws));
   // The base is resolved and pinned at plan approval, where the user can still pick a different one; the plan
   // event records it.
-  const { baseRef } = ws.config;
+  const baseRef = await configuredBase(ws);
   const trunk = ws.config.trunk ?? (await branchName(ws.root, baseRef));
   await excludeScratch(ws);
   const run: Run = {

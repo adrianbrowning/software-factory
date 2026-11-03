@@ -15,8 +15,8 @@ const positiveInt = z.number().int().positive();
 
 const configSchema = z
   .object({
-    /** Ref the first slice branches from. */
-    baseRef: text.default('origin/main'),
+    /** Ref the first slice branches from. Unset: the remote default branch from `origin/HEAD`, else `origin/main`. */
+    baseRef: text.optional(),
     branchPrefix: text.default('factory'),
     /** Checks a new run starts with, in order. Unset: the first run asks the user and saves the choice in `scratchDir`. */
     checks: z.array(text).min(1).optional(),

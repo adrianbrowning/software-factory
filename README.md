@@ -192,7 +192,7 @@ working tree, and unknown keys are rejected.
 | `checkTimeoutMs` | `600000` | Per-check timeout; the whole process group is killed |
 | `maxRounds` | `3` | Fix rounds per slice before the user decides to continue or pause |
 | `sliceTokenBudget` | `400000` | Planned context per slice: 40% of a 1M window |
-| `baseRef` / `trunk` | `origin/main` / `main` | Default base: slice 01 branches from the commit `baseRef` points at when the plan is approved; the stack is based on `trunk`, which defaults to `baseRef` without its git remote (`origin/main` → `main`; a local `feature/auth` stays `feature/auth`). A run that builds on unmerged work names that branch as `baseRef` in `factory_plan`, and its PRs then target it. The plan event in `state.json` records the pinned base |
+| `baseRef` / `trunk` | `origin/HEAD`'s branch, else `origin/main` / `main` | Default base: slice 01 branches from the commit `baseRef` points at when the plan is approved. Unset, it is the remote default branch that `origin/HEAD` points at (`origin/master` in a repository whose trunk is master), else `origin/main`. The stack is based on `trunk`, which defaults to `baseRef` without its git remote (`origin/main` → `main`; a local `feature/auth` stays `feature/auth`). A run that builds on unmerged work names that branch as `baseRef` in `factory_plan`, and its PRs then target it. The plan event in `state.json` records the pinned base |
 | `branchPrefix` | `factory` | Branches are `<prefix>/<feature>/<NN>-<slug>` |
 | `scratchDir` | `.scratch` | Run state; added to `.git/info/exclude` |
 | `factoryRepo` | `adrianbrowning/software-factory` | Where retro findings about the factory are filed |
