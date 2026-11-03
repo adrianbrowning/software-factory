@@ -7,35 +7,37 @@ import { after, describe, it } from 'node:test';
 import type { FactoryConfig } from '../src/config.ts';
 import { type Finding, forgetRun, readRun, REVIEW_DOMAINS, type SliceInput, type Workspace, withRun } from '../src/run.ts';
 import {
+  completeSlice,
+  fixObservations,
+  pathSkips,
+  recordDecisions,
+  recordReview,
+  REVIEW_REFERENCE_DIR,
+  runChecks,
+  startReview,
+  submitDomain,
+  submitValidation,
+} from '../src/review.ts';
+import {
   addFollowUp,
   applyReslice,
   approvePlan,
-  completeSlice,
   fileSource,
-  fixObservations,
   githubSource,
   nextAction,
   nextSlice,
   parseRetro,
-  pathSkips,
   pauseRun,
   planReslice,
   planSlices,
-  recordDecisions,
   recordRetro,
   reopenSlice,
   resolveBase,
-  recordReview,
   resolveStall,
   resumeRun,
-  REVIEW_REFERENCE_DIR,
-  runChecks,
   saveChecks,
-  startReview,
   startRun,
-  submitDomain,
   submitStack,
-  submitValidation,
 } from '../src/workflow.ts';
 
 // Tests never read the developer's git config (signing, hooks, default branch).
@@ -577,13 +579,57 @@ describe('slice loop gates', () => {
     await green(ws);
     await step(ws, run => recordDecisions(ws, run, ['Late decision.']));
 
-    await assert.rejects(step(ws, run => completeSlice(ws, run)), /Decision 1 is newer than the green review/);
-    assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'review');
-    assert.equal(readRun(ws, 'demo').slices[0]?.review, undefined);
+    await assert.rejects(step(ws, run => completeSlice(ws, run)), /no green review yet/);
     const opened = await step(ws, run => startReview(ws, run));
     await review(ws, opened.reviewId, []);
     await step(ws, run => recordReview(ws, run));
     assert.equal((await step(ws, run => completeSlice(ws, run))).status, 'done');
+  });
+
+  /** A state file an older factory wrote: a decision recorded without the decide-time review reset. */
+  const olderDecision = (ws: Workspace) => step(ws, run => void run.decisions.push('Decision an older factory recorded.'));
+
+  it('reopens review on the green commit when an older state file holds a decision newer than the green review', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await green(ws);
+    const greenSha = readRun(ws, 'demo').slices[0]?.greenSha;
+    await olderDecision(ws);
+    assert.match(nextAction(readRun(ws, 'demo')), /factory_review_start/);
+
+    await assert.rejects(step(ws, run => completeSlice(ws, run)), /Decision 1 is newer than the green review/);
+    const reopened = readRun(ws, 'demo').slices[0];
+    assert.deepEqual([reopened?.phase, reopened?.checkedSha, reopened?.review], ['review', greenSha, undefined]);
+
+    const again = workspace();
+    await newRun(again, [slice('Feature')]);
+    await step(again, run => nextSlice(again, run));
+    commit(again, 'ok');
+    await green(again);
+    const checked = readRun(again, 'demo').slices[0]?.greenSha;
+    await olderDecision(again);
+    const opened = await step(again, run => startReview(again, run));
+    const state = readRun(again, 'demo').slices[0];
+    assert.deepEqual([state?.phase, state?.checkedSha, state?.review?.id, state?.review?.decisions], ['review', checked, opened.reviewId, 1]);
+  });
+
+  it('discards a review at record time when an older state file holds a decision newer than it', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const opened = await step(ws, run => startReview(ws, run));
+    await review(ws, opened.reviewId, []);
+    await olderDecision(ws);
+
+    await assert.rejects(step(ws, run => recordReview(ws, run)), /Decision 1 is newer than review/);
+    const state = readRun(ws, 'demo');
+    assert.equal(state.slices[0]?.review, undefined);
+    assert.equal(state.slices[0]?.phase, 'review');
+    assert.equal(state.events.at(-1)?.kind, 'review-invalidated');
   });
 
   it('opens a new review on the green commit without checks when a decision lands after the green review', async () => {
@@ -599,8 +645,15 @@ describe('slice loop gates', () => {
     assert.equal(first?.phase, 'ready');
     assert.ok(greenSha);
     const checkRuns = readRun(ws, 'demo').events.filter(event => event.kind.startsWith('checks')).length;
-    await step(ws, run => recordDecisions(ws, run, ['Late decision.']));
-    assert.match(nextAction(readRun(ws, 'demo')), /factory_review_start/);
+    const recorded = await step(ws, run => recordDecisions(ws, run, ['Late decision.']));
+    assert.equal(recorded.discarded, undefined, 'no review is running, so no reviewer needs stopping');
+    const reopened = readRun(ws, 'demo');
+    assert.equal(reopened.slices[0]?.phase, 'review');
+    assert.equal(reopened.slices[0]?.checkedSha, greenSha);
+    assert.equal(reopened.slices[0]?.greenSha, undefined);
+    assert.equal(reopened.slices[0]?.review, undefined);
+    assert.equal(reopened.events.at(-1)?.kind, 'review-invalidated');
+    assert.match(nextAction(reopened), /factory_review_start/);
 
     const opened = await step(ws, run => startReview(ws, run));
     const state = readRun(ws, 'demo');
@@ -630,7 +683,7 @@ describe('slice loop gates', () => {
 
     await step(ws, run => recordDecisions(ws, run, ['Late decision.']));
     commit(ws, 'late.txt');
-    await assert.rejects(step(ws, run => startReview(ws, run)), /HEAD moved after the green review/);
+    await assert.rejects(step(ws, run => startReview(ws, run)), /HEAD moved after checks passed/);
     const reset = readRun(ws, 'demo').slices[0];
     assert.equal(reset?.phase, 'checks');
     assert.equal(reset?.greenSha, undefined);

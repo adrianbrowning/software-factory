@@ -22,28 +22,35 @@ import {
   type Workspace,
 } from './run.ts';
 import {
+  completeSlice,
+  fixObservations,
+  planFix,
+  recordDecisions,
+  recordReview,
+  runChecks,
+  startReview,
+  submitDomain,
+  submitValidation,
+  validationSchema,
+} from './review.ts';
+import {
   addFollowUp,
   amendSeams,
   applyReslice,
   approvePlan,
-  completeSlice,
   fetchGithubIssue,
   fileFactoryIssues,
   type FiledIssues,
   fileSource,
-  fixObservations,
   githubSource,
   nextAction,
   nextSlice,
   parseRetro,
   pauseRun,
-  planFix,
   planFollowUp,
   planReslice,
   planSlices,
-  recordDecisions,
   recordRetro,
-  recordReview,
   reopenSlice,
   repoChecks,
   repoRoot,
@@ -53,17 +60,12 @@ import {
   resumeRun,
   retroIssueBody,
   retroSchema,
-  runChecks,
   saveChecks,
   sourceInputSchema,
   type SourceInput,
-  startReview,
   startRun,
-  submitDomain,
   submitStack,
-  submitValidation,
   summarize,
-  validationSchema,
 } from './workflow.ts';
 
 const IMPLEMENTER = 'factory-implementer';
@@ -406,11 +408,8 @@ export default function softwareFactory(pi: ExtensionAPI) {
       }
       return withRun(ws, feature, run => {
         const { decisions, discarded } = recordDecisions(ws, run, params.decisions);
-        const stop =
-          discarded === undefined
-            ? ''
-            : `\nReview ${discarded} is discarded: its reviewers did not check the code against these decisions. Stop its running reviewers and validator; their submissions are refused.`;
-        return reply(`Decisions recorded (${decisions.length} in total). Reviews from now on include them.${stop}\nNext: ${nextAction(run)}`);
+        const stop = discarded === undefined ? '' : `Stop the running reviewers and validator of review ${discarded}; their submissions are refused. `;
+        return reply(`Decisions recorded (${decisions.length} in total). Reviews from now on include them.\nNext: ${stop}${nextAction(run)}`);
       });
     },
   });

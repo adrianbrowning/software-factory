@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
 import type { ExtensionAPI } from '@oh-my-pi/pi-coding-agent';
+import { loadConfig } from '../src/config.ts';
 import softwareFactory, { MAX_IDLE_STOP_ATTEMPTS, stopDecision } from '../src/index.ts';
-import type { Run } from '../src/run.ts';
+import { type Run, withRun } from '../src/run.ts';
+import { runChecks, startReview } from '../src/review.ts';
+import { approvePlan, nextSlice, planSlices } from '../src/workflow.ts';
 
 type Registered = {
   execute: (...args: unknown[]) => Promise<unknown>;
@@ -120,5 +123,50 @@ describe('first-run checks dialog', () => {
 
   it('rejects when the user cancels the dialog', async () => {
     await assert.rejects(start(emptyRepo(), [undefined]), /cancelled the checks dialog/);
+  });
+});
+
+describe('factory_decide', () => {
+  process.env.GIT_CONFIG_GLOBAL = '/dev/null';
+  process.env.GIT_CONFIG_NOSYSTEM = '1';
+  const roots: string[] = [];
+  after(() => {
+    for (const root of roots) rmSync(root, { force: true, recursive: true });
+  });
+
+  it('tells the orchestrator in its Next line to stop the discarded review, then call factory_review_start', async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'factory-decide-')));
+    roots.push(root);
+    const sh = (...args: string[]) => execFileSync('git', args, { cwd: root });
+    sh('init', '-q', '-b', 'main');
+    sh('config', 'user.email', 'test@example.com');
+    sh('config', 'user.name', 'Test');
+    mkdirSync(join(root, '.omp'));
+    writeFileSync(join(root, '.omp', 'factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }));
+    sh('add', '.');
+    sh('commit', '-qm', 'base');
+    const caller = {
+      ...ctx('main', 'main'),
+      cwd: root,
+      hasUI: true,
+      sessionManager: { getSessionId: () => 'session' },
+      ui: { confirm: async () => true, notify() {} },
+    };
+    const tools = load();
+    const call = (name: string, params: unknown) => tools.get(name)?.execute('id', params, undefined, undefined, caller) ?? Promise.reject(new Error('no tool'));
+    await call('factory_start', { feature: 'demo', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } });
+    const ws = { config: loadConfig(root), root };
+    const input = { acceptance: ['works'], blockedBy: [], estimateTokens: 500, seams: ['cli'], title: 'Feature', whatToBuild: 'Feature' };
+    await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [input])));
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    writeFileSync(join(root, 'ok'), 'x\n');
+    sh('add', 'ok');
+    sh('commit', '-qm', 'add ok');
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+
+    const reply = (await call('factory_decide', { decisions: ['Late decision.'] })) as { content: { text: string }[] };
+    const next = reply.content[0]?.text.split('\n').find(line => line.startsWith('Next: '));
+    assert.match(next ?? '', new RegExp(`^Next: Stop the running reviewers and validator of review ${reviewId}; their submissions are refused\\. .*factory_review_start`));
   });
 });
