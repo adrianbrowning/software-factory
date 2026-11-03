@@ -594,16 +594,21 @@ describe('slice loop gates', () => {
     await step(ws, run => recordDecisions(ws, run, ['Early decision.']));
     await green(ws);
     const first = readRun(ws, 'demo').slices[0];
+    const greenId = `${first?.id}-r${first?.reviews}`;
+    const greenSha = first?.greenSha;
+    assert.equal(first?.phase, 'ready');
+    assert.ok(greenSha);
     const checkRuns = readRun(ws, 'demo').events.filter(event => event.kind.startsWith('checks')).length;
     await step(ws, run => recordDecisions(ws, run, ['Late decision.']));
     assert.match(nextAction(readRun(ws, 'demo')), /factory_review_start/);
 
     const opened = await step(ws, run => startReview(ws, run));
     const state = readRun(ws, 'demo');
-    assert.notEqual(opened.reviewId, `${first?.id}-r${first?.reviews}`);
+    assert.notEqual(opened.reviewId, greenId);
     assert.equal(state.slices[0]?.phase, 'review');
-    assert.equal(state.slices[0]?.checkedSha, first?.greenSha);
+    assert.equal(state.slices[0]?.checkedSha, greenSha);
     assert.equal(state.slices[0]?.greenSha, undefined);
+    assert.equal(state.slices[0]?.greenDecisions, undefined);
     assert.equal(state.slices[0]?.review?.decisions, 2);
     assert.equal(state.events.filter(event => event.kind.startsWith('checks')).length, checkRuns);
     const data = readFileSync(opened.dataFile, 'utf8');
