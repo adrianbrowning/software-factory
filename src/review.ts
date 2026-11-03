@@ -117,12 +117,20 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   const sha = await head(ws.root);
   // A fix round that ends on the commit its fix file described: the implementer changed nothing.
   const unchanged = slice.phase === 'fix' && slice.fixFromSha === sha;
-  // Checks that passed on this commit stand while the slice is in review or ready. A new commit no longer matches
-  // checkedSha, and a fix round or a reopened slice leaves those phases and clears it, so every check runs.
-  const passedHere = (slice.phase === 'review' || slice.phase === 'ready') && slice.checkedSha === sha;
-  if (passedHere && slice.checkResults !== undefined) {
-    return passChecks(ws, run, slice, { commits, reused: sha, sha, summary: slice.checkResults, unchanged });
-  }
+  // Checks that passed on this commit stand while the slice is in review or ready, and only when they are the run's
+  // checks, each in order: a run saved before runs kept their checks gets the repository's on resume, which may
+  // differ from the ones that passed. A new commit no longer matches checkedSha, and a fix round or a reopened slice
+  // leaves those phases and clears it, so every check runs.
+  const stored = slice.checkResults;
+  const passedHere =
+    (slice.phase === 'review' || slice.phase === 'ready') &&
+    slice.checkedSha === sha &&
+    stored?.length === run.checks.length &&
+    run.checks.every((command, index) => {
+      const prefix = `${command}: passed in `;
+      return stored[index]?.startsWith(prefix) === true && /^\d+ms$/.test(stored[index].slice(prefix.length));
+    });
+  if (passedHere) return passChecks(ws, run, slice, { commits, reused: sha, sha, summary: stored, unchanged });
   const results: { command: string; result: CommandResult }[] = [];
   const checkPath = [...ws.config.checkPath, process.env.PATH ?? ''].join(delimiter);
   const env = { ...process.env, PATH: checkPath };

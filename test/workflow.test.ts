@@ -264,6 +264,27 @@ describe('pause and resume', () => {
       ['checks', undefined, undefined, undefined, undefined, undefined],
     );
   });
+
+  it('runs the checks of a run saved before runs kept their checks, after resume, when the repository checks changed', async () => {
+    const counted = 'test -f ok && echo run >> .git/check-runs';
+    const old = workspace({ checks: [counted] });
+    await newRun(old, [slice('Feature')]);
+    await step(old, run => nextSlice(old, run));
+    commit(old, 'ok');
+    await step(old, run => runChecks(old, run));
+    await step(old, run => {
+      pauseRun(run, 'test');
+      run.checks = [];
+    });
+
+    const ws: Workspace = { ...old, config: { ...old.config, checks: [counted, 'echo added >> .git/check-runs'] } };
+    forgetRun(ws, 'demo');
+    await step(ws, run => resumeRun(ws, run, 'session-2'));
+    const checked = await step(ws, run => runChecks(ws, run));
+    assert.ok(checked.passed && checked.reused === undefined);
+    assert.deepEqual(readFileSync(join(ws.root, '.git', 'check-runs'), 'utf8').split('\n').filter(Boolean), ['run', 'run', 'added']);
+    assert.equal(checked.summary.length, 2);
+  });
 });
 
 describe('retro', () => {
