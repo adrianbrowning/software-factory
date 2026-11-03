@@ -168,8 +168,9 @@ describe('base resolution', () => {
     await start(ws);
     const run = readRun(ws, 'demo');
     assert.deepEqual([run.baseRef, run.trunk], ['origin/master', 'master']);
-    // A configured base still wins over origin/HEAD.
+    // A configured base still wins over origin/HEAD, and a missing one fails instead of falling back to it.
     assert.equal((await resolveBase({ ...ws, config: { ...ws.config, baseRef: 'main' } })).baseRef, 'main');
+    await assert.rejects(resolveBase({ ...ws, config: { ...ws.config, baseRef: 'origin/main' } }), /Base ref "origin\/main" does not exist/);
   });
 });
 
