@@ -20,6 +20,7 @@ import {
   type Workspace,
   writeAtomic,
 } from './run.ts';
+import { requireClean, requireOnBranch } from './repo.ts';
 
 const FEATURE_PATTERN = /^[a-z0-9][a-z0-9-]{0,47}$/;
 export const UNTRUSTED_NOTE =
@@ -32,24 +33,6 @@ export function requireFeatureName(feature: string) {
 
 export async function repoRoot(cwd: string) {
   return (await git(cwd, 'rev-parse', '--show-toplevel')).trim();
-}
-
-export async function head(root: string) {
-  return (await git(root, 'rev-parse', 'HEAD')).trim();
-}
-
-export async function porcelain(root: string) {
-  return git(root, 'status', '--porcelain=v1', '--untracked-files=all');
-}
-
-export async function requireClean(root: string, action: string) {
-  const status = await porcelain(root);
-  if (status.trim() !== '') throw new Error(`${action}: commit or remove these changes first:\n${evidence(status, 2_000)}`);
-}
-
-export async function requireOnBranch(root: string, slice: Slice) {
-  const branch = (await git(root, 'branch', '--show-current')).trim();
-  if (branch !== slice.branch) throw new Error(`Slice ${slice.id} works on ${slice.branch}, but ${branch || 'a detached HEAD'} is checked out.`);
 }
 
 export function requireActive(run: Run) {
@@ -862,6 +845,8 @@ export function nextAction(run: Run): string {
         ? `Pick the review domains for ${where} from its changed files, then call factory_review_start with the domains to skip.`
         : `Finish review ${slice.review.id}: every domain reviewer and the validator must submit, then call factory_review_record.`;
     case 'ready':
+      // LEGACY-STATE(decision-before-reset): only a state file written before factory_decide reset reviews keeps
+      // decisions newer than a green review; remove with the matching branches in review.ts.
       return decisionsBeforeNewer(run, slice) === undefined
         ? `Call factory_complete_slice for ${where}.`
         : `Decisions landed after the green review of ${where}: pick the review domains, then call factory_review_start for a new review of the same commit. The checks do not run again.`;

@@ -27,15 +27,12 @@ import {
   type Workspace,
   writeAtomic,
 } from './run.ts';
+import { head, porcelain, requireClean, requireOnBranch, snapshot } from './repo.ts';
 import {
-  head,
   pauseRun,
-  porcelain,
   renderTicket,
   requestFix,
   requireActive,
-  requireClean,
-  requireOnBranch,
   restartSlice,
   settle,
   UNTRUSTED_NOTE,
@@ -77,13 +74,6 @@ function reopenReview(run: Run, slice: Slice) {
 function discardReview(run: Run, slice: Slice, review: Review) {
   slice.review = undefined;
   addEvent(run, 'review-invalidated', `${review.id}: decisions recorded during review`, slice);
-}
-
-/** Identity of the committed and uncommitted repository state; ignored files (the run state) are excluded. */
-async function snapshot(root: string) {
-  return createHash('sha256')
-    .update(`${await head(root)}\n${await porcelain(root)}`)
-    .digest('hex');
 }
 
 /** The shell's own diagnostic for a command it cannot find (bash and dash wording). */
@@ -593,7 +583,8 @@ export async function recordReview(ws: Workspace, run: Run) {
     addEvent(run, 'review-invalidated', `${review.id}: repository changed during review`, slice);
     throw new Invalidated('The repository changed during review. Restore the reviewed state, then call factory_checks.');
   }
-  // factory_decide discards an open review, so only a state file written before it did can reach this with newer decisions.
+  // LEGACY-STATE(decision-before-reset): factory_decide discards an open review, so only a state file written before
+  // it did can reach this with newer decisions; remove with the matching branches in completeSlice and nextAction.
   if (run.decisions.length > review.decisions) {
     discardReview(run, slice, review);
     throw new Invalidated(`${newerDecisions(run, review.decisions)} newer than review ${review.id}, so its reviewers did not check the code against them. Call factory_review_start for a new review.`);
@@ -736,6 +727,8 @@ export async function completeSlice(ws: Workspace, run: Run) {
     slice.greenDecisions = undefined;
     throw new Invalidated('HEAD moved after the green review. Call factory_checks again.');
   }
+  // LEGACY-STATE(decision-before-reset): factory_decide reopens such a slice at once, so only a state file written
+  // before it did reaches this; remove with the matching branches in recordReview and nextAction.
   const covered = decisionsBeforeNewer(run, slice);
   if (covered !== undefined) {
     reopenReview(run, slice);

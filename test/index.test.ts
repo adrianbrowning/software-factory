@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
@@ -10,6 +10,7 @@ import softwareFactory, { MAX_IDLE_STOP_ATTEMPTS, stopDecision } from '../src/in
 import { type Run, withRun } from '../src/run.ts';
 import { runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, planSlices } from '../src/workflow.ts';
+import { sh, tempRepo } from './helpers.ts';
 
 type Registered = {
   execute: (...args: unknown[]) => Promise<unknown>;
@@ -127,24 +128,8 @@ describe('first-run checks dialog', () => {
 });
 
 describe('factory_decide', () => {
-  process.env.GIT_CONFIG_GLOBAL = '/dev/null';
-  process.env.GIT_CONFIG_NOSYSTEM = '1';
-  const roots: string[] = [];
-  after(() => {
-    for (const root of roots) rmSync(root, { force: true, recursive: true });
-  });
-
-  it('tells the orchestrator in its Next line to stop the discarded review, then call factory_review_start', async () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), 'factory-decide-')));
-    roots.push(root);
-    const sh = (...args: string[]) => execFileSync('git', args, { cwd: root });
-    sh('init', '-q', '-b', 'main');
-    sh('config', 'user.email', 'test@example.com');
-    sh('config', 'user.name', 'Test');
-    mkdirSync(join(root, '.omp'));
-    writeFileSync(join(root, '.omp', 'factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }));
-    sh('add', '.');
-    sh('commit', '-qm', 'base');
+  it('tells the orchestrator in its Next line to stop the discarded review, then call factory_review_start', async t => {
+    const root = tempRepo(t, 'factory-decide-', { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) });
     const caller = {
       ...ctx('main', 'main'),
       cwd: root,
@@ -160,8 +145,8 @@ describe('factory_decide', () => {
     await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [input])));
     await withRun(ws, 'demo', run => nextSlice(ws, run));
     writeFileSync(join(root, 'ok'), 'x\n');
-    sh('add', 'ok');
-    sh('commit', '-qm', 'add ok');
+    sh(root, 'add', 'ok');
+    sh(root, 'commit', '-qm', 'add ok');
     await withRun(ws, 'demo', run => runChecks(ws, run));
     const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
 

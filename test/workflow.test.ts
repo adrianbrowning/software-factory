@@ -39,29 +39,16 @@ import {
   startRun,
   submitStack,
 } from '../src/workflow.ts';
-
-// Tests never read the developer's git config (signing, hooks, default branch).
-process.env.GIT_CONFIG_GLOBAL = '/dev/null';
-process.env.GIT_CONFIG_NOSYSTEM = '1';
+import { initRepo, sh } from './helpers.ts';
 
 const roots: string[] = [];
 after(() => {
   for (const root of roots) rmSync(root, { force: true, recursive: true });
 });
 
-function sh(root: string, ...args: string[]) {
-  return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
-}
-
 function workspace(overrides: Partial<FactoryConfig> = {}): Workspace {
-  const root = mkdtempSync(join(tmpdir(), 'factory-'));
+  const root = initRepo(mkdtempSync(join(tmpdir(), 'factory-')), { 'README.md': 'base\n' });
   roots.push(root);
-  sh(root, 'init', '-q', '-b', 'main');
-  sh(root, 'config', 'user.email', 'test@example.com');
-  sh(root, 'config', 'user.name', 'Test');
-  writeFileSync(join(root, 'README.md'), 'base\n');
-  sh(root, 'add', '.');
-  sh(root, 'commit', '-qm', 'base');
   return {
     config: {
       baseRef: 'main',
@@ -610,7 +597,7 @@ describe('slice loop gates', () => {
   /** A state file an older factory wrote: a decision recorded without the decide-time review reset. */
   const olderDecision = (ws: Workspace) => step(ws, run => void run.decisions.push('Decision an older factory recorded.'));
 
-  it('reopens review on the green commit when an older state file holds a decision newer than the green review', async () => {
+  it('reopens review on the green commit at completion when an older state file holds a decision newer than the green review', async () => {
     const ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
@@ -623,7 +610,9 @@ describe('slice loop gates', () => {
     await assert.rejects(step(ws, run => completeSlice(ws, run)), /Decision 1 is newer than the green review/);
     const reopened = readRun(ws, 'demo').slices[0];
     assert.deepEqual([reopened?.phase, reopened?.checkedSha, reopened?.review], ['review', greenSha, undefined]);
+  });
 
+  it('opens a new review of the green commit without checks when an older state file holds a decision newer than the green review', async () => {
     const again = workspace();
     await newRun(again, [slice('Feature')]);
     await step(again, run => nextSlice(again, run));
