@@ -703,12 +703,25 @@ describe('slice loop gates', () => {
     assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'ready');
 
     await step(ws, run => recordDecisions(ws, run, ['Late decision.']));
+    const reopened = readRun(ws, 'demo').slices[0];
+    assert.deepEqual([reopened?.phase, reopened?.greenSha, reopened?.greenDecisions], ['review', undefined, undefined]);
+    commit(ws, 'late.txt');
+    await assert.rejects(step(ws, run => startReview(ws, run)), /HEAD moved after checks passed/);
+    assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'checks');
+  });
+
+  it('sends a ready slice from an older state file back to checks when HEAD moved from the green commit', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await green(ws);
+    await olderDecision(ws);
+    assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'ready');
     commit(ws, 'late.txt');
     await assert.rejects(step(ws, run => startReview(ws, run)), /HEAD moved after checks passed/);
     const reset = readRun(ws, 'demo').slices[0];
-    assert.equal(reset?.phase, 'checks');
-    assert.equal(reset?.greenSha, undefined);
-    assert.equal(reset?.greenDecisions, undefined);
+    assert.deepEqual([reset?.phase, reset?.checkedSha, reset?.greenSha, reset?.greenDecisions], ['checks', undefined, undefined, undefined]);
   });
 
   it('leaves the slice untouched when a decision lands with no open or green review', async () => {
