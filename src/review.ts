@@ -24,6 +24,7 @@ import {
   SEVERITIES,
   skippedDomainsSchema,
   type Slice,
+  standingChecks,
   type Workspace,
   writeAtomic,
 } from './run.ts';
@@ -117,20 +118,10 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   const sha = await head(ws.root);
   // A fix round that ends on the commit its fix file described: the implementer changed nothing.
   const unchanged = slice.phase === 'fix' && slice.fixFromSha === sha;
-  // Checks that passed on this commit stand while the slice is in review or ready, and only when they are the run's
-  // checks, each in order: a run saved before runs kept their checks gets the repository's on resume, which may
-  // differ from the ones that passed. A new commit no longer matches checkedSha, and a fix round or a reopened slice
-  // leaves those phases and clears it, so every check runs.
-  const stored = slice.checkResults;
-  const passedHere =
-    (slice.phase === 'review' || slice.phase === 'ready') &&
-    slice.checkedSha === sha &&
-    stored?.length === run.checks.length &&
-    run.checks.every((command, index) => {
-      const prefix = `${command}: passed in `;
-      return stored[index]?.startsWith(prefix) === true && /^\d+ms$/.test(stored[index].slice(prefix.length));
-    });
-  if (passedHere) return passChecks(ws, run, slice, { commits, reused: sha, sha, summary: stored, unchanged });
+  // Checks that still stand on this commit are not run again. A new commit no longer matches checkedSha, and a fix
+  // round or a reopened slice leaves review and ready and clears it, so every check runs.
+  const stored = standingChecks(run, slice, sha);
+  if (stored !== undefined) return passChecks(ws, run, slice, { commits, reused: sha, sha, summary: stored, unchanged });
   const results: { command: string; result: CommandResult }[] = [];
   const checkPath = [...ws.config.checkPath, process.env.PATH ?? ''].join(delimiter);
   const env = { ...process.env, PATH: checkPath };
@@ -182,6 +173,7 @@ async function passChecks(
   pass: { commits: string; reused: string | undefined; sha: string; summary: string[]; unchanged: boolean },
 ) {
   slice.checkedSha = pass.sha;
+  slice.checkedCommands = [...run.checks];
   slice.checkResults = pass.summary;
   slice.phase = 'review';
   slice.review = undefined;
@@ -267,6 +259,7 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   if (current !== slice.checkedSha) {
     slice.phase = 'checks';
     slice.checkedSha = undefined;
+    slice.checkedCommands = undefined;
     slice.checkResults = undefined;
     throw new Invalidated('HEAD moved after checks passed. Call factory_checks again.');
   }
@@ -602,6 +595,7 @@ export async function recordReview(ws: Workspace, run: Run) {
     slice.review = undefined;
     slice.phase = 'checks';
     slice.checkedSha = undefined;
+    slice.checkedCommands = undefined;
     slice.checkResults = undefined;
     addEvent(run, 'review-invalidated', `${review.id}: repository changed during review`, slice);
     throw new Invalidated('The repository changed during review. Restore the reviewed state, then call factory_checks.');

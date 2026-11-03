@@ -106,6 +106,8 @@ const reviewSchema = z.object({
 
 const sliceSchema = sliceInputSchema.extend({
   branch: text,
+  /** The run's check commands, in order, when `checkedSha` passed. A state file from before it has none. */
+  checkedCommands: z.array(text).optional(),
   checkedSha: sha.optional(),
   /** What each check reported when `checkedSha` passed; the review data file lists them for reviewers. */
   checkResults: z.array(text).optional(),
@@ -245,4 +247,20 @@ export function activeSlice(run: Run) {
 export function outdatedGreenCount(run: Run, slice: Slice) {
   if (slice.phase !== 'ready' || slice.greenDecisions === undefined) return undefined;
   return run.decisions.length > slice.greenDecisions ? slice.greenDecisions : undefined;
+}
+
+/**
+ * The slice's passing check results when they still stand on `sha`, so the checks need not run again: the slice is in
+ * review or ready, its checks passed on `sha`, and they were the run's check commands, in order. Otherwise undefined.
+ * A run saved before runs kept their checks gets the repository's on resume, which may differ; a slice saved before
+ * checkedCommands has none to match.
+ */
+export function standingChecks(run: Run, slice: Slice, sha: string) {
+  const passed = slice.checkedCommands;
+  const stands =
+    (slice.phase === 'review' || slice.phase === 'ready') &&
+    slice.checkedSha === sha &&
+    passed?.length === run.checks.length &&
+    run.checks.every((command, index) => passed[index] === command);
+  return stands ? slice.checkResults : undefined;
 }

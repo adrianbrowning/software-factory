@@ -13,6 +13,7 @@ import {
   type Slice,
   type SliceInput,
   sliceInputSchema,
+  standingChecks,
   type Source,
   sourceSchema,
   statePath,
@@ -517,6 +518,7 @@ export function requestFix(ws: Workspace, run: Run, slice: Slice, body: string, 
   slice.fixFromSha = sha;
   slice.phase = 'fix';
   slice.checkedSha = undefined;
+  slice.checkedCommands = undefined;
   slice.checkResults = undefined;
   slice.greenSha = undefined;
   slice.greenDecisions = undefined;
@@ -539,6 +541,7 @@ export async function restartSlice(ws: Workspace, run: Run, slice: Slice) {
   slice.status = 'pending';
   slice.phase = own === '0' ? 'implement' : 'checks';
   slice.checkedSha = undefined;
+  slice.checkedCommands = undefined;
   slice.checkResults = undefined;
   slice.fixPath = undefined;
   slice.fixFromSha = undefined;
@@ -608,9 +611,9 @@ export function pauseRun(run: Run, reason: string) {
 
 /**
  * Resumes a run in a new owner session. A paused or stalled run runs again. A slice past its checks keeps them while
- * HEAD is still the commit they passed on (in review) or the green commit (ready); otherwise it goes back to `checks`
- * and earns its review again. An open review is dropped either way: its reviewers belonged to the old session.
- * A run saved before runs kept their own checks gets the repository's checks.
+ * they still stand on HEAD (see `standingChecks`): in review on the commit they passed on, or ready on the green
+ * commit. Otherwise it goes back to `checks` and earns its review again. An open review is dropped either way: its
+ * reviewers belonged to the old session. A run saved before runs kept their own checks gets the repository's checks.
  */
 export async function resumeRun(ws: Workspace, run: Run, sessionId: string) {
   if (run.checks.length === 0) run.checks = checksSchema.parse(repoChecks(ws));
@@ -620,16 +623,15 @@ export async function resumeRun(ws: Workspace, run: Run, sessionId: string) {
   }
   const slice = activeSlice(run);
   if (slice?.phase === 'review' || slice?.phase === 'ready') {
-    const current = await head(ws.root);
-    if (slice.phase === 'review' && current === slice.checkedSha) slice.review = undefined;
-    else if (slice.phase !== 'ready' || current !== slice.greenSha) {
+    if (standingChecks(run, slice, await head(ws.root)) === undefined) {
       slice.phase = 'checks';
       slice.checkedSha = undefined;
+      slice.checkedCommands = undefined;
       slice.checkResults = undefined;
       slice.greenSha = undefined;
       slice.greenDecisions = undefined;
       slice.review = undefined;
-    }
+    } else if (slice.phase === 'review') slice.review = undefined;
   }
   run.ownerSessionId = sessionId;
   addEvent(run, 'resume', `session ${sessionId}`);
