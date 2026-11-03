@@ -117,6 +117,12 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   const sha = await head(ws.root);
   // A fix round that ends on the commit its fix file described: the implementer changed nothing.
   const unchanged = slice.phase === 'fix' && slice.fixFromSha === sha;
+  // Checks that passed on this commit stand while the slice is in review or ready. A new commit no longer matches
+  // checkedSha, and a fix round or a restart moves the slice out of those phases and clears it, so all checks run.
+  const passedHere = (slice.phase === 'review' || slice.phase === 'ready') && slice.checkedSha === sha;
+  if (passedHere && slice.checkResults !== undefined) {
+    return passChecks(ws, run, slice, { commits, reused: sha, sha, summary: slice.checkResults, unchanged });
+  }
   const results: { command: string; result: CommandResult }[] = [];
   const checkPath = [...ws.config.checkPath, process.env.PATH ?? ''].join(delimiter);
   const env = { ...process.env, PATH: checkPath };
@@ -144,17 +150,7 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   const dirty = (await porcelain(ws.root)).trim();
   const failed = results.filter(({ result }) => result.exitCode !== 0 || result.timedOut);
   const summary = results.map(({ command, result }) => describeCheck(command, result));
-  if (failed.length === 0 && dirty === '') {
-    slice.checkedSha = sha;
-    slice.checkResults = summary;
-    slice.phase = 'review';
-    slice.review = undefined;
-    addEvent(run, 'checks-pass', summary.join('; '), slice);
-    // The orchestrator picks the review domains from these changed files and the path skips startReview applies.
-    const range = `${slice.parentBranch}...HEAD`;
-    const changed = (await git(ws.root, 'diff', '--stat', range)).trimEnd();
-    return { changed, commits, passed: true as const, pathSkipped: await pathSkips(await changedPaths(ws.root, range), committedContent(ws.root, range, sha)), summary, unchanged };
-  }
+  if (failed.length === 0 && dirty === '') return passChecks(ws, run, slice, { commits, reused: undefined, sha, summary, unchanged });
 
   const sections = failed.map(
     ({ command, result }) =>
@@ -168,6 +164,25 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
     slice,
   );
   return { commits, passed: false as const, summary, unchanged, ...requestFix(ws, run, slice, sections.join('\n\n'), sha) };
+}
+
+/** Moves the slice to review on `sha`. `reused` names the commit whose stored results stand when no check ran. */
+async function passChecks(
+  ws: Workspace,
+  run: Run,
+  slice: Slice,
+  pass: { commits: string; reused: string | undefined; sha: string; summary: string[]; unchanged: boolean },
+) {
+  slice.checkedSha = pass.sha;
+  slice.checkResults = pass.summary;
+  slice.phase = 'review';
+  slice.review = undefined;
+  addEvent(run, 'checks-pass', `${pass.reused === undefined ? '' : `reused from ${pass.reused}: `}${pass.summary.join('; ')}`, slice);
+  // The orchestrator picks the review domains from these changed files and the path skips startReview applies.
+  const range = `${slice.parentBranch}...HEAD`;
+  const changed = (await git(ws.root, 'diff', '--stat', range)).trimEnd();
+  const pathSkipped = await pathSkips(await changedPaths(ws.root, range), committedContent(ws.root, range, pass.sha));
+  return { changed, commits: pass.commits, passed: true as const, pathSkipped, reused: pass.reused, summary: pass.summary, unchanged: pass.unchanged };
 }
 
 /**

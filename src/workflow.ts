@@ -20,7 +20,7 @@ import {
   type Workspace,
   writeAtomic,
 } from './run.ts';
-import { requireClean, requireOnBranch } from './repo.ts';
+import { head, requireClean, requireOnBranch } from './repo.ts';
 
 const FEATURE_PATTERN = /^[a-z0-9][a-z0-9-]{0,47}$/;
 export const UNTRUSTED_NOTE =
@@ -607,24 +607,29 @@ export function pauseRun(run: Run, reason: string) {
 }
 
 /**
- * Resumes a run in a new owner session. A paused or stalled run runs again. The state was read from disk with no
- * in-process copy to compare against, so a slice past its checks goes back to `checks` and earns its review again.
+ * Resumes a run in a new owner session. A paused or stalled run runs again. A slice past its checks keeps them while
+ * HEAD is still the commit they passed on (in review) or the green commit (ready); otherwise it goes back to `checks`
+ * and earns its review again. An open review is dropped either way: its reviewers belonged to the old session.
  * A run saved before runs kept their own checks gets the repository's checks.
  */
-export function resumeRun(ws: Workspace, run: Run, sessionId: string) {
+export async function resumeRun(ws: Workspace, run: Run, sessionId: string) {
   if (run.checks.length === 0) run.checks = checksSchema.parse(repoChecks(ws));
   if (run.status === 'paused' || run.status === 'stalled') {
     run.status = 'running';
     resolveStall(ws, run, 'continue');
   }
   const slice = activeSlice(run);
-  if (slice !== undefined && (slice.phase === 'review' || slice.phase === 'ready')) {
-    slice.phase = 'checks';
-    slice.checkedSha = undefined;
-    slice.checkResults = undefined;
-    slice.greenSha = undefined;
-    slice.greenDecisions = undefined;
-    slice.review = undefined;
+  if (slice?.phase === 'review' || slice?.phase === 'ready') {
+    const current = await head(ws.root);
+    if (slice.phase === 'review' && current === slice.checkedSha) slice.review = undefined;
+    else if (slice.phase !== 'ready' || current !== slice.greenSha) {
+      slice.phase = 'checks';
+      slice.checkedSha = undefined;
+      slice.checkResults = undefined;
+      slice.greenSha = undefined;
+      slice.greenDecisions = undefined;
+      slice.review = undefined;
+    }
   }
   run.ownerSessionId = sessionId;
   addEvent(run, 'resume', `session ${sessionId}`);

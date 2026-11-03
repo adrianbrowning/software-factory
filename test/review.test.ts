@@ -170,6 +170,47 @@ describe('slice loop gates', () => {
     assert.equal(results(), undefined);
   });
 
+  /** A check that passes when the slice commits `ok`, and appends a line inside .git (outside the working tree) per run. */
+  const countedCheck = 'test -f ok && echo run >> .git/check-runs';
+  const checkRuns = (ws: Workspace) => readFileSync(join(ws.root, '.git', 'check-runs'), 'utf8').split('\n').filter(Boolean).length;
+
+  it('reuses the green checks of the current commit without running a check command, and leaves the slice in review', async () => {
+    const ws = workspace({ checks: [countedCheck] });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    const first = await step(ws, run => runChecks(ws, run));
+    const stored = readRun(ws, 'demo').slices[0]?.checkResults;
+    const again = await step(ws, run => runChecks(ws, run));
+    assert.ok(again.passed);
+    assert.equal(checkRuns(ws), 1);
+    assert.deepEqual(again.summary, first.summary);
+    assert.equal(again.reused, sh(ws.root, 'rev-parse', 'HEAD'));
+    const after = readRun(ws, 'demo').slices[0];
+    assert.deepEqual([after?.phase, after?.checkedSha, after?.checkResults], ['review', again.reused, stored]);
+    assert.ok(first.passed && first.reused === undefined);
+  });
+
+  it('runs every check again after a new commit, and after a fix round on the same commit', async () => {
+    const ws = workspace({ checks: [countedCheck, 'test -f ok'], maxRounds: 2 });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    commit(ws, 'later.txt');
+    const moved = await step(ws, run => runChecks(ws, run));
+    assert.ok(moved.passed && moved.reused === undefined);
+    assert.equal(checkRuns(ws), 2);
+
+    const { reviewId } = await step(ws, run => startReview(ws, run));
+    await review(ws, reviewId, [finding('bug', 'high', 'null-crash')]);
+    assert.ok(!(await step(ws, run => recordReview(ws, run))).green);
+    const fixed = await step(ws, run => runChecks(ws, run));
+    assert.ok(fixed.passed && fixed.reused === undefined);
+    assert.equal(checkRuns(ws), 3);
+    assert.equal(fixed.summary.length, 2);
+  });
+
   it('fails checks that leave the working tree changed', async () => {
     const ws = workspace({ checks: ['touch ok stray.txt'] });
     await newRun(ws, [slice('Feature')]);

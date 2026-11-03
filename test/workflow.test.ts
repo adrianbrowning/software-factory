@@ -210,18 +210,57 @@ describe('pause and resume', () => {
     assert.deepEqual([run.status, run.ownerSessionId], ['running', 'session-2']);
   });
 
-  it('sends a reviewed slice back to checks on resume', async () => {
+  it('keeps a slice in review on its checked commit on resume, dropping only the open review', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    await step(ws, run => startReview(ws, run));
+    const before = readRun(ws, 'demo').slices[0];
+    await step(ws, run => pauseRun(run, 'test'));
+
+    forgetRun(ws, 'demo');
+    await step(ws, run => resumeRun(ws, run, 'session-2'));
+    const resumed = readRun(ws, 'demo').slices[0];
+    assert.deepEqual(
+      [resumed?.phase, resumed?.checkedSha, resumed?.checkResults, resumed?.review],
+      ['review', sh(ws.root, 'rev-parse', 'HEAD'), before?.checkResults, undefined],
+    );
+  });
+
+  it('keeps a green slice ready on its green commit on resume', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await green(ws);
+    const before = readRun(ws, 'demo').slices[0];
+    await step(ws, run => pauseRun(run, 'test'));
+
+    forgetRun(ws, 'demo');
+    await step(ws, run => resumeRun(ws, run, 'session-2'));
+    const resumed = readRun(ws, 'demo').slices[0];
+    assert.equal(resumed?.greenSha, sh(ws.root, 'rev-parse', 'HEAD'));
+    assert.deepEqual(resumed, before);
+  });
+
+  it('sends a reviewed slice back to checks on resume when HEAD moved', async () => {
     const ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
     await green(ws);
     await step(ws, run => pauseRun(run, 'test'));
+    commit(ws, 'later.txt');
 
     forgetRun(ws, 'demo');
     await step(ws, run => resumeRun(ws, run, 'session-2'));
     const resumed = readRun(ws, 'demo').slices[0];
-    assert.deepEqual([resumed?.phase, resumed?.greenSha, resumed?.checkResults], ['checks', undefined, undefined]);
+    assert.deepEqual(
+      [resumed?.phase, resumed?.checkedSha, resumed?.checkResults, resumed?.greenSha, resumed?.greenDecisions, resumed?.review],
+      ['checks', undefined, undefined, undefined, undefined, undefined],
+    );
   });
 });
 
