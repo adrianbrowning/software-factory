@@ -20,6 +20,8 @@ flowchart TD
   G -->|green| I[factory-reviewer per chosen domain + validator]
   I -->|critical/high| H
   I -->|green| J[factory_complete_slice]
+  I -->|green, observations to fix| Q[factory_fix: user approves, fix file for the observations]
+  Q --> H
   J -->|slices left| E
   J -->|all done| K[Retro: repo slice + factory issues]
   J -->|bug in a done slice| O[factory_reopen: user approves, fix file for that slice]
@@ -38,10 +40,10 @@ flowchart TD
 | Implementation and fixes | `factory-implementer` subagent, `tdd` skill autoloaded, own advisor (`advisor: true`; override with `task.agentAdvisor.factory-implementer: "off"`) | Fresh context per slice and per fix; the advisor watches the session under the most context pressure |
 | Review | Up to 11 `factory-reviewer` subagents (one per cc-pr-review domain) + `factory-review-validator` | Port of `cc-pr-review` onto omp's `task` tool. The factory skips `react-ts`, `test-validity`, and `devops` when no changed path could hold their subject (the orchestrator can keep one back); the orchestrator skips other domains the diff gives nothing to review, each with a reason; `bug` and `scope` always review, and `testing` does too for a slice with test seams. The validator, with a clean context, keeps a blocking (`critical`/`high`) finding only when it is a gap in correctness or the ticket's requirements. A supported blocking finding that fails that bar (a speculative abstraction, defensive code for an impossible state, a test for a case that cannot happen) is downgraded to an observation, not lost. A finding that shows the code breaks a recorded decision blocks: the reviewer cites the decision number and the validator cannot downgrade it, and the validator escalates an observation that shows such a conflict to `high`. The tools enforce cited decisions only; an uncited conflict depends on the reviewer and validator seeing it |
 
-User gates: questions at intake, slice-plan approval, seam additions, re-slice approval, stalled fix loops,
-reopening a done slice, retro actions, and `/factory submit`. The plugin opens PRs only when you run
-`/factory submit`, and it never merges. A run planned with `landOn` opens no PRs: `/factory submit` fast-forwards
-that existing local branch to the top slice, without a checkout or a merge commit.
+User gates: questions at intake, slice-plan approval, seam additions, re-slice approval, stalled fix loops, fixing
+observations of a green review, reopening a done slice, retro actions, and `/factory submit`. The plugin opens PRs
+only when you run `/factory submit`, and it never merges. A run planned with `landOn` opens no PRs: `/factory submit`
+fast-forwards that existing local branch to the top slice, without a checkout or a merge commit.
 While `/factory submit` runs, it shows each step as a notification and in the status line, for example the
 `gh stack submit` push, which can take a few minutes.
 
@@ -147,6 +149,17 @@ the reviewed commit of the top slice. It does not check out, merge, or push. It 
 - your branch is gone, or has commits that are not in the stack.
 
 Then push your branch. You can delete the slice branches.
+
+### Fix observations before a slice is done
+
+A green review can list non-blocking observations. When you want some of them fixed in the active slice, the
+orchestrator asks you which. `factory_fix` (the observation ids and your `reason`) opens a dialog. After you confirm:
+
+- The slice gets a fix file with those observations and goes back to fix. The green review is dropped, so the slice
+  goes through checks and a new review again before `factory_complete_slice`.
+- The round counts in the slice's fix rounds (`factory_status`) and against its round limit; a used-up budget stalls
+  like any other fix round.
+- It refuses an id that is not an observation of that green review, and a slice without a green review.
 
 ### Reopen a done slice
 

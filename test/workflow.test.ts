@@ -12,6 +12,7 @@ import {
   approvePlan,
   completeSlice,
   fileSource,
+  fixObservations,
   githubSource,
   nextAction,
   nextSlice,
@@ -552,6 +553,60 @@ describe('slice loop gates', () => {
     await review(ws, opened.reviewId, []);
     await step(ws, run => recordReview(ws, run));
     assert.equal((await step(ws, run => completeSlice(ws, run))).status, 'done');
+  });
+
+  it('fixes observations the user chose from a green review in a tracked round that needs new checks and a new review', async () => {
+    const ws = workspace({ maxRounds: 2 });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await assert.rejects(step(ws, run => fixObservations(ws, run, ['thermo-naming'], 'tidy')), /Slice 01 has no green review/);
+    await step(ws, run => runChecks(ws, run));
+    const opened = await step(ws, run => startReview(ws, run));
+    await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming'), finding('comments', 'observation', 'stale')]);
+    assert.ok((await step(ws, run => recordReview(ws, run))).green);
+
+    await assert.rejects(
+      step(ws, run => fixObservations(ws, run, ['thermo-naming', 'bug-made-up'], 'tidy')),
+      /Not observations of green review 01-r1: bug-made-up\. Its observations: thermo-naming, comments-stale/,
+    );
+    assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'ready', 'a refused call changes nothing');
+
+    const fixed = await step(ws, run => fixObservations(ws, run, ['thermo-naming'], 'The user wants the names fixed now.'));
+    assert.equal(fixed.stalled, false);
+    const fix = readFileSync(fixed.fixPath, 'utf8');
+    assert.match(fix, /Checks to run before committing: test -f ok/);
+    assert.match(fix, /The user wants the names fixed now\./);
+    assert.match(fix, /## \[observation\] thermo-naming\n\n- Location: ok:1/);
+    assert.doesNotMatch(fix, /comments-stale/);
+    const state = readRun(ws, 'demo').slices[0];
+    assert.equal(state?.phase, 'fix');
+    assert.equal(state?.fixRounds, 1);
+    assert.equal(state?.greenSha, undefined);
+    assert.match(nextAction(readRun(ws, 'demo')), new RegExp(`fix mode with ${fixed.fixPath}`));
+    await assert.rejects(step(ws, run => completeSlice(ws, run)), /no green review yet/);
+    await assert.rejects(step(ws, run => fixObservations(ws, run, ['comments-stale'], 'tidy')), /Slice 01 has no green review/);
+
+    commit(ws, 'ok', 'renamed\n');
+    await green(ws);
+    assert.equal((await step(ws, run => completeSlice(ws, run))).status, 'done');
+  });
+
+  it('counts a fix round for observations toward the fix budget', async () => {
+    const ws = workspace({ maxRounds: 1 });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'work.txt');
+    assert.ok(!(await step(ws, run => runChecks(ws, run))).passed);
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const opened = await step(ws, run => startReview(ws, run));
+    await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming')]);
+    await step(ws, run => recordReview(ws, run));
+
+    const fixed = await step(ws, run => fixObservations(ws, run, ['thermo-naming'], 'tidy'));
+    assert.equal(fixed.stalled, true);
+    assert.equal(readRun(ws, 'demo').slices[0]?.stalled, true);
   });
 });
 

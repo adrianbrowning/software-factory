@@ -31,11 +31,13 @@ import {
   fileFactoryIssues,
   type FiledIssues,
   fileSource,
+  fixObservations,
   githubSource,
   nextAction,
   nextSlice,
   parseRetro,
   pauseRun,
+  planFix,
   planFollowUp,
   planReslice,
   planSlices,
@@ -79,6 +81,7 @@ const ORCHESTRATION_TOOLS = [
   'factory_review_start',
   'factory_review_record',
   'factory_complete_slice',
+  'factory_fix',
   'factory_reopen',
   'factory_follow_up',
   'factory_status',
@@ -130,6 +133,13 @@ const reopenSchema = z.object({
   slice: z.string().regex(/^\d{2}$/).describe('Id of the done slice, for example "04"'),
 });
 const followUpSchema = sliceInputSchema.omit({ blockedBy: true });
+const fixSchema = z.object({
+  observations: z
+    .array(z.string().min(1))
+    .min(1)
+    .describe('Ids of observations from the green review of the active slice that the user chose to fix in this slice, for example "thermo-naming"'),
+  reason: z.string().min(1).describe('Why the user wants them fixed before the slice is done, for the fix file'),
+});
 const emptySchema = z.object({});
 
 export function callerOf(ctx: Pick<ExtensionContext, 'agent'>) {
@@ -500,7 +510,10 @@ export default function softwareFactory(pi: ExtensionAPI) {
       const feature = activeFeature(ws);
       const result = await withRun(ws, feature, run => recordReview(ws, run));
       if (result.green) {
-        const notes = result.observations.length > 0 ? `\nObservations (non-blocking):\n${result.observations.join('\n\n')}` : '';
+        const notes =
+          result.observations.length > 0
+            ? `\nObservations (non-blocking):\n${result.observations.join('\n\n')}\nTo fix any of them in this slice, ask the user; when they agree, call factory_fix with their ids.`
+            : '';
         return reply(`Review is green.${notes}\nNext: ${nextAction(readRun(ws, feature))}`);
       }
       const stall = result.stalled ? await decideStall(ctx, ws, feature) : '';
@@ -521,6 +534,28 @@ export default function softwareFactory(pi: ExtensionAPI) {
         const restacked = reopened ? ' Every later slice branch is rebased onto it and earns its checks and review again.' : '';
         return reply(`Slice ${slice.id} is done on ${slice.branch}.${restacked}\nNext: ${nextAction(run)}`);
       });
+    },
+  });
+
+  tool({
+    caller: 'main',
+    description:
+      'After a green review, send the active slice back to the fix loop for review observations the user chose to fix in this slice, after the user agreed. Writes a tracked fix file; the round counts toward the fix budget, and the slice earns checks and a new review before factory_complete_slice.',
+    label: 'Factory: fix observations',
+    name: 'factory_fix',
+    schema: fixSchema,
+    async run(params, ws, ctx) {
+      const feature = activeFeature(ws);
+      // Refuses a slice without a green review, or an id that is not one of its observations, without a dialog.
+      const planned = planFix(ws, readRun(ws, feature), params.observations);
+      const ids = planned.observations.map(finding => finding.id).join(', ');
+      const body = `${params.reason}\n\n${planned.observations.map(finding => `- ${finding.id}: ${finding.title}`).join('\n')}\n\nThe green review ${planned.review.id} is dropped. The implementer fixes these in fix mode, then the slice gets checks and a new review again. The round counts toward the fix budget.`;
+      if (!(await confirm(ctx, `Fix observations in slice ${planned.slice.id} "${planned.slice.title}"?`, body))) {
+        return reply(`The user kept the green review. Ask how to handle the observations, or call factory_complete_slice.\nNext: ${nextAction(readRun(ws, feature))}`);
+      }
+      const result = await withRun(ws, feature, run => fixObservations(ws, run, params.observations, params.reason));
+      const stall = result.stalled ? await decideStall(ctx, ws, feature) : '';
+      return reply(`Slice ${planned.slice.id} is back in fix for ${ids}. Fix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
     },
   });
 

@@ -921,6 +921,8 @@ function reviewDomains(skipped: { domain: Domain }[]) {
   return REVIEW_DOMAINS.filter(domain => !skipped.some(entry => entry.domain === domain));
 }
 
+type Review = NonNullable<Slice['review']>;
+
 function requireReview(run: Run, reviewId: string) {
   const slice = activeSlice(run);
   const review = slice?.review;
@@ -991,11 +993,15 @@ export function submitDomain(ws: Workspace, run: Run, input: { agentId: string; 
 }
 
 export function readDomainFindings(ws: Workspace, run: Run, reviewId: string) {
-  const review = requireReview(run, reviewId);
+  return recordedFindings(ws, run, requireReview(run, reviewId));
+}
+
+/** Every reviewed domain's submitted findings, read only where the file is what the factory tool wrote. */
+function recordedFindings(ws: Workspace, run: Run, review: Review) {
   const findings: Finding[] = [];
   const missing: string[] = [];
   for (const domain of reviewDomains(review.skipped)) {
-    const raw = readRecorded(domainFile(ws, run, reviewId, domain), review.submissions[domain]);
+    const raw = readRecorded(domainFile(ws, run, review.id, domain), review.submissions[domain]);
     if (raw === undefined) missing.push(domain);
     else findings.push(...findingListSchema.parse(raw));
   }
@@ -1187,6 +1193,40 @@ export async function recordReview(ws: Workspace, run: Run) {
     green: false as const,
     ...requestFix(ws, run, slice, `Blocking review findings from ${review.id}:\n\n${blocking.map(finding => renderFinding(finding, run.decisions)).join('\n\n')}`, review.sha),
   };
+}
+
+/**
+ * The active slice's green review and the observations the user chose from it, by finding id. Throws for a slice
+ * without a green review and for an id that is not one of its observations. Does not change the run.
+ */
+export function planFix(ws: Workspace, run: Run, ids: string[]) {
+  const slice = requireActive(run);
+  const review = slice.review;
+  if (slice.phase !== 'ready' || slice.greenSha === undefined || review === undefined) {
+    throw new Error(`Slice ${slice.id} has no green review to fix observations from.`);
+  }
+  const chosen = new Set(z.array(z.string().min(1)).min(1).parse(ids));
+  const raw = readRecorded(validationFile(ws, run, review.id), review.validation);
+  if (raw === undefined) throw new Error(`Review ${review.id} has no validation.`);
+  const { findings } = recordedFindings(ws, run, review);
+  const observations = keptFindings(findings, validationSchema.parse(raw)).filter(finding => finding.severity === 'observation');
+  const unknown = [...chosen].filter(id => !observations.some(finding => finding.id === id));
+  if (unknown.length > 0) {
+    const listed = observations.map(finding => finding.id).join(', ') || 'none';
+    throw new Error(`Not observations of green review ${review.id}: ${unknown.join(', ')}. Its observations: ${listed}.`);
+  }
+  return { observations: observations.filter(finding => chosen.has(finding.id)), review, slice };
+}
+
+/**
+ * Sends the active slice from its green review back to the fix loop for the observations the user chose to fix in
+ * this slice. The round counts against the round limit; the slice earns checks and a new review before it completes.
+ */
+export function fixObservations(ws: Workspace, run: Run, ids: string[], reason: string) {
+  const { observations, review, slice } = planFix(ws, run, ids);
+  addEvent(run, 'fix-observations', `${review.id}: ${observations.map(finding => finding.id).join(', ')}`, slice);
+  const body = `## Observations from green review ${review.id} the user chose to fix\n\n${evidence(reason, 4_000)}\n\n${observations.map(finding => renderFinding(finding, run.decisions)).join('\n\n')}`;
+  return requestFix(ws, run, slice, body, review.sha);
 }
 
 /**
