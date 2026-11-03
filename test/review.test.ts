@@ -174,7 +174,7 @@ describe('slice loop gates', () => {
   const countedCheck = 'test -f ok && echo run >> .git/check-runs';
   const checkRuns = (ws: Workspace) => readFileSync(join(ws.root, '.git', 'check-runs'), 'utf8').split('\n').filter(Boolean).length;
 
-  it('reuses the green checks of the current commit without running a check command, and leaves the slice in review', async () => {
+  it('reuses the passing checks of the current commit without running a check command, and leaves the slice in review', async () => {
     const ws = workspace({ checks: [countedCheck] });
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
@@ -191,6 +191,20 @@ describe('slice loop gates', () => {
     assert.ok(first.passed && first.reused === undefined);
   });
 
+  it('reuses the checks of a green slice on its green commit, and sends it back to review', async () => {
+    const ws = workspace({ checks: [countedCheck] });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await green(ws);
+    assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'ready');
+    const again = await step(ws, run => runChecks(ws, run));
+    assert.ok(again.passed);
+    assert.equal(again.reused, sh(ws.root, 'rev-parse', 'HEAD'));
+    assert.equal(checkRuns(ws), 1);
+    assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'review');
+  });
+
   it('runs every check again after a new commit, and after a fix round on the same commit', async () => {
     const ws = workspace({ checks: [countedCheck, 'test -f ok'], maxRounds: 2 });
     await newRun(ws, [slice('Feature')]);
@@ -205,6 +219,8 @@ describe('slice loop gates', () => {
     const { reviewId } = await step(ws, run => startReview(ws, run));
     await review(ws, reviewId, [finding('bug', 'high', 'null-crash')]);
     assert.ok(!(await step(ws, run => recordReview(ws, run))).green);
+    const fixing = readRun(ws, 'demo').slices[0];
+    assert.deepEqual([fixing?.phase, fixing?.checkedSha], ['fix', undefined]);
     const fixed = await step(ws, run => runChecks(ws, run));
     assert.ok(fixed.passed && fixed.reused === undefined);
     assert.equal(checkRuns(ws), 3);

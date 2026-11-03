@@ -118,7 +118,7 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   // A fix round that ends on the commit its fix file described: the implementer changed nothing.
   const unchanged = slice.phase === 'fix' && slice.fixFromSha === sha;
   // Checks that passed on this commit stand while the slice is in review or ready. A new commit no longer matches
-  // checkedSha, and a fix round or a restart moves the slice out of those phases and clears it, so all checks run.
+  // checkedSha, and a fix round or a reopened slice leaves those phases and clears it, so every check runs.
   const passedHere = (slice.phase === 'review' || slice.phase === 'ready') && slice.checkedSha === sha;
   if (passedHere && slice.checkResults !== undefined) {
     return passChecks(ws, run, slice, { commits, reused: sha, sha, summary: slice.checkResults, unchanged });

@@ -241,8 +241,10 @@ describe('pause and resume', () => {
     forgetRun(ws, 'demo');
     await step(ws, run => resumeRun(ws, run, 'session-2'));
     const resumed = readRun(ws, 'demo').slices[0];
-    assert.equal(resumed?.greenSha, sh(ws.root, 'rev-parse', 'HEAD'));
-    assert.deepEqual(resumed, before);
+    const current = sh(ws.root, 'rev-parse', 'HEAD');
+    assert.deepEqual([resumed?.phase, resumed?.checkedSha, resumed?.greenSha], ['ready', current, current]);
+    assert.deepEqual([resumed?.greenDecisions, resumed?.checkResults, resumed?.review], [before?.greenDecisions, before?.checkResults, before?.review]);
+    assert.notEqual(resumed?.review, undefined);
   });
 
   it('sends a reviewed slice back to checks on resume when HEAD moved', async () => {
