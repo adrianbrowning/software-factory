@@ -741,7 +741,7 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
     // The orchestrator picks the review domains from these changed files and the path skips startReview applies.
     const range = `${slice.parentBranch}...HEAD`;
     const changed = (await git(ws.root, 'diff', '--stat', range)).trimEnd();
-    return { changed, commits, passed: true as const, pathSkipped: pathSkips(await changedPaths(ws.root, range)), summary, unchanged };
+    return { changed, commits, passed: true as const, pathSkipped: await pathSkips(await changedPaths(ws.root, range), committedContent(ws.root, range, sha)), summary, unchanged };
   }
 
   const sections = failed.map(
@@ -759,11 +759,20 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
 }
 
 /**
- * Domains a diff gives nothing to review, decided from its changed paths alone. Each rule only fires when no changed
- * file could hold that domain's subject.
+ * Domains a diff gives nothing to review, decided from its changed paths (and, for `contentMatches`, the changed
+ * file's content at the reviewed commit). Each rule only fires when no changed file could hold that domain's subject.
  */
-const PATH_SKIPS: { domain: Domain; matches: RegExp; reason: string }[] = [
-  { domain: 'react-ts', matches: /\.[cm]?[jt]sx?$/, reason: 'no JavaScript or TypeScript file changed' },
+const PATH_SKIPS: { contentMatches?: { content: RegExp; paths: RegExp }; domain: Domain; matches: RegExp; reason: string }[] = [
+  {
+    // react-ts also reviews TypeScript; plain JavaScript needs it only when the file uses React.
+    contentMatches: {
+      content: /(\bfrom\s*|\b(?:require|import)\s*\(\s*|\bimport\s*)['"]react(?:-dom)?(?:\/[^'"]*)?['"]/,
+      paths: /\.[cm]?js$/,
+    },
+    domain: 'react-ts',
+    matches: /\.([cm]?ts|[jt]sx)$/,
+    reason: 'no TypeScript, JSX, or React file changed',
+  },
   {
     domain: 'test-validity',
     matches: /(^|\/)(__tests__|tests?|specs?)\/|[._-](test|spec)\.[^/]+$|(^|\/)test_[^/]+$/,
@@ -777,12 +786,32 @@ const PATH_SKIPS: { domain: Domain; matches: RegExp; reason: string }[] = [
   },
 ];
 
-export function pathSkips(files: string[]) {
-  return PATH_SKIPS.filter(rule => !files.some(file => rule.matches.test(file))).map(({ domain, reason }) => ({ domain, reason: `${reason} (factory path rule)` }));
+/** `contentOf` returns a changed file's content at the reviewed commit, or undefined for a deleted file. */
+export async function pathSkips(files: string[], contentOf: (file: string) => Promise<string | undefined>) {
+  const skips: { domain: Domain; reason: string }[] = [];
+  for (const { contentMatches, domain, matches, reason } of PATH_SKIPS) {
+    if (files.some(file => matches.test(file))) continue;
+    if (contentMatches !== undefined) {
+      const candidates = files.filter(file => contentMatches.paths.test(file));
+      const contents = await Promise.all(candidates.map(contentOf));
+      if (contents.some(content => content !== undefined && contentMatches.content.test(content))) continue;
+    }
+    skips.push({ domain, reason: `${reason} (factory path rule)` });
+  }
+  return skips;
 }
 
-async function changedPaths(root: string, range: string) {
-  return (await git(root, 'diff', '--name-only', '-z', range)).split('\0').filter(Boolean);
+async function changedPaths(root: string, range: string, ...filter: string[]) {
+  return (await git(root, 'diff', '--name-only', '-z', ...filter, range)).split('\0').filter(Boolean);
+}
+
+/** Reads a changed file at `sha`; a file the range deletes has no content. */
+function committedContent(root: string, range: string, sha: string) {
+  let present: Promise<Set<string>> | undefined;
+  return async (file: string) => {
+    present ??= changedPaths(root, range, '--diff-filter=d').then(files => new Set(files));
+    return (await present).has(file) ? git(root, 'cat-file', 'blob', `${sha}:${file}`) : undefined;
+  };
 }
 
 /**
@@ -813,9 +842,11 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   const range = `${slice.parentBranch}...HEAD`;
   const diff = await git(ws.root, '-c', 'core.quotePath=false', 'diff', '--no-ext-diff', range);
   if (diff.trim() === '') throw new Error(`No changes in ${range}; the implementer committed nothing.`);
-  const files = (await git(ws.root, 'diff', '--name-only', '-z', range)).split('\0').filter(Boolean);
+  const files = await changedPaths(ws.root, range);
   const previous = previousBlocking(ws, run, slice);
-  const byPath = pathSkips(files).filter(entry => !kept.includes(entry.domain) && !skippedNames.includes(entry.domain));
+  const byPath = (await pathSkips(files, committedContent(ws.root, range, slice.checkedSha))).filter(
+    entry => !kept.includes(entry.domain) && !skippedNames.includes(entry.domain),
+  );
   const skipped = [...byPath, ...chosen];
   slice.reviews += 1;
   const id = `${slice.id}-r${slice.reviews}`;
