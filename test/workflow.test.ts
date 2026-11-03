@@ -629,11 +629,18 @@ describe('slice loop gates', () => {
     await step(again, run => nextSlice(again, run));
     commit(again, 'ok');
     await green(again);
-    const checked = readRun(again, 'demo').slices[0]?.greenSha;
+    const greenState = readRun(again, 'demo');
+    const checked = greenState.slices[0]?.greenSha;
+    const greenId = `${greenState.slices[0]?.id}-r${greenState.slices[0]?.reviews}`;
+    const checkRuns = greenState.events.filter(event => event.kind.startsWith('checks')).length;
     await olderDecision(again);
     const opened = await step(again, run => startReview(again, run));
-    const state = readRun(again, 'demo').slices[0];
+    const started = readRun(again, 'demo');
+    const state = started.slices[0];
     assert.deepEqual([state?.phase, state?.checkedSha, state?.review?.id, state?.review?.decisions], ['review', checked, opened.reviewId, 1]);
+    assert.notEqual(opened.reviewId, greenId);
+    assert.match(readFileSync(opened.dataFile, 'utf8'), /Decision an older factory recorded\./);
+    assert.equal(started.events.filter(event => event.kind.startsWith('checks')).length, checkRuns);
   });
 
   it('discards a review at record time when an older state file holds a decision newer than it', async () => {
