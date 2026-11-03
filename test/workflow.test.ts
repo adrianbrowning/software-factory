@@ -265,6 +265,42 @@ describe('pause and resume', () => {
     );
   });
 
+  it('sends a ready slice back to checks on resume when its green commit is not HEAD, though its checks passed there', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await green(ws);
+    const parent = sh(ws.root, 'rev-parse', 'HEAD~1');
+    await step(ws, run => {
+      pauseRun(run, 'test');
+      const ready = run.slices[0];
+      if (ready !== undefined) ready.greenSha = parent;
+    });
+
+    forgetRun(ws, 'demo');
+    await step(ws, run => resumeRun(ws, run, 'session-2'));
+    const resumed = readRun(ws, 'demo').slices[0];
+    assert.deepEqual([resumed?.phase, resumed?.checkedSha, resumed?.greenSha, resumed?.review], ['checks', undefined, undefined, undefined]);
+  });
+
+  it('sends a slice back to checks on resume when its stored results do not cover every check command', async () => {
+    const ws = workspace({ checks: ['test -f ok', 'test -f README.md'] });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    await step(ws, run => {
+      pauseRun(run, 'test');
+      run.slices[0]?.checkResults?.pop();
+    });
+
+    forgetRun(ws, 'demo');
+    await step(ws, run => resumeRun(ws, run, 'session-2'));
+    const resumed = readRun(ws, 'demo').slices[0];
+    assert.deepEqual([resumed?.phase, resumed?.checkedSha, resumed?.checkResults], ['checks', undefined, undefined]);
+  });
+
   it('sends a slice in review back to checks on resume when HEAD moved past its checked commit', async () => {
     const ws = workspace();
     await newRun(ws, [slice('Feature')]);

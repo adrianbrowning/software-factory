@@ -251,16 +251,17 @@ export function outdatedGreenCount(run: Run, slice: Slice) {
 
 /**
  * The slice's passing check results when they still stand on `sha`, so the checks need not run again: the slice is in
- * review or ready, its checks passed on `sha`, and they were the run's check commands, in order. Otherwise undefined.
- * A run saved before runs kept their checks gets the repository's on resume, which may differ; a slice saved before
- * checkedCommands has none to match.
+ * review on the commit its checks passed on, or ready on that commit as its green commit, and those checks were the
+ * run's check commands, in order, each with its result. Otherwise undefined. A run saved before runs kept their checks
+ * gets the repository's on resume, which may differ; a slice saved before checkedCommands has none to match.
  */
 export function standingChecks(run: Run, slice: Slice, sha: string) {
   const passed = slice.checkedCommands;
   const stands =
-    (slice.phase === 'review' || slice.phase === 'ready') &&
+    (slice.phase === 'review' || (slice.phase === 'ready' && slice.greenSha === sha)) &&
     slice.checkedSha === sha &&
     passed?.length === run.checks.length &&
+    slice.checkResults?.length === passed.length &&
     run.checks.every((command, index) => passed[index] === command);
   return stands ? slice.checkResults : undefined;
 }
