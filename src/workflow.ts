@@ -591,6 +591,8 @@ export function requestFix(ws: Workspace, run: Run, slice: Slice, body: string, 
     `- Checks to run before committing: ${run.checks.join('; ')}`,
   ].join('\n');
   writeAtomic(fixPath, `# Fix slice ${slice.id}: ${slice.title}\n\n${context}\n\n${UNTRUSTED_NOTE}\n\n${body}\n`);
+  // A report belongs to one implementer round: the fix round's implementer submits its own.
+  rmSync(reportPath(ws, run, slice), { force: true });
   slice.fixPath = fixPath;
   slice.fixFromSha = sha;
   dropPass(slice, 'fix');
@@ -746,6 +748,7 @@ export function storedReport(ws: Workspace, run: Run, slice: Slice) {
   if (!existsSync(path)) return `No implementer report was submitted for slice ${slice.id} (factory_implementer_report).`;
   return readFileSync(path, 'utf8').trimEnd();
 }
+
 export const RETRO_CATEGORIES = [
   'navigation',
   'automated-checks',

@@ -102,16 +102,17 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   const slice = requireActive(run);
   await requireOnBranch(ws.root, slice);
   await requireClean(ws.root, 'Checks run on committed work only');
+  // Read before the refusals, so a stop report submitted before any commit still reaches the orchestrator.
+  const report = storedReport(ws, run, slice);
   const foreign = await foreignCommits(ws, run, slice);
   if (foreign.length > 0) {
     const listed = await git(ws.root, 'log', '--oneline', '--no-walk', ...foreign.slice(0, 20));
     throw new Error(
-      `Slice ${slice.id} holds ${foreign.length} commits from other branches, so its review would include work outside the slice:\n${listed.trim()}\nReset the branch to its own commits on ${slice.parentBranch}. If the slice needs that work, ask the user: a run that builds on another branch starts with factory_start baseRef set to it.`,
+      `Slice ${slice.id} holds ${foreign.length} commits from other branches, so its review would include work outside the slice:\n${listed.trim()}\nReset the branch to its own commits on ${slice.parentBranch}. If the slice needs that work, ask the user: a run that builds on another branch starts with factory_start baseRef set to it.\n${report}`,
     );
   }
   const commits = (await git(ws.root, 'log', '--oneline', `${slice.parentBranch}..HEAD`)).trim();
-  if (commits === '') throw new Error(`Slice ${slice.id} has no commits past ${slice.parentBranch}. The implementer must commit the slice work first.`);
-  const report = storedReport(ws, run, slice);
+  if (commits === '') throw new Error(`Slice ${slice.id} has no commits past ${slice.parentBranch}. The implementer must commit the slice work first.\n${report}`);
   const sha = await head(ws.root);
   // A fix round that ends on the commit its fix file described: the implementer changed nothing.
   const unchanged = slice.phase === 'fix' && slice.fixFromSha === sha;

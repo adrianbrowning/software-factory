@@ -195,6 +195,28 @@ describe('implementer report', () => {
       'Implementer report:\nCommits:\n- none\nBehaviors:\n- none\nOpen:\n- SLICE TOO BIG: the rest',
     );
   });
+
+  it('shows a stop report submitted before any commit in the no-commits refusal', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [], open: ['NEEDS SEAM: the clock — no agreed seam'] }));
+    await assert.rejects(step(ws, run => runChecks(ws, run)), /has no commits past main[\s\S]*Open:\n- NEEDS SEAM: the clock — no agreed seam/);
+  });
+
+  it('does not show the report of an earlier round after a fix round starts', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'work.txt');
+    await step(ws, run => submitImplementerReport(ws, run, { behaviors: ['round one'], commits: ['abc1234 01: work'], open: [] }));
+    const red = await step(ws, run => runChecks(ws, run));
+    assert.match(red.report, /- round one/);
+
+    commit(ws, 'ok');
+    const passed = await step(ws, run => runChecks(ws, run));
+    assert.equal(passed.report, 'No implementer report was submitted for slice 01 (factory_implementer_report).');
+  });
 });
 
 describe('re-slice', () => {
