@@ -984,7 +984,7 @@ describe('review submissions', () => {
   }
 
   it('checks domain and id prefix separately, and lets the validator only select', async () => {
-    const { findingsDir, reviewId, ws } = await openReview();
+    const { reviewId, ws } = await openReview();
     const submit = (domain: Finding['domain'], findings: Finding[]) =>
       step(ws, run => submitDomain(ws, run, { agentId: `r-${domain}`, domain, findings, reviewId }));
 
@@ -997,15 +997,35 @@ describe('review submissions', () => {
       step(ws, run => submitDomain(ws, run, { agentId: 'someone-else', domain: 'bug', findings: [], reviewId })),
       /submitted by another agent/,
     );
-    await submit('bug', [finding('bug', 'high', 'a'), finding('bug', 'critical', 'b')]);
-    await assert.rejects(submit('bug', []), /already amended once/);
-    assert.equal(JSON.parse(readFileSync(join(findingsDir, 'bug.json'), 'utf8')).length, 2);
 
     const validate = (keep: string[], dropped: { id: string; reason: string }[] = []) =>
       step(ws, run => submitValidation(ws, run, { agentId: 'validator', dropped, keep, reviewId }));
     await assert.rejects(validate(['bug-a', 'bug-invented']), /Unknown finding ids: bug-invented/);
     await assert.rejects(validate(['bug-a']), /Undecided: bug-b/);
     await validate(['bug-a'], [{ id: 'bug-b', reason: 'not in diff' }]);
+
+    const result = await step(ws, run => recordReview(ws, run));
+    assert.equal(result.green ? 0 : result.blocking, 1);
+  });
+
+  it('lets a reviewer replace its findings any number of times until validation', async () => {
+    const { findingsDir, reviewId, ws } = await openReview();
+    const submit = (domain: Finding['domain'], findings: Finding[]) =>
+      step(ws, run => submitDomain(ws, run, { agentId: `r-${domain}`, domain, findings, reviewId }));
+    for (const domain of REVIEW_DOMAINS) await submit(domain, []);
+
+    await submit('bug', [finding('bug', 'high', 'a'), finding('bug', 'critical', 'b')]);
+    await submit('bug', [finding('bug', 'high', 'a'), finding('bug', 'high', 'c')]);
+    await submit('bug', [finding('bug', 'high', 'a')]);
+    assert.deepEqual(
+      JSON.parse(readFileSync(join(findingsDir, 'bug.json'), 'utf8')).map((item: Finding) => item.id),
+      ['bug-a'],
+    );
+
+    const validate = (keep: string[]) => step(ws, run => submitValidation(ws, run, { agentId: 'validator', dropped: [], keep, reviewId }));
+    await assert.rejects(validate(['bug-a', 'bug-c']), /Unknown finding ids: bug-c/);
+    await validate(['bug-a']);
+    await assert.rejects(submit('bug', []), /already validated/);
 
     const result = await step(ws, run => recordReview(ws, run));
     assert.equal(result.green ? 0 : result.blocking, 1);

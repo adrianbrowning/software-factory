@@ -83,7 +83,7 @@ const sha = z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/);
 
 /**
  * Who wrote a review artifact and the sha256 of what the tool wrote, so a later edit is detected. `amended` marks a
- * domain reviewer or validator that has used its one replacement.
+ * validator that has used its one correction.
  */
 const submissionSchema = z.object({ agentId: text, amended: z.boolean().optional(), hash: text });
 

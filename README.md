@@ -279,9 +279,9 @@ slice trips this too; delete it, or keep backups under a name the check ignores 
 
 The gates stop model mistakes and limit what a misled agent can do. They are not a sandbox:
 
-- Reviewers and the validator have read-only tools plus their one submit tool. Each domain reviewer and the validator
-  may replace its submission once (the validator until the review is recorded), and the tool records a hash of what
-  it wrote; an edited findings or validation file fails the review.
+- Reviewers and the validator have read-only tools plus their one submit tool. Each domain reviewer may replace its
+  submission any number of times until validation; the validator may replace its validation once, until the review is
+  recorded. The tool records a hash of what each wrote; an edited findings or validation file fails the review.
 - The implementer has `read`, `write`, `edit`, `grep`, `glob`, `bash`, and `lsp`, plus `factory_implementer_report` for
   its final report, and runs on your machine with your credentials. Within one omp process, the tools reject a
   `state.json` changed outside them. After a restart, `/factory resume` trusts the file on disk: the active slice keeps
