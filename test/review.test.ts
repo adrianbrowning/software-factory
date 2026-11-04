@@ -872,6 +872,7 @@ describe('slice loop gates', () => {
 
   it('refuses the retro while items wait, and runs it once the follow-up slice took them', async () => {
     const ws = await queuedRun();
+    assert.throws(() => parseRetro(ws, readRun(ws, 'demo'), []), (error: Error) => /Finish the pending slices first/.test(error.message) && !/Call factory_follow_up/.test(error.message));
     await step(ws, run => completeSlice(ws, run));
     assert.throws(() => parseRetro(ws, readRun(ws, 'demo'), []), /Carried items wait for the end of the run \(2\)\. Call factory_follow_up for them/);
     await assert.rejects(step(ws, run => recordRetro(ws, run, { apply: [], file: [], findings: [] })), /Carried items wait for the end of the run \(2\)/);
