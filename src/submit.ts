@@ -81,11 +81,12 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
         plan.unordered.length > 0 ? `run branches out of run order: ${plan.unordered.join(', ')}` : '',
       ].filter(Boolean);
       throw new Error(`The gh stack holding ${bottom} has ${problems.join('; ')}. Nothing was submitted; fix the stack with gh stack, then submit again.`);
-    } else if (plan.missing.length === 0) {
-      progress(`the gh stack already holds all ${branches.length} slice branches`);
     } else {
       const { missing } = plan;
-      progress(`adding ${missing.length} ${missing.length === 1 ? 'branch' : 'branches'} to the existing gh stack: ${missing.join(', ')}`);
+      progress(missing.length === 0
+        ? `the gh stack already holds all ${branches.length} slice branches`
+        : `adding ${missing.length} ${missing.length === 1 ? 'branch' : 'branches'} to the existing gh stack: ${missing.join(', ')}`);
+      // `gh stack checkout` left the bottom slice checked out; a submit ends on the top slice (decision 1).
       await gh(ws.root, 'stack', 'top');
       for (const branch of missing) await gh(ws.root, 'stack', 'add', branch);
     }
