@@ -728,22 +728,27 @@ describe('submit', () => {
   const NO_STACK = { code: 2, stderr: '✗ no local or remote stack found for "$3"' };
 
   /**
-   * Puts a fake `gh` first on PATH; it records each call and serves `stack view --json` from `stack`. Without a stack,
-   * `stack checkout` fails with `checkoutFailure` (by default gh-stack's real "no stack" exit and stderr).
+   * Puts a fake `gh` first on PATH; it records each call and serves `stack view --json` from `stack` (a raw string is
+   * served as is). With a stack, `stack checkout <branch>` switches to that branch, as gh-stack does. Without a stack,
+   * `stack checkout` fails with `checkoutFailure` (by default gh-stack's real "no stack" exit and stderr). The `fail`
+   * subcommand (such as `stack submit`) exits 1.
    */
-  function fakeGh(stack: string[] | undefined, checkoutFailure = NO_STACK) {
+  function fakeGh(stack: string[] | string | undefined, checkoutFailure = NO_STACK, fail = '') {
     const dir = mkdtempSync(join(tmpdir(), 'factory-gh-'));
     roots.push(dir);
     const log = join(dir, 'calls');
     const view = join(dir, 'view.json');
-    if (stack !== undefined) {
+    if (typeof stack === 'string') writeFileSync(view, stack);
+    else if (stack !== undefined) {
       writeFileSync(view, JSON.stringify({ branches: stack.map(name => ({ name })), currentBranch: stack[0], trunk: 'main' }));
     }
     const script = [
       '#!/bin/sh',
       `echo "$*" >> '${log}'`,
       `if [ "$1 $2" = "stack checkout" ] && [ ! -f '${view}' ]; then echo "${checkoutFailure.stderr}" >&2; exit ${checkoutFailure.code}; fi`,
+      `if [ "$1 $2" = "stack checkout" ]; then git switch -q "$3" || exit 1; fi`,
       `if [ "$1 $2" = "stack view" ]; then cat '${view}' || exit 1; fi`,
+      `if [ "$1 $2" = '${fail}' ]; then exit 1; fi`,
       'exit 0',
       '',
     ].join('\n');
@@ -817,6 +822,8 @@ describe('submit', () => {
     const ws = workspace();
     const branches = await doneRun(ws, 3);
     const [one = '', two = '', three = ''] = branches;
+    const before = sh(ws.root, 'branch', '--show-current');
+    assert.notEqual(before, one, 'the submit starts off slice 01, so a checkout left behind shows');
     for (const [stack, message] of [
       [[one, 'stranger'], /outside the run: stranger/],
       [[one, three, two], new RegExp(`out of run order: ${three}, ${two}`)],
@@ -828,6 +835,41 @@ describe('submit', () => {
         gh.restore();
       }
       assert.deepEqual(gh.calls(), [`stack checkout ${one}`, 'stack view --json']);
+      assert.equal(sh(ws.root, 'branch', '--show-current'), before, 'a refused submit checks out the branch it started on');
+    }
+  });
+
+  it('checks out the branch it started on when the gh stack view fails or is malformed', async () => {
+    const ws = workspace();
+    const branches = await doneRun(ws, 2);
+    const before = sh(ws.root, 'branch', '--show-current');
+    assert.notEqual(before, branches[0], 'the submit starts off slice 01, so a checkout left behind shows');
+    for (const view of ['not json', JSON.stringify({ stacks: [] })]) {
+      const gh = fakeGh(view);
+      try {
+        await assert.rejects(step(ws, run => submitStack(ws, run)));
+      } finally {
+        gh.restore();
+      }
+      assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, 'stack view --json']);
+      assert.equal(sh(ws.root, 'branch', '--show-current'), before);
+    }
+  });
+
+  it('checks out the branch it started on when gh stack add or submit fails on a re-submit', async () => {
+    const ws = workspace();
+    const branches = await doneRun(ws, 3);
+    const before = sh(ws.root, 'branch', '--show-current');
+    assert.notEqual(before, branches[0], 'the submit starts off slice 01, so a checkout left behind shows');
+    for (const fail of ['stack add', 'stack submit']) {
+      const gh = fakeGh(branches.slice(0, 2), NO_STACK, fail);
+      try {
+        await assert.rejects(step(ws, run => submitStack(ws, run)));
+      } finally {
+        gh.restore();
+      }
+      assert.equal(gh.calls().at(-1)?.startsWith(fail), true, gh.calls().join('\n'));
+      assert.equal(sh(ws.root, 'branch', '--show-current'), before);
     }
   });
 });

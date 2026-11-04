@@ -864,40 +864,52 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
   }
   const branches = run.slices.map(slice => slice.branch);
   progress(`reading the gh stack that holds ${branches[0]}`);
-  // Only gh-stack's "no stack" checkout failure means slice 01 is in no stack; any other failure, and a failed or
-  // malformed view after a checkout, propagates.
-  const inStack = await gh(ws.root, 'stack', 'checkout', branches[0] ?? '').then(
-    () => true,
-    (error: unknown) => {
-      if (error instanceof Error && 'stderr' in error && String(error.stderr).includes('no local or remote stack found for')) return false;
-      throw error;
-    },
+  // `gh stack checkout` and the gh stack steps after it move HEAD; on a refusal or any failure, submit switches back to
+  // where it started, so a refused submit changes nothing. A successful submit stays where gh stack leaves it.
+  const start = await git(ws.root, 'symbolic-ref', '-q', '--short', 'HEAD').then(
+    name => [name.trim()],
+    async () => ['--detach', await head(ws.root)],
   );
-  const stacked = inStack ? stackView.parse(JSON.parse(await gh(ws.root, 'stack', 'view', '--json'))).branches.map(item => item.name) : undefined;
-  if (stacked === undefined) {
-    progress(`adopting ${branches.length} branches into a gh stack onto ${run.trunk}`);
-    await gh(ws.root, 'stack', 'init', '--base', run.trunk, ...branches);
-  } else {
-    const outside = stacked.filter(name => !branches.includes(name));
-    const unordered = stacked.filter((name, index) => branches.includes(name) && branches[index] !== name);
-    if (outside.length > 0 || unordered.length > 0) {
-      const problems = [
-        outside.length > 0 ? `branches outside the run: ${outside.join(', ')}` : '',
-        unordered.length > 0 ? `run branches out of run order: ${unordered.join(', ')}` : '',
-      ].filter(Boolean);
-      throw new Error(`The gh stack holding ${branches[0]} has ${problems.join('; ')}. Nothing was submitted; fix the stack with gh stack, then submit again.`);
-    }
-    const missing = branches.slice(stacked.length);
-    if (missing.length === 0) {
-      progress(`the gh stack already holds all ${branches.length} slice branches`);
+  let output: string;
+  try {
+    // Only gh-stack's "no stack" checkout failure means slice 01 is in no stack; any other failure, and a failed or
+    // malformed view after a checkout, propagates.
+    const inStack = await gh(ws.root, 'stack', 'checkout', branches[0] ?? '').then(
+      () => true,
+      (error: unknown) => {
+        if (error instanceof Error && 'stderr' in error && String(error.stderr).includes('no local or remote stack found for')) return false;
+        throw error;
+      },
+    );
+    const stacked = inStack ? stackView.parse(JSON.parse(await gh(ws.root, 'stack', 'view', '--json'))).branches.map(item => item.name) : undefined;
+    if (stacked === undefined) {
+      progress(`adopting ${branches.length} branches into a gh stack onto ${run.trunk}`);
+      await gh(ws.root, 'stack', 'init', '--base', run.trunk, ...branches);
     } else {
-      progress(`adding ${missing.length} ${missing.length === 1 ? 'branch' : 'branches'} to the existing gh stack: ${missing.join(', ')}`);
-      await gh(ws.root, 'stack', 'top');
-      for (const branch of missing) await gh(ws.root, 'stack', 'add', branch);
+      const outside = stacked.filter(name => !branches.includes(name));
+      const unordered = stacked.filter((name, index) => branches.includes(name) && branches[index] !== name);
+      if (outside.length > 0 || unordered.length > 0) {
+        const problems = [
+          outside.length > 0 ? `branches outside the run: ${outside.join(', ')}` : '',
+          unordered.length > 0 ? `run branches out of run order: ${unordered.join(', ')}` : '',
+        ].filter(Boolean);
+        throw new Error(`The gh stack holding ${branches[0]} has ${problems.join('; ')}. Nothing was submitted; fix the stack with gh stack, then submit again.`);
+      }
+      const missing = branches.slice(stacked.length);
+      if (missing.length === 0) {
+        progress(`the gh stack already holds all ${branches.length} slice branches`);
+      } else {
+        progress(`adding ${missing.length} ${missing.length === 1 ? 'branch' : 'branches'} to the existing gh stack: ${missing.join(', ')}`);
+        await gh(ws.root, 'stack', 'top');
+        for (const branch of missing) await gh(ws.root, 'stack', 'add', branch);
+      }
     }
+    progress(`pushing ${run.slices.length} branches and opening draft PRs (gh stack submit; this can take a few minutes)`);
+    output = await gh(ws.root, 'stack', 'submit', '--auto');
+  } catch (error) {
+    await git(ws.root, 'switch', '-q', ...start);
+    throw error;
   }
-  progress(`pushing ${run.slices.length} branches and opening draft PRs (gh stack submit; this can take a few minutes)`);
-  const output = await gh(ws.root, 'stack', 'submit', '--auto');
   addEvent(run, 'submit', 'stack submitted as draft PRs');
   return output;
 }
