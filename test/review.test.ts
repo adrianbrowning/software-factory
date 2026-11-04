@@ -910,6 +910,16 @@ describe('slice loop gates', () => {
     );
   });
 
+  it('refuses the retro on a paused, finished run with waiting items by pointing to /factory resume, not factory_follow_up', async () => {
+    const ws = await queuedRun();
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => pauseRun(run, 'test'));
+    assert.throws(
+      () => parseRetro(ws, readRun(ws, 'demo'), []),
+      (error: Error) => /Tell the user to \/factory resume demo first/.test(error.message) && !/Call factory_follow_up/.test(error.message),
+    );
+  });
+
   it('keeps a run with waiting items from settling after the retro slice', async () => {
     const ws = workspace({ maxRounds: 2 });
     await newRun(ws, [slice('Feature')]);

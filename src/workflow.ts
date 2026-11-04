@@ -730,10 +730,10 @@ export const retroSchema = z.object({ findings: z.array(retroFindingSchema) });
 function requireRetroOpen(run: Run) {
   const finished = run.slices.length > 0 && run.slices.every(slice => slice.status === 'done');
   if (run.waiting.length > 0) {
-    if (finished) throw new Error(waitingNotice(run));
+    if (finished && (run.status === 'running' || run.status === 'done')) throw new Error(waitingNotice(run));
     const slice = activeSlice(run);
     const first =
-      run.status !== 'stalled'
+      run.status === 'running'
         ? 'Finish the pending slices first.'
         : slice?.stalled
           ? stallNotice(run, slice)
