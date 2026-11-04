@@ -61,7 +61,8 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
     return landStack(ws, run, run.landOn);
   }
   const branches = run.slices.map(slice => slice.branch);
-  const bottom = branches[0] ?? '';
+  const bottom = branches[0];
+  if (bottom === undefined) throw new Error(`Run "${run.feature}" has no slices to submit.`);
   progress(`reading the gh stack that holds ${bottom}`);
   // `gh stack checkout` and the gh stack steps after it move HEAD; on a refusal or any failure, submit switches back to
   // where it started, so a refused submit changes nothing. A successful submit stays where gh stack leaves it.
@@ -70,6 +71,7 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
     async () => ['--detach', await head(ws.root)],
   );
   let output: string;
+  const added: string[] = [];
   try {
     const plan = planSubmit(await readStack(ws.root, bottom), branches);
     if (plan.kind === 'init') {
@@ -86,13 +88,22 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
       progress(missing.length === 0
         ? `the gh stack already holds all ${branches.length} slice branches`
         : `adding ${missing.length} ${missing.length === 1 ? 'branch' : 'branches'} to the existing gh stack: ${missing.join(', ')}`);
-      // `gh stack checkout` left the bottom slice checked out; a submit ends on the top slice (decision 1).
+      // `gh stack checkout` left the bottom slice checked out; move to the top so a submit always ends on the top slice, even when no branch is added.
       await gh(ws.root, 'stack', 'top');
-      for (const branch of missing) await gh(ws.root, 'stack', 'add', branch);
+      for (const branch of missing) {
+        await gh(ws.root, 'stack', 'add', branch);
+        added.push(branch);
+      }
     }
     progress(`pushing ${run.slices.length} branches and opening draft PRs (gh stack submit; this can take a few minutes)`);
     output = await gh(ws.root, 'stack', 'submit', '--auto');
-  } catch (error) {
+  } catch (caught) {
+    const error = added.length === 0
+      ? caught
+      : new Error(
+          `${caught instanceof Error ? caught.message : String(caught)}\nAlready added to the gh stack: ${added.join(', ')}; run /factory submit again to add the rest and submit.`,
+          { cause: caught },
+        );
     try {
       await git(ws.root, 'switch', '-q', ...start);
     } catch (switchError) {
