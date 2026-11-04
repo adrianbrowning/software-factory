@@ -58,8 +58,9 @@ export function recordDecisions(ws: Workspace, run: Run, decisions: string[]) {
   for (const slice of run.slices.filter(candidate => candidate.status !== 'done')) writeTicket(ws, run, slice);
   addEvent(run, 'decision', added.join('; '));
   const active = activeSlice(run);
-  const discarded = active === undefined ? undefined : discardReview(run, active, 'decisions recorded during review');
-  if (active !== undefined && outdatedGreenCount(run, active) !== undefined) reopenReview(run, active);
+  if (active === undefined) return { decisions: run.decisions, discarded: undefined };
+  const discarded = discardReview(run, active, 'decisions recorded during review');
+  if (outdatedGreenCount(run, active) !== undefined) reopenReview(run, active);
   return { decisions: run.decisions, discarded };
 }
 

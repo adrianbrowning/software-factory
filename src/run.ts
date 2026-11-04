@@ -108,7 +108,8 @@ const sliceSchema = sliceInputSchema.extend({
   branch: text,
   /**
    * The checks the slice passed: the commit, and the result of each of the run's checks, in order. A done slice read
-   * from an older state file may hold fewer results (see legacySlice); only the active slice's results are reused.
+   * from an older state file may hold no results (see legacySlice); a legacy pass is trusted to match the run's
+   * checks, which a run never changes once kept.
    */
   checked: z.object({ results: z.array(text), sha }).optional(),
   compactions: z.number().int().nonnegative(),
