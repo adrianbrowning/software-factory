@@ -104,13 +104,10 @@ const reviewSchema = z.object({
   validation: submissionSchema.optional(),
 });
 
-/** One check command and what it reported; the review data file lists the results for reviewers. */
-const checkSchema = z.object({ command: text, result: text });
-
 const sliceSchema = sliceInputSchema.extend({
   branch: text,
-  /** The checks the slice passed: the commit, and each of the run's check commands in order with its result. */
-  checked: z.object({ checks: z.array(checkSchema), sha }).optional(),
+  /** The checks the slice passed: the commit, and the result of each of the run's checks, in order. */
+  checked: z.object({ results: z.array(text), sha }).optional(),
   compactions: z.number().int().nonnegative(),
   /** Branch tip when a done slice was reopened; completing it restacks every later slice from this commit. */
   doneSha: sha.optional(),
@@ -134,7 +131,7 @@ const sliceSchema = sliceInputSchema.extend({
 });
 export type Slice = z.infer<typeof sliceSchema>;
 
-const storedRunSchema = z.object({
+const runSchema = z.object({
   baseRef: text,
   /** Commit `baseRef` pointed at when the plan was approved; slice 01 branches from it. */
   baseSha: z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/).optional(),
@@ -149,28 +146,19 @@ const storedRunSchema = z.object({
   landOn: text.optional(),
   ownerSessionId: text,
   retroRecorded: z.boolean(),
-  slices: z.array(sliceSchema.extend({ checkedSha: sha.optional(), checkResults: z.array(text).optional() })),
+  slices: z.array(
+    // LEGACY-STATE(checked-pass): a state file from before `checked` holds the pass as checkedSha and checkResults.
+    sliceSchema
+      .extend({ checkedSha: sha.optional(), checkResults: z.array(text).optional() })
+      .transform(({ checkedSha, checkResults, ...slice }): Slice =>
+        slice.checked !== undefined || checkedSha === undefined ? slice : { ...slice, checked: { results: checkResults ?? [], sha: checkedSha } },
+      ),
+  ),
   source: sourceSchema,
   status: z.enum(['done', 'intake', 'paused', 'running', 'stalled']),
   trunk: text,
   version: z.literal(1),
 });
-
-// LEGACY-STATE(checked-commands): a state file from before `checked` holds a pass as checkedSha and checkResults,
-// without its commands. The run's checks are fixed when it starts, so in a run that kept them on disk the pass ran
-// them, one result each. A run without them gets the repository's checks on resume, which the pass may not have run,
-// so its pass is dropped.
-const runSchema = storedRunSchema.transform(({ slices, ...run }) => ({
-  ...run,
-  slices: slices.map(({ checkedSha, checkResults, ...slice }): Slice => {
-    if (slice.checked !== undefined || checkedSha === undefined || run.checks.length === 0 || checkResults?.length !== run.checks.length) return slice;
-    const checks = run.checks.flatMap((command, index) => {
-      const result = checkResults[index];
-      return result === undefined ? [] : [{ command, result }];
-    });
-    return { ...slice, checked: { checks, sha: checkedSha } };
-  }),
-}));
 export type Run = z.infer<typeof runSchema>;
 
 export type Workspace = { config: FactoryConfig; root: string };
@@ -266,17 +254,19 @@ export function outdatedGreenCount(run: Run, slice: Slice) {
 }
 
 /**
- * The slice's passing checks when they still stand on `sha`, so they need not run again: the slice is in review on the
- * commit its checks passed on, or ready on that commit as its green commit, and those checks are the run's check
- * commands, in order. Otherwise undefined. A run saved before runs kept their checks gets the repository's on resume,
- * which may differ.
+ * The slice's passing check results when they still stand on `sha`, so the checks need not run again: the slice is in
+ * review or ready on the commit its checks passed on (a ready slice's green commit is that commit). Otherwise undefined.
  */
-export function standingChecks(run: Run, slice: Slice, sha: string) {
+export function standingChecks(slice: Slice, sha: string) {
   const checked = slice.checked;
-  const stands =
-    checked?.sha === sha &&
-    (slice.phase === 'review' || (slice.phase === 'ready' && slice.greenSha === sha)) &&
-    checked.checks.length === run.checks.length &&
-    checked.checks.every((check, index) => check.command === run.checks[index]);
-  return stands ? checked.checks : undefined;
+  return checked?.sha === sha && (slice.phase === 'review' || slice.phase === 'ready') ? checked.results : undefined;
+}
+
+/** Drops the slice's passed checks and review and moves it to `phase`. */
+export function dropPass(slice: Slice, phase: Slice['phase']) {
+  slice.phase = phase;
+  slice.checked = undefined;
+  slice.greenSha = undefined;
+  slice.greenDecisions = undefined;
+  slice.review = undefined;
 }

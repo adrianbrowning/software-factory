@@ -155,4 +155,25 @@ describe('factory_decide', () => {
     const next = reply.content[0]?.text.split('\n').find(line => line.startsWith('Next: '));
     assert.match(next ?? '', new RegExp(`^Next: Stop the running reviewers and validator of review ${reviewId}; their submissions are refused\\. .*factory_review_start`));
   });
+
+  it('factory_checks says it reuses the results that passed on the same commit', async () => {
+    using repo = tempRepo('factory-checks-', { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) });
+    const { root } = repo;
+    const caller = { ...ctx('main', 'main'), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, notify() {} } };
+    const tools = load();
+    const call = (name: string, params: unknown) => tools.get(name)?.execute('id', params, undefined, undefined, caller) ?? Promise.reject(new Error('no tool'));
+    await call('factory_start', { feature: 'demo', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } });
+    const ws = { config: loadConfig(root), root };
+    const input = { acceptance: ['works'], blockedBy: [], estimateTokens: 500, seams: ['cli'], title: 'Feature', whatToBuild: 'Feature' };
+    await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [input])));
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    writeFileSync(join(root, 'ok'), 'x\n');
+    sh(root, 'add', 'ok');
+    sh(root, 'commit', '-qm', 'add ok');
+    await call('factory_checks', {});
+
+    const reply = (await call('factory_checks', {})) as { content: { text: string }[] };
+    const sha = sh(root, 'rev-parse', 'HEAD');
+    assert.match(reply.content[0]?.text ?? '', new RegExp(`All checks already passed on ${sha}; reusing their results, no check ran\\.`));
+  });
 });

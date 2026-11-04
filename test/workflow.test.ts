@@ -262,42 +262,6 @@ describe('pause and resume', () => {
     );
   });
 
-  it('sends a ready slice back to checks on resume when its green commit is not HEAD, though its checks passed there', async () => {
-    const ws = workspace();
-    await newRun(ws, [slice('Feature')]);
-    await step(ws, run => nextSlice(ws, run));
-    commit(ws, 'ok');
-    await green(ws);
-    const parent = sh(ws.root, 'rev-parse', 'HEAD~1');
-    await step(ws, run => {
-      pauseRun(run, 'test');
-      const ready = run.slices[0];
-      if (ready !== undefined) ready.greenSha = parent;
-    });
-
-    forgetRun(ws, 'demo');
-    await step(ws, run => resumeRun(ws, run, 'session-2'));
-    const resumed = readRun(ws, 'demo').slices[0];
-    assert.deepEqual([resumed?.phase, resumed?.checked, resumed?.greenSha, resumed?.review], ['checks', undefined, undefined, undefined]);
-  });
-
-  it('sends a slice back to checks on resume when its stored results do not cover every check command', async () => {
-    const ws = workspace({ checks: ['test -f ok', 'test -f README.md'] });
-    await newRun(ws, [slice('Feature')]);
-    await step(ws, run => nextSlice(ws, run));
-    commit(ws, 'ok');
-    await step(ws, run => runChecks(ws, run));
-    await step(ws, run => {
-      pauseRun(run, 'test');
-      run.slices[0]?.checked?.checks.pop();
-    });
-
-    forgetRun(ws, 'demo');
-    await step(ws, run => resumeRun(ws, run, 'session-2'));
-    const resumed = readRun(ws, 'demo').slices[0];
-    assert.deepEqual([resumed?.phase, resumed?.checked], ['checks', undefined]);
-  });
-
   it('sends a slice in review back to checks on resume when HEAD moved past its checked commit', async () => {
     const ws = workspace();
     await newRun(ws, [slice('Feature')]);
@@ -318,18 +282,18 @@ describe('pause and resume', () => {
   });
 
   /**
-   * Pauses the run and rewrites its state as a file from before slices kept their check commands, where a pass is only
-   * its commit and results. `keptChecks` false saves it as a run from before runs kept their checks, too.
+   * Pauses the run and rewrites its state as a file from before slices kept `checked`, where a pass is checkedSha and
+   * checkResults. `keptChecks` false saves it as a run from before runs kept their checks, too.
    */
   const saveLegacy = async (ws: Workspace, keptChecks: boolean) => {
     await step(ws, run => pauseRun(run, 'test'));
     const { slices, ...run } = readRun(ws, 'demo');
-    const legacy = slices.map(({ checked, ...rest }) => ({ ...rest, checkResults: checked?.checks.map(check => check.result), checkedSha: checked?.sha }));
+    const legacy = slices.map(({ checked, ...rest }) => ({ ...rest, checkResults: checked?.results, checkedSha: checked?.sha }));
     writeFileSync(join(ws.root, '.scratch', 'demo', 'state.json'), JSON.stringify({ ...run, checks: keptChecks ? run.checks : [], slices: legacy }));
     forgetRun(ws, 'demo');
   };
 
-  it('runs the checks of a run saved before runs kept their checks, after resume, when the repository checks changed', async () => {
+  it('sends a slice of a run saved before runs kept their checks back to checks on resume on the same commit, and runs the filled checks', async () => {
     const counted = 'test -f ok && echo run >> .git/check-runs';
     const old = workspace({ checks: [counted] });
     await newRun(old, [slice('Feature')]);
@@ -339,32 +303,15 @@ describe('pause and resume', () => {
     await saveLegacy(old, false);
 
     const ws: Workspace = { ...old, config: { ...old.config, checks: [counted, 'echo added >> .git/check-runs'] } };
+    const sha = sh(ws.root, 'rev-parse', 'HEAD');
     await step(ws, run => resumeRun(ws, run, 'session-2'));
-    assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'checks');
+    const resumed = readRun(ws, 'demo').slices[0];
+    assert.deepEqual([resumed?.phase, resumed?.checked], ['checks', undefined]);
+    assert.equal(sh(ws.root, 'rev-parse', 'HEAD'), sha);
     const checked = await step(ws, run => runChecks(ws, run));
     assert.ok(checked.passed && !checked.reused);
     assert.deepEqual(readFileSync(join(ws.root, '.git', 'check-runs'), 'utf8').split('\n').filter(Boolean), ['run', 'run', 'added']);
     assert.equal(checked.summary.length, 2);
-  });
-
-  it('sends a slice of a run saved before runs kept their checks back to checks on resume when a check was swapped', async () => {
-    const old = workspace({ checks: ['test -f ok'] });
-    await newRun(old, [slice('Feature')]);
-    await step(old, run => nextSlice(old, run));
-    commit(old, 'ok');
-    await green(old);
-    await saveLegacy(old, false);
-
-    const ws: Workspace = { ...old, config: { ...old.config, checks: ['echo swapped >> .git/check-runs'] } };
-    await step(ws, run => resumeRun(ws, run, 'session-2'));
-    const resumed = readRun(ws, 'demo').slices[0];
-    assert.deepEqual(
-      [resumed?.phase, resumed?.checked, resumed?.greenSha, resumed?.greenDecisions, resumed?.review],
-      ['checks', undefined, undefined, undefined, undefined],
-    );
-    const checked = await step(ws, run => runChecks(ws, run));
-    assert.ok(checked.passed && !checked.reused);
-    assert.deepEqual(readFileSync(join(ws.root, '.git', 'check-runs'), 'utf8').split('\n').filter(Boolean), ['swapped']);
   });
 
   it('keeps a slice in review on its checked commit on resume when its state predates check commands and the run kept its checks', async () => {
@@ -383,33 +330,6 @@ describe('pause and resume', () => {
     const again = await step(ws, run => runChecks(ws, run));
     assert.ok(again.passed && again.reused);
     assert.equal(again.sha, sh(ws.root, 'rev-parse', 'HEAD'));
-  });
-
-  it('keeps a green slice ready on its green commit on resume when its state predates check commands and the run kept its checks', async () => {
-    const ws = workspace();
-    await newRun(ws, [slice('Feature')]);
-    await step(ws, run => nextSlice(ws, run));
-    commit(ws, 'ok');
-    await green(ws);
-    await saveLegacy(ws, true);
-
-    await step(ws, run => resumeRun(ws, run, 'session-2'));
-    const resumed = readRun(ws, 'demo').slices[0];
-    const current = sh(ws.root, 'rev-parse', 'HEAD');
-    assert.deepEqual([resumed?.phase, resumed?.checked?.sha, resumed?.greenSha], ['ready', current, current]);
-  });
-
-  it('sends a slice back to checks on resume when its state predates check commands and resume filled the run checks', async () => {
-    const ws = workspace();
-    await newRun(ws, [slice('Feature')]);
-    await step(ws, run => nextSlice(ws, run));
-    commit(ws, 'ok');
-    await step(ws, run => runChecks(ws, run));
-    await saveLegacy(ws, false);
-
-    await step(ws, run => resumeRun(ws, run, 'session-2'));
-    const resumed = readRun(ws, 'demo').slices[0];
-    assert.deepEqual([resumed?.phase, resumed?.checked], ['checks', undefined]);
   });
 });
 

@@ -6,6 +6,7 @@ import { gh, git } from './exec.ts';
 import {
   activeSlice,
   addEvent,
+  dropPass,
   outdatedGreenCount,
   runDir,
   type Run,
@@ -516,11 +517,7 @@ export function requestFix(ws: Workspace, run: Run, slice: Slice, body: string, 
   writeAtomic(fixPath, `# Fix slice ${slice.id}: ${slice.title}\n\n${context}\n\n${UNTRUSTED_NOTE}\n\n${body}\n`);
   slice.fixPath = fixPath;
   slice.fixFromSha = sha;
-  slice.phase = 'fix';
-  slice.checked = undefined;
-  slice.greenSha = undefined;
-  slice.greenDecisions = undefined;
-  slice.review = undefined;
+  dropPass(slice, 'fix');
   if (slice.fixRounds >= slice.roundLimit) {
     slice.stalled = true;
     addEvent(run, 'stall', `fix budget of ${slice.roundLimit} rounds used`, slice);
@@ -537,13 +534,9 @@ export function requestFix(ws: Workspace, run: Run, slice: Slice, body: string, 
 export async function restartSlice(ws: Workspace, run: Run, slice: Slice) {
   const own = (await git(ws.root, 'rev-list', '--count', `${slice.parentBranch}..refs/heads/${slice.branch}`)).trim();
   slice.status = 'pending';
-  slice.phase = own === '0' ? 'implement' : 'checks';
-  slice.checked = undefined;
+  dropPass(slice, own === '0' ? 'implement' : 'checks');
   slice.fixPath = undefined;
   slice.fixFromSha = undefined;
-  slice.greenSha = undefined;
-  slice.greenDecisions = undefined;
-  slice.review = undefined;
   writeTicket(ws, run, slice);
 }
 
@@ -607,26 +600,21 @@ export function pauseRun(run: Run, reason: string) {
 
 /**
  * Resumes a run in a new owner session. A paused or stalled run runs again. A slice past its checks keeps them while
- * they still stand on HEAD (see `standingChecks`): in review on the commit they passed on, or ready on the green
- * commit. Otherwise it goes back to `checks` and earns its review again. An open review is dropped either way: its
- * reviewers belonged to the old session. A run saved before runs kept their own checks gets the repository's checks;
- * its slices' passes were dropped when the state was read (LEGACY-STATE(checked-commands) in run.ts).
+ * they still stand on HEAD (see `standingChecks`); otherwise it goes back to `checks` and earns its review again. An
+ * open review is dropped either way: its reviewers belonged to the old session. A run saved before runs kept their own
+ * checks gets the repository's checks, which its passes may not have run, so its active slice goes back to `checks`.
  */
 export async function resumeRun(ws: Workspace, run: Run, sessionId: string) {
-  if (run.checks.length === 0) run.checks = checksSchema.parse(repoChecks(ws));
+  const filled = run.checks.length === 0;
+  if (filled) run.checks = checksSchema.parse(repoChecks(ws));
   if (run.status === 'paused' || run.status === 'stalled') {
     run.status = 'running';
     resolveStall(ws, run, 'continue');
   }
   const slice = activeSlice(run);
   if (slice?.phase === 'review' || slice?.phase === 'ready') {
-    if (standingChecks(run, slice, await head(ws.root)) === undefined) {
-      slice.phase = 'checks';
-      slice.checked = undefined;
-      slice.greenSha = undefined;
-      slice.greenDecisions = undefined;
-      slice.review = undefined;
-    } else if (slice.phase === 'review') slice.review = undefined;
+    if (filled || standingChecks(slice, await head(ws.root)) === undefined) dropPass(slice, 'checks');
+    else if (slice.phase === 'review') slice.review = undefined;
   }
   run.ownerSessionId = sessionId;
   addEvent(run, 'resume', `session ${sessionId}`);

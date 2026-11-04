@@ -156,9 +156,9 @@ describe('slice loop gates', () => {
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
-    const results = () => readRun(ws, 'demo').slices[0]?.checked?.checks;
+    const results = () => readRun(ws, 'demo').slices[0]?.checked?.results;
     await step(ws, run => runChecks(ws, run));
-    assert.match(results()?.map(check => check.result).join() ?? '', /test -f ok: passed/);
+    assert.match(results()?.join() ?? '', /test -f ok: passed/);
     commit(ws, 'later.txt');
     await assert.rejects(step(ws, run => startReview(ws, run)), /HEAD moved/);
     assert.equal(results(), undefined);
