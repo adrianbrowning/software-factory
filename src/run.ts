@@ -115,9 +115,11 @@ const sliceSchema = sliceInputSchema.extend({
   /** Commit the current fix file describes; checks on the same commit mean the fix round changed nothing. */
   fixFromSha: sha.optional(),
   fixRounds: z.number().int().nonnegative(),
-  /** How many recorded decisions the green review covered; a newer decision needs a new review. */
-  greenDecisions: z.number().int().nonnegative().optional(),
-  greenSha: sha.optional(),
+  /**
+   * The green review of the checked commit (`checked.sha`, see `greenCommit`): how many recorded decisions it covered,
+   * so a newer decision needs a new review. A green review from a state file that predates the count has none.
+   */
+  green: z.object({ decisions: z.number().int().nonnegative().optional() }).optional(),
   id: z.string().regex(/^\d{2}$/),
   parentBranch: text,
   peakContextTokens: z.number().int().nonnegative(),
@@ -130,6 +132,33 @@ const sliceSchema = sliceInputSchema.extend({
   status: z.enum(['active', 'done', 'pending']),
 });
 export type Slice = z.infer<typeof sliceSchema>;
+
+/**
+ * A slice as a state file from before `checked` and `green` holds it: a pass as checkedSha and checkResults, a green
+ * review as greenSha and greenDecisions. Read by `legacySlice`.
+ */
+const legacySliceSchema = sliceSchema.extend({
+  checkedSha: sha.optional(),
+  checkResults: z.array(text).optional(),
+  greenDecisions: z.number().int().nonnegative().optional(),
+  greenSha: sha.optional(),
+});
+
+/** The slice in today's shape, from a state file that may predate `checked` and `green`, in a run with `checks`. */
+function legacySlice({ checkedSha, checkResults, greenDecisions, greenSha, ...slice }: z.infer<typeof legacySliceSchema>, checks: string[]): Slice {
+  let checked = slice.checked;
+  const legacySha = greenSha ?? checkedSha;
+  // LEGACY-STATE(checked-pass): an old pass stands only with a result for each of the run's checks; one without
+  // results, or with another count, is no pass, so resume sends the slice back to checks. Remove once no run paused
+  // before the release that ships issue #60 is left to resume.
+  if (checked === undefined && legacySha !== undefined && checks.length > 0 && checkResults?.length === checks.length) {
+    checked = { results: checkResults, sha: legacySha };
+  }
+  // LEGACY-STATE(green-sha): the green commit was greenSha; it is now the checked commit. Remove with checked-pass.
+  let green = slice.green;
+  if (green === undefined && greenSha !== undefined && checked?.sha === greenSha) green = greenDecisions === undefined ? {} : { decisions: greenDecisions };
+  return { ...slice, checked, green };
+}
 
 const runSchema = z.object({
   baseRef: text,
@@ -146,19 +175,12 @@ const runSchema = z.object({
   landOn: text.optional(),
   ownerSessionId: text,
   retroRecorded: z.boolean(),
-  slices: z.array(
-    // LEGACY-STATE(checked-pass): a state file from before `checked` holds the pass as checkedSha and checkResults.
-    sliceSchema
-      .extend({ checkedSha: sha.optional(), checkResults: z.array(text).optional() })
-      .transform(({ checkedSha, checkResults, ...slice }): Slice =>
-        slice.checked !== undefined || checkedSha === undefined ? slice : { ...slice, checked: { results: checkResults ?? [], sha: checkedSha } },
-      ),
-  ),
+  slices: z.array(legacySliceSchema),
   source: sourceSchema,
   status: z.enum(['done', 'intake', 'paused', 'running', 'stalled']),
   trunk: text,
   version: z.literal(1),
-});
+}).transform(({ slices, ...run }) => ({ ...run, slices: slices.map(slice => legacySlice(slice, run.checks)) }));
 export type Run = z.infer<typeof runSchema>;
 
 export type Workspace = { config: FactoryConfig; root: string };
@@ -246,27 +268,37 @@ export function activeSlice(run: Run) {
 /**
  * The decision count a green slice's review covered, when decisions landed after it; otherwise undefined. Since
  * factory_decide reopens such a slice at once, only a state file written before it did keeps this state; one from
- * before greenDecisions has no count, and its green review stays valid.
+ * before the count has none, and its green review stays valid.
  */
 export function outdatedGreenCount(run: Run, slice: Slice) {
-  if (slice.phase !== 'ready' || slice.greenDecisions === undefined) return undefined;
-  return run.decisions.length > slice.greenDecisions ? slice.greenDecisions : undefined;
+  const covered = slice.green?.decisions;
+  if (slice.phase !== 'ready' || covered === undefined) return undefined;
+  return run.decisions.length > covered ? covered : undefined;
+}
+
+/** The commit the slice's green review approved: its checked commit, while it has a green review. Otherwise undefined. */
+export function greenCommit(slice: Slice) {
+  return slice.green === undefined ? undefined : slice.checked?.sha;
+}
+
+/** Whether the slice is past its checks: in review, or ready with a green review. Only such a slice holds a pass. */
+export function hasPass(slice: Slice) {
+  return slice.phase === 'review' || slice.phase === 'ready';
 }
 
 /**
- * The slice's passing check results when they still stand on `sha`, so the checks need not run again: the slice is in
- * review or ready on the commit its checks passed on (a ready slice's green commit is that commit). Otherwise undefined.
+ * The slice's passing check results when they still stand on `sha`, so the checks need not run again: the slice holds
+ * a pass (`hasPass`) on that commit. Otherwise undefined.
  */
 export function standingChecks(slice: Slice, sha: string) {
   const checked = slice.checked;
-  return checked?.sha === sha && (slice.phase === 'review' || slice.phase === 'ready') ? checked.results : undefined;
+  return checked?.sha === sha && hasPass(slice) ? checked.results : undefined;
 }
 
 /** Drops the slice's passed checks and review and moves it to `phase`. */
 export function dropPass(slice: Slice, phase: Slice['phase']) {
   slice.phase = phase;
   slice.checked = undefined;
-  slice.greenSha = undefined;
-  slice.greenDecisions = undefined;
+  slice.green = undefined;
   slice.review = undefined;
 }

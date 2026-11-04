@@ -4,7 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { forgetRun, readRun, REVIEW_DOMAINS, type Workspace } from '../src/run.ts';
+import { forgetRun, greenCommit, readRun, REVIEW_DOMAINS, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, REVIEW_REFERENCE_DIR, runChecks, startReview } from '../src/review.ts';
 import {
   addFollowUp,
@@ -216,14 +216,17 @@ describe('pause and resume', () => {
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
     await step(ws, run => runChecks(ws, run));
-    await step(ws, run => startReview(ws, run));
+    const opened = await step(ws, run => startReview(ws, run));
     const before = readRun(ws, 'demo').slices[0];
     await step(ws, run => pauseRun(run, 'test'));
 
     forgetRun(ws, 'demo');
     await step(ws, run => resumeRun(ws, run, 'session-2'));
-    const resumed = readRun(ws, 'demo').slices[0];
+    const state = readRun(ws, 'demo');
+    const resumed = state.slices[0];
     assert.deepEqual([resumed?.phase, resumed?.checked?.sha, resumed?.checked, resumed?.review], ['review', sh(ws.root, 'rev-parse', 'HEAD'), before?.checked, undefined]);
+    const dropped = state.events.find(event => event.kind === 'review-invalidated');
+    assert.deepEqual([dropped?.slice, dropped?.detail], ['01', `${opened.reviewId}: resumed in a new session`]);
   });
 
   it('keeps a green slice ready on its green commit on resume', async () => {
@@ -239,8 +242,8 @@ describe('pause and resume', () => {
     await step(ws, run => resumeRun(ws, run, 'session-2'));
     const resumed = readRun(ws, 'demo').slices[0];
     const current = sh(ws.root, 'rev-parse', 'HEAD');
-    assert.deepEqual([resumed?.phase, resumed?.checked?.sha, resumed?.greenSha], ['ready', current, current]);
-    assert.deepEqual([resumed?.greenDecisions, resumed?.checked, resumed?.review], [before?.greenDecisions, before?.checked, before?.review]);
+    assert.deepEqual([resumed?.phase, resumed?.checked?.sha, resumed && greenCommit(resumed)], ['ready', current, current]);
+    assert.deepEqual([resumed?.green, resumed?.checked, resumed?.review], [before?.green, before?.checked, before?.review]);
     assert.notEqual(resumed?.review, undefined);
   });
 
@@ -257,8 +260,8 @@ describe('pause and resume', () => {
     await step(ws, run => resumeRun(ws, run, 'session-2'));
     const resumed = readRun(ws, 'demo').slices[0];
     assert.deepEqual(
-      [resumed?.phase, resumed?.checked, resumed?.greenSha, resumed?.greenDecisions, resumed?.review],
-      ['checks', undefined, undefined, undefined, undefined],
+      [resumed?.phase, resumed?.checked, resumed?.green, resumed?.review],
+      ['checks', undefined, undefined, undefined],
     );
   });
 
@@ -276,22 +279,67 @@ describe('pause and resume', () => {
     await step(ws, run => resumeRun(ws, run, 'session-2'));
     const resumed = readRun(ws, 'demo').slices[0];
     assert.deepEqual(
-      [resumed?.phase, resumed?.checked, resumed?.greenSha, resumed?.greenDecisions, resumed?.review],
-      ['checks', undefined, undefined, undefined, undefined],
+      [resumed?.phase, resumed?.checked, resumed?.green, resumed?.review],
+      ['checks', undefined, undefined, undefined],
     );
   });
 
   /**
-   * Pauses the run and rewrites its state as a file from before slices kept `checked`, where a pass is checkedSha and
-   * checkResults. `keptChecks` false saves it as a run from before runs kept their checks, too.
+   * Pauses the run and rewrites its state as a file from before slices kept `checked` and `green`, where a pass is
+   * checkedSha and checkResults and a green review is greenSha and greenDecisions. `keptChecks` false saves it as a run
+   * from before runs kept their checks, too. `results` rewrites each slice's checkResults.
    */
-  const saveLegacy = async (ws: Workspace, keptChecks: boolean) => {
+  const saveLegacy = async (ws: Workspace, keptChecks: boolean, results = (saved: string[] | undefined): string[] | undefined => saved) => {
     await step(ws, run => pauseRun(run, 'test'));
     const { slices, ...run } = readRun(ws, 'demo');
-    const legacy = slices.map(({ checked, ...rest }) => ({ ...rest, checkResults: checked?.results, checkedSha: checked?.sha }));
+    const legacy = slices.map(({ checked, green, ...rest }) => ({
+      ...rest,
+      checkResults: results(checked?.results),
+      checkedSha: checked?.sha,
+      greenDecisions: green?.decisions,
+      greenSha: green === undefined ? undefined : checked?.sha,
+    }));
     writeFileSync(join(ws.root, '.scratch', 'demo', 'state.json'), JSON.stringify({ ...run, checks: keptChecks ? run.checks : [], slices: legacy }));
     forgetRun(ws, 'demo');
   };
+
+  it('keeps a green slice ready on its green commit on resume when its state predates `green`, and completes it', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await green(ws);
+    const before = readRun(ws, 'demo').slices[0];
+    await saveLegacy(ws, true);
+    assert.doesNotMatch(readFileSync(join(ws.root, '.scratch', 'demo', 'state.json'), 'utf8'), /"green"/);
+
+    await step(ws, run => resumeRun(ws, run, 'session-2'));
+    const resumed = readRun(ws, 'demo').slices[0];
+    assert.deepEqual([resumed?.phase, resumed?.checked, resumed?.green], ['ready', before?.checked, before?.green]);
+    assert.equal((await step(ws, run => completeSlice(ws, run))).status, 'done');
+  });
+
+  const legacyPassCases: [string, (saved: string[] | undefined) => string[] | undefined][] = [
+    ['no check results', () => undefined],
+    ['fewer check results than the run has checks', saved => saved?.slice(0, 1)],
+  ];
+  for (const [name, results] of legacyPassCases) {
+    it(`sends a slice back to checks on resume on its checked commit when its legacy pass has ${name}, and runs every check`, async () => {
+      const ws = workspace({ checks: ['test -f ok && echo first >> .git/check-runs', 'echo second >> .git/check-runs'] });
+      await newRun(ws, [slice('Feature')]);
+      await step(ws, run => nextSlice(ws, run));
+      commit(ws, 'ok');
+      await step(ws, run => runChecks(ws, run));
+      await saveLegacy(ws, true, results);
+
+      await step(ws, run => resumeRun(ws, run, 'session-2'));
+      const resumed = readRun(ws, 'demo').slices[0];
+      assert.deepEqual([resumed?.phase, resumed?.checked], ['checks', undefined]);
+      const checked = await step(ws, run => runChecks(ws, run));
+      assert.ok(checked.passed && !checked.reused);
+      assert.deepEqual(readFileSync(join(ws.root, '.git', 'check-runs'), 'utf8').split('\n').filter(Boolean), ['first', 'second', 'first', 'second']);
+    });
+  }
 
   it('sends a slice of a run saved before runs kept their checks back to checks on resume on the same commit, and runs the filled checks', async () => {
     const counted = 'test -f ok && echo run >> .git/check-runs';
@@ -516,15 +564,15 @@ describe('follow-up slice', () => {
     const run = readRun(ws, 'demo');
     assert.deepEqual([run.status, run.retroRecorded], ['running', false]);
     assert.deepEqual(
-      run.slices.map(item => [item.id, item.status, item.parentBranch, item.blockedBy, item.greenSha]),
+      run.slices.map(item => [item.id, item.status, item.parentBranch, item.blockedBy, greenCommit(item)]),
       [
-        ['01', 'done', run.slices[0]?.parentBranch, [], done.greenSha],
+        ['01', 'done', run.slices[0]?.parentBranch, [], greenCommit(done)],
         ['02', 'pending', done.branch, ['Feature'], undefined],
       ],
     );
 
     const next = await step(ws, current => nextSlice(ws, current));
-    assert.deepEqual([next?.id, next?.phase, sh(ws.root, 'rev-parse', 'HEAD')], ['02', 'implement', done.greenSha]);
+    assert.deepEqual([next?.id, next?.phase, sh(ws.root, 'rev-parse', 'HEAD')], ['02', 'implement', greenCommit(done)]);
   });
 
   it('refuses a follow-up slice on a run that is not running or done', async () => {
@@ -582,7 +630,7 @@ describe('submit', () => {
     const output = await step(ws, run => submitStack(ws, run, message => steps.push(message)));
     assert.deepEqual(steps, ['checking the working tree and the slice branches', 'fast-forwarding ext-953 to the top slice']);
     assert.match(output, /ext-953 fast-forwarded to .*No PRs were opened/);
-    assert.equal(sh(ws.root, 'rev-parse', 'ext-953'), top?.greenSha);
+    assert.equal(sh(ws.root, 'rev-parse', 'ext-953'), top === undefined ? undefined : greenCommit(top));
     assert.equal(sh(ws.root, 'branch', '--show-current'), checkedOut, 'the checkout is unchanged');
     assert.equal(sh(ws.root, 'rev-list', '--merges', '--count', 'ext-953'), '0');
   });

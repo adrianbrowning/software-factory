@@ -7,6 +7,8 @@ import {
   activeSlice,
   addEvent,
   dropPass,
+  greenCommit,
+  hasPass,
   outdatedGreenCount,
   runDir,
   type Run,
@@ -23,6 +25,8 @@ import {
   writeAtomic,
 } from './run.ts';
 import { head, requireClean, requireOnBranch } from './repo.ts';
+// review.ts imports this module too; discardReview is only called at run time, so the cycle is safe.
+import { discardReview } from './review.ts';
 
 const FEATURE_PATTERN = /^[a-z0-9][a-z0-9-]{0,47}$/;
 export const UNTRUSTED_NOTE =
@@ -558,8 +562,8 @@ export async function reopenSlice(ws: Workspace, run: Run, id: string, reason: s
   if (active?.stalled) throw new Error(`Slice ${active.id} is stalled; the user must decide how to continue first.`);
   await requireClean(ws.root, `Cannot reopen slice ${id}`);
   const doneSha = (await git(ws.root, 'rev-parse', '--verify', `refs/heads/${slice.branch}^{commit}`)).trim();
-  const unreviewed =
-    slice.greenSha === undefined || slice.greenSha === doneSha ? '' : (await git(ws.root, 'log', '--oneline', `${slice.greenSha}..${doneSha}`)).trim();
+  const green = greenCommit(slice);
+  const unreviewed = green === undefined || green === doneSha ? '' : (await git(ws.root, 'log', '--oneline', `${green}..${doneSha}`)).trim();
   const listed =
     unreviewed === ''
       ? ''
@@ -612,9 +616,9 @@ export async function resumeRun(ws: Workspace, run: Run, sessionId: string) {
     resolveStall(ws, run, 'continue');
   }
   const slice = activeSlice(run);
-  if (slice?.phase === 'review' || slice?.phase === 'ready') {
+  if (slice !== undefined && hasPass(slice)) {
     if (filled || standingChecks(slice, await head(ws.root)) === undefined) dropPass(slice, 'checks');
-    else if (slice.phase === 'review') slice.review = undefined;
+    else discardReview(run, slice, 'resumed in a new session');
   }
   run.ownerSessionId = sessionId;
   addEvent(run, 'resume', `session ${sessionId}`);
@@ -751,7 +755,7 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
   const unreviewed: string[] = [];
   for (const slice of run.slices) {
     const tip = (await git(ws.root, 'rev-parse', `refs/heads/${slice.branch}`)).trim();
-    if (tip !== slice.greenSha) unreviewed.push(slice.branch);
+    if (tip !== greenCommit(slice)) unreviewed.push(slice.branch);
   }
   if (unreviewed.length > 0) {
     throw new Error(
@@ -783,7 +787,8 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
  */
 async function landStack(ws: Workspace, run: Run, landOn: string) {
   const top = run.slices.at(-1);
-  if (top?.greenSha === undefined) throw new Error(`Run "${run.feature}" has no reviewed slice to land.`);
+  const green = top === undefined ? undefined : greenCommit(top);
+  if (top === undefined || green === undefined) throw new Error(`Run "${run.feature}" has no reviewed slice to land.`);
   const ref = `refs/heads/${landOn}`;
   // Any worktree (this one or a linked one) with the branch checked out would be left behind by the ref update.
   const worktree = (await git(ws.root, 'worktree', 'list', '--porcelain'))
@@ -797,12 +802,12 @@ async function landStack(ws: Workspace, run: Run, landOn: string) {
   let old: string;
   try {
     old = (await git(ws.root, 'rev-parse', '--verify', '--quiet', `${ref}^{commit}`)).trim();
-    await git(ws.root, 'merge-base', '--is-ancestor', old, top.greenSha);
+    await git(ws.root, 'merge-base', '--is-ancestor', old, green);
   } catch {
     throw new Error(`${landOn} is gone or moved off the stack's base, so it cannot fast-forward to ${top.branch}. Nothing changed.`);
   }
-  await git(ws.root, 'update-ref', '-m', `factory: land ${run.feature}`, ref, top.greenSha, old);
-  const landed = `${landOn} fast-forwarded to ${top.branch} (${top.greenSha.slice(0, 12)})`;
+  await git(ws.root, 'update-ref', '-m', `factory: land ${run.feature}`, ref, green, old);
+  const landed = `${landOn} fast-forwarded to ${top.branch} (${green.slice(0, 12)})`;
   addEvent(run, 'submit', landed);
   return `${landed}. No PRs were opened.\n`;
 }
