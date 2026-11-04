@@ -884,6 +884,31 @@ describe('slice loop gates', () => {
     assert.equal(readRun(ws, 'demo').status, 'done');
   });
 
+  it('refuses the retro on a stalled run with waiting items by pointing to /factory resume, not factory_follow_up', async () => {
+    const ws = workspace({ maxRounds: 1 });
+    await newRun(ws, [slice('Feature'), slice('Next', ['Feature'])]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await green(ws);
+    await step(ws, run => carryObservations(ws, run, { note: 'Also log the parse time.', to: 'end' }));
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => nextSlice(ws, run));
+    sh(ws.root, 'rm', '-q', 'ok');
+    sh(ws.root, 'commit', '-qm', 'drop ok');
+    await step(ws, run => runChecks(ws, run));
+    await step(ws, run => runChecks(ws, run));
+    await step(ws, run => resolveStall(ws, run, 'pause'));
+    const run = readRun(ws, 'demo');
+    assert.equal(run.status, 'stalled');
+    assert.throws(
+      () => parseRetro(ws, run, []),
+      (error: Error) =>
+        /Carried items wait for the end of the run \(1\)/.test(error.message) &&
+        /fix budget of slice 02 "Next" is used up.*\/factory resume demo asks whether to raise it/.test(error.message) &&
+        !/Call factory_follow_up/.test(error.message),
+    );
+  });
+
   it('keeps a run with waiting items from settling after the retro slice', async () => {
     const ws = workspace({ maxRounds: 2 });
     await newRun(ws, [slice('Feature')]);

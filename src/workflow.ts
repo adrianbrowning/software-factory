@@ -728,8 +728,13 @@ export type RetroFinding = z.infer<typeof retroFindingSchema>;
 export const retroSchema = z.object({ findings: z.array(retroFindingSchema) });
 
 function requireRetroOpen(run: Run) {
-  if (run.waiting.length > 0) throw new Error(waitingNotice(run));
   const finished = run.slices.length > 0 && run.slices.every(slice => slice.status === 'done');
+  if (run.waiting.length > 0) {
+    if (finished) throw new Error(waitingNotice(run));
+    const slice = activeSlice(run);
+    const first = slice?.stalled ? stallNotice(run, slice) : 'Finish the pending slices first.';
+    throw new Error(`Carried items wait for the end of the run (${run.waiting.length}), and the retro waits for them. ${first} factory_follow_up takes them once every slice is done.`);
+  }
   if (!finished && run.status !== 'stalled') throw new Error('Retro runs when every slice is done or the run is stalled.');
   if (run.retroRecorded) throw new Error('The retro for this run is already recorded.');
 }
