@@ -161,7 +161,7 @@ function legacySlice({ checkedSha, checkResults, greenDecisions, greenSha, ...sl
   if (checked === undefined && legacySha !== undefined && (saved || (slice.status === 'done' && greenSha !== undefined))) {
     checked = { results: checkResults ?? [], sha: legacySha };
   }
-  // LEGACY-STATE(green-sha): the green commit was greenSha; it is now the checked commit. Remove with checked-pass.
+  // LEGACY-STATE(green-sha): a green review was greenSha; it carries over as `green` only when greenSha is the checked commit, so a slice not done whose checkedSha moved past it loses its green review. Remove with checked-pass.
   let green = slice.green;
   if (green === undefined && greenSha !== undefined && checked?.sha === greenSha) green = greenDecisions === undefined ? {} : { decisions: greenDecisions };
   return { ...slice, checked, green };
