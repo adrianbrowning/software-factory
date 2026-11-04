@@ -685,10 +685,10 @@ describe('slice loop gates', () => {
     const ws = workspace({ maxRounds: 2 });
     await greenWithObservation(ws);
 
-    const fixed = await step(ws, run => fixObservations(ws, run, { bug: 'Empty input crashes the parser.' }, 'Found while demoing.'));
+    const fixed = await step(ws, run => fixObservations(ws, run, { bug: '    at parse (src/p.ts:3): empty input crashes the parser.' }, 'Found while demoing.'));
     assert.equal(fixed.stalled, false);
     const fix = readFileSync(fixed.fixPath, 'utf8');
-    assert.match(fix, /## Bug found after green review 01-r1\n\nFound while demoing\.\n\nEmpty input crashes the parser\./);
+    assert.match(fix, /## Bug found after green review 01-r1\n\nFound while demoing\.\n\n {4}at parse \(src\/p\.ts:3\): empty input crashes the parser\./, 'the bug text is kept in full');
     assert.doesNotMatch(fix, /thermo-naming/);
     const state = readRun(ws, 'demo').slices[0];
     assert.deepEqual([state?.phase, state?.fixRounds, state?.green], ['fix', 1, undefined]);

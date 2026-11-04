@@ -623,7 +623,7 @@ export type FixRequest = { bug?: string | undefined; observations?: string[] | u
  * observations. Does not change the run.
  */
 export function planFix(ws: Workspace, run: Run, request: FixRequest) {
-  const bug = request.bug?.trim() || undefined;
+  const bug = request.bug?.trim() ? request.bug : undefined;
   const chosen = new Set(z.array(z.string().min(1)).parse(request.observations ?? []));
   if (bug === undefined && chosen.size === 0) throw new Error('factory_fix needs a bug, observation ids, or both.');
   const slice = requireActive(run);
