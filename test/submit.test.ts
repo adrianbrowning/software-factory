@@ -243,6 +243,8 @@ describe('submit', () => {
   it('fails naming each slice branch that has no PR after gh stack submit, staying on the top slice', async t => {
     const ws = workspace();
     const branches = await doneRun(ws, 3);
+    sh(ws.root, 'switch', '-q', 'main');
+    assert.notEqual(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'the submit starts off the top slice, so a switch-back shows');
     const gh = fakeGh(t, { stack: branches.slice(0, 1), submitted: [{ name: branches[0] ?? '', pr: 101 }, { name: branches[1] ?? '' }, { name: branches[2] ?? '', pr: 103 }] });
     const error = await step(ws, run => submitStack(ws, run)).then(() => assert.fail('submit should fail'), (caught: unknown) => caught);
     assert.ok(error instanceof Error);
@@ -256,6 +258,8 @@ describe('submit', () => {
   it('fails saying the titles were not set when a title PATCH fails, staying on the top slice', async t => {
     const ws = workspace();
     const branches = await doneRun(ws, 2);
+    sh(ws.root, 'switch', '-q', 'main');
+    assert.notEqual(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'the submit starts off the top slice, so a switch-back shows');
     fakeGh(t, { stack: branches.slice(0, 1), submitted: withPrs(branches), fail: 'api -X' });
     const error = await step(ws, run => submitStack(ws, run)).then(() => assert.fail('submit should fail'), (caught: unknown) => caught);
     assert.ok(error instanceof Error);
