@@ -240,14 +240,28 @@ describe('submit', () => {
     assert.ok(steps.includes('the gh stack already holds all 2 slice branches'), steps.join('\n'));
   });
 
-  it('fails naming each slice branch that has no PR after gh stack submit', async t => {
+  it('fails naming each slice branch that has no PR after gh stack submit, staying on the top slice', async t => {
     const ws = workspace();
     const branches = await doneRun(ws, 3);
-    const before = sh(ws.root, 'branch', '--show-current');
-    const gh = fakeGh(t, { stack: undefined, submitted: [{ name: branches[0] ?? '', pr: 101 }, { name: branches[1] ?? '' }, { name: branches[2] ?? '', pr: 103 }] });
-    await assert.rejects(step(ws, run => submitStack(ws, run)), new RegExp(`no PR.*${branches[1]}`));
+    const gh = fakeGh(t, { stack: branches.slice(0, 1), submitted: [{ name: branches[0] ?? '', pr: 101 }, { name: branches[1] ?? '' }, { name: branches[2] ?? '', pr: 103 }] });
+    const error = await step(ws, run => submitStack(ws, run)).then(() => assert.fail('submit should fail'), (caught: unknown) => caught);
+    assert.ok(error instanceof Error);
+    assert.match(error.message, new RegExp(`submitted.*titles were not set.*${branches[1]}`, 's'));
+    assert.match(error.message, /\/factory submit again sets them/);
+    assert.doesNotMatch(error.message, /Already added/);
     assert.deepEqual(gh.calls().filter(call => call.startsWith('api')), [], 'no title is set when a slice has no PR');
-    assert.equal(sh(ws.root, 'branch', '--show-current'), before, 'a failed title step switches back to the starting branch');
+    assert.equal(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'a failed title step stays on the top slice gh stack left');
+  });
+
+  it('fails saying the titles were not set when a title PATCH fails, staying on the top slice', async t => {
+    const ws = workspace();
+    const branches = await doneRun(ws, 2);
+    fakeGh(t, { stack: branches.slice(0, 1), submitted: withPrs(branches), fail: 'api -X' });
+    const error = await step(ws, run => submitStack(ws, run)).then(() => assert.fail('submit should fail'), (caught: unknown) => caught);
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /submitted.*titles were not set.*\/factory submit again sets them/s);
+    assert.doesNotMatch(error.message, /Already added/);
+    assert.equal(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'a failed title step stays on the top slice gh stack left');
   });
 
   it('refuses a stack with branches outside the run or out of run order, and changes nothing', async t => {

@@ -97,7 +97,6 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
     }
     progress(`pushing ${run.slices.length} branches and opening draft PRs (gh stack submit; this can take a few minutes)`);
     output = await gh(ws.root, 'stack', 'submit', '--auto');
-    await setTitles(ws.root, run, progress);
   } catch (caught) {
     const error = added.length === 0
       ? caught
@@ -115,6 +114,15 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
     throw error;
   }
   addEvent(run, 'submit', 'stack submitted as draft PRs');
+  // The stack and its PRs are now on GitHub; a title failure leaves the checkout where gh stack put it.
+  try {
+    await setTitles(ws.root, run, progress);
+  } catch (caught) {
+    throw new Error(
+      `The stack and its PRs were submitted, but the PR titles were not set: ${caught instanceof Error ? caught.message : String(caught)}\nRunning /factory submit again sets them.`,
+      { cause: caught },
+    );
+  }
   return output;
 }
 
@@ -127,7 +135,7 @@ async function setTitles(root: string, run: Run, progress: (step: string) => voi
   const view = stackView.parse(JSON.parse(await gh(root, 'stack', 'view', '--json')));
   const prs = new Map(view.branches.map(item => [item.name, item.pr?.number]));
   const missing = run.slices.filter(slice => prs.get(slice.branch) === undefined).map(slice => slice.branch);
-  if (missing.length > 0) throw new Error(`gh stack submit left these slice branches with no PR, so no PR title was set: ${missing.join(', ')}.`);
+  if (missing.length > 0) throw new Error(`gh stack submit left these slice branches with no PR: ${missing.join(', ')}.`);
   for (const slice of run.slices) {
     await gh(root, 'api', '-X', 'PATCH', `repos/{owner}/{repo}/pulls/${prs.get(slice.branch)}`, '-f', `title=${run.feature}: ${slice.id} ${slice.title}`);
   }
