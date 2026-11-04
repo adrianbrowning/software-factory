@@ -155,7 +155,9 @@ describe('factory_decide', () => {
     const next = reply.content[0]?.text.split('\n').find(line => line.startsWith('Next: '));
     assert.match(next ?? '', new RegExp(`^Next: Stop the running reviewers and validator of review ${reviewId}; their submissions are refused\\. .*factory_review_start`));
   });
+});
 
+describe('factory_checks', () => {
   it('factory_checks says it reuses the results that passed on the same commit', async () => {
     using repo = tempRepo('factory-checks-', { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) });
     const { root } = repo;

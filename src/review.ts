@@ -12,6 +12,7 @@ import { git, runShell, type CommandResult } from './exec.ts';
 import {
   activeSlice,
   addEvent,
+  discardReview,
   dropPass,
   greenCommit,
   outdatedGreenCount,
@@ -57,10 +58,9 @@ export function recordDecisions(ws: Workspace, run: Run, decisions: string[]) {
   for (const slice of run.slices.filter(candidate => candidate.status !== 'done')) writeTicket(ws, run, slice);
   addEvent(run, 'decision', added.join('; '));
   const active = activeSlice(run);
-  const open = active?.phase === 'review' ? active.review : undefined;
-  if (active !== undefined) discardReview(run, active, 'decisions recorded during review');
+  const discarded = active === undefined ? undefined : discardReview(run, active, 'decisions recorded during review');
   if (active !== undefined && outdatedGreenCount(run, active) !== undefined) reopenReview(run, active);
-  return { decisions: run.decisions, discarded: open?.id };
+  return { decisions: run.decisions, discarded };
 }
 
 /** Sends a green slice back to review on its green commit, for decisions newer than the review; its checks, which passed on that commit, stand. */
@@ -69,14 +69,6 @@ function reopenReview(run: Run, slice: Slice) {
   slice.green = undefined;
   slice.review = undefined;
   addEvent(run, 'review-invalidated', 'decisions recorded after the green review', slice);
-}
-
-/** Discards the open review of a slice in review, whose reviewers can no longer finish it, for `reason`; a slice without one is unchanged. */
-export function discardReview(run: Run, slice: Slice, reason: string) {
-  const review = slice.phase === 'review' ? slice.review : undefined;
-  if (review === undefined) return;
-  slice.review = undefined;
-  addEvent(run, 'review-invalidated', `${review.id}: ${reason}`, slice);
 }
 
 /** The shell's own diagnostic for a command it cannot find (bash and dash wording). */

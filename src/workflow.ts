@@ -6,6 +6,7 @@ import { gh, git } from './exec.ts';
 import {
   activeSlice,
   addEvent,
+  discardReview,
   dropPass,
   greenCommit,
   hasPass,
@@ -25,8 +26,6 @@ import {
   writeAtomic,
 } from './run.ts';
 import { head, requireClean, requireOnBranch } from './repo.ts';
-// review.ts imports this module too; discardReview is only called at run time, so the cycle is safe.
-import { discardReview } from './review.ts';
 
 const FEATURE_PATTERN = /^[a-z0-9][a-z0-9-]{0,47}$/;
 export const UNTRUSTED_NOTE =
