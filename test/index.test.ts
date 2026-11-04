@@ -286,4 +286,27 @@ describe('used-up fix budget', () => {
     const resumed = readRun(ws, 'demo');
     assert.deepEqual([resumed.status, resumed.slices[0]?.stalled, resumed.slices[0]?.roundLimit], ['running', false, 2]);
   });
+
+  it('sends a green slice back to fix for a bug alone, showing the bug in the dialog', async () => {
+    using run = await budgetRun(['Feature']);
+    const { call, ws } = run;
+    commit(ws, 'ok');
+    await green(ws);
+    const asked: string[] = [];
+    const fixed = await call('factory_fix', { bug: 'Empty input crashes the parser.', reason: 'Found while demoing.' }, { confirm: async (title: string, body: string) => (asked.push(`${title}\n${body}`), true) });
+    assert.match(asked[0] ?? '', /^Fix a bug in slice 01 "Feature"\?\nFound while demoing\.\n\n- Bug: Empty input crashes the parser\./);
+    assert.match(fixed.content[0]?.text ?? '', /Slice 01 is back in fix for the bug\. Fix file: .*01-f1\.md/);
+    assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'fix');
+  });
+
+  it('refuses factory_fix with neither a bug nor observations, before any dialog', async () => {
+    using run = await budgetRun(['Feature']);
+    const { call, ws } = run;
+    commit(ws, 'ok');
+    await green(ws);
+    let dialogs = 0;
+    await assert.rejects(call('factory_fix', { reason: 'tidy' }, { confirm: async () => (dialogs++, true) }), /factory_fix needs a bug, observation ids, or both/);
+    assert.equal(dialogs, 0);
+    assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'ready');
+  });
 });
