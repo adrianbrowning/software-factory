@@ -481,7 +481,11 @@ export async function applyReslice(ws: Workspace, run: Run, slices: Slice[]) {
   const first = slices[run.slices.indexOf(active)];
   if (first === undefined) throw new Error('Re-slice lost the active slice');
   if (first.branch !== active.branch) await git(ws.root, 'branch', '-m', active.branch, first.branch);
-  for (const old of run.slices.filter(slice => slice.status !== 'done')) rmSync(ticketPath(ws, run.feature, old), { force: true });
+  // Re-slicing renumbers every slice that is not done, so their tickets and implementer reports go with them.
+  for (const old of run.slices.filter(slice => slice.status !== 'done')) {
+    rmSync(ticketPath(ws, run.feature, old), { force: true });
+    rmSync(reportPath(ws, run, old), { force: true });
+  }
   run.slices = slices;
   for (const slice of slices.filter(candidate => candidate.status !== 'done')) writeTicket(ws, run, slice);
   addEvent(

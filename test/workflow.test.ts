@@ -235,6 +235,18 @@ describe('re-slice', () => {
     await assert.rejects(step(ws, run => recordReview(ws, run)), /Domains not submitted yet/);
   });
 
+  it("does not show the split slice's implementer report for the first child", async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Big')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: ['abc1234 01: partial'], open: ['SLICE TOO BIG: part two'] }));
+
+    await step(ws, run => applyReslice(ws, run, planReslice(ws, run, [slice('Part one'), slice('Part two', ['Part one'])]).slices));
+    const checks = await step(ws, run => runChecks(ws, run));
+    assert.match(checks.report, /^No implementer report was submitted for slice 01/);
+  });
+
   it('leaves the run and its tickets unchanged when the branch rename fails', async () => {
     const ws = workspace();
     await newRun(ws, [slice('Big')]);
