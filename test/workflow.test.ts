@@ -710,6 +710,102 @@ describe('submit', () => {
     await assert.rejects(step(ws, run => submitStack(ws, run)), /target is gone or moved off the stack's base/);
     assert.equal(sh(ws.root, 'rev-parse', 'target'), moved);
   });
+
+  /** A done run of `count` chained slices, each with a reviewed commit. */
+  async function doneRun(ws: Workspace, count: number) {
+    const titles = Array.from({ length: count }, (_, index) => `S${index + 1}`);
+    await newRun(ws, titles.map((title, index) => slice(title, index === 0 ? [] : [titles[index - 1] ?? ''])));
+    for (const [index] of titles.entries()) {
+      await step(ws, run => nextSlice(ws, run));
+      commit(ws, index === 0 ? 'ok' : `s${index + 1}.txt`);
+      await green(ws);
+      await step(ws, run => completeSlice(ws, run));
+    }
+    await step(ws, run => recordRetro(ws, run, parseRetro(ws, run, [])));
+    return readRun(ws, 'demo').slices.map(item => item.branch);
+  }
+
+  /** Puts a fake `gh` first on PATH; it records each call and serves `stack view --json` from `stack` (none: no stack). */
+  function fakeGh(stack: string[] | undefined) {
+    const dir = mkdtempSync(join(tmpdir(), 'factory-gh-'));
+    roots.push(dir);
+    const log = join(dir, 'calls');
+    const view = join(dir, 'view.json');
+    if (stack !== undefined) {
+      writeFileSync(view, JSON.stringify({ branches: stack.map(name => ({ name })), currentBranch: stack[0], trunk: 'main' }));
+    }
+    const script = `#!/bin/sh\necho "$*" >> '${log}'\ncase "$1 $2" in\n  "stack checkout"|"stack view") [ -f '${view}' ] || exit 1; [ "$2" = view ] && cat '${view}';;\nesac\nexit 0\n`;
+    writeFileSync(join(dir, 'gh'), script);
+    chmodSync(join(dir, 'gh'), 0o755);
+    const path = process.env.PATH;
+    process.env.PATH = `${dir}:${path}`;
+    return {
+      calls: () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : []),
+      restore: () => {
+        process.env.PATH = path;
+      },
+    };
+  }
+
+  it('adopts every slice branch with gh stack init on a first submit', async () => {
+    const ws = workspace();
+    const branches = await doneRun(ws, 3);
+    const gh = fakeGh(undefined);
+    const steps: string[] = [];
+    try {
+      await step(ws, run => submitStack(ws, run, message => steps.push(message)));
+    } finally {
+      gh.restore();
+    }
+    assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, `stack init --base main ${branches.join(' ')}`, 'stack submit --auto']);
+    assert.ok(steps.includes('adopting 3 branches into a gh stack onto main'), steps.join('\n'));
+  });
+
+  it('adds only the slices the existing stack does not hold on a re-submit', async () => {
+    const ws = workspace();
+    const branches = await doneRun(ws, 6);
+    const gh = fakeGh(branches.slice(0, 5));
+    const steps: string[] = [];
+    try {
+      await step(ws, run => submitStack(ws, run, message => steps.push(message)));
+    } finally {
+      gh.restore();
+    }
+    assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, 'stack view --json', 'stack top', `stack add ${branches[5]}`, 'stack submit --auto']);
+    assert.ok(steps.includes(`adding 1 branch to the existing gh stack: ${branches[5]}`), steps.join('\n'));
+  });
+
+  it('only submits when the existing stack holds every slice branch', async () => {
+    const ws = workspace();
+    const branches = await doneRun(ws, 2);
+    const gh = fakeGh(branches);
+    const steps: string[] = [];
+    try {
+      await step(ws, run => submitStack(ws, run, message => steps.push(message)));
+    } finally {
+      gh.restore();
+    }
+    assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, 'stack view --json', 'stack submit --auto']);
+    assert.ok(steps.includes('the gh stack already holds all 2 slice branches'), steps.join('\n'));
+  });
+
+  it('refuses a stack with branches outside the run or out of run order, and changes nothing', async () => {
+    const ws = workspace();
+    const branches = await doneRun(ws, 3);
+    const [one = '', two = '', three = ''] = branches;
+    for (const [stack, message] of [
+      [[one, 'stranger'], /outside the run: stranger/],
+      [[one, three, two], new RegExp(`out of run order: ${three}, ${two}`)],
+    ] as const) {
+      const gh = fakeGh([...stack]);
+      try {
+        await assert.rejects(step(ws, run => submitStack(ws, run)), message);
+      } finally {
+        gh.restore();
+      }
+      assert.deepEqual(gh.calls(), [`stack checkout ${one}`, 'stack view --json']);
+    }
+  });
 });
 
 describe('run state', () => {

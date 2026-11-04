@@ -833,8 +833,13 @@ export function settle(run: Run) {
   addEvent(run, 'stack-ready', run.slices.map(slice => slice.branch).join(' <- '));
 }
 
+/** The part of `gh stack view --json` submit reads: the stack's branches, bottom (closest to trunk) first. */
+const stackView = z.object({ branches: z.array(z.object({ name: z.string() })) });
+
 /**
- * Submits the reviewed stack. By default it adopts every slice branch into one gh-stack stack and opens draft PRs.
+ * Submits the reviewed stack. By default it adopts every slice branch into one gh-stack stack and opens draft PRs; on a
+ * re-submit, when slice 01 is already stacked, it adds only the slice branches that stack lacks (the stack must hold a
+ * prefix of the run's branches, in run order).
  * A run with `landOn` instead fast-forwards that local branch to the top slice; no PRs are opened. Never merges.
  * Only the user-invoked `/factory submit` command calls this; no model-callable tool does. `progress` names each step
  * before it starts, so the user sees what the submit is waiting on.
@@ -857,14 +862,35 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
     progress(`fast-forwarding ${run.landOn} to the top slice`);
     return landStack(ws, run, run.landOn);
   }
-  progress('reading the gh stack');
-  const stacked = await gh(ws.root, 'stack', 'view', '--json').then(
+  const branches = run.slices.map(slice => slice.branch);
+  progress(`reading the gh stack that holds ${branches[0]}`);
+  // A failed checkout means no stack holds slice 01; a failed or malformed view after it propagates.
+  const inStack = await gh(ws.root, 'stack', 'checkout', branches[0] ?? '').then(
     () => true,
     () => false,
   );
-  if (!stacked) {
-    progress(`adopting ${run.slices.length} branches into a gh stack onto ${run.trunk}`);
-    await gh(ws.root, 'stack', 'init', '--base', run.trunk, ...run.slices.map(slice => slice.branch));
+  const stacked = inStack ? stackView.parse(JSON.parse(await gh(ws.root, 'stack', 'view', '--json'))).branches.map(item => item.name) : undefined;
+  if (stacked === undefined) {
+    progress(`adopting ${branches.length} branches into a gh stack onto ${run.trunk}`);
+    await gh(ws.root, 'stack', 'init', '--base', run.trunk, ...branches);
+  } else {
+    const outside = stacked.filter(name => !branches.includes(name));
+    const unordered = stacked.filter((name, index) => branches.includes(name) && branches[index] !== name);
+    if (outside.length > 0 || unordered.length > 0) {
+      const problems = [
+        outside.length > 0 ? `branches outside the run: ${outside.join(', ')}` : '',
+        unordered.length > 0 ? `run branches out of run order: ${unordered.join(', ')}` : '',
+      ].filter(Boolean);
+      throw new Error(`The gh stack holding ${branches[0]} has ${problems.join('; ')}. Nothing was submitted; fix the stack with gh stack, then submit again.`);
+    }
+    const missing = branches.slice(stacked.length);
+    if (missing.length === 0) {
+      progress(`the gh stack already holds all ${branches.length} slice branches`);
+    } else {
+      progress(`adding ${missing.length} ${missing.length === 1 ? 'branch' : 'branches'} to the existing gh stack: ${missing.join(', ')}`);
+      await gh(ws.root, 'stack', 'top');
+      for (const branch of missing) await gh(ws.root, 'stack', 'add', branch);
+    }
   }
   progress(`pushing ${run.slices.length} branches and opening draft PRs (gh stack submit; this can take a few minutes)`);
   const output = await gh(ws.root, 'stack', 'submit', '--auto');
