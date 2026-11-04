@@ -22,28 +22,35 @@ import {
   type Workspace,
 } from './run.ts';
 import {
+  completeSlice,
+  fixObservations,
+  planFix,
+  recordDecisions,
+  recordReview,
+  runChecks,
+  startReview,
+  submitDomain,
+  submitValidation,
+  validationSchema,
+} from './review.ts';
+import {
   addFollowUp,
   amendSeams,
   applyReslice,
   approvePlan,
-  completeSlice,
   fetchGithubIssue,
   fileFactoryIssues,
   type FiledIssues,
   fileSource,
-  fixObservations,
   githubSource,
   nextAction,
   nextSlice,
   parseRetro,
   pauseRun,
-  planFix,
   planFollowUp,
   planReslice,
   planSlices,
-  recordDecisions,
   recordRetro,
-  recordReview,
   reopenSlice,
   repoChecks,
   repoRoot,
@@ -53,17 +60,12 @@ import {
   resumeRun,
   retroIssueBody,
   retroSchema,
-  runChecks,
   saveChecks,
   sourceInputSchema,
   type SourceInput,
-  startReview,
   startRun,
-  submitDomain,
   submitStack,
-  submitValidation,
   summarize,
-  validationSchema,
 } from './workflow.ts';
 
 const IMPLEMENTER = 'factory-implementer';
@@ -404,8 +406,11 @@ export default function softwareFactory(pi: ExtensionAPI) {
       if (!(await confirm(ctx, 'Record these decisions for reviewers?', params.decisions.map(decision => `- ${decision}`).join('\n')))) {
         return reply('The user rejected these decisions. Ask how to word them.');
       }
-      const decisions = await withRun(ws, feature, run => recordDecisions(ws, run, params.decisions));
-      return reply(`Decisions recorded (${decisions.length} in total). Reviews from now on include them.`);
+      return withRun(ws, feature, run => {
+        const { decisions, discarded } = recordDecisions(ws, run, params.decisions);
+        const stop = discarded === undefined ? '' : `Stop the running reviewers and validator of review ${discarded}; their submissions are refused. `;
+        return reply(`Decisions recorded (${decisions.length} in total). Reviews from now on include them.\nNext: ${stop}${nextAction(run)}`);
+      });
     },
   });
 

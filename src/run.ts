@@ -236,3 +236,13 @@ export function addEvent(run: Run, kind: string, detail: string, slice?: Slice) 
 export function activeSlice(run: Run) {
   return run.slices.find(slice => slice.status === 'active');
 }
+
+/**
+ * The decision count a green slice's review covered, when decisions landed after it; otherwise undefined. Since
+ * factory_decide reopens such a slice at once, only a state file written before it did keeps this state; one from
+ * before greenDecisions has no count, and its green review stays valid.
+ */
+export function outdatedGreenCount(run: Run, slice: Slice) {
+  if (slice.phase !== 'ready' || slice.greenDecisions === undefined) return undefined;
+  return run.decisions.length > slice.greenDecisions ? slice.greenDecisions : undefined;
+}
