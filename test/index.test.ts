@@ -152,6 +152,35 @@ describe('implementer sessions', () => {
     git(root, 'commit', '-qm', 'work');
     assert.match(await call('factory_checks', {}, main), /No implementer report was submitted for slice 01/);
   });
+
+  it('clears the report at spawn only after factory_checks that was called first has read it', async () => {
+    const root = emptyRepo();
+    const handlers = new Map<string, Handler>();
+    const tools = load(handlers);
+    const main = {
+      ...ctx('main', 'main'),
+      cwd: root,
+      hasUI: true,
+      sessionManager: { getSessionId: () => 'session' },
+      ui: { confirm: async () => true, editor: async () => 'true', notify() {} },
+    };
+    const implementer = { ...ctx('sub', 'factory-implementer'), cwd: root };
+    const call = async (name: string, params: unknown, caller: unknown) => JSON.stringify(await tools.get(name)?.execute('id', params, undefined, undefined, caller));
+    await call('factory_start', { feature: 'demo', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } }, main);
+    const feature = { acceptance: ['works'], blockedBy: [], estimateTokens: 500, seams: ['cli'], title: 'Feature', whatToBuild: 'Feature' };
+    await call('factory_plan', { baseRef: 'main', slices: [feature], trunk: 'main' }, main);
+    await call('factory_next', {}, main);
+    writeFileSync(join(root, 'work.txt'), 'x\n');
+    git(root, 'add', '.');
+    git(root, 'commit', '-qm', 'work');
+    await call('factory_implementer_report', { behaviors: [], commits: [], open: ['first round'] }, implementer);
+
+    const checks = call('factory_checks', {}, main);
+    const spawned = handlers.get('before_subagent_spawn')?.({ agent: 'factory-implementer', invocationKind: 'task', patterns: [], type: 'before_subagent_spawn' }, main);
+    assert.match(await checks, /first round/);
+    await spawned;
+    assert.match(await call('factory_implementer_report', { behaviors: [], commits: [], open: [] }, implementer), /Stored the report/);
+  });
 });
 
 describe('first-run checks dialog', () => {

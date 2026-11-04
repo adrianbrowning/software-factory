@@ -883,6 +883,6 @@ export default function softwareFactory(pi: ExtensionAPI) {
     if (ctx.agent.kind !== 'main' || event.agent !== IMPLEMENTER) return;
     const ws = await workspace(ctx.cwd);
     const feature = activeRuns.get(ws.root);
-    if (feature !== undefined) startImplementerSession(ws, readRun(ws, feature));
+    if (feature !== undefined) await withRun(ws, feature, run => startImplementerSession(ws, run));
   });
 }
