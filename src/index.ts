@@ -3,7 +3,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { CONFIG_PATH, checksPrompt, loadConfig, parseChecks, suggestChecks } from './config.ts';
-import { evidence } from './evidence.ts';
+import { evidence, evidenceHead } from './evidence.ts';
 import {
   activeSlice,
   addEvent,
@@ -576,7 +576,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
       // of its observations, without a dialog.
       const planned = planFix(ws, readRun(ws, feature), params);
       const items = [
-        ...(planned.bug === undefined ? [] : [`- Bug: ${evidence(planned.bug, 1_000)}`]),
+        ...(planned.bug === undefined ? [] : [`- Bug: ${evidenceHead(planned.bug, 1_000)}`]),
         ...planned.observations.map(finding => `- ${finding.id}: ${finding.title}`),
       ];
       const what = [...(planned.bug === undefined ? [] : ['the bug']), ...planned.observations.map(finding => finding.id)].join(', ');

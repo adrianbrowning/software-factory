@@ -7,7 +7,7 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { evidence } from './evidence.ts';
+import { evidence, redact } from './evidence.ts';
 import { git, runShell, type CommandResult } from './exec.ts';
 import {
   activeSlice,
@@ -654,7 +654,7 @@ export function fixObservations(ws: Workspace, run: Run, request: FixRequest, re
   addEvent(run, 'fix-observations', `${review.id}: ${[...(bug === undefined ? [] : ['bug']), ...ids].join(', ')}`, slice);
   const why = evidence(reason, 4_000);
   const sections = [
-    ...(bug === undefined ? [] : [`## Bug found after green review ${review.id}\n\n${why}\n\n${evidence(bug, 4_000)}`]),
+    ...(bug === undefined ? [] : [`## Bug found after green review ${review.id}\n\n${why}\n\n${redact(bug)}`]),
     ...(ids.length === 0
       ? []
       : [`## Observations from green review ${review.id} the user chose to fix\n\n${why}\n\n${observations.map(finding => renderFinding(finding, run.decisions)).join('\n\n')}`]),

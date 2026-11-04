@@ -699,6 +699,17 @@ describe('slice loop gates', () => {
     assert.equal((await step(ws, run => completeSlice(ws, run))).status, 'done');
   });
 
+  it('keeps the start of a long bug report in the fix file', async () => {
+    const ws = workspace({ maxRounds: 2 });
+    await greenWithObservation(ws);
+
+    const bug = `Saving a draft loses the title.\n${'log line\n'.repeat(600)}`;
+    const fixed = await step(ws, run => fixObservations(ws, run, { bug }, 'Found while demoing.'));
+    const fix = readFileSync(fixed.fixPath, 'utf8');
+    assert.match(fix, /Found while demoing\.\n\nSaving a draft loses the title\./);
+    assert.doesNotMatch(fix, /\[truncated\]/);
+  });
+
   it('writes both the bug and the chosen observations into one fix file', async () => {
     const ws = workspace({ maxRounds: 2 });
     await greenWithObservation(ws);

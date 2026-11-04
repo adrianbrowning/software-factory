@@ -299,6 +299,17 @@ describe('used-up fix budget', () => {
     assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'fix');
   });
 
+  it('shows the start of a long bug in the factory_fix dialog', async () => {
+    using run = await budgetRun(['Feature']);
+    const { call, ws } = run;
+    commit(ws, 'ok');
+    await green(ws);
+    const asked: string[] = [];
+    await call('factory_fix', { bug: `Saving a draft loses the title.\n${'log line\n'.repeat(600)}`, reason: 'Found while demoing.' }, { confirm: async (title: string, body: string) => (asked.push(`${title}\n${body}`), true) });
+    assert.match(asked[0] ?? '', /- Bug: Saving a draft loses the title\.\n[\s\S]*\.\.\.\[truncated\]/);
+    assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'fix');
+  });
+
   it('refuses factory_fix with neither a bug nor observations, before any dialog', async () => {
     using run = await budgetRun(['Feature']);
     const { call, ws } = run;
