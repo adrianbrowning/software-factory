@@ -48,9 +48,11 @@ describe('base resolution', () => {
     assert.equal((await resolveBase(ws, { baseRef: 'feature/auth' })).trunk, 'feature/auth');
     assert.equal((await resolveBase(ws, { landOn: 'feature/auth' })).trunk, 'feature/auth');
     assert.equal((await resolveBase(ws, { baseRef: 'upstream/dev' })).trunk, 'dev');
-    // `up` is listed before `up/stream` and also prefixes `up/stream/dev`.
+    // `up` is listed before `up/stream` and also prefixes `up/stream/dev`. Git 2.54+ refuses
+    // `git remote add up/stream` beside `up`, but repos made by older git can hold both, so configure it directly.
     sh(ws.root, 'remote', 'add', 'up', ws.root);
-    sh(ws.root, 'remote', 'add', 'up/stream', ws.root);
+    sh(ws.root, 'config', 'remote.up/stream.url', ws.root);
+    sh(ws.root, 'config', 'remote.up/stream.fetch', '+refs/heads/*:refs/remotes/up/stream/*');
     sh(ws.root, 'update-ref', 'refs/remotes/up/stream/dev', 'HEAD');
     assert.equal((await resolveBase(ws, { baseRef: 'up/stream/dev' })).trunk, 'dev');
     await start(ws);
