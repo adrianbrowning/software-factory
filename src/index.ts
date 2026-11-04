@@ -38,6 +38,7 @@ import {
   amendSeams,
   applyReslice,
   approvePlan,
+  carryObservations,
   fetchGithubIssue,
   fileFactoryIssues,
   type FiledIssues,
@@ -47,6 +48,7 @@ import {
   nextSlice,
   parseRetro,
   pauseRun,
+  planCarry,
   planFollowUp,
   planReslice,
   planSlices,
@@ -86,6 +88,7 @@ const ORCHESTRATION_TOOLS = [
   'factory_review_record',
   'factory_complete_slice',
   'factory_fix',
+  'factory_carry',
   'factory_reopen',
   'factory_follow_up',
   'factory_status',
@@ -147,6 +150,17 @@ const fixSchema = z.object({
     .optional()
     .describe('Ids of observations from the green review of the active slice that the user chose to fix in this slice, for example "thermo-naming"'),
   reason: z.string().min(1).describe('Why the user wants them fixed before the slice is done, for the fix file'),
+});
+const carrySchema = z.object({
+  note: z
+    .string()
+    .optional()
+    .describe('Work the user wants built in the pending slice, in full, for its ticket. Give it, observations, or both'),
+  observations: z
+    .array(z.string().min(1))
+    .optional()
+    .describe('Ids of observations from the green review of the active slice that the user chose to carry, for example "thermo-naming"'),
+  to: z.string().regex(/^\d{2}$/).describe('Id of the pending slice whose ticket takes the work, for example "03"'),
 });
 const emptySchema = z.object({});
 
@@ -537,7 +551,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
       if (result.green) {
         const notes =
           result.observations.length > 0
-            ? `\nObservations (non-blocking):\n${result.observations.join('\n\n')}\nTo fix any of them in this slice, ask the user; when they agree, call factory_fix with their ids.`
+            ? `\nObservations (non-blocking):\n${result.observations.join('\n\n')}\nAsk the user where each goes: fixed in this slice (factory_fix with their ids), or carried into the ticket of a pending slice (factory_carry with their ids and that slice id; this slice stays green).`
             : '';
         const bug = '\nWhen the user finds a bug in this slice before it is done, call factory_fix with the bug (and any observation ids).';
         return reply(`Review is green.${notes}${bug}\nNext: ${nextAction(readRun(ws, feature))}`);
@@ -588,6 +602,34 @@ export default function softwareFactory(pi: ExtensionAPI) {
       const result = await withRun(ws, feature, run => fixObservations(ws, run, params, params.reason));
       const stall = result.stalled ? await decideStall(ctx, ws, feature) : '';
       return reply(`Slice ${planned.slice.id} is back in fix for ${what}. Fix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
+    },
+  });
+
+  tool({
+    caller: 'main',
+    description:
+      'After a green review, carry review observations the user chose (observations), a free-text note (note), or both into the ticket of a pending slice (to), after the user agreed. That slice builds them and its reviewers check them; the active slice keeps its green review.',
+    label: 'Factory: carry work into a pending slice',
+    name: 'factory_carry',
+    schema: carrySchema,
+    async run(params, ws, ctx) {
+      const feature = activeFeature(ws);
+      // Refuses empty input, a slice without a green review, an unknown observation id, or a target that is not a
+      // pending slice, without a dialog.
+      const planned = planCarry(ws, readRun(ws, feature), params);
+      const items = [
+        ...(planned.note === undefined ? [] : [`- Note: ${evidenceHead(planned.note, 1_000)}`]),
+        ...planned.observations.map(finding => `- ${finding.id}: ${finding.title}`),
+      ];
+      const what = [...(planned.note === undefined ? [] : ['the note']), ...planned.observations.map(finding => finding.id)].join(', ');
+      const body = `${items.join('\n')}\n\nSlice ${planned.slice.id} keeps its green review. Slice ${planned.target.id} builds these, and its reviewers check them.`;
+      if (!(await confirm(ctx, `Carry into slice ${planned.target.id} "${planned.target.title}"?`, body))) {
+        return reply(`The user did not carry the work. Ask how to handle the observations or the note.\nNext: ${nextAction(readRun(ws, feature))}`);
+      }
+      return withRun(ws, feature, run => {
+        const { target } = carryObservations(ws, run, params);
+        return reply(`Carried ${what} into slice ${target.id} "${target.title}". Ticket: ${ticketPath(ws, run.feature, target)}\nNext: ${nextAction(run)}`);
+      });
     },
   });
 

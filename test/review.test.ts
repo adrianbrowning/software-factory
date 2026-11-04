@@ -4,9 +4,9 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { type Finding, readRun, REVIEW_DOMAINS, type Workspace } from '../src/run.ts';
+import { type Finding, readRun, REVIEW_DOMAINS, ticketPath, type Workspace } from '../src/run.ts';
 import { completeSlice, fixObservations, pathSkips, recordDecisions, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
-import { approvePlan, nextAction, nextSlice, pauseRun, planFollowUp, planSlices, resolveBase, resolveStall, resumeRun, saveChecks, startRun } from '../src/workflow.ts';
+import { applyReslice, approvePlan, carryObservations, nextAction, nextSlice, pauseRun, planFollowUp, planReslice, planSlices, resolveBase, resolveStall, resumeRun, saveChecks, startRun } from '../src/workflow.ts';
 import { checkRuns, commit, countedCheck, finding, green, newRun, review, roots, sh, slice, start, step, workspace } from './helpers.ts';
 
 describe('slice loop gates', () => {
@@ -752,6 +752,82 @@ describe('slice loop gates', () => {
     const fixed = await step(ws, run => fixObservations(ws, run, { bug: 'Crash.' }, 'tidy'));
     assert.equal(fixed.stalled, true);
     assert.equal(readRun(ws, 'demo').slices[0]?.stalled, true);
+  });
+
+  it('carries chosen observations and a note into a pending slice ticket, which its review data file shows, and leaves the active slice green', async () => {
+    const ws = workspace({ maxRounds: 2 });
+    await newRun(ws, [slice('Feature'), slice('Second', ['Feature'])]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const opened = await step(ws, run => startReview(ws, run));
+    await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming'), finding('comments', 'observation', 'stale')]);
+    assert.ok((await step(ws, run => recordReview(ws, run))).green);
+    const before = readRun(ws, 'demo').slices[0];
+
+    await step(ws, run => carryObservations(ws, run, { note: 'Also log the parse time.', observations: ['thermo-naming'], to: '02' }));
+    const second = readRun(ws, 'demo').slices[1];
+    assert.ok(second !== undefined);
+    const ticket = readFileSync(ticketPath(ws, 'demo', second), 'utf8');
+    assert.match(ticket, /## Carried-in work\n[\s\S]*### From green review 01-r1 of slice 01 "Feature"\n\nAlso log the parse time\.\n\n#### \[observation\] thermo-naming\n\n- Location: ok:1/);
+    assert.doesNotMatch(ticket, /comments-stale/);
+    assert.deepEqual(readRun(ws, 'demo').slices[0], before, 'the active slice keeps its green review');
+    assert.equal((await step(ws, run => completeSlice(ws, run))).status, 'done');
+
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'second.txt');
+    await step(ws, run => runChecks(ws, run));
+    const { dataFile } = await step(ws, run => startReview(ws, run));
+    assert.match(readFileSync(dataFile, 'utf8'), /## Carried-in work[\s\S]*Also log the parse time\.[\s\S]*#### \[observation\] thermo-naming/);
+  });
+
+  it('refuses a carry with nothing to carry, without a green review, with unknown observation ids, or to a slice that is not pending', async () => {
+    const ws = workspace({ maxRounds: 2 });
+    await newRun(ws, [slice('Feature'), slice('Second', ['Feature']), slice('Third', ['Second'])]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await assert.rejects(step(ws, run => carryObservations(ws, run, { note: 'Later.', to: '02' })), /Slice 01 has no green review to carry observations or a note from/);
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'second.txt');
+    await step(ws, run => runChecks(ws, run));
+    const opened = await step(ws, run => startReview(ws, run));
+    await review(ws, opened.reviewId, [{ ...finding('thermo', 'observation', 'naming'), path: 'second.txt' }]);
+    await step(ws, run => recordReview(ws, run));
+    const before = readRun(ws, 'demo');
+
+    for (const request of [{ to: '03' }, { note: ' ', observations: [], to: '03' }]) {
+      await assert.rejects(step(ws, run => carryObservations(ws, run, request)), /factory_carry needs observation ids, a note, or both/);
+    }
+    await assert.rejects(
+      step(ws, run => carryObservations(ws, run, { observations: ['thermo-naming', 'bug-made-up'], to: '03' })),
+      /Not observations of green review 02-r1: bug-made-up\. Its observations: thermo-naming/,
+    );
+    await assert.rejects(step(ws, run => carryObservations(ws, run, { note: 'Later.', to: '01' })), /Slice 01 is done; factory_carry takes a pending slice/);
+    await assert.rejects(step(ws, run => carryObservations(ws, run, { note: 'Later.', to: '02' })), /Slice 02 is active; factory_carry takes a pending slice/);
+    await assert.rejects(step(ws, run => carryObservations(ws, run, { note: 'Later.', to: '09' })), /No slice 09\. Slices: 01, 02, 03/);
+    assert.deepEqual(readRun(ws, 'demo').slices, before.slices, 'a refused carry changes nothing');
+  });
+
+  it('keeps carried work through a re-slice: the first child takes the split slice items, later slices keep theirs', async () => {
+    const ws = workspace({ maxRounds: 2 });
+    await newRun(ws, [slice('Feature'), slice('Big', ['Feature']), slice('Last', ['Big'])]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await green(ws);
+    await step(ws, run => carryObservations(ws, run, { note: 'Big must log.', to: '02' }));
+    await step(ws, run => carryObservations(ws, run, { note: 'Last must log.', to: '03' }));
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => nextSlice(ws, run));
+
+    await step(ws, async run => applyReslice(ws, run, planReslice(ws, run, [slice('Big A', ['Feature']), slice('Big B', ['Big A'])]).slices));
+    const slices = readRun(ws, 'demo').slices;
+    const ticket = (index: number) => readFileSync(ticketPath(ws, 'demo', slices[index] ?? assert.fail('no slice')), 'utf8');
+    assert.deepEqual(slices.map(item => item.title), ['Feature', 'Big A', 'Big B', 'Last']);
+    assert.match(ticket(1), /## Carried-in work[\s\S]*Big must log\./);
+    assert.doesNotMatch(ticket(2), /Carried-in work/);
+    assert.match(ticket(3), /## Carried-in work[\s\S]*Last must log\./);
   });
 });
 

@@ -562,9 +562,10 @@ function countBy(findings: Finding[], key: 'domain' | 'severity') {
     .join(' ');
 }
 
-function renderFinding(finding: Finding, decisions: string[]) {
+/** A finding as a markdown section under a `heading` of the given level (`##` by default). */
+export function renderFinding(finding: Finding, decisions: string[], heading = '##') {
   const decision = finding.decision === undefined ? '' : `\n- Breaks decision ${finding.decision}: ${decisions[finding.decision - 1] ?? ''}`;
-  return `## [${finding.severity}] ${finding.id}\n\n- Location: ${finding.path}${finding.line === undefined ? '' : `:${finding.line}`}\n- Title: ${evidence(finding.title, 500)}\n- Problem: ${evidence(finding.problem, 2_000)}\n- Fix: ${evidence(finding.fix, 2_000)}\n- Fix prompt: ${evidence(finding.fix_prompt, 2_000)}${decision}`;
+  return `${heading} [${finding.severity}] ${finding.id}\n\n- Location: ${finding.path}${finding.line === undefined ? '' : `:${finding.line}`}\n- Title: ${evidence(finding.title, 500)}\n- Problem: ${evidence(finding.problem, 2_000)}\n- Fix: ${evidence(finding.fix, 2_000)}\n- Fix prompt: ${evidence(finding.fix_prompt, 2_000)}${decision}`;
 }
 
 export async function recordReview(ws: Workspace, run: Run) {
@@ -618,18 +619,15 @@ export async function recordReview(ws: Workspace, run: Run) {
 export type FixRequest = { bug?: string | undefined; observations?: string[] | undefined };
 
 /**
- * The active slice's green review, the observations the user chose from it by finding id, and the bug the user found.
- * Throws for a request with neither, for a slice without a green review, and for an id that is not one of its
- * observations. Does not change the run.
+ * The active slice's green review and the observations from it whose ids are in `chosen`. Throws for a slice without a
+ * green review (naming what `purpose` needed it for) and for an id that is not one of its observations. Does not change
+ * the run.
  */
-export function planFix(ws: Workspace, run: Run, request: FixRequest) {
-  const bug = request.bug?.trim() ? request.bug : undefined;
-  const chosen = new Set(z.array(z.string().min(1)).parse(request.observations ?? []));
-  if (bug === undefined && chosen.size === 0) throw new Error('factory_fix needs a bug, observation ids, or both.');
+export function greenObservations(ws: Workspace, run: Run, chosen: Set<string>, purpose: string) {
   const slice = requireActive(run);
   const review = slice.review;
   if (slice.phase !== 'ready' || greenCommit(slice) === undefined || review === undefined) {
-    throw new Error(`Slice ${slice.id} has no green review to fix observations or a bug from.`);
+    throw new Error(`Slice ${slice.id} has no green review to ${purpose} from.`);
   }
   const raw = readRecorded(validationFile(ws, run, review.id), review.validation);
   if (raw === undefined) throw new Error(`Review ${review.id} has no validation.`);
@@ -640,7 +638,19 @@ export function planFix(ws: Workspace, run: Run, request: FixRequest) {
     const listed = observations.map(finding => finding.id).join(', ') || 'none';
     throw new Error(`Not observations of green review ${review.id}: ${unknown.join(', ')}. Its observations: ${listed}.`);
   }
-  return { bug, observations: observations.filter(finding => chosen.has(finding.id)), review, slice };
+  return { observations: observations.filter(finding => chosen.has(finding.id)), review, slice };
+}
+
+/**
+ * The active slice's green review, the observations the user chose from it by finding id, and the bug the user found.
+ * Throws for a request with neither, for a slice without a green review, and for an id that is not one of its
+ * observations. Does not change the run.
+ */
+export function planFix(ws: Workspace, run: Run, request: FixRequest) {
+  const bug = request.bug?.trim() ? request.bug : undefined;
+  const chosen = new Set(z.array(z.string().min(1)).parse(request.observations ?? []));
+  if (bug === undefined && chosen.size === 0) throw new Error('factory_fix needs a bug, observation ids, or both.');
+  return { bug, ...greenObservations(ws, run, chosen, 'fix observations or a bug') };
 }
 
 /**
