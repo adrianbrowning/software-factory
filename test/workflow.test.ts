@@ -319,6 +319,21 @@ describe('pause and resume', () => {
     assert.equal((await step(ws, run => completeSlice(ws, run))).status, 'done');
   });
 
+  it('keeps the green commit of a done slice whose state predates `green` and holds no check results', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature'), slice('Second')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await green(ws);
+    const done = await step(ws, run => completeSlice(ws, run));
+    const tip = sh(ws.root, 'rev-parse', `refs/heads/${done.branch}`);
+    await saveLegacy(ws, true, () => undefined);
+
+    await step(ws, run => resumeRun(ws, run, 'session-2'));
+    const resumed = readRun(ws, 'demo').slices[0];
+    assert.deepEqual([resumed?.status, resumed && greenCommit(resumed), resumed?.green], ['done', tip, done.green]);
+  });
+
   const legacyPassCases: [string, (saved: string[] | undefined) => string[] | undefined][] = [
     ['no check results', () => undefined],
     ['fewer check results than the run has checks', saved => saved?.slice(0, 1)],

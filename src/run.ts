@@ -149,10 +149,13 @@ function legacySlice({ checkedSha, checkResults, greenDecisions, greenSha, ...sl
   let checked = slice.checked;
   const legacySha = greenSha ?? checkedSha;
   // LEGACY-STATE(checked-pass): an old pass stands only with a result for each of the run's checks; one without
-  // results, or with another count, is no pass, so resume sends the slice back to checks. Remove once no run paused
-  // before the release that ships issue #60 is left to resume.
-  if (checked === undefined && legacySha !== undefined && checks.length > 0 && checkResults?.length === checks.length) {
-    checked = { results: checkResults, sha: legacySha };
+  // results, or with another count, is no pass, so resume sends the slice back to checks. A done slice keeps its green
+  // commit with the results it saved: its checks are never reused, since only the active slice's checks are, and
+  // reopening or restacking a done slice drops its pass. Remove once no run paused before the release that ships issue
+  // #60 is left to resume.
+  const complete = checks.length > 0 && checkResults?.length === checks.length;
+  if (checked === undefined && legacySha !== undefined && (complete || (slice.status === 'done' && greenSha !== undefined))) {
+    checked = { results: checkResults ?? [], sha: legacySha };
   }
   // LEGACY-STATE(green-sha): the green commit was greenSha; it is now the checked commit. Remove with checked-pass.
   let green = slice.green;
