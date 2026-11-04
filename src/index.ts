@@ -57,6 +57,7 @@ import {
   requireFeatureName,
   resolveBase,
   resolveStall,
+  requireNotStalled,
   stallNotice,
   resumeRun,
   retroIssueBody,
@@ -303,12 +304,13 @@ export default function softwareFactory(pi: ExtensionAPI) {
         if (!existsSync(statePath(ws, feature))) throw new Error(`No run named "${feature}".`);
         forgetRun(ws, feature);
         const current = readRun(ws, feature);
-        if (current.status === 'paused' || current.status === 'stalled') {
-          const stalled = activeSlice(current);
+        const stalled = activeSlice(current);
+        if (stalled?.stalled || current.status === 'paused' || current.status === 'stalled') {
           const body = stalled?.stalled
             ? `In "${feature}", slice ${stalled.id} "${stalled.title}" used up its fix budget of ${stalled.roundLimit} rounds. Raise the fix budget by ${ws.config.maxRounds} rounds and resume?`
             : `Resume "${feature}" (${current.status})?`;
           if (!(await confirm(ctx, 'Resume software factory run', body))) {
+            if (stalled?.stalled && current.status !== 'stalled') await withRun(ws, feature, latest => resolveStall(ws, latest, 'pause'));
             throw new Error(stalled?.stalled ? `The user kept "${feature}" stalled. ${stallNotice(current, stalled)}` : `The user kept "${feature}" ${current.status}.`);
           }
         }
@@ -582,7 +584,9 @@ export default function softwareFactory(pi: ExtensionAPI) {
     schema: reopenSchema,
     async run(params, ws, ctx) {
       const feature = activeFeature(ws);
-      const target = readRun(ws, feature).slices.find(slice => slice.id === params.slice);
+      const current = readRun(ws, feature);
+      requireNotStalled(current);
+      const target = current.slices.find(slice => slice.id === params.slice);
       // Anything but a done slice is refused by reopenSlice, without a dialog.
       if (target?.status === 'done') {
         const body = `${params.reason}\n\nThe active slice goes back to pending with its commits. When slice ${target.id} is done again, every later slice branch is rebased onto the fix and earns its checks and review again. The run needs a new retro before /factory submit.`;

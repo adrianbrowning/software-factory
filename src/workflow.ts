@@ -47,7 +47,7 @@ export function requireActive(run: Run) {
       'No active slice. Call factory_next. To change a slice that is done, ask the user: factory_reopen fixes a bug in that slice, factory_follow_up adds a slice on top of the stack.',
     );
   }
-  if (slice.stalled) throw new Error(stallNotice(run, slice));
+  requireNotStalled(run);
   return slice;
 }
 
@@ -472,6 +472,7 @@ function pushSlice(ws: Workspace, run: Run, slice: Slice) {
 
 /** Validates a follow-up slice for `addFollowUp` without changing the run, so a dialog only offers one that can be added. */
 export function planFollowUp(ws: Workspace, run: Run, proposed: Omit<SliceInput, 'blockedBy'>) {
+  requireNotStalled(run);
   if (run.status !== 'running' && run.status !== 'done') throw new Error(`Run is ${run.status}; only a running or done run takes a follow-up slice.`);
   return planAppend(ws, run, proposed);
 }
@@ -551,6 +552,7 @@ export async function restartSlice(ws: Workspace, run: Run, slice: Slice) {
  * listed in the fix file: they are part of this fix round and get its checks and review.
  */
 export async function reopenSlice(ws: Workspace, run: Run, id: string, reason: string) {
+  requireNotStalled(run);
   if (run.status !== 'running' && run.status !== 'done') throw new Error(`Run is ${run.status}; only a running or done run reopens a slice.`);
   const slice = run.slices.find(candidate => candidate.id === id);
   if (slice === undefined) throw new Error(`No slice ${id}. Slices: ${run.slices.map(candidate => candidate.id).join(', ')}.`);
@@ -558,7 +560,6 @@ export async function reopenSlice(ws: Workspace, run: Run, id: string, reason: s
   const reopened = run.slices.find(candidate => candidate.doneSha !== undefined);
   if (reopened !== undefined) throw new Error(`Slice ${reopened.id} is already reopened. Complete it before you reopen another slice.`);
   const active = activeSlice(run);
-  if (active?.stalled) throw new Error(stallNotice(run, active));
   await requireClean(ws.root, `Cannot reopen slice ${id}`);
   const doneSha = (await git(ws.root, 'rev-parse', '--verify', `refs/heads/${slice.branch}^{commit}`)).trim();
   const green = greenCommit(slice);
@@ -599,6 +600,12 @@ export function stallNotice(run: Run, slice: Slice) {
   return `The fix budget of slice ${slice.id} "${slice.title}" is used up after ${slice.roundLimit} fix rounds. Tell the user that /factory resume ${run.feature} asks whether to raise it and resume.`;
 }
 
+/** Throws the stall notice when the active slice used up its fix budget. */
+export function requireNotStalled(run: Run) {
+  const slice = activeSlice(run);
+  if (slice?.stalled) throw new Error(stallNotice(run, slice));
+}
+
 /** Only a running run pauses; intake, stalled, and done runs keep their status. */
 export function pauseRun(run: Run, reason: string) {
   if (run.status !== 'running') throw new Error(`Run "${run.feature}" is ${run.status}; only a running run pauses.`);
@@ -615,10 +622,8 @@ export function pauseRun(run: Run, reason: string) {
 export async function resumeRun(ws: Workspace, run: Run, sessionId: string) {
   const filled = run.checks.length === 0;
   if (filled) run.checks = checksSchema.parse(repoChecks(ws));
-  if (run.status === 'paused' || run.status === 'stalled') {
-    run.status = 'running';
-    resolveStall(ws, run, 'continue');
-  }
+  if (activeSlice(run)?.stalled) resolveStall(ws, run, 'continue');
+  if (run.status === 'paused' || run.status === 'stalled') run.status = 'running';
   const slice = activeSlice(run);
   if (slice !== undefined && hasPass(slice)) {
     if (filled || standingChecks(slice, await head(ws.root)) === undefined) dropPass(slice, 'checks');

@@ -248,4 +248,36 @@ describe('used-up fix budget', () => {
     const resumed = readRun(ws, 'demo');
     assert.deepEqual([resumed.status, resumed.slices[0]?.stalled, resumed.slices[0]?.roundLimit], ['running', false, 2]);
   });
+
+  it('refuses factory_reopen on a paused stall with the stall notice, before any dialog', async () => {
+    const tools = load();
+    const run = (name: string, params: unknown, context: unknown) => tools.get(name)?.execute('id', params, undefined, undefined, context) ?? Promise.reject(new Error('no tool'));
+    const { root } = await greenWithObservation(dir => run('factory_start', { resume: 'demo' }, caller(dir, {})));
+    await run('factory_fix', { observations: ['thermo-naming'], reason: 'tidy' }, caller(root, { confirm: async () => true, select: async () => 'Pause the run' }));
+
+    let dialogs = 0;
+    await assert.rejects(
+      run('factory_reopen', { reason: 'bug', slice: '01' }, caller(root, { confirm: async () => (dialogs++, true) })),
+      /fix budget of slice 01 "Feature" is used up.*\/factory resume demo asks whether to raise it/,
+    );
+    assert.equal(dialogs, 0);
+  });
+
+  it('asks to raise the budget on resume when a stall was interrupted before the user chose', async () => {
+    const tools = load();
+    const run = (name: string, params: unknown, context: unknown) => tools.get(name)?.execute('id', params, undefined, undefined, context) ?? Promise.reject(new Error('no tool'));
+    const { root, ws } = await greenWithObservation(dir => run('factory_start', { resume: 'demo' }, caller(dir, {})));
+    await assert.rejects(run('factory_fix', { observations: ['thermo-naming'], reason: 'tidy' }, caller(root, { confirm: async () => true, select: async () => { throw new Error('omp exited'); } })));
+    assert.deepEqual([readRun(ws, 'demo').status, readRun(ws, 'demo').slices[0]?.stalled], ['running', true]);
+
+    const asked: string[] = [];
+    const ask = (answer: boolean) => caller(root, { confirm: async (_title, body) => (asked.push(body), answer) });
+    await assert.rejects(run('factory_start', { resume: 'demo' }, ask(false)), /kept "demo" stalled/);
+    assert.match(asked[0] ?? '', /Raise the fix budget by 1 rounds and resume\?/);
+    assert.equal(readRun(ws, 'demo').status, 'stalled');
+
+    await run('factory_start', { resume: 'demo' }, ask(true));
+    const resumed = readRun(ws, 'demo');
+    assert.deepEqual([resumed.status, resumed.slices[0]?.stalled, resumed.slices[0]?.roundLimit], ['running', false, 2]);
+  });
 });
