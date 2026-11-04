@@ -44,10 +44,10 @@ after(() => {
 
 /** A workspace on a temp repository, removed when the `using` scope that holds it ends, or else when the test file ends. */
 export function workspace(overrides: Partial<FactoryConfig> = {}): Workspace & Disposable {
-  const root = initRepo(mkdtempSync(join(tmpdir(), 'factory-')), { 'README.md': 'base\n' });
-  roots.push(root);
+  const repo = tempRepo('factory-', { 'README.md': 'base\n' });
+  roots.push(repo.root);
   return {
-    [Symbol.dispose]: () => rmSync(root, { force: true, recursive: true }),
+    ...repo,
     config: {
       baseRef: 'main',
       branchPrefix: 'factory',
@@ -62,7 +62,6 @@ export function workspace(overrides: Partial<FactoryConfig> = {}): Workspace & D
       trunk: 'main',
       ...overrides,
     },
-    root,
   };
 }
 
