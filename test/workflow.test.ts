@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, it } from 'node:test';
+import { afterEach, describe, it } from 'node:test';
 import { forgetRun, greenCommit, readRun, REVIEW_DOMAINS, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, REVIEW_REFERENCE_DIR, runChecks, startReview } from '../src/review.ts';
 import {
@@ -21,8 +21,8 @@ import {
   reopenSlice,
   resolveBase,
   resumeRun,
-  submitStack,
 } from '../src/workflow.ts';
+import { planSubmit, submitStack } from '../src/submit.ts';
 import { checkRuns, commit, countedCheck, green, newRun, review, roots, sh, slice, start, step, workspace } from './helpers.ts';
 
 describe('base resolution', () => {
@@ -726,14 +726,19 @@ describe('submit', () => {
   }
 
   const NO_STACK = { code: 2, stderr: '✗ no local or remote stack found for "$3"' };
+  const PATH = process.env.PATH;
+  afterEach(() => {
+    process.env.PATH = PATH;
+  });
 
   /**
-   * Puts a fake `gh` first on PATH; it records each call and serves `stack view --json` from `stack` (a raw string is
-   * served as is). With a stack, `stack checkout <branch>` switches to that branch, as gh-stack does; `stack init`
-   * switches to its last (top) branch. Without a stack, `stack checkout` fails with `checkoutFailure` (by default
-   * gh-stack's real "no stack" exit and stderr). The `fail` subcommand (such as `stack submit`) exits 1.
+   * Puts a fake `gh` first on PATH until the test ends; it records each call and serves `stack view --json` from
+   * `stack` (a raw string is served as is). With a stack, `stack checkout <branch>` switches to that branch, as gh-stack
+   * does; `stack init` switches to its last (top) branch. Without a stack, `stack checkout` fails with
+   * `checkoutFailure` (by default gh-stack's real "no stack" exit and stderr). The `fail` subcommand (such as
+   * `stack submit`) runs `onFail` and exits 1.
    */
-  function fakeGh(stack: string[] | string | undefined, checkoutFailure = NO_STACK, fail = '') {
+  function fakeGh(stack: string[] | string | undefined, checkoutFailure = NO_STACK, fail = '', onFail = ':') {
     const dir = mkdtempSync(join(tmpdir(), 'factory-gh-'));
     roots.push(dir);
     const log = join(dir, 'calls');
@@ -749,20 +754,14 @@ describe('submit', () => {
       `if [ "$1 $2" = "stack checkout" ]; then git switch -q "$3" || exit 1; fi`,
       `if [ "$1 $2" = "stack view" ]; then cat '${view}' || exit 1; fi`,
       `if [ "$1 $2" = "stack init" ]; then eval "git switch -q \\"\\\${$#}\\"" || exit 1; fi`,
-      `if [ "$1 $2" = '${fail}' ]; then exit 1; fi`,
+      `if [ "$1 $2" = '${fail}' ]; then ${onFail}; exit 1; fi`,
       'exit 0',
       '',
     ].join('\n');
     writeFileSync(join(dir, 'gh'), script);
     chmodSync(join(dir, 'gh'), 0o755);
-    const path = process.env.PATH;
-    process.env.PATH = `${dir}:${path}`;
-    return {
-      calls: () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : []),
-      restore: () => {
-        process.env.PATH = path;
-      },
-    };
+    process.env.PATH = `${dir}:${process.env.PATH}`;
+    return { calls: () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : []) };
   }
 
   it('adopts every slice branch with gh stack init on a first submit', async () => {
@@ -770,11 +769,7 @@ describe('submit', () => {
     const branches = await doneRun(ws, 3);
     const gh = fakeGh(undefined);
     const steps: string[] = [];
-    try {
-      await step(ws, run => submitStack(ws, run, message => steps.push(message)));
-    } finally {
-      gh.restore();
-    }
+    await step(ws, run => submitStack(ws, run, message => steps.push(message)));
     assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, `stack init --base main ${branches.join(' ')}`, 'stack submit --auto']);
     assert.ok(steps.includes('adopting 3 branches into a gh stack onto main'), steps.join('\n'));
   });
@@ -783,11 +778,7 @@ describe('submit', () => {
     const ws = workspace();
     const branches = await doneRun(ws, 2);
     const gh = fakeGh(undefined, { code: 4, stderr: '✗ failed to list stacks: HTTP 401: Bad credentials' });
-    try {
-      await assert.rejects(step(ws, run => submitStack(ws, run)), /Bad credentials/);
-    } finally {
-      gh.restore();
-    }
+    await assert.rejects(step(ws, run => submitStack(ws, run)), /Bad credentials/);
     assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`]);
   });
 
@@ -796,13 +787,26 @@ describe('submit', () => {
     const branches = await doneRun(ws, 6);
     const gh = fakeGh(branches.slice(0, 5));
     const steps: string[] = [];
-    try {
-      await step(ws, run => submitStack(ws, run, message => steps.push(message)));
-    } finally {
-      gh.restore();
-    }
+    await step(ws, run => submitStack(ws, run, message => steps.push(message)));
     assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, 'stack view --json', 'stack top', `stack add ${branches[5]}`, 'stack submit --auto']);
     assert.ok(steps.includes(`adding 1 branch to the existing gh stack: ${branches[5]}`), steps.join('\n'));
+  });
+
+  it('adds every missing slice in run order on a re-submit', async () => {
+    const ws = workspace();
+    const branches = await doneRun(ws, 3);
+    const gh = fakeGh(branches.slice(0, 1));
+    const steps: string[] = [];
+    await step(ws, run => submitStack(ws, run, message => steps.push(message)));
+    assert.deepEqual(gh.calls(), [
+      `stack checkout ${branches[0]}`,
+      'stack view --json',
+      'stack top',
+      `stack add ${branches[1]}`,
+      `stack add ${branches[2]}`,
+      'stack submit --auto',
+    ]);
+    assert.ok(steps.includes(`adding 2 branches to the existing gh stack: ${branches[1]}, ${branches[2]}`), steps.join('\n'));
   });
 
   it('only submits when the existing stack holds every slice branch', async () => {
@@ -810,11 +814,7 @@ describe('submit', () => {
     const branches = await doneRun(ws, 2);
     const gh = fakeGh(branches);
     const steps: string[] = [];
-    try {
-      await step(ws, run => submitStack(ws, run, message => steps.push(message)));
-    } finally {
-      gh.restore();
-    }
+    await step(ws, run => submitStack(ws, run, message => steps.push(message)));
     assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, 'stack view --json', 'stack submit --auto']);
     assert.ok(steps.includes('the gh stack already holds all 2 slice branches'), steps.join('\n'));
   });
@@ -830,14 +830,21 @@ describe('submit', () => {
       [[one, three, two], new RegExp(`out of run order: ${three}, ${two}`)],
     ] as const) {
       const gh = fakeGh([...stack]);
-      try {
-        await assert.rejects(step(ws, run => submitStack(ws, run)), message);
-      } finally {
-        gh.restore();
-      }
+      await assert.rejects(step(ws, run => submitStack(ws, run)), message);
       assert.deepEqual(gh.calls(), [`stack checkout ${one}`, 'stack view --json']);
       assert.equal(sh(ws.root, 'branch', '--show-current'), before, 'a refused submit checks out the branch it started on');
     }
+  });
+
+  it('returns to a detached HEAD at the same commit after a refused submit', async () => {
+    const ws = workspace();
+    const [one = ''] = await doneRun(ws, 3);
+    sh(ws.root, 'switch', '-q', '--detach', 'HEAD');
+    const sha = sh(ws.root, 'rev-parse', 'HEAD');
+    fakeGh([one, 'stranger']);
+    await assert.rejects(step(ws, run => submitStack(ws, run)), /outside the run/);
+    assert.equal(sh(ws.root, 'branch', '--show-current'), '');
+    assert.equal(sh(ws.root, 'rev-parse', 'HEAD'), sha);
   });
 
   it('checks out the branch it started on when the gh stack view fails or is malformed', async () => {
@@ -847,11 +854,7 @@ describe('submit', () => {
     assert.notEqual(before, branches[0], 'the submit starts off slice 01, so a checkout left behind shows');
     for (const view of ['not json', JSON.stringify({ stacks: [] })]) {
       const gh = fakeGh(view);
-      try {
-        await assert.rejects(step(ws, run => submitStack(ws, run)));
-      } finally {
-        gh.restore();
-      }
+      await assert.rejects(step(ws, run => submitStack(ws, run)));
       assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, 'stack view --json']);
       assert.equal(sh(ws.root, 'branch', '--show-current'), before);
     }
@@ -864,11 +867,7 @@ describe('submit', () => {
     assert.notEqual(before, branches[0], 'the submit starts off slice 01, so a checkout left behind shows');
     for (const fail of ['stack add', 'stack submit']) {
       const gh = fakeGh(branches.slice(0, 2), NO_STACK, fail);
-      try {
-        await assert.rejects(step(ws, run => submitStack(ws, run)));
-      } finally {
-        gh.restore();
-      }
+      await assert.rejects(step(ws, run => submitStack(ws, run)));
       assert.equal(gh.calls().at(-1)?.startsWith(fail), true, gh.calls().join('\n'));
       assert.equal(sh(ws.root, 'branch', '--show-current'), before);
     }
@@ -879,13 +878,40 @@ describe('submit', () => {
     const branches = await doneRun(ws, 2);
     sh(ws.root, 'switch', '-q', 'main');
     const gh = fakeGh(undefined, NO_STACK, 'stack init');
-    try {
-      await assert.rejects(step(ws, run => submitStack(ws, run)));
-    } finally {
-      gh.restore();
-    }
+    await assert.rejects(step(ws, run => submitStack(ws, run)));
     assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, `stack init --base main ${branches.join(' ')}`]);
     assert.equal(sh(ws.root, 'branch', '--show-current'), 'main');
+  });
+
+  it('keeps the gh stack error when switching back to the starting branch also fails', async () => {
+    const ws = workspace();
+    await doneRun(ws, 2);
+    sh(ws.root, 'switch', '-q', 'main');
+    // s2.txt exists only on slice 02; a local change to it blocks the switch back to main.
+    fakeGh(undefined, NO_STACK, 'stack init', 'echo changed > s2.txt; echo "init exploded" >&2');
+    await assert.rejects(step(ws, run => submitStack(ws, run)), /init exploded[\s\S]*Switching back to main also failed/);
+  });
+});
+
+describe('planSubmit', () => {
+  const branches = ['b1', 'b2', 'b3'];
+  it('adopts every branch when slice 01 is in no stack', () => {
+    assert.deepEqual(planSubmit(undefined, branches), { kind: 'init' });
+  });
+  it('adds the branches a prefix stack lacks', () => {
+    assert.deepEqual(planSubmit(['b1'], branches), { kind: 'add', missing: ['b2', 'b3'] });
+  });
+  it('adds nothing when the stack holds every branch', () => {
+    assert.deepEqual(planSubmit(['b1', 'b2', 'b3'], branches), { kind: 'add', missing: [] });
+  });
+  it('refuses a stack with a branch outside the run', () => {
+    assert.deepEqual(planSubmit(['b1', 'x'], branches), { kind: 'refuse', outside: ['x'], unordered: [] });
+  });
+  it('refuses a stack holding run branches out of order', () => {
+    assert.deepEqual(planSubmit(['b1', 'b3', 'b2'], branches), { kind: 'refuse', outside: [], unordered: ['b3', 'b2'] });
+  });
+  it('refuses a stack with a stranger below slice 01', () => {
+    assert.deepEqual(planSubmit(['x', 'b1'], branches), { kind: 'refuse', outside: ['x'], unordered: ['b1'] });
   });
 });
 

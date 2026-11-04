@@ -49,6 +49,9 @@ only when you run `/factory submit`, and it never merges. A run planned with `la
 fast-forwards that existing local branch to the top slice, without a checkout or a merge commit.
 While `/factory submit` runs, it shows each step as a notification and in the status line, for example the
 `gh stack submit` push, which can take a few minutes.
+A second `/factory submit`, for example after a follow-up slice, adds the new slice branches to the existing gh stack
+with `gh stack add` and submits again. It refuses, and changes nothing, when that stack holds branches outside the run
+or holds the run's branches in another order; the error names those branches.
 
 ## Install
 
