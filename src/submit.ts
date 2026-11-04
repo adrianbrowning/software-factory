@@ -97,6 +97,7 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
     }
     progress(`pushing ${run.slices.length} branches and opening draft PRs (gh stack submit; this can take a few minutes)`);
     output = await gh(ws.root, 'stack', 'submit', '--auto');
+    await setTitles(ws.root, run, progress);
   } catch (caught) {
     const error = added.length === 0
       ? caught
@@ -113,7 +114,6 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
     }
     throw error;
   }
-  await setTitles(ws.root, run, progress);
   addEvent(run, 'submit', 'stack submitted as draft PRs');
   return output;
 }

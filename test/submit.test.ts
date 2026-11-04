@@ -243,9 +243,11 @@ describe('submit', () => {
   it('fails naming each slice branch that has no PR after gh stack submit', async t => {
     const ws = workspace();
     const branches = await doneRun(ws, 3);
+    const before = sh(ws.root, 'branch', '--show-current');
     const gh = fakeGh(t, { stack: undefined, submitted: [{ name: branches[0] ?? '', pr: 101 }, { name: branches[1] ?? '' }, { name: branches[2] ?? '', pr: 103 }] });
     await assert.rejects(step(ws, run => submitStack(ws, run)), new RegExp(`no PR.*${branches[1]}`));
     assert.deepEqual(gh.calls().filter(call => call.startsWith('api')), [], 'no title is set when a slice has no PR');
+    assert.equal(sh(ws.root, 'branch', '--show-current'), before, 'a failed title step switches back to the starting branch');
   });
 
   it('refuses a stack with branches outside the run or out of run order, and changes nothing', async t => {
