@@ -451,7 +451,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         : '';
       if (result.passed) {
         const byPath = result.pathSkipped.length === 0 ? '' : `\nPath rules skip: ${result.pathSkipped.map(entry => `${entry.domain} (${entry.reason})`).join('; ')}. Pass a domain in factory_review_start keep when a changed file holds its subject after all.`;
-        const passed = result.reused === undefined ? 'All checks passed.' : `All checks already passed on ${result.reused}; reusing their results, no check ran.`;
+        const passed = result.reused ? `All checks already passed on ${result.sha}; reusing their results, no check ran.` : 'All checks passed.';
         return reply(`${passed}\n${summary}\n${commits}${unchanged}\nChanged files:\n${result.changed}${byPath}\nNext: ${nextAction(run)}`);
       }
       const stall = result.stalled ? await decideStall(ctx, ws, feature) : '';
