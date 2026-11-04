@@ -40,7 +40,7 @@ flowchart TD
 | --- | --- | --- |
 | Gates: checks, review verdict, round limits, approvals, branch/HEAD checks | TypeScript tools (`src/`) | Deterministic: they decide from git and from what the tools recorded, not from what an agent says |
 | Questions, slicing, deciding what to spawn | Orchestrator (main session) following `skills/software-factory/SKILL.md` | Judgement |
-| Implementation and fixes | `factory-implementer` subagent, `tdd` skill autoloaded, own advisor (`advisor: true`; override with `task.agentAdvisor.factory-implementer: "off"`) | Fresh context per slice and per fix; the advisor watches the session under the most context pressure |
+| Implementation and fixes | `factory-implementer` subagent, `tdd` skill autoloaded, own advisor (`advisor: true`; override with `task.agentAdvisor.factory-implementer: "off"`) | Fresh context per slice and per fix; the advisor watches the session under the most context pressure. The implementer submits its final report (commits, fix file items, behaviors, open) with `factory_implementer_report`. The factory keeps the latest report per slice and shows it in the `factory_checks` reply after the `Slice commits` list, or says that none was submitted, so a follow-up turn such as an advisor note cannot lose it |
 | Review | Up to 11 `factory-reviewer` subagents (one per cc-pr-review domain) + `factory-review-validator` | Port of `cc-pr-review` onto omp's `task` tool. The factory skips `react-ts`, `test-validity`, and `devops` when no changed path could hold their subject (the orchestrator can keep one back); the orchestrator skips other domains the diff gives nothing to review, each with a reason; `bug` and `scope` always review, and `testing` does too for a slice with test seams. The validator, with a clean context, keeps a blocking (`critical`/`high`) finding only when it is a gap in correctness or the ticket's requirements. A supported blocking finding that fails that bar (a speculative abstraction, defensive code for an impossible state, a test for a case that cannot happen) is downgraded to an observation, not lost. A finding that shows the code breaks a recorded decision blocks: the reviewer cites the decision number and the validator cannot downgrade it, and the validator escalates an observation that shows such a conflict to `high`. The tools enforce cited decisions only; an uncited conflict depends on the reviewer and validator seeing it |
 
 User gates: questions at intake, slice-plan approval, seam additions, re-slice approval, stalled fix loops, fixing
@@ -258,7 +258,8 @@ task:
 ## Run state
 
 `<scratchDir>/<feature>/` holds `state.json` (schema-validated on every read), `issue.md`, one ticket per slice
-under `issues/`, fix files under `fixes/`, review data, per-domain findings, validation and `review.json` under
+under `issues/`, fix files under `fixes/`, the latest implementer report per slice under `reports/<slice>.md`, review
+data, per-domain findings, validation and `review.json` under
 `reviews/<slice>-r<n>/`, and `retro.md`. The review data file lists the ticket, each check's result and duration on
 the reviewed commit, the blocking findings of the previous round (after a fix), the diff, and the changed files.
 Each reviewer writes only its own domain file, so parallel reviewers never share a write. The submit tool rejects a
@@ -281,11 +282,12 @@ The gates stop model mistakes and limit what a misled agent can do. They are not
 - Reviewers and the validator have read-only tools plus their one submit tool. Each domain reviewer and the validator
   may replace its submission once (the validator until the review is recorded), and the tool records a hash of what
   it wrote; an edited findings or validation file fails the review.
-- The implementer has `read`, `write`, `edit`, `grep`, `glob`, `bash`, and `lsp`, and runs on your machine with your
-  credentials. Within one omp process, the tools reject a `state.json` changed outside them. After a restart,
-  `/factory resume` trusts the file on disk: the active slice keeps its passed checks and green review only while HEAD
-  is still the commit they recorded and the run's check commands are the ones that passed, and an open review starts
-  over. `/factory checks` on that same commit reuses the stored results instead of running the checks again.
+- The implementer has `read`, `write`, `edit`, `grep`, `glob`, `bash`, and `lsp`, plus `factory_implementer_report` for
+  its final report, and runs on your machine with your credentials. Within one omp process, the tools reject a
+  `state.json` changed outside them. After a restart, `/factory resume` trusts the file on disk: the active slice keeps
+  its passed checks and green review only while HEAD is still the commit they recorded and the run's check commands
+  are the ones that passed, and an open review starts over. `/factory checks` on that same commit reuses the stored
+  results instead of running the checks again.
 - Issue text and comments are marked as untrusted in `issue.md` and in the review data. `factory_start` loads GitHub
   issues itself with `gh` and asks you before the run uses the title, text, or comments of GitHub users who are not
   collaborators. Unlike the earlier Sandcastle drop-in, nothing runs in a container.

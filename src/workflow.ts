@@ -701,6 +701,47 @@ export async function resumeRun(ws: Workspace, run: Run, sessionId: string) {
   addEvent(run, 'resume', `session ${sessionId}`);
 }
 
+const reportItem = z.string().min(1);
+
+/** The implementer's final report. The factory keeps it, so a follow-up turn (an advisor note) cannot lose it. */
+export const implementerReportSchema = z.object({
+  behaviors: z.array(reportItem).describe('Each test name → the behavior it proves; empty when you wrote no test'),
+  commits: z.array(reportItem).describe('Each commit you made, as `<short sha> <subject>`; empty when you made none'),
+  fixItems: z
+    .array(reportItem)
+    .optional()
+    .describe('Fix mode only: each fix file item by its id or check name, with `fixed in <sha>`, `already fixed`, or `not a defect: <why>`'),
+  open: z.array(reportItem).describe('Anything unfinished, and any stop report (NEEDS SEAM, SLICE TOO BIG, MISSING DEPENDENCY); empty when nothing is open'),
+});
+export type ImplementerReport = z.infer<typeof implementerReportSchema>;
+
+const reportPath = (ws: Workspace, run: Run, slice: Slice) => join(runDir(ws, run.feature), 'reports', `${slice.id}.md`);
+
+function renderReport(report: ImplementerReport) {
+  const section = (title: string, items: string[]) => [`${title}:`, ...(items.length === 0 ? ['- none'] : items.map(item => `- ${item}`))];
+  return [
+    'Implementer report:',
+    ...section('Commits', report.commits),
+    ...(report.fixItems === undefined ? [] : section('Fix file items', report.fixItems)),
+    ...section('Behaviors', report.behaviors),
+    ...section('Open', report.open),
+  ].join('\n');
+}
+
+/** Stores the implementer's report for the active slice in the run dir; a later call replaces it. */
+export function submitImplementerReport(ws: Workspace, run: Run, report: ImplementerReport) {
+  const path = reportPath(ws, run, requireActive(run));
+  const replaced = existsSync(path);
+  writeAtomic(path, `${renderReport(report)}\n`);
+  return { path, replaced };
+}
+
+/** The slice's latest stored implementer report, or a line saying none was submitted. */
+export function storedReport(ws: Workspace, run: Run, slice: Slice) {
+  const path = reportPath(ws, run, slice);
+  if (!existsSync(path)) return `No implementer report was submitted for slice ${slice.id} (factory_implementer_report).`;
+  return readFileSync(path, 'utf8').trimEnd();
+}
 export const RETRO_CATEGORIES = [
   'navigation',
   'automated-checks',

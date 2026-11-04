@@ -51,12 +51,20 @@ describe('tool registration', () => {
     assert.deepEqual(load().get('factory_review_start')?.parameters.required, ['skip']);
   });
 
+  it('advertises the implementer report fields, fix file items optional', () => {
+    const report = load().get('factory_implementer_report');
+    assert.deepEqual(Object.keys(report?.parameters.properties ?? {}).toSorted(), ['behaviors', 'commits', 'fixItems', 'open']);
+    assert.deepEqual(report?.parameters.required?.toSorted(), ['behaviors', 'commits', 'open']);
+  });
+
   it('lets only the named agent call each tool', async () => {
     const tools = load();
     const call = (name: string, caller: TestContext) => tools.get(name)?.execute('id', {}, undefined, undefined, caller);
     await assert.rejects(call('factory_review_submit', ctx('sub', 'factory-implementer')) ?? Promise.resolve(), /Only the factory-reviewer agent/);
     await assert.rejects(call('factory_review_validate', ctx('sub', 'factory-reviewer')) ?? Promise.resolve(), /Only the factory-review-validator agent/);
     await assert.rejects(call('factory_checks', ctx('sub', 'factory-implementer')) ?? Promise.resolve(), /Only the main agent/);
+    await assert.rejects(call('factory_implementer_report', ctx('main', 'main')) ?? Promise.resolve(), /Only the factory-implementer agent/);
+    await assert.rejects(call('factory_implementer_report', ctx('sub', 'factory-reviewer')) ?? Promise.resolve(), /Only the factory-implementer agent/);
   });
 });
 

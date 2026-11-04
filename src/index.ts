@@ -45,6 +45,7 @@ import {
   type FiledIssues,
   fileSource,
   githubSource,
+  implementerReportSchema,
   nextAction,
   nextSlice,
   parseRetro,
@@ -69,6 +70,7 @@ import {
   sourceInputSchema,
   type SourceInput,
   startRun,
+  submitImplementerReport,
   summarize,
 } from './workflow.ts';
 
@@ -97,7 +99,7 @@ const ORCHESTRATION_TOOLS = [
 /** Stop attempts in a row without new run events; the last one pauses the run instead of blocking. */
 export const MAX_IDLE_STOP_ATTEMPTS = 3;
 
-type Caller = 'main' | typeof REVIEWER | typeof VALIDATOR;
+type Caller = 'main' | typeof IMPLEMENTER | typeof REVIEWER | typeof VALIDATOR;
 
 const startSchema = z.object({
   feature: z.string().optional().describe('kebab-case run name for a new run'),
@@ -482,17 +484,30 @@ export default function softwareFactory(pi: ExtensionAPI) {
       const result = await withRun(ws, feature, run => runChecks(ws, run, signal));
       const summary = result.summary.join('\n');
       const run = readRun(ws, feature);
-      const commits = `Slice commits:\n${result.commits}`;
+      const work = `Slice commits:\n${result.commits}\n${result.report}`;
       const unchanged = result.unchanged
         ? '\nNo new commits since the fix file. The implementer report should explain, for each item, why no change was needed.'
         : '';
       if (result.passed) {
         const byPath = result.pathSkipped.length === 0 ? '' : `\nPath rules skip: ${result.pathSkipped.map(entry => `${entry.domain} (${entry.reason})`).join('; ')}. Pass a domain in factory_review_start keep when a changed file holds its subject after all.`;
         const passed = result.reused ? `All checks already passed on ${result.sha}; reusing their results, no check ran.` : 'All checks passed.';
-        return reply(`${passed}\n${summary}\n${commits}${unchanged}\nChanged files:\n${result.changed}${byPath}\nNext: ${nextAction(run)}`);
+        return reply(`${passed}\n${summary}\n${work}${unchanged}\nChanged files:\n${result.changed}${byPath}\nNext: ${nextAction(run)}`);
       }
       const stall = result.stalled ? await decideStall(ctx, ws, feature) : '';
-      return reply(`Checks failed.\n${summary}\n${commits}${unchanged}\nFix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
+      return reply(`Checks failed.\n${summary}\n${work}${unchanged}\nFix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
+    },
+  });
+
+  tool({
+    caller: IMPLEMENTER,
+    description:
+      'Submit your final report for the active slice: commits, fix file items (fix mode only), behaviors, and open items. Call it before your final message, and again after any follow-up turn that changes the report; each call replaces the stored report. The orchestrator reads it in the factory_checks reply.',
+    label: 'Factory: implementer report',
+    name: 'factory_implementer_report',
+    schema: implementerReportSchema,
+    async run(params, ws) {
+      const result = await withRun(ws, activeFeature(ws), run => submitImplementerReport(ws, run, params));
+      return reply(`${result.replaced ? 'Replaced the stored report' : 'Stored the report'}: ${result.path}`);
     },
   });
 

@@ -20,6 +20,7 @@ import {
   reopenSlice,
   resolveBase,
   resumeRun,
+  submitImplementerReport,
 } from '../src/workflow.ts';
 import { checkRuns, commit, countedCheck, green, newRun, review, sh, slice, start, step, workspace } from './helpers.ts';
 
@@ -157,6 +158,44 @@ describe('planSlices', () => {
   });
 });
 
+describe('implementer report', () => {
+  it('stores the latest report for the active slice and shows it in the checks result, or that none was submitted', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature'), slice('Next', ['Feature'])]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'work.txt');
+    const red = await step(ws, run => runChecks(ws, run));
+    assert.equal(red.report, 'No implementer report was submitted for slice 01 (factory_implementer_report).');
+
+    const first = await step(ws, run => submitImplementerReport(ws, run, { behaviors: ['old test → old behavior'], commits: ['abc1234 01: first try'], open: [] }));
+    assert.deepEqual([first.path, first.replaced], [join(ws.root, '.scratch', 'demo', 'reports', '01.md'), false]);
+    const second = await step(ws, run =>
+      submitImplementerReport(ws, run, {
+        behaviors: ['writes ok → checks pass'],
+        commits: ['abc1234 01: first try', 'def5678 01: add ok'],
+        fixItems: ['test -f ok: fixed in def5678'],
+        open: [],
+      }),
+    );
+    assert.deepEqual([second.path, second.replaced], [first.path, true]);
+    commit(ws, 'ok');
+    const passed = await step(ws, run => runChecks(ws, run));
+    assert.equal(
+      passed.report,
+      'Implementer report:\nCommits:\n- abc1234 01: first try\n- def5678 01: add ok\nFix file items:\n- test -f ok: fixed in def5678\nBehaviors:\n- writes ok → checks pass\nOpen:\n- none',
+    );
+
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'next.txt');
+    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [], open: ['SLICE TOO BIG: the rest'] }));
+    assert.equal(
+      (await step(ws, run => runChecks(ws, run))).report,
+      'Implementer report:\nCommits:\n- none\nBehaviors:\n- none\nOpen:\n- SLICE TOO BIG: the rest',
+    );
+  });
+});
 
 describe('re-slice', () => {
   it('replaces the active slice with children on its branch and remaps later blockers', async () => {
