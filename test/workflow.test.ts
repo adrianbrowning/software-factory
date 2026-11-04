@@ -729,9 +729,9 @@ describe('submit', () => {
 
   /**
    * Puts a fake `gh` first on PATH; it records each call and serves `stack view --json` from `stack` (a raw string is
-   * served as is). With a stack, `stack checkout <branch>` switches to that branch, as gh-stack does. Without a stack,
-   * `stack checkout` fails with `checkoutFailure` (by default gh-stack's real "no stack" exit and stderr). The `fail`
-   * subcommand (such as `stack submit`) exits 1.
+   * served as is). With a stack, `stack checkout <branch>` switches to that branch, as gh-stack does; `stack init`
+   * switches to its last (top) branch. Without a stack, `stack checkout` fails with `checkoutFailure` (by default
+   * gh-stack's real "no stack" exit and stderr). The `fail` subcommand (such as `stack submit`) exits 1.
    */
   function fakeGh(stack: string[] | string | undefined, checkoutFailure = NO_STACK, fail = '') {
     const dir = mkdtempSync(join(tmpdir(), 'factory-gh-'));
@@ -748,6 +748,7 @@ describe('submit', () => {
       `if [ "$1 $2" = "stack checkout" ] && [ ! -f '${view}' ]; then echo "${checkoutFailure.stderr}" >&2; exit ${checkoutFailure.code}; fi`,
       `if [ "$1 $2" = "stack checkout" ]; then git switch -q "$3" || exit 1; fi`,
       `if [ "$1 $2" = "stack view" ]; then cat '${view}' || exit 1; fi`,
+      `if [ "$1 $2" = "stack init" ]; then eval "git switch -q \\"\\\${$#}\\"" || exit 1; fi`,
       `if [ "$1 $2" = '${fail}' ]; then exit 1; fi`,
       'exit 0',
       '',
@@ -871,6 +872,20 @@ describe('submit', () => {
       assert.equal(gh.calls().at(-1)?.startsWith(fail), true, gh.calls().join('\n'));
       assert.equal(sh(ws.root, 'branch', '--show-current'), before);
     }
+  });
+
+  it('checks out the branch it started on when gh stack init fails on a first submit', async () => {
+    const ws = workspace();
+    const branches = await doneRun(ws, 2);
+    sh(ws.root, 'switch', '-q', 'main');
+    const gh = fakeGh(undefined, NO_STACK, 'stack init');
+    try {
+      await assert.rejects(step(ws, run => submitStack(ws, run)));
+    } finally {
+      gh.restore();
+    }
+    assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, `stack init --base main ${branches.join(' ')}`]);
+    assert.equal(sh(ws.root, 'branch', '--show-current'), 'main');
   });
 });
 
