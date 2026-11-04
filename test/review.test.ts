@@ -7,7 +7,7 @@ import { describe, it } from 'node:test';
 import { type Finding, readRun, REVIEW_DOMAINS, type Workspace } from '../src/run.ts';
 import { completeSlice, fixObservations, pathSkips, recordDecisions, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
 import { approvePlan, nextAction, nextSlice, planSlices, resolveBase, resolveStall, saveChecks, startRun } from '../src/workflow.ts';
-import { commit, finding, green, newRun, review, roots, sh, slice, start, step, workspace } from './helpers.ts';
+import { checkRuns, commit, countedCheck, finding, green, newRun, review, roots, sh, slice, start, step, workspace } from './helpers.ts';
 
 describe('slice loop gates', () => {
   it('takes a slice from red checks through a blocking review to done', async () => {
@@ -170,12 +170,8 @@ describe('slice loop gates', () => {
     assert.equal(results(), undefined);
   });
 
-  /** A check that passes when the slice commits `ok`, and appends a line inside .git (outside the working tree) per run. */
-  const countedCheck = 'test -f ok && echo run >> .git/check-runs';
-  const checkRuns = (ws: Workspace) => readFileSync(join(ws.root, '.git', 'check-runs'), 'utf8').split('\n').filter(Boolean).length;
-
   it('reuses the passing checks of the current commit without running a check command, and leaves the slice in review', async () => {
-    const ws = workspace({ checks: [countedCheck] });
+    using ws = workspace({ checks: [countedCheck('run', 'test -f ok')] });
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -183,7 +179,7 @@ describe('slice loop gates', () => {
     const stored = readRun(ws, 'demo').slices[0]?.checked;
     const again = await step(ws, run => runChecks(ws, run));
     assert.ok(again.passed);
-    assert.equal(checkRuns(ws), 1);
+    assert.deepEqual(checkRuns(ws), ['run']);
     assert.deepEqual(again.summary, first.summary);
     assert.equal(again.reused, true);
     assert.equal(again.sha, sh(ws.root, 'rev-parse', 'HEAD'));
@@ -194,7 +190,7 @@ describe('slice loop gates', () => {
   });
 
   it('reuses the checks of a green slice on its green commit, and sends it back to review', async () => {
-    const ws = workspace({ checks: [countedCheck] });
+    using ws = workspace({ checks: [countedCheck('run', 'test -f ok')] });
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -204,13 +200,13 @@ describe('slice loop gates', () => {
     assert.ok(again.passed);
     assert.equal(again.reused, true);
     assert.equal(again.sha, sh(ws.root, 'rev-parse', 'HEAD'));
-    assert.equal(checkRuns(ws), 1);
+    assert.deepEqual(checkRuns(ws), ['run']);
     const reviewing = readRun(ws, 'demo').slices[0];
     assert.deepEqual([reviewing?.phase, reviewing?.checked?.sha, reviewing?.green], ['review', again.sha, undefined]);
   });
 
   it('runs every check again after a new commit, and after a fix round on the same commit', async () => {
-    const ws = workspace({ checks: [countedCheck, 'test -f ok'], maxRounds: 2 });
+    using ws = workspace({ checks: [countedCheck('run', 'test -f ok'), 'test -f ok'], maxRounds: 2 });
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -218,7 +214,7 @@ describe('slice loop gates', () => {
     commit(ws, 'later.txt');
     const moved = await step(ws, run => runChecks(ws, run));
     assert.ok(moved.passed && !moved.reused);
-    assert.equal(checkRuns(ws), 2);
+    assert.deepEqual(checkRuns(ws), ['run', 'run']);
 
     const { reviewId } = await step(ws, run => startReview(ws, run));
     await review(ws, reviewId, [finding('bug', 'high', 'null-crash')]);
@@ -227,7 +223,7 @@ describe('slice loop gates', () => {
     assert.deepEqual([fixing?.phase, fixing?.checked], ['fix', undefined]);
     const fixed = await step(ws, run => runChecks(ws, run));
     assert.ok(fixed.passed && !fixed.reused);
-    assert.equal(checkRuns(ws), 3);
+    assert.deepEqual(checkRuns(ws), ['run', 'run', 'run']);
     assert.equal(fixed.summary.length, 2);
   });
 

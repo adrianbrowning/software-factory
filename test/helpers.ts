@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { after } from 'node:test';
@@ -42,11 +42,12 @@ after(() => {
   for (const root of roots) rmSync(root, { force: true, recursive: true });
 });
 
-/** A workspace on a temp repository, removed when the test file ends. */
-export function workspace(overrides: Partial<FactoryConfig> = {}): Workspace {
-  const root = initRepo(mkdtempSync(join(tmpdir(), 'factory-')), { 'README.md': 'base\n' });
-  roots.push(root);
+/** A workspace on a temp repository, removed when the `using` scope that holds it ends, or else when the test file ends. */
+export function workspace(overrides: Partial<FactoryConfig> = {}): Workspace & Disposable {
+  const repo = tempRepo('factory-', { 'README.md': 'base\n' });
+  roots.push(repo.root);
   return {
+    ...repo,
     config: {
       baseRef: 'main',
       branchPrefix: 'factory',
@@ -61,8 +62,17 @@ export function workspace(overrides: Partial<FactoryConfig> = {}): Workspace {
       trunk: 'main',
       ...overrides,
     },
-    root,
   };
+}
+
+/** A check command that runs `guard` first, when given, and appends `label` to .git/check-runs (outside the working tree). */
+export function countedCheck(label = 'run', guard = '') {
+  return `${guard === '' ? '' : `${guard} && `}echo ${label} >> .git/check-runs`;
+}
+
+/** The labels counted checks logged, in run order. */
+export function checkRuns(ws: Workspace) {
+  return readFileSync(join(ws.root, '.git', 'check-runs'), 'utf8').split('\n').filter(Boolean);
 }
 
 export function slice(title: string, blockedBy: string[] = [], extra: Partial<SliceInput> = {}): SliceInput {

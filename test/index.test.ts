@@ -127,27 +127,28 @@ describe('first-run checks dialog', () => {
   });
 });
 
+/** A run whose one slice has committed `ok`, driven through the loaded tools; the repo is removed when `using` ends. */
+async function sliceAtCommit(prefix: string) {
+  const repo = tempRepo(prefix, { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) });
+  const { root } = repo;
+  const caller = { ...ctx('main', 'main'), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, notify() {} } };
+  const tools = load();
+  const call = (name: string, params: unknown) => tools.get(name)?.execute('id', params, undefined, undefined, caller) ?? Promise.reject(new Error('no tool'));
+  await call('factory_start', { feature: 'demo', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } });
+  const ws = { config: loadConfig(root), root };
+  const input = { acceptance: ['works'], blockedBy: [], estimateTokens: 500, seams: ['cli'], title: 'Feature', whatToBuild: 'Feature' };
+  await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [input])));
+  await withRun(ws, 'demo', run => nextSlice(ws, run));
+  writeFileSync(join(root, 'ok'), 'x\n');
+  sh(root, 'add', 'ok');
+  sh(root, 'commit', '-qm', 'add ok');
+  return { ...repo, call, ws };
+}
+
 describe('factory_decide', () => {
   it('tells the orchestrator in its Next line to stop the discarded review, then call factory_review_start', async () => {
-    using repo = tempRepo('factory-decide-', { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) });
-    const { root } = repo;
-    const caller = {
-      ...ctx('main', 'main'),
-      cwd: root,
-      hasUI: true,
-      sessionManager: { getSessionId: () => 'session' },
-      ui: { confirm: async () => true, notify() {} },
-    };
-    const tools = load();
-    const call = (name: string, params: unknown) => tools.get(name)?.execute('id', params, undefined, undefined, caller) ?? Promise.reject(new Error('no tool'));
-    await call('factory_start', { feature: 'demo', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } });
-    const ws = { config: loadConfig(root), root };
-    const input = { acceptance: ['works'], blockedBy: [], estimateTokens: 500, seams: ['cli'], title: 'Feature', whatToBuild: 'Feature' };
-    await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [input])));
-    await withRun(ws, 'demo', run => nextSlice(ws, run));
-    writeFileSync(join(root, 'ok'), 'x\n');
-    sh(root, 'add', 'ok');
-    sh(root, 'commit', '-qm', 'add ok');
+    using slice = await sliceAtCommit('factory-decide-');
+    const { call, ws } = slice;
     await withRun(ws, 'demo', run => runChecks(ws, run));
     const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
 
@@ -155,21 +156,12 @@ describe('factory_decide', () => {
     const next = reply.content[0]?.text.split('\n').find(line => line.startsWith('Next: '));
     assert.match(next ?? '', new RegExp(`^Next: Stop the running reviewers and validator of review ${reviewId}; their submissions are refused\\. .*factory_review_start`));
   });
+});
 
+describe('factory_checks', () => {
   it('factory_checks says it reuses the results that passed on the same commit', async () => {
-    using repo = tempRepo('factory-checks-', { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) });
-    const { root } = repo;
-    const caller = { ...ctx('main', 'main'), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, notify() {} } };
-    const tools = load();
-    const call = (name: string, params: unknown) => tools.get(name)?.execute('id', params, undefined, undefined, caller) ?? Promise.reject(new Error('no tool'));
-    await call('factory_start', { feature: 'demo', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } });
-    const ws = { config: loadConfig(root), root };
-    const input = { acceptance: ['works'], blockedBy: [], estimateTokens: 500, seams: ['cli'], title: 'Feature', whatToBuild: 'Feature' };
-    await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [input])));
-    await withRun(ws, 'demo', run => nextSlice(ws, run));
-    writeFileSync(join(root, 'ok'), 'x\n');
-    sh(root, 'add', 'ok');
-    sh(root, 'commit', '-qm', 'add ok');
+    using slice = await sliceAtCommit('factory-checks-');
+    const { call, root } = slice;
     await call('factory_checks', {});
 
     const reply = (await call('factory_checks', {})) as { content: { text: string }[] };

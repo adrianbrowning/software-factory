@@ -106,7 +106,11 @@ const reviewSchema = z.object({
 
 const sliceSchema = sliceInputSchema.extend({
   branch: text,
-  /** The checks the slice passed: the commit, and the result of each of the run's checks, in order. */
+  /**
+   * The checks the slice passed: the commit, and the result of each of the run's checks, in order. A done slice read
+   * from an older state file may hold no results (see legacySlice); a legacy pass is trusted to match the run's
+   * checks, which a run never changes once kept.
+   */
   checked: z.object({ results: z.array(text), sha }).optional(),
   compactions: z.number().int().nonnegative(),
   /** Branch tip when a done slice was reopened; completing it restacks every later slice from this commit. */
@@ -147,17 +151,17 @@ const legacySliceSchema = sliceSchema.extend({
 /** The slice in today's shape, from a state file that may predate `checked` and `green`, in a run with `checks`. */
 function legacySlice({ checkedSha, checkResults, greenDecisions, greenSha, ...slice }: z.infer<typeof legacySliceSchema>, checks: string[]): Slice {
   let checked = slice.checked;
-  const legacySha = greenSha ?? checkedSha;
-  // LEGACY-STATE(checked-pass): an old pass stands only with a result for each of the run's checks; one without
-  // results, or with another count, is no pass, so resume sends the slice back to checks. A done slice keeps its green
-  // commit with the results it saved: its checks are never reused, since only the active slice's checks are, and
-  // reopening or restacking a done slice drops its pass. Remove once no run paused before the release that ships issue
-  // #60 is left to resume.
-  const complete = checks.length > 0 && checkResults?.length === checks.length;
-  if (checked === undefined && legacySha !== undefined && (complete || (slice.status === 'done' && greenSha !== undefined))) {
+  const legacySha = slice.status === 'done' ? greenSha ?? checkedSha : checkedSha ?? greenSha;
+  // LEGACY-STATE(checked-pass): an old pass stands only with the results it saved, in a run that kept its checks;
+  // one without results is no pass, so resume sends the slice back to checks. A done slice keeps its green commit, with
+  // the results it saved or none in a file that saved none: its checks are never reused, since only the active slice's checks are, and reopening or
+  // restacking a done slice drops its pass. Remove once no run paused before the release that ships issue #60 is left
+  // to resume.
+  const saved = checks.length > 0 && checkResults !== undefined;
+  if (checked === undefined && legacySha !== undefined && (saved || (slice.status === 'done' && greenSha !== undefined))) {
     checked = { results: checkResults ?? [], sha: legacySha };
   }
-  // LEGACY-STATE(green-sha): the green commit was greenSha; it is now the checked commit. Remove with checked-pass.
+  // LEGACY-STATE(green-sha): a green review was greenSha; it carries over as `green` only when greenSha is the checked commit, so a slice not done whose checkedSha moved past it loses its green review. Remove with checked-pass.
   let green = slice.green;
   if (green === undefined && greenSha !== undefined && checked?.sha === greenSha) green = greenDecisions === undefined ? {} : { decisions: greenDecisions };
   return { ...slice, checked, green };
@@ -304,4 +308,13 @@ export function dropPass(slice: Slice, phase: Slice['phase']) {
   slice.checked = undefined;
   slice.green = undefined;
   slice.review = undefined;
+}
+
+/** Discards the open review of a slice in review, whose reviewers can no longer finish it, for `reason`; returns its id, or undefined when there was none. */
+export function discardReview(run: Run, slice: Slice, reason: string) {
+  const review = slice.phase === 'review' ? slice.review : undefined;
+  if (review === undefined) return undefined;
+  slice.review = undefined;
+  addEvent(run, 'review-invalidated', `${review.id}: ${reason}`, slice);
+  return review.id;
 }
