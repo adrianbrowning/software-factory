@@ -194,11 +194,17 @@ describe('used-up fix budget', () => {
     return { ...repo, call, ws };
   }
 
-  /** Fails checks `failures` times (continuing a stall), then takes the slice to green with one thermo observation. */
-  async function greenWithObservation(ws: Workspace, failures: number) {
+  /**
+   * Fails checks once, or twice with the user continuing the stall the second failure hits (roundLimit 2), then takes
+   * the slice to green with one thermo observation.
+   */
+  async function greenWithObservation(ws: Workspace, failures: 1 | 2) {
     commit(ws, 'work.txt');
     for (let i = 0; i < failures; i += 1) await withRun(ws, 'demo', run => runChecks(ws, run));
-    await withRun(ws, 'demo', run => resolveStall(ws, run, 'continue'));
+    if (failures === 2) {
+      assert.equal(readRun(ws, 'demo').slices[0]?.stalled, true);
+      await withRun(ws, 'demo', run => resolveStall(ws, run, 'continue'));
+    }
     commit(ws, 'ok');
     await withRun(ws, 'demo', run => runChecks(ws, run));
     const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
