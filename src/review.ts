@@ -12,6 +12,8 @@ import { git, runShell, type CommandResult } from './exec.ts';
 import {
   activeSlice,
   addEvent,
+  dropPass,
+  greenCommit,
   outdatedGreenCount,
   type Domain,
   type Finding,
@@ -24,6 +26,7 @@ import {
   SEVERITIES,
   skippedDomainsSchema,
   type Slice,
+  standingChecks,
   type Workspace,
   writeAtomic,
 } from './run.ts';
@@ -55,25 +58,25 @@ export function recordDecisions(ws: Workspace, run: Run, decisions: string[]) {
   addEvent(run, 'decision', added.join('; '));
   const active = activeSlice(run);
   const open = active?.phase === 'review' ? active.review : undefined;
-  if (active !== undefined && open !== undefined) discardReview(run, active, open);
+  if (active !== undefined) discardReview(run, active, 'decisions recorded during review');
   if (active !== undefined && outdatedGreenCount(run, active) !== undefined) reopenReview(run, active);
   return { decisions: run.decisions, discarded: open?.id };
 }
 
-/** Sends a green slice back to review on its green commit, for decisions newer than the review; its checks stand. */
+/** Sends a green slice back to review on its green commit, for decisions newer than the review; its checks, which passed on that commit, stand. */
 function reopenReview(run: Run, slice: Slice) {
   slice.phase = 'review';
-  slice.checkedSha = slice.greenSha;
-  slice.greenSha = undefined;
-  slice.greenDecisions = undefined;
+  slice.green = undefined;
   slice.review = undefined;
   addEvent(run, 'review-invalidated', 'decisions recorded after the green review', slice);
 }
 
-/** Discards the slice's open review, whose reviewers saw only the decisions recorded before it opened. */
-function discardReview(run: Run, slice: Slice, review: Review) {
+/** Discards the open review of a slice in review, whose reviewers can no longer finish it, for `reason`; a slice without one is unchanged. */
+export function discardReview(run: Run, slice: Slice, reason: string) {
+  const review = slice.phase === 'review' ? slice.review : undefined;
+  if (review === undefined) return;
   slice.review = undefined;
-  addEvent(run, 'review-invalidated', `${review.id}: decisions recorded during review`, slice);
+  addEvent(run, 'review-invalidated', `${review.id}: ${reason}`, slice);
 }
 
 /** The shell's own diagnostic for a command it cannot find (bash and dash wording). */
@@ -117,6 +120,12 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   const sha = await head(ws.root);
   // A fix round that ends on the commit its fix file described: the implementer changed nothing.
   const unchanged = slice.phase === 'fix' && slice.fixFromSha === sha;
+  // Checks that still stand on this commit are not run again. A new commit no longer matches the checked commit, and
+  // a fix round (factory_reopen included) or restartSlice (a restack, or a reopen that sends the active slice back to
+  // pending) clears it, so every check runs; a review reopened for newer decisions (reopenReview) or a resume on the
+  // same commit keeps its checks.
+  const stored = standingChecks(slice, sha);
+  if (stored !== undefined) return { commits, unchanged, ...(await passChecks(ws, run, slice, sha, stored, true)) };
   const results: { command: string; result: CommandResult }[] = [];
   const checkPath = [...ws.config.checkPath, process.env.PATH ?? ''].join(delimiter);
   const env = { ...process.env, PATH: checkPath };
@@ -144,17 +153,7 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   const dirty = (await porcelain(ws.root)).trim();
   const failed = results.filter(({ result }) => result.exitCode !== 0 || result.timedOut);
   const summary = results.map(({ command, result }) => describeCheck(command, result));
-  if (failed.length === 0 && dirty === '') {
-    slice.checkedSha = sha;
-    slice.checkResults = summary;
-    slice.phase = 'review';
-    slice.review = undefined;
-    addEvent(run, 'checks-pass', summary.join('; '), slice);
-    // The orchestrator picks the review domains from these changed files and the path skips startReview applies.
-    const range = `${slice.parentBranch}...HEAD`;
-    const changed = (await git(ws.root, 'diff', '--stat', range)).trimEnd();
-    return { changed, commits, passed: true as const, pathSkipped: await pathSkips(await changedPaths(ws.root, range), committedContent(ws.root, range, sha)), summary, unchanged };
-  }
+  if (failed.length === 0 && dirty === '') return { commits, unchanged, ...(await passChecks(ws, run, slice, sha, summary, false)) };
 
   const sections = failed.map(
     ({ command, result }) =>
@@ -168,6 +167,18 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
     slice,
   );
   return { commits, passed: false as const, summary, unchanged, ...requestFix(ws, run, slice, sections.join('\n\n'), sha) };
+}
+
+/** Moves the slice to review with check `results` passed on `sha`. `reused` marks stored results that stand, when no check ran. */
+async function passChecks(ws: Workspace, run: Run, slice: Slice, sha: string, results: string[], reused: boolean) {
+  dropPass(slice, 'review');
+  slice.checked = { results, sha };
+  addEvent(run, 'checks-pass', `${reused ? `reused from ${sha}: ` : ''}${results.join('; ')}`, slice);
+  // The orchestrator picks the review domains from these changed files and the path skips startReview applies.
+  const range = `${slice.parentBranch}...HEAD`;
+  const changed = (await git(ws.root, 'diff', '--stat', range)).trimEnd();
+  const pathSkipped = await pathSkips(await changedPaths(ws.root, range), committedContent(ws.root, range, sha));
+  return { changed, passed: true as const, pathSkipped, reused, sha, summary: results };
 }
 
 /**
@@ -236,15 +247,13 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   // factory_decide reopens a green review that newer decisions outdate; only a state file written before it did is
   // still ready here.
   const outdated = outdatedGreenCount(run, slice) !== undefined;
-  if (!outdated && (slice.phase !== 'review' || slice.checkedSha === undefined)) throw new Error('Checks must pass first: call factory_checks.');
+  if (!outdated && (slice.phase !== 'review' || slice.checked === undefined)) throw new Error('Checks must pass first: call factory_checks.');
   await requireOnBranch(ws.root, slice);
   await requireClean(ws.root, 'Review needs committed work');
   if (outdated) reopenReview(run, slice);
-  const current = await head(ws.root);
-  if (current !== slice.checkedSha) {
-    slice.phase = 'checks';
-    slice.checkedSha = undefined;
-    slice.checkResults = undefined;
+  const checked = slice.checked;
+  if (checked === undefined || (await head(ws.root)) !== checked.sha) {
+    dropPass(slice, 'checks');
     throw new Invalidated('HEAD moved after checks passed. Call factory_checks again.');
   }
   const chosen = skippedDomainsSchema.parse(skip);
@@ -261,7 +270,7 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   if (diff.trim() === '') throw new Error(`No changes in ${range}; the implementer committed nothing.`);
   const files = await changedPaths(ws.root, range);
   const previous = previousBlocking(ws, run, slice);
-  const byPath = (await pathSkips(files, committedContent(ws.root, range, slice.checkedSha))).filter(
+  const byPath = (await pathSkips(files, committedContent(ws.root, range, checked.sha))).filter(
     entry => !kept.includes(entry.domain) && !skippedNames.includes(entry.domain),
   );
   const skipped = [...byPath, ...chosen];
@@ -271,10 +280,10 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   const dataFile = join(reviewDir(ws, run.feature, id), 'data.md');
   writeAtomic(
     dataFile,
-    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n## CHECKS\n\nThe factory ran every configured check on \`${slice.checkedSha}\` and all passed. Do not run them again.\n\n${(slice.checkResults ?? []).map(line => `- ${line}`).join('\n')}\n\n${previous}## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files.join('\n')}\n`,
+    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n## CHECKS\n\nThe factory ran every configured check on \`${checked.sha}\` and all passed. Do not run them again.\n\n${checked.results.map(result => `- ${result}`).join('\n')}\n\n${previous}## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files.join('\n')}\n`,
   );
   const lines = changedLines(diff, files);
-  slice.review = { decisions: run.decisions.length, id, lines, sha: slice.checkedSha, skipped, snapshot: await snapshot(ws.root), submissions: {} };
+  slice.review = { decisions: run.decisions.length, id, lines, sha: checked.sha, skipped, snapshot: await snapshot(ws.root), submissions: {} };
   const skippedDetail = skipped.map(entry => `${entry.domain} (${entry.reason})`).join('; ');
   addEvent(run, 'review-start', skipped.length === 0 ? id : `${id} skipped ${skippedDetail}`, slice);
   return {
@@ -576,17 +585,14 @@ export async function recordReview(ws: Workspace, run: Run) {
   const validation = validationSchema.parse(raw);
   checkCoverage(findings, validation, review.decisions);
   if ((await snapshot(ws.root)) !== review.snapshot) {
-    slice.review = undefined;
-    slice.phase = 'checks';
-    slice.checkedSha = undefined;
-    slice.checkResults = undefined;
+    dropPass(slice, 'checks');
     addEvent(run, 'review-invalidated', `${review.id}: repository changed during review`, slice);
     throw new Invalidated('The repository changed during review. Restore the reviewed state, then call factory_checks.');
   }
   // LEGACY-STATE(decision-before-reset): factory_decide discards an open review, so only a state file written before
   // it did can reach this with newer decisions; remove with the matching branches in completeSlice and nextAction.
   if (run.decisions.length > review.decisions) {
-    discardReview(run, slice, review);
+    discardReview(run, slice, 'decisions recorded during review');
     throw new Invalidated(`${newerDecisions(run, review.decisions)} newer than review ${review.id}, so its reviewers did not check the code against them. Call factory_review_start for a new review.`);
   }
 
@@ -603,8 +609,7 @@ export async function recordReview(ws: Workspace, run: Run) {
 
   if (blocking.length === 0) {
     slice.phase = 'ready';
-    slice.greenSha = review.sha;
-    slice.greenDecisions = review.decisions;
+    slice.green = { decisions: review.decisions };
     addEvent(run, 'review-green', detail, slice);
     return { green: true as const, observations: observations.map(finding => renderFinding(finding, run.decisions)) };
   }
@@ -623,7 +628,7 @@ export async function recordReview(ws: Workspace, run: Run) {
 export function planFix(ws: Workspace, run: Run, ids: string[]) {
   const slice = requireActive(run);
   const review = slice.review;
-  if (slice.phase !== 'ready' || slice.greenSha === undefined || review === undefined) {
+  if (slice.phase !== 'ready' || greenCommit(slice) === undefined || review === undefined) {
     throw new Error(`Slice ${slice.id} has no green review to fix observations from.`);
   }
   const chosen = new Set(z.array(z.string().min(1)).min(1).parse(ids));
@@ -711,20 +716,19 @@ async function restack(ws: Workspace, run: Run, reopened: Slice, doneSha: string
   for (const { slice } of later) await git(ws.root, 'update-ref', '-d', backup(slice));
   for (const { slice } of later) {
     const tip = (await git(ws.root, 'rev-parse', `refs/heads/${slice.branch}`)).trim();
-    if (slice.status !== 'done' || tip !== slice.greenSha) await restartSlice(ws, run, slice);
+    if (slice.status !== 'done' || tip !== greenCommit(slice)) await restartSlice(ws, run, slice);
   }
   if (moved.length > 0) addEvent(run, 'restack', `${moved.map(({ slice }) => slice.branch).join(', ')} onto ${reopened.branch}`, reopened);
 }
 
 export async function completeSlice(ws: Workspace, run: Run) {
   const slice = requireActive(run);
-  if (slice.phase !== 'ready' || slice.greenSha === undefined) throw new Error('The slice has no green review yet.');
+  const green = greenCommit(slice);
+  if (slice.phase !== 'ready' || green === undefined) throw new Error('The slice has no green review yet.');
   await requireOnBranch(ws.root, slice);
   await requireClean(ws.root, 'Cannot complete the slice');
-  if ((await head(ws.root)) !== slice.greenSha) {
-    slice.phase = 'checks';
-    slice.greenSha = undefined;
-    slice.greenDecisions = undefined;
+  if ((await head(ws.root)) !== green) {
+    dropPass(slice, 'checks');
     throw new Invalidated('HEAD moved after the green review. Call factory_checks again.');
   }
   // LEGACY-STATE(decision-before-reset): factory_decide reopens such a slice at once, so only a state file written

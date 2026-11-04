@@ -249,7 +249,9 @@ The gates stop model mistakes and limit what a misled agent can do. They are not
   it wrote; an edited findings or validation file fails the review.
 - The implementer has `read`, `write`, `edit`, `grep`, `glob`, `bash`, and `lsp`, and runs on your machine with your
   credentials. Within one omp process, the tools reject a `state.json` changed outside them. After a restart,
-  `/factory resume` trusts the file on disk but sends the active slice back through checks and review.
+  `/factory resume` trusts the file on disk: the active slice keeps its passed checks and green review only while HEAD
+  is still the commit they recorded and the run's check commands are the ones that passed, and an open review starts
+  over. `/factory checks` on that same commit reuses the stored results instead of running the checks again.
 - Issue text and comments are marked as untrusted in `issue.md` and in the review data. `factory_start` loads GitHub
   issues itself with `gh` and asks you before the run uses the title, text, or comments of GitHub users who are not
   collaborators. Unlike the earlier Sandcastle drop-in, nothing runs in a container.

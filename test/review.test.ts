@@ -156,7 +156,7 @@ describe('slice loop gates', () => {
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
-    const results = () => readRun(ws, 'demo').slices[0]?.checkResults;
+    const results = () => readRun(ws, 'demo').slices[0]?.checked?.results;
     await step(ws, run => runChecks(ws, run));
     assert.match(results()?.join() ?? '', /test -f ok: passed/);
     commit(ws, 'later.txt');
@@ -168,6 +168,67 @@ describe('slice loop gates', () => {
     sh(ws.root, 'commit', '-qm', 'drop ok');
     assert.equal((await step(ws, run => runChecks(ws, run))).passed, false);
     assert.equal(results(), undefined);
+  });
+
+  /** A check that passes when the slice commits `ok`, and appends a line inside .git (outside the working tree) per run. */
+  const countedCheck = 'test -f ok && echo run >> .git/check-runs';
+  const checkRuns = (ws: Workspace) => readFileSync(join(ws.root, '.git', 'check-runs'), 'utf8').split('\n').filter(Boolean).length;
+
+  it('reuses the passing checks of the current commit without running a check command, and leaves the slice in review', async () => {
+    const ws = workspace({ checks: [countedCheck] });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    const first = await step(ws, run => runChecks(ws, run));
+    const stored = readRun(ws, 'demo').slices[0]?.checked;
+    const again = await step(ws, run => runChecks(ws, run));
+    assert.ok(again.passed);
+    assert.equal(checkRuns(ws), 1);
+    assert.deepEqual(again.summary, first.summary);
+    assert.equal(again.reused, true);
+    assert.equal(again.sha, sh(ws.root, 'rev-parse', 'HEAD'));
+    const after = readRun(ws, 'demo').slices[0];
+    assert.deepEqual([after?.phase, after?.checked], ['review', stored]);
+    assert.equal(stored?.sha, again.sha);
+    assert.ok(first.passed && !first.reused);
+  });
+
+  it('reuses the checks of a green slice on its green commit, and sends it back to review', async () => {
+    const ws = workspace({ checks: [countedCheck] });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await green(ws);
+    assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'ready');
+    const again = await step(ws, run => runChecks(ws, run));
+    assert.ok(again.passed);
+    assert.equal(again.reused, true);
+    assert.equal(again.sha, sh(ws.root, 'rev-parse', 'HEAD'));
+    assert.equal(checkRuns(ws), 1);
+    const reviewing = readRun(ws, 'demo').slices[0];
+    assert.deepEqual([reviewing?.phase, reviewing?.checked?.sha, reviewing?.green], ['review', again.sha, undefined]);
+  });
+
+  it('runs every check again after a new commit, and after a fix round on the same commit', async () => {
+    const ws = workspace({ checks: [countedCheck, 'test -f ok'], maxRounds: 2 });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    commit(ws, 'later.txt');
+    const moved = await step(ws, run => runChecks(ws, run));
+    assert.ok(moved.passed && !moved.reused);
+    assert.equal(checkRuns(ws), 2);
+
+    const { reviewId } = await step(ws, run => startReview(ws, run));
+    await review(ws, reviewId, [finding('bug', 'high', 'null-crash')]);
+    assert.ok(!(await step(ws, run => recordReview(ws, run))).green);
+    const fixing = readRun(ws, 'demo').slices[0];
+    assert.deepEqual([fixing?.phase, fixing?.checked], ['fix', undefined]);
+    const fixed = await step(ws, run => runChecks(ws, run));
+    assert.ok(fixed.passed && !fixed.reused);
+    assert.equal(checkRuns(ws), 3);
+    assert.equal(fixed.summary.length, 2);
   });
 
   it('fails checks that leave the working tree changed', async () => {
@@ -279,7 +340,7 @@ describe('slice loop gates', () => {
       await assert.rejects(step(ws, run => recordReview(ws, run)), /changed during review/);
       const invalidated = readRun(ws, 'demo').slices[0];
       assert.equal(invalidated?.phase, 'checks', change);
-      assert.equal(invalidated?.checkResults, undefined, change);
+      assert.equal(invalidated?.checked, undefined, change);
     }
   });
 
@@ -301,7 +362,7 @@ describe('slice loop gates', () => {
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
     await step(ws, run => runChecks(ws, run));
-    const checked = readRun(ws, 'demo').slices[0]?.checkedSha;
+    const checked = readRun(ws, 'demo').slices[0]?.checked?.sha;
     const opened = await step(ws, run => startReview(ws, run));
     await step(ws, run => submitDomain(ws, run, { agentId: 'r-bug', domain: 'bug', findings: [], reviewId: opened.reviewId }));
 
@@ -310,7 +371,7 @@ describe('slice loop gates', () => {
     const invalidated = readRun(ws, 'demo');
     assert.equal(invalidated.slices[0]?.phase, 'review');
     assert.equal(invalidated.slices[0]?.review, undefined);
-    assert.equal(invalidated.slices[0]?.checkedSha, checked);
+    assert.equal(invalidated.slices[0]?.checked?.sha, checked);
     assert.match(invalidated.events.at(-1)?.detail ?? '', new RegExp(`${opened.reviewId}: decisions recorded during review`));
     assert.equal(invalidated.events.at(-1)?.kind, 'review-invalidated');
     assert.match(nextAction(invalidated), /factory_review_start/);
@@ -378,13 +439,13 @@ describe('slice loop gates', () => {
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
     await green(ws);
-    const greenSha = readRun(ws, 'demo').slices[0]?.greenSha;
+    const greenSha = readRun(ws, 'demo').slices[0]?.checked?.sha;
     await olderDecision(ws);
     assert.match(nextAction(readRun(ws, 'demo')), /factory_review_start/);
 
     await assert.rejects(step(ws, run => completeSlice(ws, run)), /Decision 1 is newer than the green review/);
     const reopened = readRun(ws, 'demo').slices[0];
-    assert.deepEqual([reopened?.phase, reopened?.checkedSha, reopened?.review], ['review', greenSha, undefined]);
+    assert.deepEqual([reopened?.phase, reopened?.checked?.sha, reopened?.review], ['review', greenSha, undefined]);
   });
 
   it('opens a new review of the green commit without checks when an older state file holds a decision newer than the green review', async () => {
@@ -394,14 +455,14 @@ describe('slice loop gates', () => {
     commit(again, 'ok');
     await green(again);
     const greenState = readRun(again, 'demo');
-    const checked = greenState.slices[0]?.greenSha;
+    const checked = greenState.slices[0]?.checked?.sha;
     const greenId = `${greenState.slices[0]?.id}-r${greenState.slices[0]?.reviews}`;
     const checkRuns = greenState.events.filter(event => event.kind.startsWith('checks')).length;
     await olderDecision(again);
     const opened = await step(again, run => startReview(again, run));
     const started = readRun(again, 'demo');
     const state = started.slices[0];
-    assert.deepEqual([state?.phase, state?.checkedSha, state?.review?.id, state?.review?.decisions], ['review', checked, opened.reviewId, 1]);
+    assert.deepEqual([state?.phase, state?.checked?.sha, state?.review?.id, state?.review?.decisions], ['review', checked, opened.reviewId, 1]);
     assert.notEqual(opened.reviewId, greenId);
     assert.match(readFileSync(opened.dataFile, 'utf8'), /Decision an older factory recorded\./);
     assert.equal(started.events.filter(event => event.kind.startsWith('checks')).length, checkRuns);
@@ -433,16 +494,16 @@ describe('slice loop gates', () => {
     await green(ws);
     const first = readRun(ws, 'demo').slices[0];
     const greenId = `${first?.id}-r${first?.reviews}`;
-    const greenSha = first?.greenSha;
+    const greenSha = first?.checked?.sha;
     assert.equal(first?.phase, 'ready');
-    assert.ok(greenSha);
+    assert.ok(greenSha && first?.green);
     const checkRuns = readRun(ws, 'demo').events.filter(event => event.kind.startsWith('checks')).length;
     const recorded = await step(ws, run => recordDecisions(ws, run, ['Late decision.']));
     assert.equal(recorded.discarded, undefined, 'no review is running, so no reviewer needs stopping');
     const reopened = readRun(ws, 'demo');
     assert.equal(reopened.slices[0]?.phase, 'review');
-    assert.equal(reopened.slices[0]?.checkedSha, greenSha);
-    assert.equal(reopened.slices[0]?.greenSha, undefined);
+    assert.equal(reopened.slices[0]?.checked?.sha, greenSha);
+    assert.equal(reopened.slices[0]?.green, undefined);
     assert.equal(reopened.slices[0]?.review, undefined);
     assert.equal(reopened.events.at(-1)?.kind, 'review-invalidated');
     assert.match(nextAction(reopened), /factory_review_start/);
@@ -451,9 +512,8 @@ describe('slice loop gates', () => {
     const state = readRun(ws, 'demo');
     assert.notEqual(opened.reviewId, greenId);
     assert.equal(state.slices[0]?.phase, 'review');
-    assert.equal(state.slices[0]?.checkedSha, greenSha);
-    assert.equal(state.slices[0]?.greenSha, undefined);
-    assert.equal(state.slices[0]?.greenDecisions, undefined);
+    assert.equal(state.slices[0]?.checked?.sha, greenSha);
+    assert.equal(state.slices[0]?.green, undefined);
     assert.equal(state.slices[0]?.review?.decisions, 2);
     assert.equal(state.events.filter(event => event.kind.startsWith('checks')).length, checkRuns);
     const data = readFileSync(opened.dataFile, 'utf8');
@@ -475,7 +535,7 @@ describe('slice loop gates', () => {
 
     await step(ws, run => recordDecisions(ws, run, ['Late decision.']));
     const reopened = readRun(ws, 'demo').slices[0];
-    assert.deepEqual([reopened?.phase, reopened?.greenSha, reopened?.greenDecisions], ['review', undefined, undefined]);
+    assert.deepEqual([reopened?.phase, reopened?.green], ['review', undefined]);
     commit(ws, 'late.txt');
     await assert.rejects(step(ws, run => startReview(ws, run)), /HEAD moved after checks passed/);
     assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'checks');
@@ -492,7 +552,7 @@ describe('slice loop gates', () => {
     commit(ws, 'late.txt');
     await assert.rejects(step(ws, run => startReview(ws, run)), /HEAD moved after checks passed/);
     const reset = readRun(ws, 'demo').slices[0];
-    assert.deepEqual([reset?.phase, reset?.checkedSha, reset?.greenSha, reset?.greenDecisions], ['checks', undefined, undefined, undefined]);
+    assert.deepEqual([reset?.phase, reset?.checked, reset?.green], ['checks', undefined, undefined]);
   });
 
   it('leaves the slice untouched when a decision lands with no open or green review', async () => {
@@ -534,7 +594,7 @@ describe('slice loop gates', () => {
     const state = readRun(ws, 'demo').slices[0];
     assert.equal(state?.phase, 'fix');
     assert.equal(state?.fixRounds, 1);
-    assert.equal(state?.greenSha, undefined);
+    assert.equal(state?.green, undefined);
     assert.match(nextAction(readRun(ws, 'demo')), new RegExp(`fix mode with ${fixed.fixPath}`));
     await assert.rejects(step(ws, run => completeSlice(ws, run)), /no green review yet/);
     await assert.rejects(step(ws, run => fixObservations(ws, run, ['comments-stale'], 'tidy')), /Slice 01 has no green review/);

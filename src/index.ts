@@ -307,8 +307,8 @@ export default function softwareFactory(pi: ExtensionAPI) {
           }
         }
         if (current.checks.length === 0) await ensureChecks(ctx, ws);
-        run = await withRun(ws, feature, latest => {
-          resumeRun(ws, latest, sessionId);
+        run = await withRun(ws, feature, async latest => {
+          await resumeRun(ws, latest, sessionId);
           return latest;
         });
       } else {
@@ -451,7 +451,8 @@ export default function softwareFactory(pi: ExtensionAPI) {
         : '';
       if (result.passed) {
         const byPath = result.pathSkipped.length === 0 ? '' : `\nPath rules skip: ${result.pathSkipped.map(entry => `${entry.domain} (${entry.reason})`).join('; ')}. Pass a domain in factory_review_start keep when a changed file holds its subject after all.`;
-        return reply(`All checks passed.\n${summary}\n${commits}${unchanged}\nChanged files:\n${result.changed}${byPath}\nNext: ${nextAction(run)}`);
+        const passed = result.reused ? `All checks already passed on ${result.sha}; reusing their results, no check ran.` : 'All checks passed.';
+        return reply(`${passed}\n${summary}\n${commits}${unchanged}\nChanged files:\n${result.changed}${byPath}\nNext: ${nextAction(run)}`);
       }
       const stall = result.stalled ? await decideStall(ctx, ws, feature) : '';
       return reply(`Checks failed.\n${summary}\n${commits}${unchanged}\nFix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
