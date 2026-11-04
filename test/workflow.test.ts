@@ -142,6 +142,19 @@ describe('planSlices', () => {
     assert.throws(() => planSlices(ws, run, [slice('A', [], { seams: [] })]), /needs test seams/);
     assert.equal(planSlices(ws, run, [slice('Docs', [], { noTestReason: 'docs only', seams: [] })]).length, 1);
   });
+
+  it('cuts long titles to whole words of at most 40 characters', async () => {
+    const ws = workspace();
+    await start(ws);
+    const slices = planSlices(ws, readRun(ws, 'demo'), [
+      slice('Slice branch slugs end on a whole word always'),
+      slice('x'.repeat(45)),
+    ]);
+    assert.deepEqual(
+      slices.map(item => item.branch),
+      [`factory/demo/01-slice-branch-slugs-end-on-a-whole-word`, `factory/demo/02-${'x'.repeat(40)}`],
+    );
+  });
 });
 
 
