@@ -57,6 +57,7 @@ import {
   requireFeatureName,
   resolveBase,
   resolveStall,
+  stallNotice,
   resumeRun,
   retroIssueBody,
   retroSchema,
@@ -227,7 +228,7 @@ async function decideStall(ctx: ExtensionContext, ws: Workspace, feature: string
   const choice = ctx.hasUI
     ? await ctx.ui.select(`Slice ${slice.id} "${slice.title}" is not green after ${slice.roundLimit} fix rounds`, [
         { description: 'The loop keeps fixing and re-reviewing.', label: more },
-        { description: 'Stop here; /factory resume continues later.', label: 'Pause the run' },
+        { description: 'Stop here; /factory resume asks whether to raise the fix budget.', label: 'Pause the run' },
       ])
     : undefined;
   const status = await withRun(ws, feature, current => {
@@ -235,7 +236,7 @@ async function decideStall(ctx: ExtensionContext, ws: Workspace, feature: string
     return current.status;
   });
   return status === 'stalled'
-    ? '\nThe user paused the run. Run the retro now (skill://retro, then factory_retro) so this stall improves future runs, then stop.'
+    ? `\nThe user paused the run. ${stallNotice(run, slice)} Run the retro now (skill://retro, then factory_retro) so this stall improves future runs, then stop.`
     : `\nThe user allowed ${ws.config.maxRounds} more fix rounds.`;
 }
 
@@ -288,7 +289,8 @@ export default function softwareFactory(pi: ExtensionAPI) {
 
   tool({
     caller: 'main',
-    description: 'Start a software-factory run for a loaded issue (feature + source), or resume one (resume). Read skill://software-factory first.',
+    description:
+      'Start a software-factory run for a loaded issue (feature + source), or resume one (resume). Resuming a stalled run asks the user whether to raise the used-up fix budget by maxRounds. Read skill://software-factory first.',
     essential: true,
     label: 'Factory: start',
     name: 'factory_start',
@@ -302,8 +304,12 @@ export default function softwareFactory(pi: ExtensionAPI) {
         forgetRun(ws, feature);
         const current = readRun(ws, feature);
         if (current.status === 'paused' || current.status === 'stalled') {
-          if (!(await confirm(ctx, 'Resume software factory run', `Resume "${feature}" (${current.status})?`))) {
-            throw new Error(`The user kept "${feature}" ${current.status}.`);
+          const stalled = activeSlice(current);
+          const body = stalled?.stalled
+            ? `In "${feature}", slice ${stalled.id} "${stalled.title}" used up its fix budget of ${stalled.roundLimit} rounds. Raise the fix budget by ${ws.config.maxRounds} rounds and resume?`
+            : `Resume "${feature}" (${current.status})?`;
+          if (!(await confirm(ctx, 'Resume software factory run', body))) {
+            throw new Error(stalled?.stalled ? `The user kept "${feature}" stalled. ${stallNotice(current, stalled)}` : `The user kept "${feature}" ${current.status}.`);
           }
         }
         if (current.checks.length === 0) await ensureChecks(ctx, ws);
@@ -436,7 +442,8 @@ export default function softwareFactory(pi: ExtensionAPI) {
 
   tool({
     caller: 'main',
-    description: 'Run every configured check on the committed slice. Failures produce a fix file for the implementer.',
+    description:
+      'Run every configured check on the committed slice. Failures produce a fix file for the implementer. A used-up fix budget asks the user to continue or pause; a paused run stalls until /factory resume, which asks whether to raise the budget.',
     label: 'Factory: checks',
     name: 'factory_checks',
     schema: emptySchema,
@@ -508,7 +515,8 @@ export default function softwareFactory(pi: ExtensionAPI) {
 
   tool({
     caller: 'main',
-    description: 'Gate the slice on the validated review: green when no critical or high findings remain.',
+    description:
+      'Gate the slice on the validated review: green when no critical or high findings remain. A used-up fix budget asks the user to continue or pause; a paused run stalls until /factory resume, which asks whether to raise the budget.',
     label: 'Factory: record review',
     name: 'factory_review_record',
     schema: emptySchema,
@@ -546,7 +554,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
   tool({
     caller: 'main',
     description:
-      'After a green review, send the active slice back to the fix loop for review observations the user chose to fix in this slice, after the user agreed. Writes a tracked fix file; the round counts toward the fix budget, and the slice earns checks and a new review before factory_complete_slice.',
+      'After a green review, send the active slice back to the fix loop for review observations the user chose to fix in this slice, after the user agreed. Writes a tracked fix file; the round counts toward the fix budget, and the slice earns checks and a new review before factory_complete_slice. A used-up budget asks the user to continue or pause; a paused run stalls until /factory resume, which asks whether to raise the budget.',
     label: 'Factory: fix observations',
     name: 'factory_fix',
     schema: fixSchema,
@@ -568,7 +576,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
   tool({
     caller: 'main',
     description:
-      'Reopen a done slice to fix a bug found in it, after the user agreed. The fix goes into that slice; completing it rebases every later slice onto the fix, and those slices earn their checks and review again.',
+      'Reopen a done slice to fix a bug found in it, after the user agreed. The fix goes into that slice; completing it rebases every later slice onto the fix, and those slices earn their checks and review again. A used-up fix budget asks the user to continue or pause; a paused run stalls until /factory resume, which asks whether to raise the budget.',
     label: 'Factory: reopen slice',
     name: 'factory_reopen',
     schema: reopenSchema,

@@ -47,7 +47,7 @@ export function requireActive(run: Run) {
       'No active slice. Call factory_next. To change a slice that is done, ask the user: factory_reopen fixes a bug in that slice, factory_follow_up adds a slice on top of the stack.',
     );
   }
-  if (slice.stalled) throw new Error(`Slice ${slice.id} is stalled; the user must decide how to continue.`);
+  if (slice.stalled) throw new Error(stallNotice(run, slice));
   return slice;
 }
 
@@ -558,7 +558,7 @@ export async function reopenSlice(ws: Workspace, run: Run, id: string, reason: s
   const reopened = run.slices.find(candidate => candidate.doneSha !== undefined);
   if (reopened !== undefined) throw new Error(`Slice ${reopened.id} is already reopened. Complete it before you reopen another slice.`);
   const active = activeSlice(run);
-  if (active?.stalled) throw new Error(`Slice ${active.id} is stalled; the user must decide how to continue first.`);
+  if (active?.stalled) throw new Error(stallNotice(run, active));
   await requireClean(ws.root, `Cannot reopen slice ${id}`);
   const doneSha = (await git(ws.root, 'rev-parse', '--verify', `refs/heads/${slice.branch}^{commit}`)).trim();
   const green = greenCommit(slice);
@@ -592,6 +592,11 @@ export function resolveStall(ws: Workspace, run: Run, choice: 'continue' | 'paus
   slice.fixRounds += 1;
   run.status = 'running';
   addEvent(run, 'stall-continue', `round limit raised to ${slice.roundLimit}`, slice);
+}
+
+/** The one explanation every reply gives for a slice that used up its fix budget. */
+export function stallNotice(run: Run, slice: Slice) {
+  return `The fix budget of slice ${slice.id} "${slice.title}" is used up after ${slice.roundLimit} fix rounds. Tell the user that /factory resume ${run.feature} asks whether to raise it and resume.`;
 }
 
 /** Only a running run pauses; intake, stalled, and done runs keep their status. */
@@ -819,14 +824,16 @@ export function nextAction(run: Run): string {
       ? `The stack is ready. Tell the user they can open draft PRs with /factory submit ${run.feature}.`
       : `The stack is ready. Tell the user that /factory submit ${run.feature} fast-forwards ${run.landOn} to the top slice.`;
   }
-  if (run.status !== 'running') return `The run is ${run.status}. The user resumes it with /factory resume ${run.feature}.`;
   const slice = activeSlice(run);
+  if (slice?.stalled) {
+    return stallNotice(run, slice);
+  }
+  if (run.status !== 'running') return `The run is ${run.status}. The user resumes it with /factory resume ${run.feature}.`;
   if (slice === undefined) {
     if (run.slices.some(candidate => candidate.status === 'pending')) return 'Call factory_next to start the next slice.';
     return 'Every slice is done. Run the retro (skill://retro) and record it with factory_retro.';
   }
   const where = `slice ${slice.id} "${slice.title}"`;
-  if (slice.stalled) return `The fix budget for ${where} is used up. The user decides with /factory resume ${run.feature}.`;
   switch (slice.phase) {
     case 'implement':
       return `Spawn factory-implementer for ${where}, then call factory_checks.`;

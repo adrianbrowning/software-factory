@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
 import type { ExtensionAPI } from '@oh-my-pi/pi-coding-agent';
 import { loadConfig } from '../src/config.ts';
 import softwareFactory, { MAX_IDLE_STOP_ATTEMPTS, stopDecision } from '../src/index.ts';
-import { type Run, withRun } from '../src/run.ts';
-import { runChecks, startReview } from '../src/review.ts';
-import { approvePlan, nextSlice, planSlices } from '../src/workflow.ts';
+import { readRun, REVIEW_DOMAINS, type Run, withRun, type Workspace } from '../src/run.ts';
+import { recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
+import { approvePlan, nextSlice, planSlices, startRun } from '../src/workflow.ts';
 import { sh, tempRepo } from './helpers.ts';
 
 type Registered = {
@@ -167,5 +167,85 @@ describe('factory_checks', () => {
     const reply = (await call('factory_checks', {})) as { content: { text: string }[] };
     const sha = sh(root, 'rev-parse', 'HEAD');
     assert.match(reply.content[0]?.text ?? '', new RegExp(`All checks already passed on ${sha}; reusing their results, no check ran\\.`));
+  });
+});
+
+describe('used-up fix budget', () => {
+  const roots: string[] = [];
+  after(() => {
+    for (const root of roots) rmSync(root, { force: true, recursive: true });
+  });
+
+  /**
+   * A run whose only slice is green with one observation, after one failed check used its single fix round. `resume`
+   * makes it the session's active run before the slice starts, since resuming sends a reviewed slice back to checks.
+   */
+  async function greenWithObservation(resume: (root: string) => Promise<unknown>) {
+    // The real path, as the extension resolves the repository root (macOS tmpdir is a symlink).
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'factory-index-')));
+    roots.push(root);
+    const sh = (...args: string[]) => execFileSync('git', args, { cwd: root });
+    sh('init', '-q', '-b', 'main');
+    sh('config', 'user.email', 'test@example.com');
+    sh('config', 'user.name', 'Test');
+    mkdirSync(join(root, '.omp'));
+    writeFileSync(join(root, '.omp', 'factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], maxRounds: 1 }));
+    sh('add', '.');
+    sh('commit', '-qm', 'base');
+    const ws: Workspace = { config: loadConfig(root), root };
+    const step = <T>(mutate: (run: Run) => T | Promise<T>) => withRun(ws, 'demo', mutate);
+    const commit = (file: string) => {
+      writeFileSync(join(root, file), 'x\n');
+      sh('add', file);
+      sh('commit', '-qm', `add ${file}`);
+    };
+    await startRun(ws, { feature: 'demo', sessionId: 'session-1', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } });
+    const input = { acceptance: ['works'], blockedBy: [], estimateTokens: 500, seams: ['cli'], title: 'Feature', whatToBuild: 'Feature' };
+    await step(run => approvePlan(ws, run, planSlices(ws, run, [input])));
+    await resume(root);
+    await step(run => nextSlice(ws, run));
+    commit('work.txt');
+    await step(run => runChecks(ws, run));
+    commit('ok');
+    await step(run => runChecks(ws, run));
+    const { reviewId } = await step(run => startReview(ws, run));
+    const skipped = readRun(ws, 'demo').slices[0]?.review?.skipped ?? [];
+    const observation = { domain: 'thermo', fix: 'f', fix_prompt: 'f', id: 'thermo-naming', line: 1, path: 'ok', problem: 'p', severity: 'observation', title: 'naming' } as const;
+    for (const domain of REVIEW_DOMAINS.filter(name => !skipped.some(entry => entry.domain === name))) {
+      await step(run => submitDomain(ws, run, { agentId: `r-${domain}`, domain, findings: domain === 'thermo' ? [observation] : [], reviewId }));
+    }
+    await step(run => submitValidation(ws, run, { agentId: 'validator', dropped: [], keep: ['thermo-naming'], reviewId }));
+    await step(run => recordReview(ws, run));
+    return { root, ws };
+  }
+
+  function caller(root: string, ui: { confirm?: (title: string, body: string) => Promise<boolean>; select?: () => Promise<string | undefined> }) {
+    return { ...ctx('main', 'main'), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session-2' }, ui: { notify() {}, ...ui } };
+  }
+
+  it('explains the used-up budget after a pause, and resume asks to raise it by maxRounds', async () => {
+    const tools = load();
+    const run = (name: string, params: unknown, context: unknown) => tools.get(name)?.execute('id', params, undefined, undefined, context) ?? Promise.reject(new Error('no tool'));
+    const { root, ws } = await greenWithObservation(dir => run('factory_start', { resume: 'demo' }, caller(dir, {})));
+
+    const fixed = JSON.stringify(await run('factory_fix', { observations: ['thermo-naming'], reason: 'tidy' }, caller(root, { confirm: async () => true, select: async () => 'Pause the run' })));
+    assert.match(fixed, /fix budget of slice 01 \\"Feature\\" is used up/);
+    assert.match(fixed, /\/factory resume demo asks whether to raise it/);
+    assert.doesNotMatch(fixed, /The run is (paused|stalled)/);
+    assert.match(fixed, /The user paused the run\. The fix budget of slice 01 \\"Feature\\" is used up after 1 fix rounds\. Tell the user that \/factory resume demo asks whether to raise it/);
+
+    const asked: string[] = [];
+    const ask = (answer: boolean) => caller(root, { confirm: async (title, body) => (asked.push(`${title}\n${body}`), answer) });
+    await assert.rejects(
+      run('factory_start', { resume: 'demo' }, ask(false)),
+      /kept "demo" stalled\. The fix budget of slice 01 "Feature" is used up.*\/factory resume demo asks whether to raise it/,
+    );
+    assert.match(asked[0] ?? '', /slice 01 "Feature" used up its fix budget of 1 rounds/);
+    assert.match(asked[0] ?? '', /Raise the fix budget by 1 rounds and resume\?/);
+    assert.equal(readRun(ws, 'demo').status, 'stalled');
+
+    await run('factory_start', { resume: 'demo' }, ask(true));
+    const resumed = readRun(ws, 'demo');
+    assert.deepEqual([resumed.status, resumed.slices[0]?.stalled, resumed.slices[0]?.roundLimit], ['running', false, 2]);
   });
 });
