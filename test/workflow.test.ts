@@ -725,8 +725,13 @@ describe('submit', () => {
     return readRun(ws, 'demo').slices.map(item => item.branch);
   }
 
-  /** Puts a fake `gh` first on PATH; it records each call and serves `stack view --json` from `stack` (none: no stack). */
-  function fakeGh(stack: string[] | undefined) {
+  const NO_STACK = { code: 2, stderr: '✗ no local or remote stack found for "$3"' };
+
+  /**
+   * Puts a fake `gh` first on PATH; it records each call and serves `stack view --json` from `stack`. Without a stack,
+   * `stack checkout` fails with `checkoutFailure` (by default gh-stack's real "no stack" exit and stderr).
+   */
+  function fakeGh(stack: string[] | undefined, checkoutFailure = NO_STACK) {
     const dir = mkdtempSync(join(tmpdir(), 'factory-gh-'));
     roots.push(dir);
     const log = join(dir, 'calls');
@@ -734,7 +739,14 @@ describe('submit', () => {
     if (stack !== undefined) {
       writeFileSync(view, JSON.stringify({ branches: stack.map(name => ({ name })), currentBranch: stack[0], trunk: 'main' }));
     }
-    const script = `#!/bin/sh\necho "$*" >> '${log}'\ncase "$1 $2" in\n  "stack checkout"|"stack view") [ -f '${view}' ] || exit 1; [ "$2" = view ] && cat '${view}';;\nesac\nexit 0\n`;
+    const script = [
+      '#!/bin/sh',
+      `echo "$*" >> '${log}'`,
+      `if [ "$1 $2" = "stack checkout" ] && [ ! -f '${view}' ]; then echo "${checkoutFailure.stderr}" >&2; exit ${checkoutFailure.code}; fi`,
+      `if [ "$1 $2" = "stack view" ]; then cat '${view}' || exit 1; fi`,
+      'exit 0',
+      '',
+    ].join('\n');
     writeFileSync(join(dir, 'gh'), script);
     chmodSync(join(dir, 'gh'), 0o755);
     const path = process.env.PATH;
@@ -759,6 +771,18 @@ describe('submit', () => {
     }
     assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, `stack init --base main ${branches.join(' ')}`, 'stack submit --auto']);
     assert.ok(steps.includes('adopting 3 branches into a gh stack onto main'), steps.join('\n'));
+  });
+
+  it('fails without adopting when gh stack checkout fails for another reason than no stack', async () => {
+    const ws = workspace();
+    const branches = await doneRun(ws, 2);
+    const gh = fakeGh(undefined, { code: 4, stderr: '✗ failed to list stacks: HTTP 401: Bad credentials' });
+    try {
+      await assert.rejects(step(ws, run => submitStack(ws, run)), /Bad credentials/);
+    } finally {
+      gh.restore();
+    }
+    assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`]);
   });
 
   it('adds only the slices the existing stack does not hold on a re-submit', async () => {

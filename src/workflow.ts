@@ -864,10 +864,14 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
   }
   const branches = run.slices.map(slice => slice.branch);
   progress(`reading the gh stack that holds ${branches[0]}`);
-  // A failed checkout means no stack holds slice 01; a failed or malformed view after it propagates.
+  // Only gh-stack's "no stack" checkout failure means slice 01 is in no stack; any other failure, and a failed or
+  // malformed view after a checkout, propagates.
   const inStack = await gh(ws.root, 'stack', 'checkout', branches[0] ?? '').then(
     () => true,
-    () => false,
+    (error: unknown) => {
+      if (error instanceof Error && 'stderr' in error && String(error.stderr).includes('no local or remote stack found for')) return false;
+      throw error;
+    },
   );
   const stacked = inStack ? stackView.parse(JSON.parse(await gh(ws.root, 'stack', 'view', '--json'))).branches.map(item => item.name) : undefined;
   if (stacked === undefined) {
