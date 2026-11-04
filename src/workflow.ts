@@ -481,7 +481,8 @@ export async function applyReslice(ws: Workspace, run: Run, slices: Slice[]) {
   const first = slices[run.slices.indexOf(active)];
   if (first === undefined) throw new Error('Re-slice lost the active slice');
   if (first.branch !== active.branch) await git(ws.root, 'branch', '-m', active.branch, first.branch);
-  // Re-slicing renumbers every slice that is not done, so their tickets and implementer reports go with them.
+  // Re-slicing renumbers every slice that is not done, so their tickets and implementer reports go with them: checks
+  // can run on the carried-over commits before a new implementer starts.
   for (const old of run.slices.filter(slice => slice.status !== 'done')) {
     rmSync(ticketPath(ws, run.feature, old), { force: true });
     rmSync(reportPath(ws, run, old), { force: true });
@@ -591,8 +592,6 @@ export function requestFix(ws: Workspace, run: Run, slice: Slice, body: string, 
     `- Checks to run before committing: ${run.checks.join('; ')}`,
   ].join('\n');
   writeAtomic(fixPath, `# Fix slice ${slice.id}: ${slice.title}\n\n${context}\n\n${UNTRUSTED_NOTE}\n\n${body}\n`);
-  // A report belongs to one implementer round: the fix round's implementer submits its own.
-  rmSync(reportPath(ws, run, slice), { force: true });
   slice.fixPath = fixPath;
   slice.fixFromSha = sha;
   dropPass(slice, 'fix');
@@ -747,6 +746,15 @@ export function storedReport(ws: Workspace, run: Run, slice: Slice) {
   const path = reportPath(ws, run, slice);
   if (!existsSync(path)) return `No implementer report was submitted for slice ${slice.id} (factory_implementer_report).`;
   return readFileSync(path, 'utf8').trimEnd();
+}
+
+/**
+ * A report belongs to one implementer session: a newly spawned implementer (a fix round, or a respawn after a stop
+ * report) starts without the stored report of the one before. A follow-up turn of the same session keeps it.
+ */
+export function startImplementerSession(ws: Workspace, run: Run) {
+  const slice = activeSlice(run);
+  if (slice !== undefined) rmSync(reportPath(ws, run, slice), { force: true });
 }
 
 export const RETRO_CATEGORIES = [

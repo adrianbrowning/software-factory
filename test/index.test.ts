@@ -18,12 +18,16 @@ type Registered = {
   parameters: { properties?: Record<string, unknown>; required?: string[] };
 };
 
-/** Registers the extension against a recording `pi` and returns its tools by name; `activated` collects what setActiveTools gets. */
-function load(activated: string[] = []) {
+type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
+
+/** Registers the extension against a recording `pi` and returns its tools by name; `activated` collects what setActiveTools gets, `handlers` records its event hooks. */
+function load(activated: string[] = [], handlers = new Map<string, Handler>()) {
   const tools = new Map<string, Registered>();
   const pi = {
     getActiveTools: () => [],
-    on() {},
+    on(event: string, handler: Handler) {
+      handlers.set(event, handler);
+    },
     registerCommand() {},
     registerTool(tool: Registered) {
       tools.set(tool.name, tool);
@@ -93,28 +97,64 @@ describe('stopDecision', () => {
   });
 });
 
-describe('first-run checks dialog', () => {
-  process.env.GIT_CONFIG_GLOBAL = '/dev/null';
-  process.env.GIT_CONFIG_NOSYSTEM = '1';
-  const roots: string[] = [];
-  after(() => {
-    for (const root of roots) rmSync(root, { force: true, recursive: true });
+process.env.GIT_CONFIG_GLOBAL = '/dev/null';
+process.env.GIT_CONFIG_NOSYSTEM = '1';
+const roots: string[] = [];
+after(() => {
+  for (const root of roots) rmSync(root, { force: true, recursive: true });
+});
+
+const git = (root: string, ...args: string[]) => execFileSync('git', args, { cwd: root });
+
+/** A git repository with no package.json and no workflows. */
+function emptyRepo() {
+  const root = mkdtempSync(join(tmpdir(), 'factory-index-'));
+  roots.push(root);
+  git(root, 'init', '-q', '-b', 'main');
+  git(root, 'config', 'user.email', 'test@example.com');
+  git(root, 'config', 'user.name', 'Test');
+  writeFileSync(join(root, 'README.md'), 'base\n');
+  git(root, 'add', '.');
+  git(root, 'commit', '-qm', 'base');
+  return root;
+}
+
+describe('implementer sessions', () => {
+  it('clears the stored report when the orchestrator spawns a new implementer, not for other agents or spawners', async () => {
+    const root = emptyRepo();
+    const handlers = new Map<string, Handler>();
+    const tools = load([], handlers);
+    const main = {
+      ...ctx('main', 'main'),
+      cwd: root,
+      hasUI: true,
+      sessionManager: { getSessionId: () => 'session' },
+      ui: { confirm: async () => true, editor: async () => 'true', notify() {} },
+    };
+    const implementer = { ...ctx('sub', 'factory-implementer'), cwd: root };
+    const call = async (name: string, params: unknown, caller: unknown) => JSON.stringify(await tools.get(name)?.execute('id', params, undefined, undefined, caller));
+    const spawn = (agent: string, spawner: unknown = main) =>
+      handlers.get('before_subagent_spawn')?.({ agent, invocationKind: 'task', patterns: [], type: 'before_subagent_spawn' }, spawner);
+    await call('factory_start', { feature: 'demo', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } }, main);
+    const feature = { acceptance: ['works'], blockedBy: [], estimateTokens: 500, seams: ['cli'], title: 'Feature', whatToBuild: 'Feature' };
+    await call('factory_plan', { baseRef: 'main', slices: [feature], trunk: 'main' }, main);
+    await call('factory_next', {}, main);
+    const report = { behaviors: [], commits: [], open: ['NEEDS SEAM: x'] };
+    await call('factory_implementer_report', report, implementer);
+
+    await spawn('factory-reviewer');
+    await spawn('factory-implementer', implementer);
+    assert.match(await call('factory_implementer_report', report, implementer), /Replaced the stored report/);
+
+    await spawn('factory-implementer');
+    writeFileSync(join(root, 'work.txt'), 'x\n');
+    git(root, 'add', '.');
+    git(root, 'commit', '-qm', 'work');
+    assert.match(await call('factory_checks', {}, main), /No implementer report was submitted for slice 01/);
   });
+});
 
-  /** A git repository with no package.json and no workflows. */
-  function emptyRepo() {
-    const root = mkdtempSync(join(tmpdir(), 'factory-index-'));
-    roots.push(root);
-    const sh = (...args: string[]) => execFileSync('git', args, { cwd: root });
-    sh('init', '-q', '-b', 'main');
-    sh('config', 'user.email', 'test@example.com');
-    sh('config', 'user.name', 'Test');
-    writeFileSync(join(root, 'README.md'), 'base\n');
-    sh('add', '.');
-    sh('commit', '-qm', 'base');
-    return root;
-  }
-
+describe('first-run checks dialog', () => {
   const start = (root: string, answers: (string | undefined)[]) => {
     const caller = {
       ...ctx('main', 'main'),

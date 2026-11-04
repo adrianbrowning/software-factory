@@ -69,6 +69,7 @@ import {
   saveChecks,
   sourceInputSchema,
   type SourceInput,
+  startImplementerSession,
   startRun,
   submitImplementerReport,
   summarize,
@@ -876,4 +877,12 @@ export default function softwareFactory(pi: ExtensionAPI) {
 
   pi.on('turn_end', async (_event, ctx) => trackImplementer(ctx, false));
   pi.on('auto_compaction_start', async (_event, ctx) => trackImplementer(ctx, true));
+  // A new implementer the orchestrator spawns starts a new report round; reviving or messaging one is not a spawn, so
+  // a follow-up turn keeps its report.
+  pi.on('before_subagent_spawn', async (event, ctx) => {
+    if (ctx.agent.kind !== 'main' || event.agent !== IMPLEMENTER) return;
+    const ws = await workspace(ctx.cwd);
+    const feature = activeRuns.get(ws.root);
+    if (feature !== undefined) startImplementerSession(ws, readRun(ws, feature));
+  });
 }

@@ -7,6 +7,7 @@ import { forgetRun, greenCommit, readRun, REVIEW_DOMAINS, type Workspace } from 
 import { completeSlice, recordReview, REVIEW_REFERENCE_DIR, runChecks, startReview } from '../src/review.ts';
 import {
   addFollowUp,
+  amendSeams,
   applyReslice,
   approvePlan,
   fileSource,
@@ -20,6 +21,7 @@ import {
   reopenSlice,
   resolveBase,
   resumeRun,
+  startImplementerSession,
   submitImplementerReport,
 } from '../src/workflow.ts';
 import { checkRuns, commit, countedCheck, green, newRun, review, sh, slice, start, step, workspace } from './helpers.ts';
@@ -204,15 +206,15 @@ describe('implementer report', () => {
     await assert.rejects(step(ws, run => runChecks(ws, run)), /has no commits past main[\s\S]*Open:\n- NEEDS SEAM: the clock — no agreed seam/);
   });
 
-  it('does not show the report of an earlier round after a fix round starts', async () => {
+  it('clears the stored report when a new implementer session starts, and only then', async () => {
     const ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
-    commit(ws, 'work.txt');
-    await step(ws, run => submitImplementerReport(ws, run, { behaviors: ['round one'], commits: ['abc1234 01: work'], open: [] }));
-    const red = await step(ws, run => runChecks(ws, run));
-    assert.match(red.report, /- round one/);
+    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [], open: ['NEEDS SEAM: x'] }));
+    await step(ws, run => amendSeams(ws, run, ['the clock']));
+    await assert.rejects(step(ws, run => runChecks(ws, run)), /has no commits past main[\s\S]*Open:\n- NEEDS SEAM: x/);
 
+    await step(ws, run => startImplementerSession(ws, run));
     commit(ws, 'ok');
     const passed = await step(ws, run => runChecks(ws, run));
     assert.equal(passed.report, 'No implementer report was submitted for slice 01 (factory_implementer_report).');
