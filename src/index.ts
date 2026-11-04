@@ -10,6 +10,7 @@ import {
   findingSchema,
   forgetRun,
   readRun,
+  reportPath,
   REQUIRED_REVIEW_DOMAINS,
   REVIEW_DOMAINS,
   type Run,
@@ -21,6 +22,7 @@ import {
   withRun,
   type Workspace,
 } from './run.ts';
+import { implementerReportSchema, startImplementerSession, submitImplementerReport } from './report.ts';
 import { submitStack } from './submit.ts';
 import {
   completeSlice,
@@ -45,7 +47,6 @@ import {
   type FiledIssues,
   fileSource,
   githubSource,
-  implementerReportSchema,
   nextAction,
   nextSlice,
   parseRetro,
@@ -69,9 +70,7 @@ import {
   saveChecks,
   sourceInputSchema,
   type SourceInput,
-  startImplementerSession,
   startRun,
-  submitImplementerReport,
   summarize,
 } from './workflow.ts';
 
@@ -404,7 +403,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         const slice = await nextSlice(ws, run);
         if (slice === undefined) return reply(`No slices left.\nNext: ${nextAction(run)}`);
         return reply(
-          `Slice ${slice.id} "${slice.title}" on ${slice.branch} (phase ${slice.phase}).\nTicket: ${ticketPath(ws, run.feature, slice)}\nChecks: ${run.checks.join('; ')}\nContext budget: ${ws.config.sliceTokenBudget} tokens.\nNext: ${nextAction(run)}`,
+          `Slice ${slice.id} "${slice.title}" on ${slice.branch} (phase ${slice.phase}).\nTicket: ${ticketPath(ws, run.feature, slice)}\nImplementer report file: ${reportPath(ws, run.feature, slice)}\nChecks: ${run.checks.join('; ')}\nContext budget: ${ws.config.sliceTokenBudget} tokens.\nNext: ${nextAction(run)}`,
         );
       });
     },
@@ -502,7 +501,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
   tool({
     caller: IMPLEMENTER,
     description:
-      'Submit your final report for the active slice: commits, fix file items (fix mode only), behaviors, and open items. Call it before your final message, and again after any follow-up turn that changes the report; each call replaces the stored report. The orchestrator reads it in the factory_checks reply.',
+      'Submit your final report for the active slice: commits, fix file items (required in fix mode), behaviors, and open items, one line per item. Call it before your final message, and again after every follow-up turn; each call replaces the stored report. The orchestrator reads the stored report file, which the factory_next and factory_checks replies name.',
     label: 'Factory: implementer report',
     name: 'factory_implementer_report',
     schema: implementerReportSchema,

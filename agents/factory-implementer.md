@@ -41,7 +41,7 @@ Stop and report instead of guessing in these cases:
 
 ## Final report
 
-Submit the report with `factory_implementer_report` before your final message: `commits`, `fixItems` (fix mode only), `behaviors`, and `open`, one entry per item. The factory stores it for the slice, and the orchestrator reads it from there, so a report only in your final message can be lost. After any follow-up turn (for example an advisor note), call `factory_implementer_report` again with the complete report when anything in it changed; each call replaces the stored report.
+Submit the report with `factory_implementer_report` before your final message: `commits`, `fixItems` (required in fix mode), `behaviors`, and `open`, one single-line entry per item. The factory stores it for the slice, and the orchestrator reads it from there, so a report only in your final message can be lost. After every follow-up turn (for example an advisor note), call `factory_implementer_report` again with the complete report; each call replaces the stored report.
 
 Then end your final message with these sections, every time, in this order:
 

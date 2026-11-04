@@ -31,6 +31,7 @@ import {
   type Workspace,
   writeAtomic,
 } from './run.ts';
+import { storedReport } from './report.ts';
 import { head, porcelain, requireClean, requireOnBranch, snapshot } from './repo.ts';
 import {
   pauseRun,
@@ -39,7 +40,6 @@ import {
   requireActive,
   restartSlice,
   settle,
-  storedReport,
   UNTRUSTED_NOTE,
   writeTicket,
 } from './workflow.ts';

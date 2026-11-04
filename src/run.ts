@@ -207,6 +207,7 @@ export const statePath = (ws: Workspace, feature: string) => join(runDir(ws, fea
 export const ticketPath = (ws: Workspace, feature: string, slice: Pick<Slice, 'branch' | 'id'>) =>
   join(runDir(ws, feature), 'issues', `${slice.branch.split('/').pop()}.md`);
 export const reviewDir = (ws: Workspace, feature: string, reviewId: string) => join(runDir(ws, feature), 'reviews', reviewId);
+export const reportPath = (ws: Workspace, feature: string, slice: Pick<Slice, 'id'>) => join(runDir(ws, feature), 'reports', `${slice.id}.md`);
 
 /** Write via rename so concurrent readers never see a partial file. */
 export function writeAtomic(path: string, content: string) {

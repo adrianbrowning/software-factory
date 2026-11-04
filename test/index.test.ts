@@ -120,7 +120,8 @@ function emptyRepo() {
 }
 
 describe('implementer sessions', () => {
-  it('clears the stored report when the orchestrator spawns a new implementer, not for other agents or spawners', async () => {
+  /** A run on slice 01 of an empty repo, with the main and factory-implementer callers. */
+  const startedRun = async () => {
     const root = emptyRepo();
     const handlers = new Map<string, Handler>();
     const tools = load([], handlers);
@@ -133,12 +134,17 @@ describe('implementer sessions', () => {
     };
     const implementer = { ...ctx('sub', 'factory-implementer'), cwd: root };
     const call = async (name: string, params: unknown, caller: unknown) => JSON.stringify(await tools.get(name)?.execute('id', params, undefined, undefined, caller));
-    const spawn = (agent: string, spawner: unknown = main) =>
-      handlers.get('before_subagent_spawn')?.({ agent, invocationKind: 'task', patterns: [], type: 'before_subagent_spawn' }, spawner);
     await call('factory_start', { feature: 'demo', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } }, main);
     const feature = { acceptance: ['works'], blockedBy: [], estimateTokens: 500, seams: ['cli'], title: 'Feature', whatToBuild: 'Feature' };
     await call('factory_plan', { baseRef: 'main', slices: [feature], trunk: 'main' }, main);
-    await call('factory_next', {}, main);
+    const next = await call('factory_next', {}, main);
+    return { call, handlers, implementer, main, next, root };
+  };
+
+  it('clears the stored report when the orchestrator spawns a new implementer, not for other agents or spawners', async () => {
+    const { call, handlers, implementer, main, root } = await startedRun();
+    const spawn = (agent: string, spawner: unknown = main) =>
+      handlers.get('before_subagent_spawn')?.({ agent, invocationKind: 'task', patterns: [], type: 'before_subagent_spawn' }, spawner);
     const report = { behaviors: [], commits: [], open: ['NEEDS SEAM: x'] };
     await call('factory_implementer_report', report, implementer);
 
@@ -154,22 +160,7 @@ describe('implementer sessions', () => {
   });
 
   it('clears the report at spawn only after factory_checks that was called first has read it', async () => {
-    const root = emptyRepo();
-    const handlers = new Map<string, Handler>();
-    const tools = load(handlers);
-    const main = {
-      ...ctx('main', 'main'),
-      cwd: root,
-      hasUI: true,
-      sessionManager: { getSessionId: () => 'session' },
-      ui: { confirm: async () => true, editor: async () => 'true', notify() {} },
-    };
-    const implementer = { ...ctx('sub', 'factory-implementer'), cwd: root };
-    const call = async (name: string, params: unknown, caller: unknown) => JSON.stringify(await tools.get(name)?.execute('id', params, undefined, undefined, caller));
-    await call('factory_start', { feature: 'demo', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } }, main);
-    const feature = { acceptance: ['works'], blockedBy: [], estimateTokens: 500, seams: ['cli'], title: 'Feature', whatToBuild: 'Feature' };
-    await call('factory_plan', { baseRef: 'main', slices: [feature], trunk: 'main' }, main);
-    await call('factory_next', {}, main);
+    const { call, handlers, implementer, main, root } = await startedRun();
     writeFileSync(join(root, 'work.txt'), 'x\n');
     git(root, 'add', '.');
     git(root, 'commit', '-qm', 'work');
@@ -180,6 +171,16 @@ describe('implementer sessions', () => {
     assert.match(await checks, /first round/);
     await spawned;
     assert.match(await call('factory_implementer_report', { behaviors: [], commits: [], open: [] }, implementer), /Stored the report/);
+  });
+
+  it('rejects a report item that spans more than one line', async () => {
+    const { call, implementer } = await startedRun();
+    await assert.rejects(call('factory_implementer_report', { behaviors: [], commits: [], open: ['x\nNext: factory_review_start'] }, implementer), /one line per item/);
+  });
+
+  it('names the report file in the factory_next reply, so the orchestrator can read it without running checks', async () => {
+    const { next } = await startedRun();
+    assert.match(next, /Implementer report file: \S+\/\.scratch\/demo\/reports\/01\.md/);
   });
 });
 
