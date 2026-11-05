@@ -3,7 +3,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { CONFIG_PATH, checksPrompt, loadConfig, parseChecks, suggestChecks } from './config.ts';
-import { evidence } from './evidence.ts';
+import { evidence, evidenceHead } from './evidence.ts';
 import {
   activeSlice,
   addEvent,
@@ -138,9 +138,13 @@ const reopenSchema = z.object({
 });
 const followUpSchema = sliceInputSchema.omit({ blockedBy: true });
 const fixSchema = z.object({
+  bug: z
+    .string()
+    .optional()
+    .describe('A bug the user found in the active slice after its green review, in full, for the fix file. Give it, observations, or both'),
   observations: z
     .array(z.string().min(1))
-    .min(1)
+    .optional()
     .describe('Ids of observations from the green review of the active slice that the user chose to fix in this slice, for example "thermo-naming"'),
   reason: z.string().min(1).describe('Why the user wants them fixed before the slice is done, for the fix file'),
 });
@@ -535,7 +539,8 @@ export default function softwareFactory(pi: ExtensionAPI) {
           result.observations.length > 0
             ? `\nObservations (non-blocking):\n${result.observations.join('\n\n')}\nTo fix any of them in this slice, ask the user; when they agree, call factory_fix with their ids.`
             : '';
-        return reply(`Review is green.${notes}\nNext: ${nextAction(readRun(ws, feature))}`);
+        const bug = '\nWhen the user finds a bug in this slice before it is done, call factory_fix with the bug (and any observation ids).';
+        return reply(`Review is green.${notes}${bug}\nNext: ${nextAction(readRun(ws, feature))}`);
       }
       const stall = result.stalled ? await decideStall(ctx, ws, feature) : '';
       return reply(`${result.blocking} blocking findings. Fix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
@@ -561,22 +566,28 @@ export default function softwareFactory(pi: ExtensionAPI) {
   tool({
     caller: 'main',
     description:
-      `After a green review, send the active slice back to the fix loop for review observations the user chose to fix in this slice, after the user agreed. Writes a tracked fix file; the round counts toward the fix budget, and the slice earns checks and a new review before factory_complete_slice. ${STALL_DESCRIPTION}`,
-    label: 'Factory: fix observations',
+      `After a green review, send the active slice back to the fix loop for a bug the user found in it (bug), review observations the user chose to fix in this slice (observations), or both, after the user agreed. Writes a tracked fix file; the round counts toward the fix budget, and the slice earns checks and a new review before factory_complete_slice. ${STALL_DESCRIPTION}`,
+    label: 'Factory: fix observations or a bug',
     name: 'factory_fix',
     schema: fixSchema,
     async run(params, ws, ctx) {
       const feature = activeFeature(ws);
-      // Refuses a slice without a green review, or an id that is not one of its observations, without a dialog.
-      const planned = planFix(ws, readRun(ws, feature), params.observations);
-      const ids = planned.observations.map(finding => finding.id).join(', ');
-      const body = `${params.reason}\n\n${planned.observations.map(finding => `- ${finding.id}: ${finding.title}`).join('\n')}\n\nThe green review ${planned.review.id} is dropped. The implementer fixes these in fix mode, then the slice gets checks and a new review again. The round counts toward the fix budget.`;
-      if (!(await confirm(ctx, `Fix observations in slice ${planned.slice.id} "${planned.slice.title}"?`, body))) {
-        return reply(`The user kept the green review. Ask how to handle the observations, or call factory_complete_slice.\nNext: ${nextAction(readRun(ws, feature))}`);
+      // Refuses a call with neither a bug nor observations, a slice without a green review, or an id that is not one
+      // of its observations, without a dialog.
+      const planned = planFix(ws, readRun(ws, feature), params);
+      const items = [
+        ...(planned.bug === undefined ? [] : [`- Bug: ${evidenceHead(planned.bug, 1_000)}`]),
+        ...planned.observations.map(finding => `- ${finding.id}: ${finding.title}`),
+      ];
+      const what = [...(planned.bug === undefined ? [] : ['the bug']), ...planned.observations.map(finding => finding.id)].join(', ');
+      const body = `${params.reason}\n\n${items.join('\n')}\n\nThe green review ${planned.review.id} is dropped. The implementer fixes these in fix mode, then the slice gets checks and a new review again. The round counts toward the fix budget.`;
+      const title = planned.observations.length === 0 ? 'Fix a bug' : planned.bug === undefined ? 'Fix observations' : 'Fix a bug and observations';
+      if (!(await confirm(ctx, `${title} in slice ${planned.slice.id} "${planned.slice.title}"?`, body))) {
+        return reply(`The user kept the green review. Ask how to handle the observations or the bug, or call factory_complete_slice.\nNext: ${nextAction(readRun(ws, feature))}`);
       }
-      const result = await withRun(ws, feature, run => fixObservations(ws, run, params.observations, params.reason));
+      const result = await withRun(ws, feature, run => fixObservations(ws, run, params, params.reason));
       const stall = result.stalled ? await decideStall(ctx, ws, feature) : '';
-      return reply(`Slice ${planned.slice.id} is back in fix for ${ids}. Fix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
+      return reply(`Slice ${planned.slice.id} is back in fix for ${what}. Fix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
     },
   });
 

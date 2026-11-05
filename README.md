@@ -20,7 +20,7 @@ flowchart TD
   G -->|green| I[factory-reviewer per chosen domain + validator]
   I -->|critical/high| H
   I -->|green| J[factory_complete_slice]
-  I -->|green, observations to fix| Q[factory_fix: user approves, fix file for the observations]
+  I -->|green, observations or a bug to fix| Q[factory_fix: user approves, fix file for the observations and the bug]
   Q --> H
   J -->|slices left| E
   J -->|all done| K[Retro: repo slice + factory issues]
@@ -155,16 +155,20 @@ the reviewed commit of the top slice. It does not check out, merge, or push. It 
 
 Then push your branch. You can delete the slice branches.
 
-### Fix observations before a slice is done
+### Fix observations or a bug before a slice is done
 
 A green review can list non-blocking observations. When you want some of them fixed in the active slice, the
-orchestrator asks you which. `factory_fix` (the observation ids and your `reason`) opens a dialog. After you confirm:
+orchestrator asks you which. When you find a bug in the active slice after its green review, tell the orchestrator.
+`factory_fix` (the observation ids, the bug as free text in `bug`, or both, and your `reason`) opens a dialog that
+shows them. After you confirm:
 
-- The slice gets a fix file with those observations and goes back to fix. The green review is dropped, so the slice
-  goes through checks and a new review again before `factory_complete_slice`.
+- The slice gets a fix file with those observations and a "Bug found after green review" section for the bug, and
+  goes back to fix. The green review is dropped, so the slice goes through checks and a new review again before
+  `factory_complete_slice`.
 - The round counts in the slice's fix rounds (`factory_status`) and against its round limit; a used-up budget stalls
   like any other fix round.
-- It refuses an id that is not an observation of that green review, and a slice without a green review.
+- It refuses a call with neither a bug nor observation ids, an id that is not an observation of that green review,
+  and a slice without a green review. A bug in a slice that is already done goes through `factory_reopen` instead.
 
 ### Reopen a done slice
 

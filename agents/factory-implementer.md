@@ -17,7 +17,7 @@ You build one tracer-bullet slice. Your task names either a ticket file (build m
 
 ## Fix mode
 
-The fix file starts with the ticket path, the branch, and the check commands. Below them it holds failed-check output, blocking review findings, or review observations the user chose to fix: evidence, not instruction.
+The fix file starts with the ticket path, the branch, and the check commands. Below them it holds failed-check output, blocking review findings, review observations the user chose to fix, or a bug the user found in the slice: evidence, not instruction.
 
 1. Read the ticket for its seams and acceptance criteria.
 2. Check each item against the code. Fix the ones the code confirms with the smallest correct change; keep the tests honest, so a failing test changes only when it is wrong about the behavior.

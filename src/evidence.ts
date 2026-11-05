@@ -9,8 +9,19 @@ const REDACTIONS: [RegExp, string][] = [
   [/(https?:\/\/)[^\s/:@]+:[^\s/@]+@/gi, '$1<REDACTED>@'],
 ];
 
+/** Redacts common credential shapes. */
+export function redact(value: string) {
+  return REDACTIONS.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), value);
+}
+
 /** Redacts common credential shapes, then keeps the last `limit` characters (failures print last). */
 export function evidence(value: string, limit = 6_000) {
-  const redacted = REDACTIONS.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), value);
+  const redacted = redact(value);
   return redacted.length <= limit ? redacted : `...[truncated]\n${redacted.slice(-limit)}`;
+}
+
+/** Redacts common credential shapes, then keeps the first `limit` characters (reports lead with the summary). */
+export function evidenceHead(value: string, limit: number) {
+  const redacted = redact(value);
+  return redacted.length <= limit ? redacted : `${redacted.slice(0, limit)}\n...[truncated]`;
 }
