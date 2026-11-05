@@ -290,7 +290,7 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   const dataFile = join(reviewDir(ws, run.feature, id), 'data.md');
   writeAtomic(
     dataFile,
-    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n## CHECKS\n\nThe factory ran every configured check on \`${checked.sha}\` and all passed. Do not run them again.\n\n${checked.results.map(result => `- ${result}`).join('\n')}\n\n## FIX ITEMS\n\n${listed}\n\n## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files.join('\n')}\n`,
+    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n${renderLaterSlices(run, slice)}\n\n## CHECKS\n\nThe factory ran every configured check on \`${checked.sha}\` and all passed. Do not run them again.\n\n${checked.results.map(result => `- ${result}`).join('\n')}\n\n## FIX ITEMS\n\n${listed}\n\n## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files.join('\n')}\n`,
   );
   const lines = changedLines(diff, files);
   slice.review = { decisions: run.decisions.length, id, lines, sha: checked.sha, skipped, snapshot: await snapshot(ws.root), submissions: {} };
@@ -304,6 +304,16 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
     referenceDir: REVIEW_REFERENCE_DIR,
     reviewId: id,
   };
+}
+
+/** The slices stacked after `slice`, so reviewers can tell work the plan gives a later slice from a gap in this one. */
+function renderLaterSlices(run: Run, slice: Slice) {
+  const later = run.slices.slice(run.slices.indexOf(slice) + 1);
+  if (later.length === 0) return '## LATER SLICES\n\nNone. This is the last slice of the plan.';
+  const listed = later.map(
+    item => `### ${item.id}: ${item.title}\n\n**What to build:** ${item.whatToBuild}\n\n${item.acceptance.map(line => `- ${line}`).join('\n')}`,
+  );
+  return `## LATER SLICES\n\nLater slices of the plan build this work. Work a later slice lists is not a finding against this slice; this slice's own acceptance criteria, seams, and decisions still count in full, and code here that contradicts a later slice's plan is still a finding.\n\n${listed.join('\n\n')}`;
 }
 
 /**
