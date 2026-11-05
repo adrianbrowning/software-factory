@@ -57,13 +57,17 @@ Repeat until `factory_next` reports no slices left:
 3. `factory_checks`. Red: spawn a fresh `factory-implementer` in fix mode with the returned fix file, then run `factory_checks` again. The two commit refusals end with the stored implementer report. A refusal for commits from other branches is not a fix round: ask the user, as for `MISSING DEPENDENCY`. A refusal for a slice with no commits is not a fix round either: when its report shows a stop report in Open (`NEEDS SEAM`, `SLICE TOO BIG`, `MISSING DEPENDENCY`), handle that stop report as in step 2; otherwise spawn the implementer again. A refusal as an environment error (command not found) is not a fix round: fix the PATH with `checkPath` in `.omp/factory.json` and run `factory_checks` again. When the reply says a fix round made no new commits, check that the implementer report explains, for each fix item, why no change was needed.
 4. Pick the review domains from the `Changed files` list that `factory_checks` returns and the ticket. Its `Path rules skip` line names the domains the factory skips because no changed path could hold their subject (`react-ts`, `test-validity`, `devops`). Pass one in `keep` only when a changed file holds that subject after all (for example a build script with an unusual name). Skip each other domain the diff gives nothing to review, and give the reason: for example `performance` for a diff with no runtime hot path, `security` for a diff with no input handling, auth, secrets, shell, file, or network code, and `comments` for a diff that adds or changes no comments. For a small diff, skip more. `bug` and `scope` always review, and `testing` does too for a slice with test seams. When unsure, keep the domain.
 5. `factory_review_start` with those skips and keeps, in one call: the review opens as soon as it returns.
-6. Run the whole review in one eval cell with timeout 0 (the reviews take minutes): spawn one `factory-reviewer` per domain that `factory_review_start` lists with `agent()`, each with the review id, data file, its domain, and its reference file (`<reference dir>/<domain>.md`); wait for every reviewer with the kernel `wait()`; then spawn one `factory-review-validator` with the review id, data file, findings dir, and reference dir, and wait for it. The validator may correct its validation once. Fill in the values from the `factory_review_start` reply:
+6. Run the whole review in one eval cell with timeout 0 (the reviews take minutes): spawn one `factory-reviewer` per domain that `factory_review_start` lists with `agent()`, each with the review id, data file, its domain, and its reference file (`<reference dir>/<domain>.md`); wait for every reviewer with the kernel `wait()`; then spawn one `factory-review-validator` with the review id, data file, findings dir, and reference dir, and wait for it. The validator may correct its validation once. When reviewers failed, the cell returns their domains and errors without spawning the validator: re-spawn only those domains, then spawn the validator. Fill in the values from the `factory_review_start` reply:
 
    ```python
    def run_review(review_id, domains, data, refdir, findings):
-       hs = [agent(f"Review id: {review_id}\nDomain: {d}\nData file: {data}\nReference file: {refdir}{d}.md",
+       import os
+       hs = [agent(f"Review id: {review_id}\nDomain: {d}\nData file: {data}\nReference file: {os.path.join(refdir, f'{d}.md')}",
                    agent="factory-reviewer", label=f"rev-{review_id}-{d}") for d in domains]
-       wait(hs, raise_errors=False)
+       rs = wait(hs, raise_errors=False)
+       failed = [(d, r) for d, r in zip(domains, rs) if isinstance(r, BaseException)]
+       if failed:
+           return {"failed": failed}
        v = agent(f"Review id: {review_id}\nData file: {data}\nFindings dir: {findings}\nReference dir: {refdir}",
                  agent="factory-review-validator", label=f"val-{review_id}")
        return v.wait()
