@@ -82,15 +82,15 @@ export function runShell(command: string, cwd: string, timeoutMs: number, signal
 }
 
 const execFileAsync = promisify(execFile);
-/** git and gh never wait on a credential or confirmation prompt. */
-const NON_INTERACTIVE = { ...process.env, GH_PROMPT_DISABLED: '1', GIT_TERMINAL_PROMPT: '0' };
+/** git and gh never wait on a credential or confirmation prompt. Read per call, so a changed PATH reaches them. */
+const nonInteractive = () => ({ ...process.env, GH_PROMPT_DISABLED: '1', GIT_TERMINAL_PROMPT: '0' });
 
 export async function git(cwd: string, ...args: string[]) {
-  const { stdout } = await execFileAsync('git', args, { cwd, env: NON_INTERACTIVE, maxBuffer: 64 * 1024 * 1024, timeout: 60_000 });
+  const { stdout } = await execFileAsync('git', args, { cwd, env: nonInteractive(), maxBuffer: 64 * 1024 * 1024, timeout: 60_000 });
   return stdout;
 }
 
 export async function gh(cwd: string, ...args: string[]) {
-  const { stdout } = await execFileAsync('gh', args, { cwd, env: NON_INTERACTIVE, maxBuffer: 16 * 1024 * 1024, timeout: 300_000 });
+  const { stdout } = await execFileAsync('gh', args, { cwd, env: nonInteractive(), maxBuffer: 16 * 1024 * 1024, timeout: 300_000 });
   return stdout;
 }

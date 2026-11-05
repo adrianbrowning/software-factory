@@ -21,6 +21,7 @@ import {
   withRun,
   type Workspace,
 } from './run.ts';
+import { submitStack } from './submit.ts';
 import {
   completeSlice,
   fixObservations,
@@ -68,7 +69,6 @@ import {
   sourceInputSchema,
   type SourceInput,
   startRun,
-  submitStack,
   summarize,
 } from './workflow.ts';
 
@@ -795,7 +795,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         const ok = await ctx.ui.confirm(
           run.landOn === undefined ? 'Open draft PRs?' : `Fast-forward ${run.landOn}?`,
           run.landOn === undefined
-            ? `gh stack will adopt ${run.slices.length} branches onto ${run.trunk} and open one draft PR per slice:\n${run.slices.map(slice => slice.branch).join('\n')}`
+            ? `gh stack will stack ${run.slices.length} branches onto ${run.trunk} (adding any the existing stack lacks) and open or update one draft PR per slice:\n${run.slices.map(slice => slice.branch).join('\n')}`
             : `${run.landOn} will fast-forward to ${run.slices.at(-1)?.branch} (${run.slices.length} slices). No PRs are opened and your checkout is not changed.`,
         );
         if (!ok) return;

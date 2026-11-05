@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { forgetRun, greenCommit, readRun, REVIEW_DOMAINS, type Workspace } from '../src/run.ts';
@@ -21,9 +20,8 @@ import {
   reopenSlice,
   resolveBase,
   resumeRun,
-  submitStack,
 } from '../src/workflow.ts';
-import { checkRuns, commit, countedCheck, green, newRun, review, roots, sh, slice, start, step, workspace } from './helpers.ts';
+import { checkRuns, commit, countedCheck, green, newRun, review, sh, slice, start, step, workspace } from './helpers.ts';
 
 describe('base resolution', () => {
   it('starts a run without the default base, and plans on a base the user chooses', async () => {
@@ -626,89 +624,6 @@ describe('follow-up slice', () => {
     const ws = workspace();
     await start(ws);
     await assert.rejects(step(ws, run => addFollowUp(ws, run, followUp)), /Run is intake; only a running or done run takes a follow-up slice/);
-  });
-});
-
-describe('submit', () => {
-  it('refuses to submit a branch that moved after its green review', async () => {
-    const ws = workspace();
-    await newRun(ws, [slice('Feature')]);
-    const started = await step(ws, run => nextSlice(ws, run));
-    commit(ws, 'ok');
-    await green(ws);
-    await step(ws, run => completeSlice(ws, run));
-    await step(ws, run => recordRetro(ws, run, parseRetro(ws, run, [])));
-
-    commit(ws, 'unreviewed.txt');
-    await assert.rejects(step(ws, run => submitStack(ws, run)), new RegExp(`moved after their green review.*${started?.branch}`));
-  });
-
-  it('lands a multi-slice run on an existing branch by fast-forwarding it to the top slice, without checkout', async () => {
-    const ws = workspace();
-    sh(ws.root, 'switch', '-q', '-c', 'ext-953');
-    commit(ws, 'ext.txt');
-    sh(ws.root, 'switch', '-q', 'main');
-    await assert.rejects(resolveBase(ws, { baseRef: 'main', landOn: 'ext-953' }), /"ext-953" is not at or below main/);
-    await start(ws);
-    const base = await resolveBase(ws, { landOn: 'ext-953' });
-    assert.equal(base.baseRef, 'ext-953');
-    await step(ws, run => approvePlan(ws, run, planSlices(ws, run, [slice('One'), slice('Two', ['One'])], base), base));
-    assert.match(readRun(ws, 'demo').events.find(event => event.kind === 'plan')?.detail ?? '', /lands on ext-953/);
-    for (const file of ['ok', 'two.txt']) {
-      await step(ws, run => nextSlice(ws, run));
-      commit(ws, file);
-      await green(ws);
-      await step(ws, run => completeSlice(ws, run));
-    }
-    await step(ws, run => recordRetro(ws, run, parseRetro(ws, run, [])));
-    const top = readRun(ws, 'demo').slices[1];
-    const checkedOut = sh(ws.root, 'branch', '--show-current');
-
-    sh(ws.root, 'switch', '-q', 'ext-953');
-    await assert.rejects(step(ws, run => submitStack(ws, run)), /ext-953 is checked out/);
-    sh(ws.root, 'switch', '-q', checkedOut);
-    const linked = mkdtempSync(join(tmpdir(), 'factory-wt-'));
-    roots.push(linked);
-    sh(ws.root, 'worktree', 'add', '-q', linked, 'ext-953');
-    await assert.rejects(step(ws, run => submitStack(ws, run)), /ext-953 is checked out in .*factory-wt-/);
-    sh(ws.root, 'worktree', 'remove', linked);
-
-    const steps: string[] = [];
-    const output = await step(ws, run => submitStack(ws, run, message => steps.push(message)));
-    assert.deepEqual(steps, ['checking the working tree and the slice branches', 'fast-forwarding ext-953 to the top slice']);
-    assert.match(output, /ext-953 fast-forwarded to .*No PRs were opened/);
-    assert.equal(sh(ws.root, 'rev-parse', 'ext-953'), top === undefined ? undefined : greenCommit(top));
-    assert.equal(sh(ws.root, 'branch', '--show-current'), checkedOut, 'the checkout is unchanged');
-    assert.equal(sh(ws.root, 'rev-list', '--merges', '--count', 'ext-953'), '0');
-  });
-
-  it('refuses at plan time a landOn that is a revision expression or not a local branch', async () => {
-    const ws = workspace();
-    sh(ws.root, 'update-ref', 'refs/remotes/origin/main', 'main');
-    for (const name of ['main^{commit}', 'main~0', 'origin/main', 'refs/heads/main', '../main', '-main', 'missing']) {
-      await assert.rejects(resolveBase(ws, { baseRef: 'main', landOn: name }), /is not an existing local branch/, name);
-    }
-    assert.equal((await resolveBase(ws, { baseRef: 'main', landOn: 'main' })).landOn, 'main');
-  });
-
-  it('refuses to land when the target branch moved off the stack', async () => {
-    const ws = workspace();
-    sh(ws.root, 'branch', 'target');
-    await start(ws);
-    const base = await resolveBase(ws, { landOn: 'target' });
-    await step(ws, run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')], base), base));
-    await step(ws, run => nextSlice(ws, run));
-    commit(ws, 'ok');
-    await green(ws);
-    await step(ws, run => completeSlice(ws, run));
-    await step(ws, run => recordRetro(ws, run, parseRetro(ws, run, [])));
-    const slices = sh(ws.root, 'branch', '--show-current');
-    sh(ws.root, 'switch', '-q', 'target');
-    commit(ws, 'elsewhere.txt');
-    const moved = sh(ws.root, 'rev-parse', 'HEAD');
-    sh(ws.root, 'switch', '-q', slices);
-    await assert.rejects(step(ws, run => submitStack(ws, run)), /target is gone or moved off the stack's base/);
-    assert.equal(sh(ws.root, 'rev-parse', 'target'), moved);
   });
 });
 
