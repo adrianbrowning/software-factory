@@ -559,7 +559,7 @@ export function amendSeams(ws: Workspace, run: Run, seams: string[]) {
   return slice;
 }
 
-/** A slice appended after the plan; only factory_plan assigns decisions, so it owns none. */
+/** A slice appended after the plan. It starts owning no decisions; factory_decide can name it later. */
 type AppendInput = Omit<SliceInput, 'blockedBy' | 'ownsDecisions'>;
 
 /** Builds the slice `addFollowUp` or a retro adds on top of the stack, validated, without changing the run. */
