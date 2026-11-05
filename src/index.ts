@@ -522,7 +522,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         const review = await startReview(ws, run, params.skip, params.keep);
         const byPath = review.pathSkipped.length === 0 ? '' : `\nSkipped by path: ${review.pathSkipped.map(entry => `${entry.domain} (${entry.reason})`).join('; ')}.`;
         return reply(
-          `Review ${review.reviewId} is open.${byPath}\nData file: ${review.dataFile}\nReference dir: ${review.referenceDir}\nFindings dir: ${review.findingsDir}\nSpawn one ${REVIEWER} per domain, in one task batch: ${review.domains.join(', ')}. Give each its domain, the review id, the data file, and the reference file <reference dir>/<domain>.md. When all have submitted, spawn one ${VALIDATOR} with the review id, the data file, and the findings dir. Wait until it has finished (it may correct its validation once), then call factory_review_record.`,
+          `Review ${review.reviewId} is open.${byPath}\nData file: ${review.dataFile}\nReference dir: ${review.referenceDir}\nFindings dir: ${review.findingsDir}\nSpawn one ${REVIEWER} per domain, in one task batch: ${review.domains.join(', ')}. Give each its domain, the review id, the data file, and the reference file <reference dir>/<domain>.md. When all have submitted, spawn one ${VALIDATOR} with the review id, the data file, the findings dir, and the reference dir. Wait until it has finished (it may correct its validation once), then call factory_review_record.`,
           review,
         );
       });
