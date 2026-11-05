@@ -70,7 +70,7 @@ Repeat until `factory_next` reports no slices left:
            return {"failed": failed}
        v = agent(f"Review id: {review_id}\nData file: {data}\nFindings dir: {findings}\nReference dir: {refdir}",
                  agent="factory-review-validator", label=f"val-{review_id}")
-       return v.wait()
+       return wait([v], raise_errors=False)[0]
 
    run_review("<review id>", ["<domain>", ...], "<data file>", "<reference dir>", "<findings dir>")
    ```
