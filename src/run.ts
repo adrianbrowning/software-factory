@@ -106,6 +106,8 @@ const reviewSchema = z.object({
 
 const sliceSchema = sliceInputSchema.extend({
   branch: text,
+  /** Work carried in from earlier slices' green reviews (factory_carry), as ticket sections; renderTicket lists them. */
+  carried: z.array(text).default([]),
   /**
    * The checks the slice passed: the commit, and the result of each of the run's checks, in order. A done slice read
    * from an older state file may hold no results (see legacySlice); a legacy pass is trusted to match the run's

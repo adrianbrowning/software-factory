@@ -22,6 +22,8 @@ flowchart TD
   I -->|green| J[factory_complete_slice]
   I -->|green, observations or a bug to fix| Q[factory_fix: user approves, fix file for the observations and the bug]
   Q --> H
+  I -->|green, observations or a note for a later slice| T[factory_carry: user approves, items in a pending slice's ticket]
+  T --> J
   J -->|slices left| E
   J -->|all done| K[Retro: repo slice + factory issues]
   J -->|bug in a done slice| O[factory_reopen: user approves, fix file for that slice]
@@ -169,6 +171,19 @@ shows them. After you confirm:
   like any other fix round.
 - It refuses a call with neither a bug nor observation ids, an id that is not an observation of that green review,
   and a slice without a green review. A bug in a slice that is already done goes through `factory_reopen` instead.
+
+### Carry observations into a pending slice
+
+When a green review lists observations that belong in a later slice, or you want extra work built there, the
+orchestrator asks you where they go. `factory_carry` (observation ids from the active slice's green review, a
+free-text `note`, or both, and `to`, the id of a pending slice) opens a dialog that shows them. After you confirm:
+
+- The items are added to that slice's ticket under "Carried-in work". Its implementer builds them, and its review
+  data file lists them, so its reviewers check them.
+- The active slice keeps its green review, and `factory_complete_slice` completes it without new checks or review.
+- A re-slice keeps the items: the first child takes those of the split slice.
+- It refuses a call with neither observation ids nor a note, an id that is not an observation of that green review,
+  a slice without a green review, and a target that is not a pending slice.
 
 ### Reopen a done slice
 

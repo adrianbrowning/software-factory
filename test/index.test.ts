@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
 import type { ExtensionAPI } from '@oh-my-pi/pi-coding-agent';
 import { loadConfig } from '../src/config.ts';
 import softwareFactory, { MAX_IDLE_STOP_ATTEMPTS, stopDecision } from '../src/index.ts';
-import { readRun, type Run, withRun, type Workspace } from '../src/run.ts';
+import { readRun, type Run, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, pauseRun, planSlices, resolveStall } from '../src/workflow.ts';
 import { commit, finding, green, review, sh, slice, tempRepo } from './helpers.ts';
@@ -18,8 +18,8 @@ type Registered = {
   parameters: { properties?: Record<string, unknown>; required?: string[] };
 };
 
-/** Registers the extension against a recording `pi` and returns its tools by name. */
-function load() {
+/** Registers the extension against a recording `pi` and returns its tools by name; `activated` collects what setActiveTools gets. */
+function load(activated: string[] = []) {
   const tools = new Map<string, Registered>();
   const pi = {
     getActiveTools: () => [],
@@ -28,7 +28,9 @@ function load() {
     registerTool(tool: Registered) {
       tools.set(tool.name, tool);
     },
-    setActiveTools: async () => {},
+    setActiveTools: async (names: string[]) => {
+      activated.push(...names);
+    },
     setLabel() {},
   };
   softwareFactory(pi as unknown as ExtensionAPI);
@@ -319,5 +321,42 @@ describe('used-up fix budget', () => {
     await assert.rejects(call('factory_fix', { reason: 'tidy' }, { confirm: async () => (dialogs++, true) }), /factory_fix needs a bug, observation ids, or both/);
     assert.equal(dialogs, 0);
     assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'ready');
+  });
+
+  it('factory_start activates factory_carry', async () => {
+    using repo = tempRepo('factory-carry-', { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) });
+    const activated: string[] = [];
+    const caller = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { notify() {} } };
+    await load(activated).get('factory_start')?.execute('id', { feature: 'demo', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } }, undefined, undefined, caller);
+    assert.ok(activated.includes('factory_carry'));
+  });
+
+  it('carries an observation and a note into a pending slice after the user confirms, and keeps the active slice green', async () => {
+    using run = await budgetRun(['Feature', 'Second']);
+    const { call, ws } = run;
+    await greenWithObservation(ws, 1);
+    const asked: string[] = [];
+    const answer = (ok: boolean) => ({ confirm: async (title: string, body: string) => (asked.push(`${title}\n${body}`), ok) });
+    const params = { note: 'Log the parse time.', observations: ['thermo-naming'], to: '02' };
+
+    const declined = await call('factory_carry', params, answer(false));
+    assert.match(declined.content[0]?.text ?? '', /The user did not carry/);
+    assert.deepEqual(readRun(ws, 'demo').slices[1]?.carried, []);
+
+    const carried = await call('factory_carry', params, answer(true));
+    assert.match(asked[0] ?? '', /^Carry into slice 02 "Second"\?\n- Note: Log the parse time\.\n- thermo-naming: naming\n\nSlice 01 keeps its green review/);
+    assert.match(carried.content[0]?.text ?? '', /Carried the note, thermo-naming into slice 02 "Second"\. Ticket: .*02-second\.md\nNext: Call factory_complete_slice for slice 01/);
+    const state = readRun(ws, 'demo');
+    assert.equal(state.slices[0]?.phase, 'ready');
+    assert.match(readFileSync(ticketPath(ws, 'demo', state.slices[1] ?? assert.fail('no slice')), 'utf8'), /## Carried-in work[\s\S]*Log the parse time\.[\s\S]*thermo-naming/);
+  });
+
+  it('refuses factory_carry to a slice that is not pending, before any dialog', async () => {
+    using run = await budgetRun(['Feature', 'Second']);
+    const { call, ws } = run;
+    await greenWithObservation(ws, 1);
+    let dialogs = 0;
+    await assert.rejects(call('factory_carry', { note: 'Later.', to: '01' }, { confirm: async () => (dialogs++, true) }), /Slice 01 is active; factory_carry takes a pending slice/);
+    assert.equal(dialogs, 0);
   });
 });
