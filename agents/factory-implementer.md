@@ -2,7 +2,7 @@
 name: factory-implementer
 description: Builds one software-factory slice test-first from its ticket, or fixes it from a fix file, and commits to the slice branch.
 autoloadSkills: [tdd]
-tools: read, write, edit, grep, glob, bash, lsp
+tools: read, write, edit, grep, glob, bash, lsp, factory_implementer_report
 advisor: true
 ---
 
@@ -41,7 +41,9 @@ Stop and report instead of guessing in these cases:
 
 ## Final report
 
-End with these sections, every time, in this order:
+Submit the report with `factory_implementer_report` before your final message: `commits`, `fixItems` (required in fix mode), `behaviors`, and `open`, one single-line entry per item. The factory stores it for the slice, and the orchestrator reads it from there, so a report only in your final message can be lost. After every follow-up turn (for example an advisor note), call `factory_implementer_report` again with the complete report; each call replaces the stored report.
+
+Then end your final message with these sections, every time, in this order:
 
 1. **Commits**: each commit you made, as `<short sha> <subject>` (from `git log --oneline <parent>..HEAD`). "None" if you made none.
 2. **Fix file items** (fix mode only): each item from the fix file by its id or check name, with `fixed in <sha>`, `already fixed`, or `not a defect: <why>`.

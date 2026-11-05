@@ -3,10 +3,12 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
+import { startImplementerSession, submitImplementerReport } from '../src/report.ts';
 import { forgetRun, greenCommit, readRun, REVIEW_DOMAINS, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, REVIEW_REFERENCE_DIR, runChecks, startReview } from '../src/review.ts';
 import {
   addFollowUp,
+  amendSeams,
   applyReslice,
   approvePlan,
   fileSource,
@@ -20,6 +22,7 @@ import {
   reopenSlice,
   resolveBase,
   resumeRun,
+
 } from '../src/workflow.ts';
 import { checkRuns, commit, countedCheck, green, newRun, review, sh, slice, start, step, workspace } from './helpers.ts';
 
@@ -157,6 +160,93 @@ describe('planSlices', () => {
   });
 });
 
+describe('implementer report', () => {
+  it('stores the latest report for the active slice and shows it in the checks result, or that none was submitted', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature'), slice('Next', ['Feature'])]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'work.txt');
+    const red = await step(ws, run => runChecks(ws, run));
+    const path = join(ws.root, '.scratch', 'demo', 'reports', '01.md');
+    assert.equal(red.report, `No implementer report was submitted for slice 01 (factory_implementer_report). Once it is, read it at ${path}`);
+
+    const first = await step(ws, run =>
+      submitImplementerReport(ws, run, { behaviors: ['old test → old behavior'], commits: ['abc1234 01: first try'], fixItems: [], open: [] }),
+    );
+    assert.deepEqual([first.path, first.replaced], [path, false]);
+    const second = await step(ws, run =>
+      submitImplementerReport(ws, run, {
+        behaviors: ['writes ok → checks pass'],
+        commits: ['abc1234 01: first try', 'def5678 01: add ok'],
+        fixItems: ['test -f ok: fixed in def5678'],
+        open: [],
+      }),
+    );
+    assert.deepEqual([second.path, second.replaced], [first.path, true]);
+    commit(ws, 'ok');
+    const passed = await step(ws, run => runChecks(ws, run));
+    assert.equal(
+      passed.report,
+      `Implementer report:\nCommits:\n- abc1234 01: first try\n- def5678 01: add ok\nFix file items:\n- test -f ok: fixed in def5678\nBehaviors:\n- writes ok → checks pass\nOpen:\n- none\nReport file: ${path}`,
+    );
+
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'next.txt');
+    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [], open: ['SLICE TOO BIG: the rest'] }));
+    assert.equal(
+      (await step(ws, run => runChecks(ws, run))).report,
+      `Implementer report:\nCommits:\n- none\nBehaviors:\n- none\nOpen:\n- SLICE TOO BIG: the rest\nReport file: ${join(ws.root, '.scratch', 'demo', 'reports', '02.md')}`,
+    );
+  });
+
+  it('shows a stop report submitted before any commit in the no-commits refusal', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [], open: ['NEEDS SEAM: the clock — no agreed seam'] }));
+    await assert.rejects(step(ws, run => runChecks(ws, run)), /has no commits past main[\s\S]*Open:\n- NEEDS SEAM: the clock — no agreed seam/);
+  });
+
+  it('shows the stored report in the refusal for commits from other branches', async () => {
+    const ws = workspace();
+    sh(ws.root, 'switch', '-q', '-c', 'ext-950');
+    commit(ws, 'ext.txt');
+    sh(ws.root, 'switch', '-q', 'main');
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    sh(ws.root, 'merge', '-q', '--ff-only', 'ext-950');
+    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [], open: ['MISSING DEPENDENCY: x'] }));
+    await assert.rejects(step(ws, run => runChecks(ws, run)), /commits from other branches[\s\S]*Open:\n- MISSING DEPENDENCY: x/);
+  });
+
+  it('rejects a fix-mode report without fix file items', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'work.txt');
+    await step(ws, run => runChecks(ws, run));
+    await assert.rejects(
+      step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: ['abc1234 01: fix'], open: [] })),
+      /fix mode: list every fix file item in fixItems/,
+    );
+  });
+
+  it('clears the stored report when a new implementer session starts, and only then', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [], open: ['NEEDS SEAM: x'] }));
+    await step(ws, run => amendSeams(ws, run, ['the clock']));
+    await assert.rejects(step(ws, run => runChecks(ws, run)), /has no commits past main[\s\S]*Open:\n- NEEDS SEAM: x/);
+
+    await step(ws, run => startImplementerSession(ws, run));
+    commit(ws, 'ok');
+    const passed = await step(ws, run => runChecks(ws, run));
+    assert.match(passed.report, /^No implementer report was submitted for slice 01 \(factory_implementer_report\)\./);
+  });
+});
 
 describe('re-slice', () => {
   it('replaces the active slice with children on its branch and remaps later blockers', async () => {
@@ -194,6 +284,18 @@ describe('re-slice', () => {
     const fresh = await step(ws, run => startReview(ws, run));
     assert.notEqual(fresh.reviewId, old.reviewId);
     await assert.rejects(step(ws, run => recordReview(ws, run)), /Domains not submitted yet/);
+  });
+
+  it("does not show the split slice's implementer report for the first child", async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Big')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: ['abc1234 01: partial'], open: ['SLICE TOO BIG: part two'] }));
+
+    await step(ws, run => applyReslice(ws, run, planReslice(ws, run, [slice('Part one'), slice('Part two', ['Part one'])]).slices));
+    const checks = await step(ws, run => runChecks(ws, run));
+    assert.match(checks.report, /^No implementer report was submitted for slice 01/);
   });
 
   it('leaves the run and its tickets unchanged when the branch rename fails', async () => {

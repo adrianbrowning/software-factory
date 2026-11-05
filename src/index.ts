@@ -10,6 +10,7 @@ import {
   findingSchema,
   forgetRun,
   readRun,
+  reportPath,
   REQUIRED_REVIEW_DOMAINS,
   REVIEW_DOMAINS,
   type Run,
@@ -21,6 +22,7 @@ import {
   withRun,
   type Workspace,
 } from './run.ts';
+import { implementerReportSchema, startImplementerSession, submitImplementerReport } from './report.ts';
 import { submitStack } from './submit.ts';
 import {
   completeSlice,
@@ -97,7 +99,7 @@ const ORCHESTRATION_TOOLS = [
 /** Stop attempts in a row without new run events; the last one pauses the run instead of blocking. */
 export const MAX_IDLE_STOP_ATTEMPTS = 3;
 
-type Caller = 'main' | typeof REVIEWER | typeof VALIDATOR;
+type Caller = 'main' | typeof IMPLEMENTER | typeof REVIEWER | typeof VALIDATOR;
 
 const startSchema = z.object({
   feature: z.string().optional().describe('kebab-case run name for a new run'),
@@ -401,7 +403,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         const slice = await nextSlice(ws, run);
         if (slice === undefined) return reply(`No slices left.\nNext: ${nextAction(run)}`);
         return reply(
-          `Slice ${slice.id} "${slice.title}" on ${slice.branch} (phase ${slice.phase}).\nTicket: ${ticketPath(ws, run.feature, slice)}\nChecks: ${run.checks.join('; ')}\nContext budget: ${ws.config.sliceTokenBudget} tokens.\nNext: ${nextAction(run)}`,
+          `Slice ${slice.id} "${slice.title}" on ${slice.branch} (phase ${slice.phase}).\nTicket: ${ticketPath(ws, run.feature, slice)}\nImplementer report file: ${reportPath(ws, run.feature, slice)}\nChecks: ${run.checks.join('; ')}\nContext budget: ${ws.config.sliceTokenBudget} tokens.\nNext: ${nextAction(run)}`,
         );
       });
     },
@@ -482,17 +484,30 @@ export default function softwareFactory(pi: ExtensionAPI) {
       const result = await withRun(ws, feature, run => runChecks(ws, run, signal));
       const summary = result.summary.join('\n');
       const run = readRun(ws, feature);
-      const commits = `Slice commits:\n${result.commits}`;
+      const work = `Slice commits:\n${result.commits}\n${result.report}`;
       const unchanged = result.unchanged
         ? '\nNo new commits since the fix file. The implementer report should explain, for each item, why no change was needed.'
         : '';
       if (result.passed) {
         const byPath = result.pathSkipped.length === 0 ? '' : `\nPath rules skip: ${result.pathSkipped.map(entry => `${entry.domain} (${entry.reason})`).join('; ')}. Pass a domain in factory_review_start keep when a changed file holds its subject after all.`;
         const passed = result.reused ? `All checks already passed on ${result.sha}; reusing their results, no check ran.` : 'All checks passed.';
-        return reply(`${passed}\n${summary}\n${commits}${unchanged}\nChanged files:\n${result.changed}${byPath}\nNext: ${nextAction(run)}`);
+        return reply(`${passed}\n${summary}\n${work}${unchanged}\nChanged files:\n${result.changed}${byPath}\nNext: ${nextAction(run)}`);
       }
       const stall = result.stalled ? await decideStall(ctx, ws, feature) : '';
-      return reply(`Checks failed.\n${summary}\n${commits}${unchanged}\nFix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
+      return reply(`Checks failed.\n${summary}\n${work}${unchanged}\nFix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
+    },
+  });
+
+  tool({
+    caller: IMPLEMENTER,
+    description:
+      'Submit your final report for the active slice: commits, fix file items (required in fix mode), behaviors, and open items, one line per item. Call it before your final message, and again after every follow-up turn; each call replaces the stored report. The orchestrator reads the stored report file, which the factory_next and factory_checks replies name.',
+    label: 'Factory: implementer report',
+    name: 'factory_implementer_report',
+    schema: implementerReportSchema,
+    async run(params, ws) {
+      const result = await withRun(ws, activeFeature(ws), run => submitImplementerReport(ws, run, params));
+      return reply(`${result.replaced ? 'Replaced the stored report' : 'Stored the report'}: ${result.path}`);
     },
   });
 
@@ -861,4 +876,12 @@ export default function softwareFactory(pi: ExtensionAPI) {
 
   pi.on('turn_end', async (_event, ctx) => trackImplementer(ctx, false));
   pi.on('auto_compaction_start', async (_event, ctx) => trackImplementer(ctx, true));
+  // A new implementer the orchestrator spawns starts a new report round; reviving or messaging one is not a spawn, so
+  // a follow-up turn keeps its report.
+  pi.on('before_subagent_spawn', async (event, ctx) => {
+    if (ctx.agent.kind !== 'main' || event.agent !== IMPLEMENTER) return;
+    const ws = await workspace(ctx.cwd);
+    const feature = activeRuns.get(ws.root);
+    if (feature !== undefined) await withRun(ws, feature, run => startImplementerSession(ws, run));
+  });
 }

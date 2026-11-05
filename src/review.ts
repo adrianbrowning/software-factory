@@ -31,6 +31,7 @@ import {
   type Workspace,
   writeAtomic,
 } from './run.ts';
+import { storedReport } from './report.ts';
 import { head, porcelain, requireClean, requireOnBranch, snapshot } from './repo.ts';
 import {
   pauseRun,
@@ -101,15 +102,17 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   const slice = requireActive(run);
   await requireOnBranch(ws.root, slice);
   await requireClean(ws.root, 'Checks run on committed work only');
+  // Read before the refusals, so a stop report submitted before any commit still reaches the orchestrator.
+  const report = storedReport(ws, run, slice);
   const foreign = await foreignCommits(ws, run, slice);
   if (foreign.length > 0) {
     const listed = await git(ws.root, 'log', '--oneline', '--no-walk', ...foreign.slice(0, 20));
     throw new Error(
-      `Slice ${slice.id} holds ${foreign.length} commits from other branches, so its review would include work outside the slice:\n${listed.trim()}\nReset the branch to its own commits on ${slice.parentBranch}. If the slice needs that work, ask the user: a run that builds on another branch starts with factory_start baseRef set to it.`,
+      `Slice ${slice.id} holds ${foreign.length} commits from other branches, so its review would include work outside the slice:\n${listed.trim()}\nReset the branch to its own commits on ${slice.parentBranch}. If the slice needs that work, ask the user: a run that builds on another branch starts with factory_start baseRef set to it.\n${report}`,
     );
   }
   const commits = (await git(ws.root, 'log', '--oneline', `${slice.parentBranch}..HEAD`)).trim();
-  if (commits === '') throw new Error(`Slice ${slice.id} has no commits past ${slice.parentBranch}. The implementer must commit the slice work first.`);
+  if (commits === '') throw new Error(`Slice ${slice.id} has no commits past ${slice.parentBranch}. The implementer must commit the slice work first.\n${report}`);
   const sha = await head(ws.root);
   // A fix round that ends on the commit its fix file described: the implementer changed nothing.
   const unchanged = slice.phase === 'fix' && slice.fixFromSha === sha;
@@ -118,7 +121,7 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   // pending) clears it, so every check runs; a review reopened for newer decisions (reopenReview) or a resume on the
   // same commit keeps its checks.
   const stored = standingChecks(slice, sha);
-  if (stored !== undefined) return { commits, unchanged, ...(await passChecks(ws, run, slice, sha, stored, true)) };
+  if (stored !== undefined) return { commits, report, unchanged, ...(await passChecks(ws, run, slice, sha, stored, true)) };
   const results: { command: string; result: CommandResult }[] = [];
   const checkPath = [...ws.config.checkPath, process.env.PATH ?? ''].join(delimiter);
   const env = { ...process.env, PATH: checkPath };
@@ -146,7 +149,7 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   const dirty = (await porcelain(ws.root)).trim();
   const failed = results.filter(({ result }) => result.exitCode !== 0 || result.timedOut);
   const summary = results.map(({ command, result }) => describeCheck(command, result));
-  if (failed.length === 0 && dirty === '') return { commits, unchanged, ...(await passChecks(ws, run, slice, sha, summary, false)) };
+  if (failed.length === 0 && dirty === '') return { commits, report, unchanged, ...(await passChecks(ws, run, slice, sha, summary, false)) };
 
   const sections = failed.map(
     ({ command, result }) =>
@@ -159,7 +162,7 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
     [...failed.map(({ command }) => command), ...(dirty === '' ? [] : ['working tree changed'])].join('; '),
     slice,
   );
-  return { commits, passed: false as const, summary, unchanged, ...requestFix(ws, run, slice, sections.join('\n\n'), sha) };
+  return { commits, passed: false as const, report, summary, unchanged, ...requestFix(ws, run, slice, sections.join('\n\n'), sha) };
 }
 
 /** Moves the slice to review with check `results` passed on `sha`. `reused` marks stored results that stand, when no check ran. */
