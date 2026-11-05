@@ -6,8 +6,8 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { git } from '../src/exec.ts';
 import { startImplementerSession, submitImplementerReport } from '../src/report.ts';
-import { forgetRun, greenCommit, readRun, REVIEW_DOMAINS, type Workspace } from '../src/run.ts';
-import { completeSlice, recordReview, REVIEW_REFERENCE_DIR, runChecks, startReview } from '../src/review.ts';
+import { forgetRun, greenCommit, readRun, REVIEW_DOMAINS, ticketPath, type Workspace } from '../src/run.ts';
+import { completeSlice, recordDecisions, recordReview, REVIEW_REFERENCE_DIR, runChecks, startReview } from '../src/review.ts';
 import {
   addFollowUp,
   amendSeams,
@@ -166,6 +166,30 @@ describe('planSlices', () => {
       [`factory/demo/01-slice-branch-slugs-end-on-a-whole-word`, `factory/demo/02-${'x'.repeat(40)}`],
     );
   });
+
+  it('assigns intake decisions a slice owns, and marks them in the tickets of the slices before it', async () => {
+    const ws = workspace();
+    await start(ws);
+    await step(ws, run => recordDecisions(ws, run, ['Shared rule.', 'Export is built by API.']));
+    await step(ws, run => approvePlan(ws, run, planSlices(ws, run, [slice('Schema'), slice('API', ['Schema'], { ownsDecisions: [2] })])));
+    const run = readRun(ws, 'demo');
+    assert.deepEqual(run.slices.map(item => item.ownsDecisions), [[], [2]]);
+    const ticket = (index: number) => readFileSync(ticketPath(ws, 'demo', run.slices[index] ?? assert.fail('no slice')), 'utf8');
+    assert.ok(ticket(0).includes('\n2. Export is built by API. Built by slice 02 (API): this slice need not build it; report only code that contradicts it.\n'));
+    assert.ok(ticket(1).includes('\n2. Export is built by API.\n'));
+  });
+
+  it('rejects an owned decision number that was not recorded or that two slices own', async () => {
+    const ws = workspace();
+    await start(ws);
+    await step(ws, run => recordDecisions(ws, run, ['Only decision.']));
+    const run = readRun(ws, 'demo');
+    assert.throws(() => planSlices(ws, run, [slice('A', [], { ownsDecisions: [2] })]), /"A" owns decision 2, but 1 decision is recorded/);
+    assert.throws(
+      () => planSlices(ws, run, [slice('A', [], { ownsDecisions: [1] }), slice('B', ['A'], { ownsDecisions: [1] })]),
+      /Decision 1 is owned by both "A" and "B"/,
+    );
+  });
 });
 
 describe('implementer report', () => {
@@ -276,6 +300,30 @@ describe('re-slice', () => {
     assert.equal(sh(ws.root, 'branch', '--show-current'), first.branch);
     assert.match(sh(ws.root, 'log', '--oneline', '-1'), /add partial.txt/);
     assert.equal(sh(ws.root, 'branch', '--list', big?.branch ?? ''), '');
+  });
+
+  it("moves the split slice's decisions to its last child, and other slices keep theirs under their new ids", async () => {
+    const ws = workspace();
+    await start(ws);
+    await step(ws, run => recordDecisions(ws, run, ['Big builds the export.', 'After builds the import.']));
+    await step(ws, run => approvePlan(ws, run, planSlices(ws, run, [slice('Big', [], { ownsDecisions: [1] }), slice('After', ['Big'], { ownsDecisions: [2] })])));
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'partial.txt');
+
+    await assert.rejects(
+      step(ws, run => applyReslice(ws, run, planReslice(ws, run, [slice('Part one', [], { ownsDecisions: [] }), slice('Part two', ['Part one'], { ownsDecisions: [2] })]).slices)),
+      /factory_reslice moves the split slice's decisions to its last child; leave ownsDecisions out of "Part two"/,
+    );
+    await step(ws, run => applyReslice(ws, run, planReslice(ws, run, [slice('Part one'), slice('Part two', ['Part one'])]).slices));
+    const run = readRun(ws, 'demo');
+    assert.deepEqual(run.slices.map(item => [item.id, item.title, item.ownsDecisions]), [
+      ['01', 'Part one', []],
+      ['02', 'Part two', [1]],
+      ['03', 'After', [2]],
+    ]);
+    const ticket = readFileSync(ticketPath(ws, 'demo', run.slices[0] ?? assert.fail('no slice')), 'utf8');
+    assert.ok(ticket.includes('\n1. Big builds the export. Built by slice 02 (Part two): this slice need not build it; report only code that contradicts it.\n'));
+    assert.ok(ticket.includes('\n2. After builds the import. Built by slice 03 (After): this slice need not build it; report only code that contradicts it.\n'));
   });
 
   it('gives the first child a new review id, so old review files never count', async () => {
@@ -776,6 +824,20 @@ describe('follow-up slice', () => {
     assert.deepEqual([next?.id, next?.phase, sh(ws.root, 'rev-parse', 'HEAD')], ['02', 'implement', greenCommit(done)]);
   });
 
+  it('gives a follow-up slice no decisions, so earlier tickets stay as written', async () => {
+    const ws = workspace();
+    await start(ws);
+    await step(ws, run => recordDecisions(ws, run, ['Export rule.']));
+    await step(ws, run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')])));
+    await step(ws, run => nextSlice(ws, run));
+
+    await step(ws, run => addFollowUp(ws, run, { ...followUp, ownsDecisions: [1] } as typeof followUp));
+    const run = readRun(ws, 'demo');
+    assert.deepEqual(run.slices.map(item => item.ownsDecisions), [[], []]);
+    const ticket = readFileSync(ticketPath(ws, 'demo', run.slices[0] ?? assert.fail('no slice')), 'utf8');
+    assert.ok(ticket.includes('\n1. Export rule.\n'));
+  });
+
   it('refuses a follow-up slice on a run that is not running or done', async () => {
     const ws = workspace();
     await start(ws);
@@ -812,6 +874,17 @@ describe('run state', () => {
       /boom/,
     );
     assert.equal(readRun(ws, 'demo').status, 'running');
+  });
+
+  it('loads a state file from before decision ownership with no decisions owned', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    forgetRun(ws, 'demo');
+    const path = join(ws.root, '.scratch', 'demo', 'state.json');
+    const state = JSON.parse(readFileSync(path, 'utf8')) as { slices: Record<string, unknown>[] };
+    for (const item of state.slices) delete item.ownsDecisions;
+    writeFileSync(path, JSON.stringify(state));
+    assert.deepEqual(readRun(ws, 'demo').slices.map(item => item.ownsDecisions), [[]]);
   });
 
   it('keeps run state out of git', async () => {

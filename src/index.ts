@@ -27,7 +27,9 @@ import { implementerReportSchema, startImplementerSession, submitImplementerRepo
 import { submitStack } from './submit.ts';
 import {
   completeSlice,
+  decisionInputSchema,
   fixObservations,
+  planDecisions,
   planFix,
   recordDecisions,
   recordReview,
@@ -108,7 +110,10 @@ const startSchema = z.object({
   source: sourceInputSchema.optional().describe('The issue, required for a new run: github or file by ref (the tool loads it), jira or text in full'),
 });
 const decisionsSchema = z.object({
-  decisions: z.array(z.string().min(1)).min(1).describe('Decisions the user made, each one self-contained sentence'),
+  decisions: z
+    .array(decisionInputSchema)
+    .min(1)
+    .describe('Decisions the user made, each one self-contained sentence; give { text, slice } when the plan assigns the work to one pending or active slice'),
 });
 const planSchema = z.object({ slices: z.array(sliceInputSchema) });
 const planToolSchema = planSchema.extend({
@@ -152,7 +157,7 @@ const reopenSchema = z.object({
   reason: z.string().min(1).describe('The bug found in the done slice, as the fix file for its implementer'),
   slice: z.string().regex(/^\d{2}$/).describe('Id of the done slice, for example "04"'),
 });
-const followUpSchema = sliceInputSchema.omit({ blockedBy: true });
+const followUpSchema = sliceInputSchema.omit({ blockedBy: true, ownsDecisions: true });
 const fixSchema = z.object({
   bug: z
     .string()
@@ -446,13 +451,16 @@ export default function softwareFactory(pi: ExtensionAPI) {
   tool({
     caller: 'main',
     description:
-      'Record decisions the user made (accepted tradeoffs, out-of-scope work). The user confirms them; every later ticket and review data file lists them.',
+      'Record decisions the user made (accepted tradeoffs, out-of-scope work). The user confirms them; every later ticket and review data file lists them. A decision may name the slice that builds it; slices before that one mark it as built later.',
     label: 'Factory: record decisions',
     name: 'factory_decide',
     schema: decisionsSchema,
     async run(params, ws, ctx) {
       const feature = activeFeature(ws);
-      if (!(await confirm(ctx, 'Record these decisions for reviewers?', params.decisions.map(decision => `- ${decision}`).join('\n')))) {
+      // An unknown or done slice is refused by planDecisions, without a dialog.
+      const planned = planDecisions(readRun(ws, feature), params.decisions);
+      const body = planned.map(({ owner, text }) => `- ${text}${owner === undefined ? '' : ` (built by slice ${owner.id} ${owner.title})`}`).join('\n');
+      if (!(await confirm(ctx, 'Record these decisions for reviewers?', body))) {
         return reply('The user rejected these decisions. Ask how to word them.');
       }
       return withRun(ws, feature, run => {

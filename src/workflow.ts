@@ -285,6 +285,7 @@ function makeSlice(ws: Workspace, run: Run, input: SliceInput, index: number, pa
     fixItems: [],
     fixRounds: 0,
     id,
+    ownsDecisions: input.ownsDecisions ?? [],
     parentBranch,
     peakContextTokens: 0,
     phase: 'implement',
@@ -295,10 +296,20 @@ function makeSlice(ws: Workspace, run: Run, input: SliceInput, index: number, pa
   };
 }
 
-/** Numbered, so a validator can name the decision a finding conflicts with. */
-function renderDecisions(run: Run) {
+/**
+ * Numbered, so a validator can name the decision a finding conflicts with. A decision a later slice than `slice` builds
+ * is marked with that slice, so this slice's reviewers do not count it as a gap.
+ */
+function renderDecisions(run: Run, slice: Slice) {
   if (run.decisions.length === 0) return 'None recorded.';
-  return run.decisions.map((decision, index) => `${index + 1}. ${decision}`).join('\n');
+  const later = run.slices.slice(run.slices.indexOf(slice) + 1);
+  return run.decisions
+    .map((decision, index) => {
+      const owner = later.find(item => item.ownsDecisions.includes(index + 1));
+      const mark = owner === undefined ? '' : ` Built by slice ${owner.id} (${owner.title}): this slice need not build it; report only code that contradicts it.`;
+      return `${index + 1}. ${decision}${mark}`;
+    })
+    .join('\n');
 }
 
 export function renderTicket(run: Run, slice: Slice, budget: number) {
@@ -328,7 +339,7 @@ ${slice.acceptance.map(item => `- [ ] ${item}`).join('\n')}
 ${renderCarried(slice)}
 ## Decisions the user already made
 
-${renderDecisions(run)}
+${renderDecisions(run, slice)}
 `;
 }
 
@@ -437,12 +448,31 @@ function stack(ws: Workspace, run: Run, base: Slice[], inputs: SliceInput[]) {
 }
 
 /**
+ * Throws unless each decision a slice owns is a recorded decision, owned by that slice alone. A decision belongs to
+ * at most one slice, the one that builds it (renderDecisions marks it in the slices before).
+ */
+function checkOwnership(run: Run, slices: Slice[]) {
+  const owners = new Map<number, Slice>();
+  for (const slice of slices) {
+    for (const number of slice.ownsDecisions) {
+      if (number > run.decisions.length) {
+        throw new Error(`"${slice.title}" owns decision ${number}, but ${run.decisions.length} ${run.decisions.length === 1 ? 'decision is' : 'decisions are'} recorded.`);
+      }
+      const other = owners.get(number);
+      if (other !== undefined) throw new Error(`Decision ${number} is owned by both "${other.title}" and "${slice.title}"; give it to the one slice that builds it.`);
+      owners.set(number, slice);
+    }
+  }
+  return slices;
+}
+
+/**
  * Validates the proposed slices and orders them into one linear stack (blockers first) on `base`, slice 01 branching
- * from the pinned base commit. Does not save.
+ * from the pinned base commit. Each decision a slice owns must be recorded and owned by no other slice. Does not save.
  */
 export function planSlices(ws: Workspace, run: Run, proposed: unknown, base?: Base): Slice[] {
   if (run.status !== 'intake') throw new Error(`Run is ${run.status}; the plan is already approved.`);
-  return stack(ws, base === undefined ? run : { ...run, ...base }, [], orderInputs(ws, proposed, new Set(), new Set()));
+  return checkOwnership(run, stack(ws, base === undefined ? run : { ...run, ...base }, [], orderInputs(ws, proposed, new Set(), new Set())));
 }
 
 /**
@@ -456,6 +486,8 @@ export function planReslice(ws: Workspace, run: Run, proposed: unknown) {
   const done = run.slices.slice(0, index);
   const pending = run.slices.slice(index + 1);
   const children = orderInputs(ws, proposed, new Set(done.map(slice => slice.title)), new Set(pending.map(slice => slice.title)));
+  const claiming = children.find(child => (child.ownsDecisions ?? []).length > 0);
+  if (claiming !== undefined) throw new Error(`factory_reslice moves the split slice's decisions to its last child; leave ownsDecisions out of "${claiming.title}".`);
   const childTitles = children.map(child => child.title);
   const rest = pending.map(slice =>
     sliceInputSchema.parse({ ...slice, blockedBy: slice.blockedBy.flatMap(blocker => (blocker === active.title ? childTitles : [blocker])) }),
@@ -473,7 +505,9 @@ export function planReslice(ws: Workspace, run: Run, proposed: unknown) {
   // Review ids are `<slice id>-r<n>` and the first child keeps the slice id: continue the count so a new review
   // never reuses an old review directory.
   first.reviews = active.reviews;
-  return { children: slices.slice(index, index + children.length), slices };
+  // The decisions the split slice builds go to its last child, which finishes its work; later slices keep theirs.
+  slices[index + children.length - 1]?.ownsDecisions.push(...active.ownsDecisions);
+  return { children: slices.slice(index, index + children.length), slices: checkOwnership(run, slices) };
 }
 
 export async function applyReslice(ws: Workspace, run: Run, slices: Slice[]) {
@@ -525,10 +559,13 @@ export function amendSeams(ws: Workspace, run: Run, seams: string[]) {
   return slice;
 }
 
+/** A slice appended after the plan. It starts owning no decisions; factory_decide can name it later. */
+type AppendInput = Omit<SliceInput, 'blockedBy' | 'ownsDecisions'>;
+
 /** Builds the slice `addFollowUp` or a retro adds on top of the stack, validated, without changing the run. */
-function planAppend(ws: Workspace, run: Run, proposed: Omit<SliceInput, 'blockedBy'>) {
+function planAppend(ws: Workspace, run: Run, proposed: AppendInput) {
   const existing = run.slices.map(slice => slice.title);
-  const [input] = orderInputs(ws, [{ ...proposed, blockedBy: existing }], new Set(existing), new Set());
+  const [input] = orderInputs(ws, [{ ...proposed, blockedBy: existing, ownsDecisions: undefined }], new Set(existing), new Set());
   const slice = input === undefined ? undefined : stack(ws, run, run.slices, [input]).at(-1);
   if (slice === undefined) throw new Error('No slice to append');
   return slice;
@@ -542,7 +579,7 @@ function pushSlice(ws: Workspace, run: Run, slice: Slice) {
 }
 
 /** Validates a follow-up slice for `addFollowUp` without changing the run, so a dialog only offers one that can be added. */
-export function planFollowUp(ws: Workspace, run: Run, proposed: Omit<SliceInput, 'blockedBy'>) {
+export function planFollowUp(ws: Workspace, run: Run, proposed: AppendInput) {
   requireNotStalled(run);
   if (run.status !== 'running' && run.status !== 'done') throw new Error(`Run is ${run.status}; only a running or done run takes a follow-up slice.`);
   return planAppend(ws, run, proposed);
@@ -554,7 +591,7 @@ export function planFollowUp(ws: Workspace, run: Run, proposed: Omit<SliceInput,
  * `to: "end"`) goes into its ticket as carried-in work, and the queue empties. The done slices and their PRs stay as
  * reviewed. A done run runs again and needs a new retro before submit.
  */
-export function addFollowUp(ws: Workspace, run: Run, proposed: Omit<SliceInput, 'blockedBy'>) {
+export function addFollowUp(ws: Workspace, run: Run, proposed: AppendInput) {
   const planned = planFollowUp(ws, run, proposed);
   planned.carried = run.waiting;
   run.waiting = [];

@@ -262,9 +262,15 @@ under `issues/`, fix files under `fixes/`, the latest implementer report per sli
 data, per-domain findings, validation and `review.json` under
 `reviews/<slice>-r<n>/`, and `retro.md`. Each fix file lists its fix items under `## Fix items`: review findings by id,
 and factory-assigned ids for a bug (`bug-f<N>`), a reopen reason (`reopen-f<N>`), a failed check (`check-f<N>-<k>`),
-and a working tree the checks changed (`tree-f<N>`). The review data file lists the ticket, each check's result and
-duration on the reviewed commit, a `## FIX ITEMS` section with every fix item from the fix rounds since the last
-recorded review (id, fix file and round, summary; None when there are none), the diff, and the changed files.
+and a working tree the checks changed (`tree-f<N>`). The review data file lists the ticket, then a `## LATER SLICES`
+section with each not-done slice stacked after the reviewed one, in stack order (id, title, what to build, acceptance
+criteria), or says none follows; reviewers and the validator do not count work a later slice lists as a gap in this
+slice. Then come each check's result and duration on the reviewed commit, a `## FIX ITEMS` section with every fix item
+from the fix rounds since the last recorded review (id, fix file and round, summary; None when there are none), the
+diff, and the changed files. A decision can name the slice that builds it (`factory_decide` item `{ text, slice }`, or
+`ownsDecisions` on a `factory_plan` slice); that slice's state keeps the decision numbers it owns, and the tickets and
+review data of the slices before it mark the decision as built by that slice, so their reviewers report only code
+that contradicts it.
 The scope reviewer gives each fix item a verdict in `fixItems` of its `factory_review_submit` call: `fixed`,
 `not-a-defect` (with evidence from the diff or code), `waived` (with a recorded decision number), or `open`, each with
 a reason. The tool refuses a scope submission that misses an id, names an unknown one, repeats one, or cites a

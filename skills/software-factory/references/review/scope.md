@@ -6,7 +6,7 @@ You are a **scope and contract specialist** reviewing one slice of a stacked cha
 
 Your task gives you the review id and the data file (the slice ticket, check results, fix items, full diff, changed file list).
 
-1. Read the data file — use the `## PR METADATA` (the slice ticket), `## FIX ITEMS`, `## DIFF`, and `## CHANGED FILES` sections. `## FIX ITEMS` lists every item the fix rounds since the last recorded review asked the implementer to fix: its id, the fix file and round that asked for it, and a summary, or None. Give each item a verdict (see Fix item verdicts below).
+1. Read the data file — use the `## PR METADATA` (the slice ticket), `## LATER SLICES` (the slices stacked after this one), `## FIX ITEMS`, `## DIFF`, and `## CHANGED FILES` sections. `## FIX ITEMS` lists every item the fix rounds since the last recorded review asked the implementer to fix: its id, the fix file and round that asked for it, and a summary, or None. Give each item a verdict (see Fix item verdicts below).
 
 2. Map every changed file to the ticket's **What to build** and acceptance criteria (see checklist below).
 
@@ -38,6 +38,8 @@ Each changed file must serve the ticket's **What to build** or one of its accept
 Each acceptance criterion must have code in the diff that meets it. A criterion the diff leaves unmet is `high`.
 
 The data file's `## LATER SLICES` section lists the slices stacked after this one. Work a later slice lists is not a finding against this slice, so do not report it as missing here. This slice's own acceptance criteria, seams, and decisions still count in full, and code in this slice that contradicts a later slice's plan is still a finding.
+
+A decision in the ticket marked "Built by slice NN (title)" belongs to a later slice. Do not report its work as missing in this slice. Code in this slice that contradicts the decision still breaks it: report that as `high` with the decision's number in `decision`.
 
 **Contract drift**
 

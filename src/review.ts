@@ -50,18 +50,45 @@ import {
 
 export const REVIEW_REFERENCE_DIR = fileURLToPath(new URL('../skills/software-factory/references/review/', import.meta.url));
 
+/** One decision for factory_decide: its text, or its text and the id of the pending or active slice that builds it. */
+export const decisionInputSchema = z.union([
+  z.string().min(1),
+  z.object({
+    slice: z.string().regex(/^\d{2}$/).describe('Id of the pending or active slice that builds this decision, for example "03"'),
+    text: z.string().min(1),
+  }),
+]);
+
+/**
+ * The decisions as text, each with the slice that builds it, if it names one. Throws for an empty list and for a slice
+ * that is unknown or done. Does not change the run.
+ */
+export function planDecisions(run: Run, decisions: unknown) {
+  return z.array(decisionInputSchema).min(1).parse(decisions).map(decision => {
+    if (typeof decision === 'string') return { owner: undefined, text: decision };
+    const owner = run.slices.find(slice => slice.id === decision.slice);
+    if (owner === undefined) throw new Error(`No slice ${decision.slice}. Slices: ${run.slices.map(slice => slice.id).join(', ') || 'none'}.`);
+    if (owner.status === 'done') throw new Error(`Slice ${owner.id} is done; a decision names a pending or active slice to build it.`);
+    return { owner, text: decision.text };
+  });
+}
+
 /**
  * Records decisions the user confirmed (accepted tradeoffs, out-of-scope work) so every later ticket and review
  * data file carries them. Reviewers check the code against them: they report code that breaks a decision, and do
- * not re-raise a tradeoff the user already accepted. An open review of the active slice froze the older decisions,
+ * not re-raise a tradeoff the user already accepted. A decision that names a slice belongs to it: slices before it
+ * mark the decision as built later. An open review of the active slice froze the older decisions,
  * so it is discarded and `discarded` names it; a green review did not see them either, so the slice goes back to
  * review on its green commit. Either way the slice keeps its checks.
  */
-export function recordDecisions(ws: Workspace, run: Run, decisions: string[]) {
-  const added = z.array(z.string().min(1)).min(1).parse(decisions);
-  run.decisions.push(...added);
+export function recordDecisions(ws: Workspace, run: Run, decisions: unknown) {
+  const added = planDecisions(run, decisions);
+  for (const { owner, text } of added) {
+    run.decisions.push(text);
+    owner?.ownsDecisions.push(run.decisions.length);
+  }
   for (const slice of run.slices.filter(candidate => candidate.status !== 'done')) writeTicket(ws, run, slice);
-  addEvent(run, 'decision', added.join('; '));
+  addEvent(run, 'decision', added.map(({ owner, text }) => (owner === undefined ? text : `${text} (built by slice ${owner.id})`)).join('; '));
   const active = activeSlice(run);
   if (active === undefined) return { decisions: run.decisions, discarded: undefined };
   const discarded = discardReview(run, active, 'decisions recorded during review');
