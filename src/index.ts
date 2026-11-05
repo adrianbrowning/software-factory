@@ -7,6 +7,7 @@ import { evidence, evidenceHead } from './evidence.ts';
 import {
   activeSlice,
   addEvent,
+  builtBy,
   findingSchema,
   fixVerdictSchema,
   forgetRun,
@@ -158,6 +159,7 @@ const reopenSchema = z.object({
   slice: z.string().regex(/^\d{2}$/).describe('Id of the done slice, for example "04"'),
 });
 const followUpSchema = sliceInputSchema.omit({ blockedBy: true, ownsDecisions: true });
+const resliceSchema = z.object({ slices: z.array(sliceInputSchema.omit({ ownsDecisions: true })) });
 const fixSchema = z.object({
   bug: z
     .string()
@@ -286,7 +288,7 @@ function planSummary(slices: Run['slices']) {
   return slices
     .map(
       slice =>
-        `${slice.id}. ${slice.title}\n   blocked by: ${slice.blockedBy.join('; ') || 'none'}\n   seams: ${slice.seams.join('; ') || `none (${slice.noTestReason})`}\n   ~${slice.estimateTokens} tokens`,
+        `${slice.id}. ${slice.title}\n   blocked by: ${slice.blockedBy.join('; ') || 'none'}\n   seams: ${slice.seams.join('; ') || `none (${slice.noTestReason})`}\n${slice.ownsDecisions.length > 0 ? `   builds decisions: ${slice.ownsDecisions.join(', ')}\n` : ''}   ~${slice.estimateTokens} tokens`,
     )
     .join('\n');
 }
@@ -431,7 +433,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
       'Split the active slice into smaller vertical slices when it outgrows the context budget. The user approves the split; committed work carries into the first child.',
     label: 'Factory: re-slice',
     name: 'factory_reslice',
-    schema: planSchema,
+    schema: resliceSchema,
     async run(params, ws, ctx) {
       const feature = activeFeature(ws);
       const run = readRun(ws, feature);
@@ -459,7 +461,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
       const feature = activeFeature(ws);
       // An unknown or done slice is refused by planDecisions, without a dialog.
       const planned = planDecisions(readRun(ws, feature), params.decisions);
-      const body = planned.map(({ owner, text }) => `- ${text}${owner === undefined ? '' : ` (built by slice ${owner.id} ${owner.title})`}`).join('\n');
+      const body = planned.map(({ owner, text }) => `- ${text}${owner === undefined ? '' : ` (${builtBy(owner)})`}`).join('\n');
       if (!(await confirm(ctx, 'Record these decisions for reviewers?', body))) {
         return reply('The user rejected these decisions. Ask how to word them.');
       }

@@ -12,6 +12,7 @@ import { git, runShell, type CommandResult } from './exec.ts';
 import {
   activeSlice,
   addEvent,
+  builtBy,
   discardReview,
   dropPass,
   greenCommit,
@@ -88,7 +89,7 @@ export function recordDecisions(ws: Workspace, run: Run, decisions: unknown) {
     owner?.ownsDecisions.push(run.decisions.length);
   }
   for (const slice of run.slices.filter(candidate => candidate.status !== 'done')) writeTicket(ws, run, slice);
-  addEvent(run, 'decision', added.map(({ owner, text }) => (owner === undefined ? text : `${text} (built by slice ${owner.id})`)).join('; '));
+  addEvent(run, 'decision', added.map(({ owner, text }) => (owner === undefined ? text : `${text} (${builtBy(owner)})`)).join('; '));
   const active = activeSlice(run);
   if (active === undefined) return { decisions: run.decisions, discarded: undefined };
   const discarded = discardReview(run, active, 'decisions recorded during review');

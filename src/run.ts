@@ -172,6 +172,11 @@ const sliceSchema = sliceInputSchema.extend({
 });
 export type Slice = z.infer<typeof sliceSchema>;
 
+/** The owner label of a decision, shared by the decision event, the factory_decide dialog and the ticket mark. */
+export function builtBy(slice: Slice) {
+  return `built by slice ${slice.id} (${slice.title})`;
+}
+
 /**
  * A slice as a state file from before `checked` and `green` holds it: a pass as checkedSha and checkResults, a green
  * review as greenSha and greenDecisions. Read by `legacySlice`.

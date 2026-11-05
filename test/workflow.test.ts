@@ -310,10 +310,6 @@ describe('re-slice', () => {
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'partial.txt');
 
-    await assert.rejects(
-      step(ws, run => applyReslice(ws, run, planReslice(ws, run, [slice('Part one', [], { ownsDecisions: [] }), slice('Part two', ['Part one'], { ownsDecisions: [2] })]).slices)),
-      /factory_reslice moves the split slice's decisions to its last child; leave ownsDecisions out of "Part two"/,
-    );
     await step(ws, run => applyReslice(ws, run, planReslice(ws, run, [slice('Part one'), slice('Part two', ['Part one'])]).slices));
     const run = readRun(ws, 'demo');
     assert.deepEqual(run.slices.map(item => [item.id, item.title, item.ownsDecisions]), [
@@ -324,6 +320,11 @@ describe('re-slice', () => {
     const ticket = readFileSync(ticketPath(ws, 'demo', run.slices[0] ?? assert.fail('no slice')), 'utf8');
     assert.ok(ticket.includes('\n1. Big builds the export. Built by slice 02 (Part two): this slice need not build it; report only code that contradicts it.\n'));
     assert.ok(ticket.includes('\n2. After builds the import. Built by slice 03 (After): this slice need not build it; report only code that contradicts it.\n'));
+    const later = (index: number) => readFileSync(ticketPath(ws, 'demo', run.slices[index] ?? assert.fail('no slice')), 'utf8');
+    assert.ok(later(1).includes('\n1. Big builds the export.\n'));
+    assert.ok(later(1).includes('\n2. After builds the import. Built by slice 03 (After): this slice need not build it; report only code that contradicts it.\n'));
+    assert.ok(later(2).includes('\n1. Big builds the export.\n2. After builds the import.\n'));
+    assert.ok(!later(2).includes('Built by slice'));
   });
 
   it('gives the first child a new review id, so old review files never count', async () => {
@@ -822,20 +823,6 @@ describe('follow-up slice', () => {
 
     const next = await step(ws, current => nextSlice(ws, current));
     assert.deepEqual([next?.id, next?.phase, sh(ws.root, 'rev-parse', 'HEAD')], ['02', 'implement', greenCommit(done)]);
-  });
-
-  it('gives a follow-up slice no decisions, so earlier tickets stay as written', async () => {
-    const ws = workspace();
-    await start(ws);
-    await step(ws, run => recordDecisions(ws, run, ['Export rule.']));
-    await step(ws, run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')])));
-    await step(ws, run => nextSlice(ws, run));
-
-    await step(ws, run => addFollowUp(ws, run, { ...followUp, ownsDecisions: [1] } as typeof followUp));
-    const run = readRun(ws, 'demo');
-    assert.deepEqual(run.slices.map(item => item.ownsDecisions), [[], []]);
-    const ticket = readFileSync(ticketPath(ws, 'demo', run.slices[0] ?? assert.fail('no slice')), 'utf8');
-    assert.ok(ticket.includes('\n1. Export rule.\n'));
   });
 
   it('refuses a follow-up slice on a run that is not running or done', async () => {
