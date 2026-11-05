@@ -1,3 +1,4 @@
+import './git-env.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -9,7 +10,7 @@ import { completeSlice, fixObservations, pathSkips, recordDecisions, recordRevie
 import { addFollowUp, applyReslice, approvePlan, carryObservations, nextAction, nextSlice, parseRetro, pauseRun, planFollowUp, planReslice, planSlices, recordRetro, resolveBase, resolveStall, resumeRun, saveChecks, startRun } from '../src/workflow.ts';
 import { checkRuns, commit, countedCheck, finding, green, newRun, review, roots, sh, slice, start, step, workspace } from './helpers.ts';
 
-describe('slice loop gates', () => {
+describe('slice loop gates', { concurrency: 4 }, () => {
   it('takes a slice from red checks through a blocking review to done', async () => {
     const ws = workspace({ maxRounds: 2 });
     await newRun(ws, [slice('Feature')]);
@@ -965,7 +966,7 @@ describe('slice loop gates', () => {
   });
 });
 
-describe('review submissions', () => {
+describe('review submissions', { concurrency: 4 }, () => {
   /** Opens a review of a slice that commits `ok`. By default it keeps the path-ruled domains, so every domain reviews. */
   async function openReview(
     decisions: string[] = [],

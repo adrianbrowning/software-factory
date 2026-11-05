@@ -1,3 +1,4 @@
+import './git-env.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -97,8 +98,6 @@ describe('stopDecision', () => {
   });
 });
 
-process.env.GIT_CONFIG_GLOBAL = '/dev/null';
-process.env.GIT_CONFIG_NOSYSTEM = '1';
 const roots: string[] = [];
 after(() => {
   for (const root of roots) rmSync(root, { force: true, recursive: true });

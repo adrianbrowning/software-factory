@@ -1,3 +1,4 @@
+import './git-env.ts';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -7,10 +8,6 @@ import type { FactoryConfig } from '../src/config.ts';
 import { type Finding, readRun, REVIEW_DOMAINS, type SliceInput, type Workspace, withRun } from '../src/run.ts';
 import { recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
 import { approvePlan, planSlices, startRun } from '../src/workflow.ts';
-
-// Tests never read the developer's git config (signing, hooks, default branch).
-process.env.GIT_CONFIG_GLOBAL = '/dev/null';
-process.env.GIT_CONFIG_NOSYSTEM = '1';
 
 export function sh(root: string, ...args: string[]) {
   return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();

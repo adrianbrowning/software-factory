@@ -1,8 +1,10 @@
+import './git-env.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
+import { git } from '../src/exec.ts';
 import { startImplementerSession, submitImplementerReport } from '../src/report.ts';
 import { forgetRun, greenCommit, readRun, REVIEW_DOMAINS, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, REVIEW_REFERENCE_DIR, runChecks, startReview } from '../src/review.ts';
@@ -25,6 +27,12 @@ import {
 
 } from '../src/workflow.ts';
 import { checkRuns, commit, countedCheck, green, newRun, review, sh, slice, start, step, workspace } from './helpers.ts';
+
+describe('test isolation', () => {
+  it("runs the factory's git calls without the developer's global git config", async () => {
+    assert.equal(await git(workspace().root, 'config', '--global', '--list'), '');
+  });
+});
 
 describe('base resolution', () => {
   it('starts a run without the default base, and plans on a base the user chooses', async () => {
