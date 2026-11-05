@@ -269,8 +269,8 @@ The scope reviewer gives each fix item a verdict in `fixItems` of its `factory_r
 `not-a-defect` (with evidence from the diff or code), `waived` (with a recorded decision number), or `open`, each with
 a reason. The tool refuses a scope submission that misses an id, names an unknown one, repeats one, or cites a
 decision that does not exist. Recording a review stores the verdicts in `review.json` and clears the gathered fix
-items; an open item makes the review `CHANGES_REQUESTED` even with no blocking finding, goes into the next fix file,
-and carries into the next review's `## FIX ITEMS`.
+items, except open ones: an open item makes the review `CHANGES_REQUESTED` even with no blocking finding, goes into the
+next fix file (which then names it as asked in that round), and carries into the next review's `## FIX ITEMS`.
 Each reviewer writes only its own domain file, so parallel reviewers never share a write. The submit tool rejects a
 finding whose `path` the diff does not change, or whose `line` is outside that file's new-side hunks.
 

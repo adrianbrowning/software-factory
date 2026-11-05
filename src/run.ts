@@ -144,7 +144,7 @@ const sliceSchema = sliceInputSchema.extend({
   fixPath: text.optional(),
   /** Commit the current fix file describes; checks on the same commit mean the fix round changed nothing. */
   fixFromSha: sha.optional(),
-  /** Fix items from every fix round since the slice's last recorded review; recording a review clears them. */
+  /** Fix items from every fix round since the slice's last recorded review; recording a review clears them, and its fix file asks again for the blocking findings and open items. */
   fixItems: z.array(fixItemSchema).default([]),
   fixRounds: z.number().int().nonnegative(),
   /**
