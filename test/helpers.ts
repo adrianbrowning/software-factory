@@ -1,13 +1,14 @@
 import './git-env.ts';
+import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { after } from 'node:test';
 import type { FactoryConfig } from '../src/config.ts';
-import { type Finding, readRun, REVIEW_DOMAINS, type SliceInput, type Workspace, withRun } from '../src/run.ts';
+import { type Finding, type FixVerdict, readRun, REVIEW_DOMAINS, type SliceInput, type Workspace, withRun } from '../src/run.ts';
 import { recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
-import { approvePlan, planSlices, startRun } from '../src/workflow.ts';
+import { approvePlan, nextSlice, planSlices, startRun } from '../src/workflow.ts';
 
 export function sh(root: string, ...args: string[]) {
   return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
@@ -101,14 +102,37 @@ export async function newRun(ws: Workspace, inputs: SliceInput[]) {
 
 export const step = <T>(ws: Workspace, mutate: Parameters<typeof withRun<T>>[2]) => withRun(ws, 'demo', mutate);
 
-/** Every reviewed domain submits (the given findings under their domains, the rest empty), then the validator keeps `keep`. */
-export async function review(ws: Workspace, reviewId: string, findings: Finding[], keep = findings.map(item => item.id)) {
-  const skipped = readRun(ws, 'demo').slices.find(item => item.review?.id === reviewId)?.review?.skipped ?? [];
+/** The FIX ITEMS section of a review data file. */
+export const fixItems = (dataFile: string) => /## FIX ITEMS\n\n([\s\S]*?)\n## DIFF/.exec(readFileSync(dataFile, 'utf8'))?.[1] ?? '';
+
+/** The fixItems a submission gives for a review that lists no fix items: [] for the scope domain, none for the others. */
+export const noFixItems = (domain: Finding['domain']) => (domain === 'scope' ? { fixItems: [] } : {});
+
+/**
+ * Every reviewed domain submits (the given findings under their domains, the rest empty), then the validator keeps
+ * `keep`. The scope domain gives `verdicts`, by default `fixed` for every fix item the review lists.
+ */
+export async function review(ws: Workspace, reviewId: string, findings: Finding[], keep = findings.map(item => item.id), verdicts?: FixVerdict[]) {
+  const reviewed = readRun(ws, 'demo').slices.find(item => item.review?.id === reviewId);
+  const skipped = reviewed?.review?.skipped ?? [];
+  const fixVerdicts = verdicts ?? (reviewed?.fixItems ?? []).map(item => ({ id: item.id, reason: 'the diff fixes it', status: 'fixed' as const }));
   for (const domain of REVIEW_DOMAINS.filter(name => !skipped.some(entry => entry.domain === name))) {
-    await step(ws, run => submitDomain(ws, run, { agentId: `r-${domain}`, domain, findings: findings.filter(item => item.domain === domain), reviewId }));
+    const own = findings.filter(item => item.domain === domain);
+    await step(ws, run => submitDomain(ws, run, { agentId: `r-${domain}`, domain, findings: own, reviewId, ...(domain === 'scope' ? { fixItems: fixVerdicts } : {}) }));
   }
   const dropped = findings.filter(item => !keep.includes(item.id)).map(item => ({ id: item.id, reason: 'not in diff' }));
   await step(ws, run => submitValidation(ws, run, { agentId: 'validator', dropped, keep, reviewId }));
+}
+
+/** Takes a slice that commits `ok` to a green review with one thermo observation. */
+export async function greenWithObservation(ws: Workspace) {
+  await newRun(ws, [slice('Feature')]);
+  await step(ws, run => nextSlice(ws, run));
+  commit(ws, 'ok');
+  await step(ws, run => runChecks(ws, run));
+  const opened = await step(ws, run => startReview(ws, run));
+  await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming')]);
+  assert.ok((await step(ws, run => recordReview(ws, run))).green);
 }
 
 /** Takes the active slice from committed work to green. */

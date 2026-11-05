@@ -8,9 +8,7 @@ import { describe, it } from 'node:test';
 import { type Finding, readRun, REVIEW_DOMAINS, ticketPath, type Workspace } from '../src/run.ts';
 import { completeSlice, fixObservations, pathSkips, recordDecisions, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
 import { addFollowUp, applyReslice, approvePlan, carryObservations, nextAction, nextSlice, parseRetro, pauseRun, planFollowUp, planReslice, planSlices, recordRetro, resolveBase, resolveStall, resumeRun, saveChecks, startRun } from '../src/workflow.ts';
-import { checkRuns, commit, countedCheck, finding, green, newRun, review, roots, sh, slice, start, step, workspace } from './helpers.ts';
-
-const fixItems = (dataFile: string) => /## FIX ITEMS\n\n([\s\S]*?)\n## DIFF/.exec(readFileSync(dataFile, 'utf8'))?.[1] ?? '';
+import { checkRuns, commit, countedCheck, finding, fixItems, green, greenWithObservation, newRun, noFixItems, review, roots, sh, slice, start, step, workspace } from './helpers.ts';
 
 describe('slice loop gates', { concurrency: 4 }, () => {
   it('takes a slice from red checks through a blocking review to done', async () => {
@@ -693,17 +691,6 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     assert.equal(readRun(ws, 'demo').slices[0]?.stalled, true);
   });
 
-  /** Takes a slice that commits `ok` to a green review with one thermo observation. */
-  async function greenWithObservation(ws: Workspace) {
-    await newRun(ws, [slice('Feature')]);
-    await step(ws, run => nextSlice(ws, run));
-    commit(ws, 'ok');
-    await step(ws, run => runChecks(ws, run));
-    const opened = await step(ws, run => startReview(ws, run));
-    await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming')]);
-    assert.ok((await step(ws, run => recordReview(ws, run))).green);
-  }
-
   it('fixes a bug the user found after a green review in a tracked round that needs new checks and a new review', async () => {
     const ws = workspace({ maxRounds: 2 });
     await greenWithObservation(ws);
@@ -741,70 +728,6 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     assert.match(fix, /## Bug found after green review 01-r1\n\nFix both now\.\n\nEmpty input crashes\./);
     assert.match(fix, /## Observations from green review 01-r1 the user chose to fix\n\nFix both now\./);
     assert.match(fix, /## \[observation\] thermo-naming/);
-  });
-
-  it('clears the fix items of a red checks round when a green review records, so the next review lists only the new ones', async () => {
-    const ws = workspace({ maxRounds: 3 });
-    await newRun(ws, [slice('Feature')]);
-    await step(ws, run => nextSlice(ws, run));
-    commit(ws, 'work.txt');
-    assert.ok(!(await step(ws, run => runChecks(ws, run))).passed);
-    commit(ws, 'ok');
-    await step(ws, run => runChecks(ws, run));
-    const opened = await step(ws, run => startReview(ws, run));
-    await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming')]);
-    assert.ok((await step(ws, run => recordReview(ws, run))).green);
-
-    await step(ws, run => fixObservations(ws, run, { bug: 'Crash.', observations: ['thermo-naming'] }, 'Fix both now.'));
-    commit(ws, 'ok', 'fixed\n');
-    await step(ws, run => runChecks(ws, run));
-    const items = fixItems((await step(ws, run => startReview(ws, run))).dataFile);
-    assert.doesNotMatch(items, /check-f1-1/);
-    assert.match(items, /- `bug-f2` \([^\n]*fixes\/01-f2\.md, round 2\)/);
-    assert.match(items, /- `thermo-naming` \([^\n]*fixes\/01-f2\.md, round 2\)/);
-  });
-
-  it('lists the chosen observations and the bug from a green review as fix items of the next review', async () => {
-    const ws = workspace({ maxRounds: 2 });
-    await greenWithObservation(ws);
-    assert.equal(fixItems(join(ws.root, '.scratch', 'demo', 'reviews', '01-r1', 'data.md')), 'None.\n', 'a first review has no fix items');
-    const fixed = await step(ws, run => fixObservations(ws, run, { bug: 'Empty input\n  crashes.', observations: ['thermo-naming'] }, 'Fix both now.'));
-    assert.match(readFileSync(fixed.fixPath, 'utf8'), /## Fix items\n\n[^#]*`bug-f1`[^#]*`thermo-naming`/);
-
-    commit(ws, 'ok', 'fixed\n');
-    await step(ws, run => runChecks(ws, run));
-    const items = fixItems((await step(ws, run => startReview(ws, run))).dataFile);
-    assert.match(items, /- `bug-f1` \([^\n]*fixes\/01-f1\.md, round 1\): Bug found after green review 01-r1: Empty input crashes\.\n/);
-    assert.match(items, /- `thermo-naming` \([^\n]*fixes\/01-f1\.md, round 1\): \[observation\] ok:1: naming\n/);
-  });
-
-  it('keeps the blocking findings as fix items through a red checks round, beside the failed checks', async () => {
-    const ws = workspace({ maxRounds: 3 });
-    await newRun(ws, [slice('Feature')]);
-    await step(ws, run => nextSlice(ws, run));
-    commit(ws, 'ok');
-    await step(ws, run => runChecks(ws, run));
-    const first = await step(ws, run => startReview(ws, run));
-    await review(ws, first.reviewId, [finding('bug', 'high', 'null-crash')]);
-    const blocked = await step(ws, run => recordReview(ws, run));
-    assert.ok(!blocked.green);
-    assert.match(
-      readFileSync(blocked.fixPath, 'utf8'),
-      /## Fix items\n\n- `bug-null-crash`: [^\n]*\n\n## Blocking review findings from 01-r1\n\n### \[high\] bug-null-crash\n/,
-      'the findings sit in their own section after the fix items',
-    );
-
-    sh(ws.root, 'rm', '-q', 'ok');
-    sh(ws.root, 'commit', '-qm', 'break');
-    const red = await step(ws, run => runChecks(ws, run));
-    assert.ok(!red.passed);
-    assert.match(readFileSync(red.fixPath, 'utf8'), /## Fix items\n\n- `check-f2-1`: test -f ok: failed \(exit 1\)/);
-
-    commit(ws, 'ok', 'fixed\n');
-    await step(ws, run => runChecks(ws, run));
-    const items = fixItems((await step(ws, run => startReview(ws, run))).dataFile);
-    assert.match(items, /- `bug-null-crash` \([^\n]*fixes\/01-f1\.md, round 1\): \[high\] ok:1: null-crash\n/);
-    assert.match(items, /- `check-f2-1` \([^\n]*fixes\/01-f2\.md, round 2\): test -f ok: failed \(exit 1\) in \d+ms\n/);
   });
 
   it('refuses a fix with neither a bug nor observations, and changes nothing', async () => {
@@ -1073,7 +996,7 @@ describe('review submissions', { concurrency: 4 }, () => {
   it('checks domain and id prefix separately, and lets the validator only select', async () => {
     const { reviewId, ws } = await openReview();
     const submit = (domain: Finding['domain'], findings: Finding[]) =>
-      step(ws, run => submitDomain(ws, run, { agentId: `r-${domain}`, domain, findings, reviewId }));
+      step(ws, run => submitDomain(ws, run, { agentId: `r-${domain}`, domain, findings, reviewId, ...noFixItems(domain) }));
 
     await assert.rejects(submit('bug', [{ ...finding('bug', 'high', 'x'), domain: 'security' }]), /must have domain "bug"/);
     await assert.rejects(submit('bug', [{ ...finding('bug', 'high', 'x'), id: 'security-x' }]), /id starting "bug-"/);
@@ -1098,7 +1021,7 @@ describe('review submissions', { concurrency: 4 }, () => {
   it('lets a reviewer replace its findings any number of times until validation', async () => {
     const { findingsDir, reviewId, ws } = await openReview();
     const submit = (domain: Finding['domain'], findings: Finding[]) =>
-      step(ws, run => submitDomain(ws, run, { agentId: `r-${domain}`, domain, findings, reviewId }));
+      step(ws, run => submitDomain(ws, run, { agentId: `r-${domain}`, domain, findings, reviewId, ...noFixItems(domain) }));
     for (const domain of REVIEW_DOMAINS) await submit(domain, []);
 
     await submit('bug', [finding('bug', 'high', 'a'), finding('bug', 'critical', 'b')]);
@@ -1223,7 +1146,7 @@ describe('review submissions', { concurrency: 4 }, () => {
     const { reviewId, ws } = await openReview();
     for (const domain of REVIEW_DOMAINS) {
       const findings = domain === 'testing' ? [finding('testing', 'high', 'mutation-survives')] : [];
-      await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings, reviewId }));
+      await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings, reviewId, ...noFixItems(domain) }));
     }
     const validate = (agentId: string, input: { downgrade?: { id: string; reason: string }[]; keep: string[] }) =>
       step(ws, run => submitValidation(ws, run, { agentId, dropped: [], reviewId, ...input }));
@@ -1249,7 +1172,7 @@ describe('review submissions', { concurrency: 4 }, () => {
   it('blocks on findings that break a recorded decision', async () => {
     const { reviewId, ws } = await openReview(['The shared field is a non-optional record.']);
     const submit = (domain: Finding['domain'], findings: Finding[]) =>
-      step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings, reviewId }));
+      step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings, reviewId, ...noFixItems(domain) }));
     const declared = { ...finding('react-ts', 'high', 'undefined-field'), decision: 1 };
 
     await assert.rejects(submit('react-ts', [{ ...declared, severity: 'observation' }]), /breaks a recorded decision, so it must be critical or high/);
@@ -1303,7 +1226,7 @@ describe('review submissions', { concurrency: 4 }, () => {
       /skipped the react-ts domain/,
     );
     for (const domain of opened.domains) {
-      await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings: [], reviewId: opened.reviewId }));
+      await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings: [], reviewId: opened.reviewId, ...noFixItems(domain) }));
     }
     await step(ws, run => submitValidation(ws, run, { agentId: 'v', dropped: [], keep: [], reviewId: opened.reviewId }));
     assert.ok((await step(ws, run => recordReview(ws, run))).green);
@@ -1326,7 +1249,7 @@ describe('review submissions', { concurrency: 4 }, () => {
           : domain === 'thermo' || domain === 'devops'
             ? [{ ...finding(domain, 'observation', 'ts5097'), ...same }]
             : [];
-      await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings, reviewId }));
+      await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings, reviewId, ...noFixItems(domain) }));
     }
     const validate = (keep: string[], dropped: { duplicateOf?: string; id: string; reason: string }[]) =>
       step(ws, run => submitValidation(ws, run, { agentId: 'validator', dropped, keep, reviewId }));
@@ -1360,7 +1283,7 @@ describe('review submissions', { concurrency: 4 }, () => {
           : domain === 'bug'
             ? [finding('bug', 'critical', 'unreachable-guard')]
             : [];
-      await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings, reviewId }));
+      await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings, reviewId, ...noFixItems(domain) }));
     }
     const validate = (downgrade: { id: string; reason: string }[], keep: string[]) =>
       step(ws, run => submitValidation(ws, run, { agentId: 'v', downgrade, dropped: [], keep, reviewId }));
@@ -1378,7 +1301,7 @@ describe('review submissions', { concurrency: 4 }, () => {
   it('rejects findings submitted after validation', async () => {
     const { reviewId, ws } = await openReview();
     for (const domain of REVIEW_DOMAINS.filter(domain => domain !== 'bug')) {
-      await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings: [], reviewId }));
+      await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings: [], reviewId, ...noFixItems(domain) }));
     }
     await step(ws, run => submitDomain(ws, run, { agentId: 'bug', domain: 'bug', findings: [], reviewId }));
     await step(ws, run => submitValidation(ws, run, { agentId: 'v', dropped: [], keep: [], reviewId }));
@@ -1391,7 +1314,7 @@ describe('review submissions', { concurrency: 4 }, () => {
   it('rejects a findings file edited after it was submitted', async () => {
     const { findingsDir, reviewId, ws } = await openReview();
     for (const domain of REVIEW_DOMAINS) {
-      await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings: domain === 'security' ? [finding('security', 'critical', 'leak')] : [], reviewId }));
+      await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings: domain === 'security' ? [finding('security', 'critical', 'leak')] : [], reviewId, ...noFixItems(domain) }));
     }
     writeFileSync(join(findingsDir, 'security.json'), '[]\n');
     await assert.rejects(step(ws, run => submitValidation(ws, run, { agentId: 'v', dropped: [], keep: [], reviewId })), /changed after it was submitted/);

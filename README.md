@@ -265,7 +265,12 @@ and factory-assigned ids for a bug (`bug-f<N>`), a reopen reason (`reopen-f<N>`)
 and a working tree the checks changed (`tree-f<N>`). The review data file lists the ticket, each check's result and
 duration on the reviewed commit, a `## FIX ITEMS` section with every fix item from the fix rounds since the last
 recorded review (id, fix file and round, summary; None when there are none), the diff, and the changed files.
-Recording a review clears the gathered fix items.
+The scope reviewer gives each fix item a verdict in `fixItems` of its `factory_review_submit` call: `fixed`,
+`not-a-defect` (with evidence from the diff or code), `waived` (with a recorded decision number), or `open`, each with
+a reason. The tool refuses a scope submission that misses an id, names an unknown one, repeats one, or cites a
+decision that does not exist. Recording a review stores the verdicts in `review.json` and clears the gathered fix
+items, except open ones: an open item makes the review `CHANGES_REQUESTED` even with no blocking finding, goes into the
+next fix file (which then names it as asked in that round), and carries into the next review's `## FIX ITEMS`.
 Each reviewer writes only its own domain file, so parallel reviewers never share a write. The submit tool rejects a
 finding whose `path` the diff does not change, or whose `line` is outside that file's new-side hunks.
 

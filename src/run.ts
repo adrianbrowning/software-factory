@@ -55,6 +55,19 @@ export const findingSchema = z.object({
 export type Finding = z.infer<typeof findingSchema>;
 export const findingListSchema = z.array(findingSchema);
 
+export const FIX_STATUSES = ['fixed', 'not-a-defect', 'waived', 'open'] as const;
+
+/** The scope reviewer's verdict on one fix item the review data file lists. */
+export const fixVerdictSchema = z.object({
+  decision: z.number().int().positive().optional().describe('Only for waived: number of the recorded user decision that waives the item'),
+  id: text.describe('Fix item id, exactly as the FIX ITEMS section lists it'),
+  reason: text.describe(
+    'Why: for fixed, where the diff fixes it; for not-a-defect, the evidence from the diff or code (a claim such as unreachable needs it); for waived, how the decision covers it; for open, what still fails',
+  ),
+  status: z.enum(FIX_STATUSES),
+});
+export type FixVerdict = z.infer<typeof fixVerdictSchema>;
+
 export const sourceSchema = z.object({
   body: z.string().describe('Full issue text, including relevant comments'),
   kind: z.enum(SOURCE_KINDS),
@@ -94,6 +107,8 @@ export const skippedDomainsSchema = z.array(skippedDomainSchema);
 const reviewSchema = z.object({
   /** How many recorded decisions the review data file listed; findings may cite only these. */
   decisions: z.number().int().nonnegative().default(0),
+  /** The scope reviewer's latest verdict per fix item; recording the review treats a missing or open verdict as open. */
+  fixVerdicts: z.array(fixVerdictSchema).optional(),
   id: text,
   /** Changed paths and the new-side line ranges of their hunks; a finding must point inside them. */
   lines: z.record(text, z.array(z.tuple([z.number().int().positive(), z.number().int().positive()]))).default({}),
@@ -129,7 +144,7 @@ const sliceSchema = sliceInputSchema.extend({
   fixPath: text.optional(),
   /** Commit the current fix file describes; checks on the same commit mean the fix round changed nothing. */
   fixFromSha: sha.optional(),
-  /** Fix items from every fix round since the slice's last recorded review; recording a review clears them. */
+  /** Fix items from every fix round since the slice's last recorded review; recording a review clears them, and its fix file asks again for the blocking findings and open items. */
   fixItems: z.array(fixItemSchema).default([]),
   fixRounds: z.number().int().nonnegative(),
   /**

@@ -8,6 +8,7 @@ import {
   activeSlice,
   addEvent,
   findingSchema,
+  fixVerdictSchema,
   forgetRun,
   readRun,
   reportPath,
@@ -135,7 +136,17 @@ const reviewStartSchema = z.object({
     'Required choice: further domains this diff gives nothing to review (for example performance for a diff with no runtime hot path), each with a reason. The factory already skips react-ts, test-validity, and devops when no changed path could hold their subject. An empty list adds no skips.',
   ),
 });
-const submitSchema = z.object({ domain: z.enum(REVIEW_DOMAINS), findings: z.array(findingSchema), reviewId: z.string().min(1) });
+const submitSchema = z.object({
+  domain: z.enum(REVIEW_DOMAINS),
+  findings: z.array(findingSchema),
+  fixItems: z
+    .array(fixVerdictSchema)
+    .optional()
+    .describe(
+      'Scope domain only, and required for it: one verdict per id the FIX ITEMS section lists ([] when it lists none). fixed, not-a-defect (evidence from the diff or code), waived (with the recorded decision number), or open (blocks the slice and carries into the next round)',
+    ),
+  reviewId: z.string().min(1),
+});
 const validateSchema = validationSchema.extend({ reviewId: z.string().min(1) });
 const reopenSchema = z.object({
   reason: z.string().min(1).describe('The bug found in the done slice, as the fix file for its implementer'),
@@ -532,7 +543,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
   tool({
     caller: REVIEWER,
     description:
-      'Submit your domain findings for the active review, with an empty list when you found nothing. Each later call replaces them with its complete list (to correct them or remove a stale finding), until validation.',
+      'Submit your domain findings for the active review, with an empty list when you found nothing; the scope domain also gives a verdict for every fix item in fixItems. Each later call replaces them with its complete list (to correct them or remove a stale finding), until validation.',
     label: 'Factory: submit review findings',
     name: 'factory_review_submit',
     schema: submitSchema,
@@ -577,7 +588,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         return reply(`Review is green.${notes}${bug}\nNext: ${nextAction(readRun(ws, feature))}`);
       }
       const stall = result.stalled ? await decideStall(ctx, ws, feature) : '';
-      return reply(`${result.blocking} blocking findings. Fix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
+      return reply(`${result.blocking} blocking findings, ${result.open} open fix items. Fix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
     },
   });
 
