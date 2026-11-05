@@ -265,13 +265,13 @@ export async function startRun(ws: Workspace, input: { feature: string; sessionI
 }
 
 function slugify(title: string) {
-  const slug = title
+  const full = title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 40)
-    .replace(/-+$/, '');
-  return slug || 'slice';
+    .replace(/^-+|-+$/g, '');
+  if (full.length <= 40) return full || 'slice';
+  const cut = full.lastIndexOf('-', 40);
+  return cut > 0 ? full.slice(0, cut) : full.slice(0, 40);
 }
 
 function makeSlice(ws: Workspace, run: Run, input: SliceInput, index: number, parentBranch: string): Slice {
