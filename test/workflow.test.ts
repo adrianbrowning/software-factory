@@ -310,7 +310,8 @@ describe('re-slice', () => {
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'partial.txt');
 
-    await step(ws, run => applyReslice(ws, run, planReslice(ws, run, [slice('Part one'), slice('Part two', ['Part one'])]).slices));
+    // A child's claim never reaches the run, whichever caller passes it: planReslice drops it.
+    await step(ws, run => applyReslice(ws, run, planReslice(ws, run, [slice('Part one', [], { ownsDecisions: [2] }), slice('Part two', ['Part one'])]).slices));
     const run = readRun(ws, 'demo');
     assert.deepEqual(run.slices.map(item => [item.id, item.title, item.ownsDecisions]), [
       ['01', 'Part one', []],

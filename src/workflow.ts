@@ -19,6 +19,7 @@ import {
   saveRun,
   type Slice,
   type SliceInput,
+  resliceItemSchema,
   sliceInputSchema,
   standingChecks,
   type Source,
@@ -307,7 +308,7 @@ function renderDecisions(run: Run, slice: Slice) {
   return run.decisions
     .map((decision, index) => {
       const owner = later.find(item => item.ownsDecisions.includes(index + 1));
-      const mark = owner === undefined ? '' : ` B${builtBy(owner).slice(1)}: this slice need not build it; report only code that contradicts it.`;
+      const mark = owner === undefined ? '' : ` ${builtBy(owner, 'Built')}: this slice need not build it; report only code that contradicts it.`;
       return `${index + 1}. ${decision}${mark}`;
     })
     .join('\n');
@@ -486,7 +487,8 @@ export function planReslice(ws: Workspace, run: Run, proposed: unknown) {
   const index = run.slices.indexOf(active);
   const done = run.slices.slice(0, index);
   const pending = run.slices.slice(index + 1);
-  const children = orderInputs(ws, proposed, new Set(done.map(slice => slice.title)), new Set(pending.map(slice => slice.title)));
+  const childInputs = z.array(resliceItemSchema).parse(proposed);
+  const children = orderInputs(ws, childInputs, new Set(done.map(slice => slice.title)), new Set(pending.map(slice => slice.title)));
   const childTitles = children.map(child => child.title);
   const rest = pending.map(slice =>
     sliceInputSchema.parse({ ...slice, blockedBy: slice.blockedBy.flatMap(blocker => (blocker === active.title ? childTitles : [blocker])) }),

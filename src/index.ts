@@ -17,6 +17,7 @@ import {
   REVIEW_DOMAINS,
   type Run,
   skippedDomainsSchema,
+  resliceItemSchema,
   sliceInputSchema,
   type Source,
   statePath,
@@ -159,7 +160,7 @@ const reopenSchema = z.object({
   slice: z.string().regex(/^\d{2}$/).describe('Id of the done slice, for example "04"'),
 });
 const followUpSchema = sliceInputSchema.omit({ blockedBy: true, ownsDecisions: true });
-const resliceSchema = z.object({ slices: z.array(sliceInputSchema.omit({ ownsDecisions: true })) });
+const resliceSchema = z.object({ slices: z.array(resliceItemSchema) });
 const fixSchema = z.object({
   bug: z
     .string()
