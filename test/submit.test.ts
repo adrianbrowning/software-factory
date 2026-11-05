@@ -9,7 +9,7 @@ import { planSubmit, submitStack } from '../src/submit.ts';
 import { approvePlan, nextSlice, parseRetro, planSlices, recordRetro, resolveBase } from '../src/workflow.ts';
 import { commit, green, newRun, roots, sh, slice, start, step, workspace } from './helpers.ts';
 
-/** A done run of `count` chained slices, each with a reviewed commit. */
+/** A done run of `count` chained slices, each with a reviewed commit, checked out on `main` (off the top slice). */
 async function doneRun(ws: Workspace, count: number) {
   const titles = Array.from({ length: count }, (_, index) => `S${index + 1}`);
   await newRun(ws, titles.map((title, index) => slice(title, index === 0 ? [] : [titles[index - 1] ?? ''])));
@@ -20,6 +20,7 @@ async function doneRun(ws: Workspace, count: number) {
     await step(ws, run => completeSlice(ws, run));
   }
   await step(ws, run => recordRetro(ws, run, parseRetro(ws, run, [])));
+  sh(ws.root, 'switch', '-q', 'main');
   return readRun(ws, 'demo').slices.map(item => item.branch);
 }
 
@@ -173,7 +174,6 @@ describe('submit', () => {
   it('adopts every slice branch with gh stack init on a first submit', async t => {
     const ws = workspace();
     const branches = await doneRun(ws, 3);
-    sh(ws.root, 'switch', '-q', 'main');
     assert.notEqual(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'only gh stack init can leave the top slice checked out');
     const gh = fakeGh(t, { stack: undefined, submitted: withPrs(branches) });
     const steps: string[] = [];
@@ -243,7 +243,6 @@ describe('submit', () => {
   it('fails naming each slice branch that has no PR after gh stack submit, staying on the top slice', async t => {
     const ws = workspace();
     const branches = await doneRun(ws, 3);
-    sh(ws.root, 'switch', '-q', 'main');
     assert.notEqual(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'the submit starts off the top slice, so a switch-back shows');
     const gh = fakeGh(t, { stack: branches.slice(0, 1), submitted: [{ name: branches[0] ?? '', pr: 101 }, { name: branches[1] ?? '' }, { name: branches[2] ?? '', pr: 103 }] });
     const error = await step(ws, run => submitStack(ws, run)).then(() => assert.fail('submit should fail'), (caught: unknown) => caught);
@@ -258,7 +257,6 @@ describe('submit', () => {
   it('fails saying the titles were not set when a title PATCH fails, staying on the top slice', async t => {
     const ws = workspace();
     const branches = await doneRun(ws, 2);
-    sh(ws.root, 'switch', '-q', 'main');
     assert.notEqual(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'the submit starts off the top slice, so a switch-back shows');
     fakeGh(t, { stack: branches.slice(0, 1), submitted: withPrs(branches), fail: 'api -X' });
     const error = await step(ws, run => submitStack(ws, run)).then(() => assert.fail('submit should fail'), (caught: unknown) => caught);
@@ -328,7 +326,6 @@ describe('submit', () => {
   it('checks out the branch it started on when gh stack init fails on a first submit', async t => {
     const ws = workspace();
     const branches = await doneRun(ws, 2);
-    sh(ws.root, 'switch', '-q', 'main');
     const gh = fakeGh(t, { fail: 'stack init', stack: undefined });
     await assert.rejects(step(ws, run => submitStack(ws, run)));
     assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, `stack init --base main ${branches.join(' ')}`]);
@@ -338,7 +335,6 @@ describe('submit', () => {
   it('keeps the gh stack error when switching back to the starting branch also fails', async t => {
     const ws = workspace();
     await doneRun(ws, 2);
-    sh(ws.root, 'switch', '-q', 'main');
     // s2.txt exists only on slice 02; a local change to it blocks the switch back to main.
     fakeGh(t, { fail: 'stack init', onFail: 'echo changed > s2.txt; echo "init exploded" >&2', stack: undefined });
     await assert.rejects(step(ws, run => submitStack(ws, run)), /init exploded[\s\S]*Switching back to main also failed/);

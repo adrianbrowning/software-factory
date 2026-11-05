@@ -1,3 +1,13 @@
+/*
+ * The gh / gh-stack CLI contract submit relies on (observed against the real CLI):
+ * - `gh stack checkout <branch>` for a branch in no stack exits 2 with stderr `no local or remote stack found for "<branch>"`;
+ *   a 401 exits 4 with `failed to list stacks: HTTP 401`.
+ * - `gh stack view --json` prints {trunk, currentBranch, branches: [{name, head, base, isCurrent, isMerged, isQueued,
+ *   needsRebase, pr?: {number, url, state}}]}: branches bottom first, trunk not in branches, `pr` left out for a branch
+ *   with no PR.
+ * - `gh api` fills `{owner}/{repo}` in the endpoint from the current repo.
+ * - `gh pr edit` fails with a Projects (classic) deprecation error, so PR titles go through `gh api -X PATCH`.
+ */
 import { z } from 'zod';
 import { gh, git } from './exec.ts';
 import { head, requireClean } from './repo.ts';
