@@ -5,7 +5,7 @@ import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { after, describe, it } from 'node:test';
 import { checksPrompt, detectChecks, loadConfig, parseChecks, runCommands, suggestChecks } from '../src/config.ts';
-import { evidence } from '../src/evidence.ts';
+import { evidence, evidenceLine } from '../src/evidence.ts';
 import { runShell } from '../src/exec.ts';
 
 const dirs: string[] = [];
@@ -187,5 +187,13 @@ describe('evidence', () => {
 
   it('keeps the tail of long output', () => {
     assert.equal(evidence('xxxxxxxxxxEND', 5), '...[truncated]\nxxEND');
+  });
+
+  it('keeps the first characters of a long line, marking the cut', () => {
+    assert.equal(evidenceLine('a b c d e f', 5), 'a b c…');
+  });
+
+  it('redacts a multi-line value before joining it onto one line', () => {
+    assert.equal(evidenceLine(`Failed:\n  ${secrets.privateKey}\n  done`), 'Failed: <REDACTED> done');
   });
 });

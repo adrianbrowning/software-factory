@@ -9,7 +9,6 @@ import {
   addEvent,
   discardReview,
   dropPass,
-  type FixItem,
   greenCommit,
   hasPass,
   outdatedGreenCount,
@@ -586,17 +585,24 @@ export async function nextSlice(ws: Workspace, run: Run) {
   return slice;
 }
 
-/** The round number of the slice's next fix file, which factory-assigned fix item ids carry (for example `bug-f2`). */
-export function nextFixRound(slice: Slice) {
-  return slice.fixRounds + 1;
-}
+/**
+ * What a fix round asks the implementer to fix: a review finding by its id, or a factory item by its kind, which
+ * requestFix gives an id carrying the round (`check-f<N>-<k>`, `tree-f<N>`, `bug-f<N>`, `reopen-f<N>`).
+ */
+export type FixItemInput = { id: string; summary: string } | { kind: 'bug' | 'check' | 'reopen' | 'tree'; summary: string };
 
 /**
  * Writes the fix file and moves the slice to `fix`. `sha` is the commit the fix file describes. `items` are what the
  * fix file asks the implementer to fix; the fix file lists them, and the slice gathers them for its next review.
  */
-export function requestFix(ws: Workspace, run: Run, slice: Slice, body: string, sha: string, items: Omit<FixItem, 'path' | 'round'>[]) {
-  const round = nextFixRound(slice);
+export function requestFix(ws: Workspace, run: Run, slice: Slice, body: string, sha: string, inputs: FixItemInput[]) {
+  const round = slice.fixRounds + 1;
+  let checks = 0;
+  const items = inputs.map(input => {
+    if ('id' in input) return input;
+    const id = input.kind === 'check' ? `check-f${round}-${++checks}` : `${input.kind}-f${round}`;
+    return { id, summary: input.summary };
+  });
   const fixPath = join(runDir(ws, run.feature), 'fixes', `${slice.id}-f${round}.md`);
   const context = [
     `- Ticket (seams and acceptance criteria): ${ticketPath(ws, run.feature, slice)}`,
@@ -664,7 +670,7 @@ export async function reopenSlice(ws: Workspace, run: Run, id: string, reason: s
   run.retroRecorded = false;
   const paused = active === undefined ? '' : `; slice ${active.id} back to pending at ${active.phase}`;
   addEvent(run, 'reopen', `${slice.branch} at ${doneSha.slice(0, 12)}${paused}`, slice);
-  const item = { id: `reopen-f${nextFixRound(slice)}`, summary: evidenceLine(`Bug found after slice ${id} was done: ${reason}`) };
+  const item = { kind: 'reopen' as const, summary: evidenceLine(`Bug found after slice ${id} was done: ${reason}`) };
   return { slice, ...requestFix(ws, run, slice, `## Bug found after slice ${id} was done\n\n${evidence(reason, 4_000)}${listed}`, doneSha, [item]) };
 }
 

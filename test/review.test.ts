@@ -10,6 +10,8 @@ import { completeSlice, fixObservations, pathSkips, recordDecisions, recordRevie
 import { addFollowUp, applyReslice, approvePlan, carryObservations, nextAction, nextSlice, parseRetro, pauseRun, planFollowUp, planReslice, planSlices, recordRetro, resolveBase, resolveStall, resumeRun, saveChecks, startRun } from '../src/workflow.ts';
 import { checkRuns, commit, countedCheck, finding, green, newRun, review, roots, sh, slice, start, step, workspace } from './helpers.ts';
 
+const fixItems = (dataFile: string) => /## FIX ITEMS\n\n([\s\S]*?)\n## DIFF/.exec(readFileSync(dataFile, 'utf8'))?.[1] ?? '';
+
 describe('slice loop gates', { concurrency: 4 }, () => {
   it('takes a slice from red checks through a blocking review to done', async () => {
     const ws = workspace({ maxRounds: 2 });
@@ -333,6 +335,13 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     assert.equal(readRun(ws, 'demo').status, 'running');
     const again = await failChecks();
     assert.ok(!again.passed && again.stalled, 'the continue round is used by the first failure after it');
+
+    await step(ws, run => resolveStall(ws, run, 'continue'));
+    commit(ws, 'ok');
+    assert.ok((await failChecks()).passed);
+    const items = fixItems((await step(ws, run => startReview(ws, run))).dataFile);
+    const ids = [...items.matchAll(/^- `([^`]+)` \([^\n]*fixes\/01-f(\d)\.md, round (\d)\)/gm)].map(([, id, file, round]) => `${id} ${file} ${round}`);
+    assert.deepEqual(ids, ['check-f1-1 1 1', 'check-f2-1 2 2', 'check-f3-1 3 3'], 'each stalled and continued round keeps its own id, fix file, and round');
   });
 
   it('tells the user a stalled run asks on resume whether to raise the used-up fix budget', async () => {
@@ -734,8 +743,26 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     assert.match(fix, /## \[observation\] thermo-naming/);
   });
 
-  /** The FIX ITEMS section of a review data file. */
-  const fixItems = (dataFile: string) => /## FIX ITEMS\n\n([\s\S]*?)\n## DIFF/.exec(readFileSync(dataFile, 'utf8'))?.[1] ?? '';
+  it('clears the fix items of a red checks round when a green review records, so the next review lists only the new ones', async () => {
+    const ws = workspace({ maxRounds: 3 });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'work.txt');
+    assert.ok(!(await step(ws, run => runChecks(ws, run))).passed);
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const opened = await step(ws, run => startReview(ws, run));
+    await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming')]);
+    assert.ok((await step(ws, run => recordReview(ws, run))).green);
+
+    await step(ws, run => fixObservations(ws, run, { bug: 'Crash.', observations: ['thermo-naming'] }, 'Fix both now.'));
+    commit(ws, 'ok', 'fixed\n');
+    await step(ws, run => runChecks(ws, run));
+    const items = fixItems((await step(ws, run => startReview(ws, run))).dataFile);
+    assert.doesNotMatch(items, /check-f1-1/);
+    assert.match(items, /- `bug-f2` \([^\n]*fixes\/01-f2\.md, round 2\)/);
+    assert.match(items, /- `thermo-naming` \([^\n]*fixes\/01-f2\.md, round 2\)/);
+  });
 
   it('lists the chosen observations and the bug from a green review as fix items of the next review', async () => {
     const ws = workspace({ maxRounds: 2 });
@@ -759,7 +786,13 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     await step(ws, run => runChecks(ws, run));
     const first = await step(ws, run => startReview(ws, run));
     await review(ws, first.reviewId, [finding('bug', 'high', 'null-crash')]);
-    assert.ok(!(await step(ws, run => recordReview(ws, run))).green);
+    const blocked = await step(ws, run => recordReview(ws, run));
+    assert.ok(!blocked.green);
+    assert.match(
+      readFileSync(blocked.fixPath, 'utf8'),
+      /## Fix items\n\n- `bug-null-crash`: [^\n]*\n\n## Blocking review findings from 01-r1\n\n### \[high\] bug-null-crash\n/,
+      'the findings sit in their own section after the fix items',
+    );
 
     sh(ws.root, 'rm', '-q', 'ok');
     sh(ws.root, 'commit', '-qm', 'break');
@@ -771,7 +804,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     await step(ws, run => runChecks(ws, run));
     const items = fixItems((await step(ws, run => startReview(ws, run))).dataFile);
     assert.match(items, /- `bug-null-crash` \([^\n]*fixes\/01-f1\.md, round 1\): \[high\] ok:1: null-crash\n/);
-    assert.match(items, /- `check-f2-1` \([^\n]*fixes\/01-f2\.md, round 2\): test -f ok: failed \(exit 1\)[^\n]*check `test -f ok`\n/);
+    assert.match(items, /- `check-f2-1` \([^\n]*fixes\/01-f2\.md, round 2\): test -f ok: failed \(exit 1\) in \d+ms\n/);
   });
 
   it('refuses a fix with neither a bug nor observations, and changes nothing', async () => {

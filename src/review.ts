@@ -18,7 +18,6 @@ import {
   outdatedGreenCount,
   type Domain,
   type Finding,
-  type FixItem,
   findingListSchema,
   Invalidated,
   REQUIRED_REVIEW_DOMAINS,
@@ -35,7 +34,7 @@ import {
 import { storedReport } from './report.ts';
 import { head, porcelain, requireClean, requireOnBranch, snapshot } from './repo.ts';
 import {
-  nextFixRound,
+  type FixItemInput,
   pauseRun,
   renderTicket,
   requestFix,
@@ -153,15 +152,14 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   const summary = results.map(({ command, result }) => describeCheck(command, result));
   if (failed.length === 0 && dirty === '') return { commits, report, unchanged, ...(await passChecks(ws, run, slice, sha, summary, false)) };
 
-  const round = nextFixRound(slice);
   const sections = failed.map(
     ({ command, result }) =>
       `## ${describeCheck(command, result)}\n\n### stdout\n\n\`\`\`\n${evidence(result.stdout)}\n\`\`\`\n\n### stderr\n\n\`\`\`\n${evidence(result.stderr)}\n\`\`\``,
   );
-  const items: Omit<FixItem, 'path' | 'round'>[] = failed.map(({ command, result }, index) => ({ command, id: `check-f${round}-${index + 1}`, summary: describeCheck(command, result) }));
+  const items: FixItemInput[] = failed.map(({ command, result }) => ({ kind: 'check', summary: describeCheck(command, result) }));
   if (dirty !== '') {
     sections.push(`## Checks changed the working tree\n\nCommit or revert these files:\n\n\`\`\`\n${evidence(dirty, 2_000)}\n\`\`\``);
-    items.push({ id: `tree-f${round}`, summary: 'Checks changed the working tree' });
+    items.push({ kind: 'tree', summary: 'Checks changed the working tree' });
   }
   addEvent(
     run,
@@ -273,7 +271,7 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   if (diff.trim() === '') throw new Error(`No changes in ${range}; the implementer committed nothing.`);
   const files = await changedPaths(ws.root, range);
   const fixItems = slice.fixItems.map(
-    item => `- \`${item.id}\` (${item.path}, round ${item.round}): ${item.summary}${item.command === undefined ? '' : `; check \`${item.command}\``}`,
+    item => `- \`${item.id}\` (${item.path}, round ${item.round}): ${item.summary}`,
   );
   const listed =
     fixItems.length === 0
@@ -611,14 +609,13 @@ export async function recordReview(ws: Workspace, run: Run) {
       ws,
       run,
       slice,
-      `Blocking review findings from ${review.id}:\n\n${blocking.map(finding => renderFinding(finding, run.decisions)).join('\n\n')}`,
+      `## Blocking review findings from ${review.id}\n\n${blocking.map(finding => renderFinding(finding, run.decisions, '###')).join('\n\n')}`,
       review.sha,
       blocking.map(findingItem),
     ),
   };
 }
 
-/** A review finding as a fix item: its id, and its severity, location, and title as the summary. */
 function findingItem(finding: Finding) {
   return { id: finding.id, summary: `[${finding.severity}] ${finding.path}${finding.line === undefined ? '' : `:${finding.line}`}: ${evidenceLine(finding.title, 500)}` };
 }
@@ -678,7 +675,7 @@ export function fixObservations(ws: Workspace, run: Run, request: FixRequest, re
       : [`## Observations from green review ${review.id} the user chose to fix\n\n${why}\n\n${observations.map(finding => renderFinding(finding, run.decisions)).join('\n\n')}`]),
   ];
   const items = [
-    ...(bug === undefined ? [] : [{ id: `bug-f${nextFixRound(slice)}`, summary: evidenceLine(`Bug found after green review ${review.id}: ${bug}`) }]),
+    ...(bug === undefined ? [] : [{ kind: 'bug' as const, summary: evidenceLine(`Bug found after green review ${review.id}: ${bug}`) }]),
     ...observations.map(findingItem),
   ];
   return requestFix(ws, run, slice, sections.join('\n\n'), review.sha, items);

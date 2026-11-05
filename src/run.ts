@@ -1,7 +1,8 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import type { FactoryConfig } from './config.ts';
+import { evidenceLine } from './evidence.ts';
 
 /** The cc-pr-review domains. Each has a vendored reference under skills/software-factory/references/review/. */
 export const REVIEW_DOMAINS = [
@@ -106,10 +107,10 @@ const reviewSchema = z.object({
 
 /**
  * One thing a fix round asked the implementer to fix: a review finding by its id, or a factory-assigned id for a bug
- * (`bug-f<N>`), a reopen reason (`reopen-f<N>`), a failed check (`check-f<N>-<k>`, with its command), or a working
- * tree the checks changed (`tree-f<N>`). `path` and `round` name the fix file that asked for it.
+ * (`bug-f<N>`), a reopen reason (`reopen-f<N>`), a failed check (`check-f<N>-<k>`), or a working tree the checks
+ * changed (`tree-f<N>`). `path` and `round` name the fix file that asked for it.
  */
-const fixItemSchema = z.object({ command: text.optional(), id: text, path: text, round: z.number().int().positive(), summary: text });
+const fixItemSchema = z.object({ id: text, path: text, round: z.number().int().positive(), summary: text });
 export type FixItem = z.infer<typeof fixItemSchema>;
 
 const sliceSchema = sliceInputSchema.extend({
@@ -237,9 +238,44 @@ export function readRun(ws: Workspace, feature: string): Run {
   if (expected !== undefined && expected !== content) {
     throw new Error(`${path} changed outside the factory tools. Restore it, or pause and resume the run to re-verify it.`);
   }
-  const parsed = runSchema.safeParse(JSON.parse(content));
+  const raw = JSON.parse(content);
+  legacyFixItems(ws, raw);
+  const parsed = runSchema.safeParse(raw);
   if (!parsed.success) throw new Error(`Corrupt factory state ${path}: ${z.prettifyError(parsed.error)}`);
   return parsed.data;
+}
+
+/**
+ * LEGACY-STATE(fix-items): a state file from before fix items holds a slice in `fix` after a blocking review with no
+ * `fixItems`; its next review would list none. Fills them once from the last recorded review.json's blocking findings,
+ * on the raw state before parsing. Remove once no run paused before the release that ships issue #68 is left to resume.
+ */
+function legacyFixItems(ws: Workspace, raw: unknown) {
+  const { feature, slices } = (raw ?? {}) as { feature?: unknown; slices?: unknown };
+  if (!Array.isArray(slices) || typeof feature !== 'string') return;
+  for (const slice of slices as Record<string, unknown>[]) {
+    const { fixPath, fixRounds, id, phase, reviews } = slice;
+    if (slice.fixItems !== undefined || phase !== 'fix' || typeof fixPath !== 'string' || typeof id !== 'string') continue;
+    if (typeof reviews !== 'number' || typeof fixRounds !== 'number' || fixRounds < 1) continue;
+    let n = reviews;
+    const recorded = (k: number) => join(reviewDir(ws, feature, `${id}-r${k}`), 'review.json');
+    while (n > 0 && !existsSync(recorded(n))) n--;
+    if (n === 0) continue;
+    let findings: Finding[];
+    try {
+      findings = z.object({ findings: findingListSchema }).parse(JSON.parse(readFileSync(recorded(n), 'utf8'))).findings;
+    } catch {
+      continue;
+    }
+    slice.fixItems = findings
+      .filter(finding => finding.severity !== 'observation')
+      .map(finding => ({
+        id: finding.id,
+        path: fixPath,
+        round: fixRounds,
+        summary: `[${finding.severity}] ${finding.path}${finding.line === undefined ? '' : `:${finding.line}`}: ${evidenceLine(finding.title, 500)}`,
+      }));
+  }
 }
 
 /** Forgets the in-process copy so the next read trusts disk again. Only resume calls this, then re-verifies. */
