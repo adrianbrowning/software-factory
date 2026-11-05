@@ -182,6 +182,18 @@ describe('implementer sessions', () => {
     const { next } = await startedRun();
     assert.match(next, /Implementer report file: \S+\/\.scratch\/demo\/reports\/01\.md/);
   });
+
+  it('tells the orchestrator to run every reviewer and then the validator in one eval step', async () => {
+    const { call, implementer, main, root } = await startedRun();
+    writeFileSync(join(root, 'work.txt'), 'x\n');
+    git(root, 'add', '.');
+    git(root, 'commit', '-qm', 'work');
+    await call('factory_implementer_report', { behaviors: [], commits: [], open: [] }, implementer);
+    await call('factory_checks', {}, main);
+    const reply = await call('factory_review_start', { skip: [] }, main);
+    assert.match(reply, /in one eval step/);
+    assert.match(reply, /wait for every reviewer, then spawn one factory-review-validator/);
+  });
 });
 
 describe('first-run checks dialog', () => {
