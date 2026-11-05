@@ -532,7 +532,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
   tool({
     caller: REVIEWER,
     description:
-      'Submit your domain findings for the active review, with an empty list when you found nothing. One more call replaces them once (for a late correction), until validation.',
+      'Submit your domain findings for the active review, with an empty list when you found nothing. Each later call replaces them with its complete list (to correct them or remove a stale finding), until validation.',
     label: 'Factory: submit review findings',
     name: 'factory_review_submit',
     schema: submitSchema,

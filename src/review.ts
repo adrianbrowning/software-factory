@@ -383,8 +383,8 @@ function requireInDiff(lines: Record<string, [number, number][]>, finding: Findi
 
 /**
  * Stores one domain reviewer's findings as its own file, so parallel reviewers never share a write. Each domain is
- * submitted by one agent, before validation; that agent may replace its submission once (for a late advisor note).
- * The run records the file's hash.
+ * submitted by one agent, before validation; that agent may replace its submission any number of times until then,
+ * so it can always remove a stale finding. The run records the latest file's hash.
  */
 export function submitDomain(ws: Workspace, run: Run, input: { agentId: string; domain: string; findings: unknown; reviewId: string }) {
   const review = requireReview(run, input.reviewId);
@@ -395,7 +395,6 @@ export function submitDomain(ws: Workspace, run: Run, input: { agentId: string; 
   if (previous !== undefined && previous.agentId !== input.agentId) {
     throw new Error(`The ${domain} findings for ${review.id} were submitted by another agent.`);
   }
-  if (previous?.amended === true) throw new Error(`The ${domain} findings for ${review.id} were already amended once.`);
   const findings = findingListSchema.parse(input.findings);
   const ids = new Set<string>();
   for (const finding of findings) {
@@ -413,7 +412,7 @@ export function submitDomain(ws: Workspace, run: Run, input: { agentId: string; 
   }
   const content = `${JSON.stringify(findings, null, 2)}\n`;
   writeAtomic(domainFile(ws, run, review.id, domain), content);
-  review.submissions[domain] = { agentId: input.agentId, ...(previous === undefined ? {} : { amended: true }), hash: sha256(content) };
+  review.submissions[domain] = { agentId: input.agentId, hash: sha256(content) };
   return findings.length;
 }
 
