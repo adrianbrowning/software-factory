@@ -277,6 +277,19 @@ describe('factory_decide', () => {
     const { dataFile } = await withRun(ws, 'demo', run => startReview(ws, run));
     assert.ok(readFileSync(dataFile, 'utf8').includes(`2. Second builds the export. ${BUILT_BY_SECOND}\n`));
   });
+
+  it('refuses a decision naming a done or unknown slice before the confirm dialog, and records nothing', async () => {
+    using slice = await sliceAtCommit('factory-decide-refuse-', ['First', 'Second']);
+    const { call, confirms, ws } = slice;
+    await green(ws);
+    await withRun(ws, 'demo', run => completeSlice(ws, run));
+    const before = readRun(ws, 'demo');
+
+    await assert.rejects(call('factory_decide', { decisions: ['Plain.', { slice: '01', text: 'Built by First.' }] }), /Slice 01 is done/);
+    await assert.rejects(call('factory_decide', { decisions: [{ slice: '07', text: 'Built by nobody.' }] }), /No slice 07/);
+    assert.deepEqual(confirms, []);
+    assert.deepEqual(readRun(ws, 'demo'), before);
+  });
 });
 
 describe('factory_checks', () => {
