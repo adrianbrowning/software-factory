@@ -834,6 +834,8 @@ describe('follow-up slice', () => {
     await step(ws, run => addFollowUp(ws, run, { ...followUp, ownsDecisions: [1] } as typeof followUp));
     const run = readRun(ws, 'demo');
     assert.deepEqual(run.slices.map(item => item.ownsDecisions), [[], []]);
+    const ticket = readFileSync(ticketPath(ws, 'demo', run.slices[0] ?? assert.fail('no slice')), 'utf8');
+    assert.ok(ticket.includes('\n1. Export rule.\n'));
   });
 
   it('refuses a follow-up slice on a run that is not running or done', async () => {
