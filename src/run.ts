@@ -246,17 +246,18 @@ export function readRun(ws: Workspace, feature: string): Run {
 }
 
 /**
- * LEGACY-STATE(fix-items): a state file from before fix items holds a slice in `fix` after a blocking review with no
- * `fixItems`; its next review would list none. Fills them once from the last recorded review.json's blocking findings,
+ * LEGACY-STATE(fix-items): a state file from before fix items holds a slice after a blocking review with no `fixItems`;
+ * its next review would list none. Fills them once from the last recorded review.json's blocking findings,
  * on the raw state before parsing. Remove once no run paused before the release that ships issue #68 is left to resume.
  */
 function legacyFixItems(ws: Workspace, raw: unknown) {
   const { feature, slices } = (raw ?? {}) as { feature?: unknown; slices?: unknown };
   if (!Array.isArray(slices) || typeof feature !== 'string') return;
   for (const slice of slices as Record<string, unknown>[]) {
-    const { fixPath, fixRounds, id, phase, reviews } = slice;
-    if (slice.fixItems !== undefined || phase !== 'fix' || typeof fixPath !== 'string' || typeof id !== 'string') continue;
+    const { fixRounds, id, phase, reviews } = slice;
+    if (slice.fixItems !== undefined || phase === 'ready' || phase === 'done' || typeof id !== 'string') continue;
     if (typeof reviews !== 'number' || typeof fixRounds !== 'number' || fixRounds < 1) continue;
+    const fixPath = typeof slice.fixPath === 'string' ? slice.fixPath : join(runDir(ws, feature), 'fixes', `${id}-f${fixRounds}.md`);
     let n = reviews;
     const recorded = (k: number) => join(reviewDir(ws, feature, `${id}-r${k}`), 'review.json');
     while (n > 0 && !existsSync(recorded(n))) n--;

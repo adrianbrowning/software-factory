@@ -509,7 +509,7 @@ describe('pause and resume', () => {
     assert.deepEqual([resumed?.phase, resumed?.checked?.sha, resumed?.green], ['review', sh(ws.root, 'rev-parse', 'HEAD'), undefined]);
   });
 
-  it('lists the blocking findings of the last recorded review as fix items when a slice in fix predates fix items', async () => {
+  it('lists the blocking findings of the last recorded review as fix items when a slice paused after its fix round predates fix items', async () => {
     using ws = workspace({ maxRounds: 2 });
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
@@ -518,16 +518,18 @@ describe('pause and resume', () => {
     const opened = await step(ws, run => startReview(ws, run));
     await review(ws, opened.reviewId, [finding('bug', 'high', 'null-crash'), finding('thermo', 'observation', 'naming')]);
     await step(ws, run => recordReview(ws, run));
+    commit(ws, 'ok', 'fixed\n');
+    await step(ws, run => runChecks(ws, run));
     await step(ws, run => pauseRun(run, 'test'));
     const path = join(ws.root, '.scratch', 'demo', 'state.json');
     const state = JSON.parse(readFileSync(path, 'utf8'));
+    assert.equal(state.slices[0].phase, 'review');
     delete state.slices[0].fixItems;
+    delete state.slices[0].fixPath;
     writeFileSync(path, JSON.stringify(state));
     forgetRun(ws, 'demo');
 
     await step(ws, run => resumeRun(ws, run, 'session-2'));
-    commit(ws, 'ok', 'fixed\n');
-    await step(ws, run => runChecks(ws, run));
     const data = readFileSync((await step(ws, run => startReview(ws, run))).dataFile, 'utf8');
     assert.match(data, /- `bug-null-crash` \([^\n]*fixes\/01-f1\.md, round 1\): \[high\] ok:1: null-crash\n/);
     assert.doesNotMatch(data, /`thermo-naming`/);
