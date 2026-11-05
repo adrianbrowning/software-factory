@@ -37,6 +37,8 @@ Each changed file must serve the ticket's **What to build** or one of its accept
 
 Each acceptance criterion must have code in the diff that meets it. A criterion the diff leaves unmet is `high`.
 
+The data file's `## LATER SLICES` section lists the slices stacked after this one. Work a later slice lists is not a finding against this slice, so do not report it as missing here. This slice's own acceptance criteria, seams, and decisions still count in full, and code in this slice that contradicts a later slice's plan is still a finding.
+
 **Contract drift**
 
 This rule applies only when the repository has an OpenAPI/schema spec file. Before you apply it, check the repository for one with `glob`, for example `**/openapi.*`, `**/swagger.*`, `**/*.schema.json`, `**/schema.graphql`.

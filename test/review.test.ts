@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { type Finding, readRun, REVIEW_DOMAINS, ticketPath, type Workspace } from '../src/run.ts';
 import { completeSlice, fixObservations, pathSkips, recordDecisions, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
-import { addFollowUp, applyReslice, approvePlan, carryObservations, nextAction, nextSlice, parseRetro, pauseRun, planFollowUp, planReslice, planSlices, recordRetro, resolveBase, resolveStall, resumeRun, saveChecks, startRun } from '../src/workflow.ts';
+import { addFollowUp, applyReslice, approvePlan, carryObservations, nextAction, nextSlice, parseRetro, pauseRun, planFollowUp, planReslice, planSlices, recordRetro, reopenSlice, resolveBase, resolveStall, resumeRun, saveChecks, startRun } from '../src/workflow.ts';
 import { checkRuns, commit, countedCheck, finding, fixItems, green, greenWithObservation, newRun, noFixItems, review, roots, sh, slice, start, step, workspace } from './helpers.ts';
 
 describe('slice loop gates', { concurrency: 4 }, () => {
@@ -155,6 +155,58 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     const data = readFileSync(dataFile, 'utf8');
     assert.match(data, /## Decisions the user already made\n\n1\. The tsx runner stays/);
     assert.match(data, /## CHECKS\n\n.*all passed\. Do not run them again\.\n\n- test -f ok: passed in \d+ms\n/);
+  });
+
+  it('lists the later slices of the plan in the review data but not in the ticket', async () => {
+    const ws = workspace();
+    await newRun(ws, [
+      slice('First'),
+      slice('Second', ['First'], { acceptance: ['Second works', 'Second logs'], whatToBuild: 'Build the second part.' }),
+      slice('Third', ['Second'], { acceptance: ['Third works'], whatToBuild: 'Build the third part.' }),
+    ]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const { dataFile } = await step(ws, run => startReview(ws, run));
+    const data = readFileSync(dataFile, 'utf8');
+    const later = /## LATER SLICES\n\n[\s\S]*?(?=\n## CHECKS)/.exec(data)?.[0] ?? '';
+    assert.match(later, /### 02: Second\n\n\*\*What to build:\*\* Build the second part\.\n\n- Second works\n- Second logs\n\n### 03: Third\n\n\*\*What to build:\*\* Build the third part\.\n\n- Third works\n/);
+    assert.doesNotMatch(later, /01: First/);
+    assert.ok(data.indexOf('## Decisions the user already made') < data.indexOf('## LATER SLICES'));
+    assert.doesNotMatch(readFileSync(ticketPath(ws, 'demo', readRun(ws, 'demo').slices[0]!), 'utf8'), /LATER SLICES|02: Second/);
+
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'second.txt');
+    await step(ws, run => runChecks(ws, run));
+    const second = readFileSync((await step(ws, run => startReview(ws, run))).dataFile, 'utf8');
+    assert.match(second, /## LATER SLICES\n\n[^#]*### 03: Third/);
+    assert.doesNotMatch(/## LATER SLICES[\s\S]*?## CHECKS/.exec(second)?.[0] ?? '', /01: First|02: Second/);
+
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'third.txt');
+    await step(ws, run => runChecks(ws, run));
+    const last = readFileSync((await step(ws, run => startReview(ws, run))).dataFile, 'utf8');
+    assert.match(last, /## LATER SLICES\n\nNone\. No pending slice follows this one\.\n\n## CHECKS/);
+  });
+
+  it('leaves done later slices out of the review data of a reopened slice', async () => {
+    const ws = workspace({ maxRounds: 2 });
+    await newRun(ws, [slice('First'), slice('Second', ['First']), slice('Third', ['Second'])]);
+    for (const file of ['ok', 'second.txt', 'third.txt']) {
+      await step(ws, run => nextSlice(ws, run));
+      commit(ws, file);
+      await green(ws);
+      await step(ws, run => completeSlice(ws, run));
+    }
+    await step(ws, run => reopenSlice(ws, run, '01', 'bug'));
+    commit(ws, 'first.txt', 'fixed\n');
+    await step(ws, run => runChecks(ws, run));
+    const data = readFileSync((await step(ws, run => startReview(ws, run))).dataFile, 'utf8');
+    assert.match(data, /## LATER SLICES\n\nNone\. No pending slice follows this one\.\n\n## CHECKS/);
   });
 
   it('drops the stored check results whenever the checked commit stops being current', async () => {
