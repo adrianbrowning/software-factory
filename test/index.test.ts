@@ -268,7 +268,8 @@ describe('factory_decide', () => {
     const run = readRun(ws, 'demo');
     assert.deepEqual(run.decisions, ['Plain decision.', 'Second builds the export.']);
     assert.deepEqual(run.slices.map(item => item.ownsDecisions), [[], [2]]);
-    assert.match(confirms.at(-1) ?? '', /^- Plain decision\.\n- Second builds the export\. \(built by slice 02 Second\)$/);
+    assert.match(confirms.at(-1) ?? '', /^- Plain decision\.\n- Second builds the export\. \(built by slice 02 \(Second\)\)$/);
+    assert.equal(run.events.at(-1)?.detail, 'Plain decision.; Second builds the export. (built by slice 02 (Second))');
     const ticket = (index: number) => readFileSync(ticketPath(ws, 'demo', run.slices[index] ?? assert.fail('no slice')), 'utf8');
     assert.match(ticket(0), new RegExp(`\\n1\\. Plain decision\\.\\n2\\. Second builds the export\\. ${BUILT_BY_SECOND.replace(/[.()]/g, '\\$&')}\\n`));
     assert.match(ticket(1), /\n1\. Plain decision\.\n2\. Second builds the export\.\n/);
@@ -276,6 +277,33 @@ describe('factory_decide', () => {
     await withRun(ws, 'demo', run => runChecks(ws, run));
     const { dataFile } = await withRun(ws, 'demo', run => startReview(ws, run));
     assert.ok(readFileSync(dataFile, 'utf8').includes(`2. Second builds the export. ${BUILT_BY_SECOND}\n`));
+  });
+
+  it('lists the decisions each slice builds in the plan approval and split dialogs', async () => {
+    using repo = tempRepo('factory-plan-owners-', { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) });
+    const { root } = repo;
+    const confirms: string[] = [];
+    const confirm = async (_title: string, message: string) => {
+      confirms.push(message);
+      return true;
+    };
+    const caller = { ...ctx('main', 'main'), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm, notify() {} } };
+    const tools = load();
+    const call = (name: string, params: unknown) => tools.get(name)?.execute('id', params, undefined, undefined, caller) ?? Promise.reject(new Error('no tool'));
+    await call('factory_start', { feature: 'demo', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } });
+    const ws = { config: loadConfig(root), root };
+    await call('factory_decide', { decisions: ['Plain decision.', 'Big builds the export.'] });
+    const input = (title: string, blockedBy: string[] = []) => ({ acceptance: ['works'], blockedBy, estimateTokens: 500, seams: ['cli'], title, whatToBuild: title });
+    await call('factory_plan', { baseRef: 'main', slices: [{ ...input('Big'), ownsDecisions: [2] }, input('After', ['Big'])], trunk: 'main' });
+    assert.match(confirms.at(-1) ?? '', /01\. Big\n[^]*\n {3}builds decisions: 2\n {3}~500 tokens\n02\. After\n(?![^]*builds decisions)/);
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    // The factory_reslice schema has no ownsDecisions, so a child's claim is dropped rather than stored.
+    await call('factory_reslice', { slices: [{ ...input('Part one'), ownsDecisions: [1] }, input('Part two', ['Part one'])] });
+    assert.match(confirms.at(-1) ?? '', /^01\. Part one\n(?:(?!builds decisions)[^])*02\. Part two\n[^]*\n {3}builds decisions: 2\n {3}~500 tokens\n03\. After\n/);
+    assert.deepEqual(readRun(ws, 'demo').slices.map(item => item.ownsDecisions), [[], [2], []]);
+    const parameters = tools.get('factory_reslice')?.parameters as { properties: { slices: { items: { properties: Record<string, unknown> } } } };
+    assert.ok(!('ownsDecisions' in parameters.properties.slices.items.properties));
+    assert.ok('title' in parameters.properties.slices.items.properties);
   });
 
   it('refuses a decision naming a done or unknown slice before the confirm dialog, and records nothing', async () => {

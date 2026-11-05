@@ -94,6 +94,8 @@ export const sliceInputSchema = z.object({
   whatToBuild: text.describe('End-to-end behavior from the user perspective, not a layer list'),
 });
 export type SliceInput = z.infer<typeof sliceInputSchema>;
+/** A slice from factory_reslice: split children claim no decisions; the split slice's decisions move to its last child. */
+export const resliceItemSchema = sliceInputSchema.omit({ ownsDecisions: true });
 
 const phaseSchema = z.enum(['checks', 'fix', 'implement', 'ready', 'review']);
 
@@ -171,6 +173,11 @@ const sliceSchema = sliceInputSchema.extend({
   status: z.enum(['active', 'done', 'pending']),
 });
 export type Slice = z.infer<typeof sliceSchema>;
+
+/** The owner label of a decision, shared by the decision event, the factory_decide dialog and the ticket mark. */
+export function builtBy(slice: Slice, start: 'built' | 'Built' = 'built') {
+  return `${start} by slice ${slice.id} (${slice.title})`;
+}
 
 /**
  * A slice as a state file from before `checked` and `green` holds it: a pass as checkedSha and checkResults, a green

@@ -7,6 +7,7 @@ import { greenObservations, renderFinding } from './review.ts';
 import {
   activeSlice,
   addEvent,
+  builtBy,
   discardReview,
   dropPass,
   greenCommit,
@@ -18,6 +19,7 @@ import {
   saveRun,
   type Slice,
   type SliceInput,
+  resliceItemSchema,
   sliceInputSchema,
   standingChecks,
   type Source,
@@ -306,7 +308,7 @@ function renderDecisions(run: Run, slice: Slice) {
   return run.decisions
     .map((decision, index) => {
       const owner = later.find(item => item.ownsDecisions.includes(index + 1));
-      const mark = owner === undefined ? '' : ` Built by slice ${owner.id} (${owner.title}): this slice need not build it; report only code that contradicts it.`;
+      const mark = owner === undefined ? '' : ` ${builtBy(owner, 'Built')}: this slice need not build it; report only code that contradicts it.`;
       return `${index + 1}. ${decision}${mark}`;
     })
     .join('\n');
@@ -485,9 +487,8 @@ export function planReslice(ws: Workspace, run: Run, proposed: unknown) {
   const index = run.slices.indexOf(active);
   const done = run.slices.slice(0, index);
   const pending = run.slices.slice(index + 1);
-  const children = orderInputs(ws, proposed, new Set(done.map(slice => slice.title)), new Set(pending.map(slice => slice.title)));
-  const claiming = children.find(child => (child.ownsDecisions ?? []).length > 0);
-  if (claiming !== undefined) throw new Error(`factory_reslice moves the split slice's decisions to its last child; leave ownsDecisions out of "${claiming.title}".`);
+  const childInputs = z.array(resliceItemSchema).parse(proposed);
+  const children = orderInputs(ws, childInputs, new Set(done.map(slice => slice.title)), new Set(pending.map(slice => slice.title)));
   const childTitles = children.map(child => child.title);
   const rest = pending.map(slice =>
     sliceInputSchema.parse({ ...slice, blockedBy: slice.blockedBy.flatMap(blocker => (blocker === active.title ? childTitles : [blocker])) }),
@@ -507,7 +508,7 @@ export function planReslice(ws: Workspace, run: Run, proposed: unknown) {
   first.reviews = active.reviews;
   // The decisions the split slice builds go to its last child, which finishes its work; later slices keep theirs.
   slices[index + children.length - 1]?.ownsDecisions.push(...active.ownsDecisions);
-  return { children: slices.slice(index, index + children.length), slices: checkOwnership(run, slices) };
+  return { children: slices.slice(index, index + children.length), slices };
 }
 
 export async function applyReslice(ws: Workspace, run: Run, slices: Slice[]) {
@@ -565,7 +566,7 @@ type AppendInput = Omit<SliceInput, 'blockedBy' | 'ownsDecisions'>;
 /** Builds the slice `addFollowUp` or a retro adds on top of the stack, validated, without changing the run. */
 function planAppend(ws: Workspace, run: Run, proposed: AppendInput) {
   const existing = run.slices.map(slice => slice.title);
-  const [input] = orderInputs(ws, [{ ...proposed, blockedBy: existing, ownsDecisions: undefined }], new Set(existing), new Set());
+  const [input] = orderInputs(ws, [{ ...proposed, blockedBy: existing }], new Set(existing), new Set());
   const slice = input === undefined ? undefined : stack(ws, run, run.slices, [input]).at(-1);
   if (slice === undefined) throw new Error('No slice to append');
   return slice;
