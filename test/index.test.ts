@@ -297,8 +297,13 @@ describe('factory_decide', () => {
     await call('factory_plan', { baseRef: 'main', slices: [{ ...input('Big'), ownsDecisions: [2] }, input('After', ['Big'])], trunk: 'main' });
     assert.match(confirms.at(-1) ?? '', /01\. Big\n[^]*\n {3}builds decisions: 2\n {3}~500 tokens\n02\. After\n(?![^]*builds decisions)/);
     await withRun(ws, 'demo', run => nextSlice(ws, run));
-    await call('factory_reslice', { slices: [input('Part one'), input('Part two', ['Part one'])] });
+    // The factory_reslice schema has no ownsDecisions, so a child's claim is dropped rather than stored.
+    await call('factory_reslice', { slices: [{ ...input('Part one'), ownsDecisions: [1] }, input('Part two', ['Part one'])] });
     assert.match(confirms.at(-1) ?? '', /^01\. Part one\n(?:(?!builds decisions)[^])*02\. Part two\n[^]*\n {3}builds decisions: 2\n {3}~500 tokens\n03\. After\n/);
+    assert.deepEqual(readRun(ws, 'demo').slices.map(item => item.ownsDecisions), [[], [2], []]);
+    const parameters = tools.get('factory_reslice')?.parameters as { properties: { slices: { items: { properties: Record<string, unknown> } } } };
+    assert.ok(!('ownsDecisions' in parameters.properties.slices.items.properties));
+    assert.ok('title' in parameters.properties.slices.items.properties);
   });
 
   it('refuses a decision naming a done or unknown slice before the confirm dialog, and records nothing', async () => {
