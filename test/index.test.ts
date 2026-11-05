@@ -223,23 +223,30 @@ describe('first-run checks dialog', () => {
   });
 });
 
-/** A run whose one slice has committed `ok`, driven through the loaded tools; the repo is removed when `using` ends. */
-async function sliceAtCommit(prefix: string) {
+/** A run of `titles` slices whose first slice has committed `ok`, driven through the loaded tools; the repo is removed when `using` ends. `confirms` records each confirm dialog's message. */
+async function sliceAtCommit(prefix: string, titles = ['Feature']) {
   const repo = tempRepo(prefix, { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) });
   const { root } = repo;
-  const caller = { ...ctx('main', 'main'), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, notify() {} } };
+  const confirms: string[] = [];
+  const confirm = async (_title: string, message: string) => {
+    confirms.push(message);
+    return true;
+  };
+  const caller = { ...ctx('main', 'main'), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm, notify() {} } };
   const tools = load();
   const call = (name: string, params: unknown) => tools.get(name)?.execute('id', params, undefined, undefined, caller) ?? Promise.reject(new Error('no tool'));
   await call('factory_start', { feature: 'demo', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } });
   const ws = { config: loadConfig(root), root };
-  const input = { acceptance: ['works'], blockedBy: [], estimateTokens: 500, seams: ['cli'], title: 'Feature', whatToBuild: 'Feature' };
-  await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [input])));
+  const inputs = titles.map((title, index) => ({ acceptance: ['works'], blockedBy: titles.slice(0, index), estimateTokens: 500, seams: ['cli'], title, whatToBuild: title }));
+  await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, inputs)));
   await withRun(ws, 'demo', run => nextSlice(ws, run));
   writeFileSync(join(root, 'ok'), 'x\n');
   sh(root, 'add', 'ok');
   sh(root, 'commit', '-qm', 'add ok');
-  return { ...repo, call, ws };
+  return { ...repo, call, confirms, ws };
 }
+
+const BUILT_BY_SECOND = 'Built by slice 02 (Second): this slice need not build it; report only code that contradicts it.';
 
 describe('factory_decide', () => {
   it('tells the orchestrator in its Next line to stop the discarded review, then call factory_review_start', async () => {
@@ -251,6 +258,24 @@ describe('factory_decide', () => {
     const reply = (await call('factory_decide', { decisions: ['Late decision.'] })) as { content: { text: string }[] };
     const next = reply.content[0]?.text.split('\n').find(line => line.startsWith('Next: '));
     assert.match(next ?? '', new RegExp(`^Next: Stop the running reviewers and validator of review ${reviewId}; their submissions are refused\\. .*factory_review_start`));
+  });
+
+  it('stores a decision on the slice that builds it, marks it in earlier tickets and review data, and shows the owner in the confirm dialog', async () => {
+    using slice = await sliceAtCommit('factory-decide-owner-', ['First', 'Second']);
+    const { call, confirms, ws } = slice;
+
+    await call('factory_decide', { decisions: ['Plain decision.', { slice: '02', text: 'Second builds the export.' }] });
+    const run = readRun(ws, 'demo');
+    assert.deepEqual(run.decisions, ['Plain decision.', 'Second builds the export.']);
+    assert.deepEqual(run.slices.map(item => item.ownsDecisions), [[], [2]]);
+    assert.match(confirms.at(-1) ?? '', /^- Plain decision\.\n- Second builds the export\. \(built by slice 02 Second\)$/);
+    const ticket = (index: number) => readFileSync(ticketPath(ws, 'demo', run.slices[index] ?? assert.fail('no slice')), 'utf8');
+    assert.match(ticket(0), new RegExp(`\\n1\\. Plain decision\\.\\n2\\. Second builds the export\\. ${BUILT_BY_SECOND.replace(/[.()]/g, '\\$&')}\\n`));
+    assert.match(ticket(1), /\n1\. Plain decision\.\n2\. Second builds the export\.\n/);
+
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const { dataFile } = await withRun(ws, 'demo', run => startReview(ws, run));
+    assert.ok(readFileSync(dataFile, 'utf8').includes(`2. Second builds the export. ${BUILT_BY_SECOND}\n`));
   });
 });
 

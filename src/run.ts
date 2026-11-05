@@ -83,6 +83,11 @@ export const sliceInputSchema = z.object({
   estimateTokens: z.number().int().positive().describe('Estimated implementer context tokens for the whole slice'),
   /** Why the slice has no test seams (docs or config only). Plan validation requires it when `seams` is empty. */
   noTestReason: text.optional().describe('Only when seams is empty: why the slice has nothing to test'),
+  /** Numbers of recorded decisions this slice builds; a slice before it marks them as built later (renderDecisions). */
+  ownsDecisions: z
+    .array(z.number().int().positive())
+    .optional()
+    .describe('Numbers of decisions recorded before the plan that this slice builds; each decision has at most one owning slice'),
   /** Public interfaces the tests go through, agreed with the user at plan approval (tdd skill). */
   seams: z.array(text).describe('Public interfaces the tests go through (tdd skill seams)'),
   title: text,
@@ -153,6 +158,8 @@ const sliceSchema = sliceInputSchema.extend({
    */
   green: z.object({ decisions: z.number().int().nonnegative().optional() }).optional(),
   id: z.string().regex(/^\d{2}$/),
+  /** Decision numbers (1-based) the slice builds; a state file from before ownership owns none. */
+  ownsDecisions: z.array(z.number().int().positive()).default([]),
   parentBranch: text,
   peakContextTokens: z.number().int().nonnegative(),
   phase: phaseSchema,

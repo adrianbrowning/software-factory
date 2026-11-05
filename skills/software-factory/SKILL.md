@@ -32,6 +32,8 @@ If the user does not want new PR branches and asks for the work on an existing l
 
 Record each decision the user makes that a reviewer could otherwise question (an accepted tradeoff, work kept out of scope, a known limitation) with `factory_decide`, at any point in the run. Tickets and review data list them, so reviewers check the code against them instead of raising them again. A decision recorded while a review is open discards that review at once: the `Next` line of the reply tells you to stop its running reviewers and validator (the factory refuses their submissions), then call `factory_review_start` again on the same commit. A decision recorded after a green review sends the slice back to review on the green commit at once: call `factory_review_start` before the slice completes. Either way the new review lists every decision, and the checks do not run again.
 
+When the plan gives a decision's work to one slice, give the decision that owning slice: in `factory_decide`, pass the item as `{ text, slice }` with the id of a pending or active slice; in `factory_plan`, set the slice's `ownsDecisions` to the numbers of decisions recorded before the plan. Each decision has at most one owner. The tickets and review data of the slices before the owner mark the decision "Built by slice NN (title): this slice need not build it; report only code that contradicts it.", so their reviewers do not report it as a gap; the owner and later slices list it unmarked. `factory_reslice` moves the split slice's decisions to its last child; leave `ownsDecisions` out of the children.
+
 ## 3. Slice
 
 Break the work into **tracer bullets** (Matt Pocock's `to-tickets` rules):

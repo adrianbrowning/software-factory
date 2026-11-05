@@ -209,6 +209,24 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     assert.match(data, /## LATER SLICES\n\nNone\. No pending slice follows this one\.\n\n## CHECKS/);
   });
 
+  it('lists only the not-done later slices in the review data of a reopened slice', async () => {
+    const ws = workspace({ maxRounds: 2 });
+    await newRun(ws, [slice('First'), slice('Second', ['First']), slice('Third', ['Second'])]);
+    for (const file of ['ok', 'second.txt']) {
+      await step(ws, run => nextSlice(ws, run));
+      commit(ws, file);
+      await green(ws);
+      await step(ws, run => completeSlice(ws, run));
+    }
+    await step(ws, run => reopenSlice(ws, run, '01', 'bug'));
+    commit(ws, 'first.txt', 'fixed\n');
+    await step(ws, run => runChecks(ws, run));
+    const data = readFileSync((await step(ws, run => startReview(ws, run))).dataFile, 'utf8');
+    const later = /## LATER SLICES[\s\S]*?(?=\n## CHECKS)/.exec(data)?.[0] ?? '';
+    assert.match(later, /### 03: Third/);
+    assert.doesNotMatch(later, /02: Second|01: First/);
+  });
+
   it('drops the stored check results whenever the checked commit stops being current', async () => {
     const ws = workspace();
     await newRun(ws, [slice('Feature')]);
@@ -687,6 +705,23 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     const recorded = await step(ws, run => recordDecisions(ws, run, ['Early decision.']));
     assert.equal(recorded.discarded, undefined);
     assert.deepEqual(readRun(ws, 'demo').slices[0], before);
+  });
+
+  it('refuses a decision that names a done or unknown slice and records none of the batch', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('First'), slice('Second', ['First'])]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+    const before = readRun(ws, 'demo');
+
+    await assert.rejects(step(ws, run => recordDecisions(ws, run, ['Plain.', { slice: '01', text: 'Built by First.' }])), /Slice 01 is done/);
+    await assert.rejects(step(ws, run => recordDecisions(ws, run, ['Plain.', { slice: '07', text: 'Built by nobody.' }])), /No slice 07/);
+    const after = readRun(ws, 'demo');
+    assert.deepEqual(after.decisions, []);
+    assert.deepEqual(after.slices.map(item => item.ownsDecisions), [[], []]);
+    assert.equal(after.events.length, before.events.length);
   });
 
   it('fixes observations the user chose from a green review in a tracked round that needs new checks and a new review', async () => {

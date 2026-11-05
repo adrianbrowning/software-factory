@@ -27,6 +27,8 @@ For the testing and test-validity domains, the ticket's seams are the agreed tes
 
 The ticket's "Decisions the user already made" section is a numbered list and is binding. Report code that breaks a decision as `critical` or `high`, never as an `observation`, and set the finding's `decision` field to the decision's number; the validator cannot downgrade such a finding. A later decision that accepts the gap overrides the earlier one. Leave out a finding whose whole point is a tradeoff a decision already accepts, or work a decision puts out of scope.
 
+A decision marked "Built by slice NN (title): this slice need not build it; report only code that contradicts it." belongs to that later slice. Its missing work is not a gap in this slice, so leave it out. Code in this slice that contradicts the decision still breaks it, and you report that as above.
+
 Read each acceptance criterion literally, word by word, and check the code against that exact wording, not against what the criterion probably meant. When the code meets a looser reading but not the literal one (for example, the criterion names "the top frame" and the code skips frames so a different frame becomes the top), report it as a `high` finding that quotes the criterion. The implementer or the user decides whether the wording or the code changes; the reviewer does not dismiss the gap.
 
 You review a frozen state: the gate rejects the whole review if the repository changes. Everything you need is in the data file and the repository files; read them and leave the repository unchanged.
