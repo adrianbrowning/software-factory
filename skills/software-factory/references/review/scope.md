@@ -26,7 +26,10 @@ Each acceptance criterion must have code in the diff that meets it. A criterion 
 
 **Contract drift**
 
-If any route handler or API file changed but NO corresponding OpenAPI/schema spec file is in the diff → flag "Route changed without spec update." (Note what spec file is missing.)
+This rule applies only when the repository has an OpenAPI/schema spec file. Before you apply it, check the repository for one with `glob`, for example `**/openapi.*`, `**/swagger.*`, `**/*.schema.json`, `**/schema.graphql`.
+
+- No spec file in the repository → do not raise "Route changed without spec update."
+- A spec file exists, a route handler or API file changed, and NO corresponding spec file is in the diff → flag "Route changed without spec update." (Note what spec file is missing.)
 
 **Envelope violations**
 
