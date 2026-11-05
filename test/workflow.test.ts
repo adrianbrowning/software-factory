@@ -824,6 +824,18 @@ describe('follow-up slice', () => {
     assert.deepEqual([next?.id, next?.phase, sh(ws.root, 'rev-parse', 'HEAD')], ['02', 'implement', greenCommit(done)]);
   });
 
+  it('gives a follow-up slice no decisions, so earlier tickets stay as written', async () => {
+    const ws = workspace();
+    await start(ws);
+    await step(ws, run => recordDecisions(ws, run, ['Export rule.']));
+    await step(ws, run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')])));
+    await step(ws, run => nextSlice(ws, run));
+
+    await step(ws, run => addFollowUp(ws, run, { ...followUp, ownsDecisions: [1] } as typeof followUp));
+    const run = readRun(ws, 'demo');
+    assert.deepEqual(run.slices.map(item => item.ownsDecisions), [[], []]);
+  });
+
   it('refuses a follow-up slice on a run that is not running or done', async () => {
     const ws = workspace();
     await start(ws);

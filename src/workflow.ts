@@ -559,13 +559,15 @@ export function amendSeams(ws: Workspace, run: Run, seams: string[]) {
   return slice;
 }
 
+/** A slice appended after the plan; only factory_plan assigns decisions, so it owns none. */
+type AppendInput = Omit<SliceInput, 'blockedBy' | 'ownsDecisions'>;
+
 /** Builds the slice `addFollowUp` or a retro adds on top of the stack, validated, without changing the run. */
-function planAppend(ws: Workspace, run: Run, proposed: Omit<SliceInput, 'blockedBy'>) {
+function planAppend(ws: Workspace, run: Run, proposed: AppendInput) {
   const existing = run.slices.map(slice => slice.title);
-  const [input] = orderInputs(ws, [{ ...proposed, blockedBy: existing }], new Set(existing), new Set());
+  const [input] = orderInputs(ws, [{ ...proposed, blockedBy: existing, ownsDecisions: undefined }], new Set(existing), new Set());
   const slice = input === undefined ? undefined : stack(ws, run, run.slices, [input]).at(-1);
   if (slice === undefined) throw new Error('No slice to append');
-  checkOwnership(run, [...run.slices, slice]);
   return slice;
 }
 
@@ -577,7 +579,7 @@ function pushSlice(ws: Workspace, run: Run, slice: Slice) {
 }
 
 /** Validates a follow-up slice for `addFollowUp` without changing the run, so a dialog only offers one that can be added. */
-export function planFollowUp(ws: Workspace, run: Run, proposed: Omit<SliceInput, 'blockedBy'>) {
+export function planFollowUp(ws: Workspace, run: Run, proposed: AppendInput) {
   requireNotStalled(run);
   if (run.status !== 'running' && run.status !== 'done') throw new Error(`Run is ${run.status}; only a running or done run takes a follow-up slice.`);
   return planAppend(ws, run, proposed);
@@ -589,7 +591,7 @@ export function planFollowUp(ws: Workspace, run: Run, proposed: Omit<SliceInput,
  * `to: "end"`) goes into its ticket as carried-in work, and the queue empties. The done slices and their PRs stay as
  * reviewed. A done run runs again and needs a new retro before submit.
  */
-export function addFollowUp(ws: Workspace, run: Run, proposed: Omit<SliceInput, 'blockedBy'>) {
+export function addFollowUp(ws: Workspace, run: Run, proposed: AppendInput) {
   const planned = planFollowUp(ws, run, proposed);
   planned.carried = run.waiting;
   run.waiting = [];

@@ -157,7 +157,7 @@ const reopenSchema = z.object({
   reason: z.string().min(1).describe('The bug found in the done slice, as the fix file for its implementer'),
   slice: z.string().regex(/^\d{2}$/).describe('Id of the done slice, for example "04"'),
 });
-const followUpSchema = sliceInputSchema.omit({ blockedBy: true });
+const followUpSchema = sliceInputSchema.omit({ blockedBy: true, ownsDecisions: true });
 const fixSchema = z.object({
   bug: z
     .string()
