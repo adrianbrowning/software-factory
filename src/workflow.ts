@@ -253,6 +253,7 @@ export async function startRun(ws: Workspace, input: { feature: string; sessionI
     status: 'intake',
     trunk,
     version: 1,
+    waiting: [],
   };
   addEvent(run, 'start', `${source.kind} ${source.ref}; checks: ${checks.join('; ')}`);
   writeAtomic(
@@ -341,19 +342,24 @@ ${slice.carried.join('\n\n')}
 `;
 }
 
-/** What factory_carry takes: observation ids from the active slice's green review, a free-text note, or both, and the pending slice they go to. */
+/**
+ * What factory_carry takes: observation ids from the active slice's green review, a free-text note, or both, and where
+ * they go: a pending slice id, or "end" to wait on the run for the next follow-up slice.
+ */
 export type CarryRequest = { note?: string | undefined; observations?: string[] | undefined; to: string };
 
 /**
- * The pending slice `request.to`, the observations chosen from the active slice's green review, and the note. Throws
- * for a request with neither, for a slice without a green review, for an id that is not one of its observations, and
- * for a target that is not a pending slice. Does not change the run.
+ * The target of `request.to` (a pending slice, or undefined for "end"), the observations chosen from the active
+ * slice's green review, and the note. Throws for a request with neither, for a slice without a green review, for an id
+ * that is not one of its observations, and for a target that is neither "end" nor a pending slice. Does not change the
+ * run.
  */
 export function planCarry(ws: Workspace, run: Run, request: CarryRequest) {
   const note = request.note?.trim() ? request.note : undefined;
   const chosen = new Set(z.array(z.string().min(1)).parse(request.observations ?? []));
   if (note === undefined && chosen.size === 0) throw new Error('factory_carry needs observation ids, a note, or both.');
   const green = greenObservations(ws, run, chosen, 'carry observations or a note');
+  if (request.to === 'end') return { note, ...green, target: undefined };
   const target = run.slices.find(candidate => candidate.id === request.to);
   if (target === undefined) throw new Error(`No slice ${request.to}. Slices: ${run.slices.map(candidate => candidate.id).join(', ')}.`);
   if (target.status !== 'pending') throw new Error(`Slice ${target.id} is ${target.status}; factory_carry takes a pending slice.`);
@@ -362,15 +368,20 @@ export function planCarry(ws: Workspace, run: Run, request: CarryRequest) {
 
 /**
  * Carries the chosen observations and the note from the active slice's green review into the ticket of a pending
- * slice, whose implementer builds them and whose reviewers check them. The active slice keeps its green review.
+ * slice, whose implementer builds them and whose reviewers check them, or, for "end", onto the run's waiting queue
+ * for the next follow-up slice. The active slice keeps its green review.
  */
 export function carryObservations(ws: Workspace, run: Run, request: CarryRequest) {
   const planned = planCarry(ws, run, request);
   const { note, observations, review, slice, target } = planned;
   const items = [...(note === undefined ? [] : [redact(note)]), ...observations.map(finding => renderFinding(finding, run.decisions, '####'))];
-  target.carried.push(`### From green review ${review.id} of slice ${slice.id} "${slice.title}"\n\n${items.join('\n\n')}`);
-  writeTicket(ws, run, target);
-  addEvent(run, 'carry', `${review.id} to slice ${target.id}: ${[...(note === undefined ? [] : ['note']), ...observations.map(finding => finding.id)].join(', ')}`, slice);
+  const section = `### From green review ${review.id} of slice ${slice.id} "${slice.title}"\n\n${items.join('\n\n')}`;
+  if (target === undefined) run.waiting.push(section);
+  else {
+    target.carried.push(section);
+    writeTicket(ws, run, target);
+  }
+  addEvent(run, 'carry', `${review.id} to ${target === undefined ? 'the end of the run' : `slice ${target.id}`}: ${[...(note === undefined ? [] : ['note']), ...observations.map(finding => finding.id)].join(', ')}`, slice);
   return planned;
 }
 
@@ -532,11 +543,15 @@ export function planFollowUp(ws: Workspace, run: Run, proposed: Omit<SliceInput,
 
 /**
  * Adds one slice on top of the stack, blocked by every existing slice, for work the user wants after the earlier
- * slices are done (for example a non-blocking review observation). The done slices and their PRs stay as reviewed.
- * A done run runs again and needs a new retro before submit.
+ * slices are done (for example a non-blocking review observation). Every item waiting on the run (factory_carry
+ * `to: "end"`) goes into its ticket as carried-in work, and the queue empties. The done slices and their PRs stay as
+ * reviewed. A done run runs again and needs a new retro before submit.
  */
 export function addFollowUp(ws: Workspace, run: Run, proposed: Omit<SliceInput, 'blockedBy'>) {
-  const slice = pushSlice(ws, run, planFollowUp(ws, run, proposed));
+  const planned = planFollowUp(ws, run, proposed);
+  planned.carried = run.waiting;
+  run.waiting = [];
+  const slice = pushSlice(ws, run, planned);
   if (run.status === 'done') run.status = 'running';
   run.retroRecorded = false;
   return slice;
@@ -714,6 +729,17 @@ export const retroSchema = z.object({ findings: z.array(retroFindingSchema) });
 
 function requireRetroOpen(run: Run) {
   const finished = run.slices.length > 0 && run.slices.every(slice => slice.status === 'done');
+  if (run.waiting.length > 0) {
+    if (finished && (run.status === 'running' || run.status === 'done')) throw new Error(waitingNotice(run));
+    const slice = activeSlice(run);
+    const first =
+      run.status === 'running'
+        ? 'Finish the pending slices first.'
+        : slice?.stalled
+          ? stallNotice(run, slice)
+          : `Tell the user to /factory resume ${run.feature} first.`;
+    throw new Error(`Carried items wait for the end of the run (${run.waiting.length}), and the retro waits for them. ${first} factory_follow_up takes them once every slice is done.`);
+  }
   if (!finished && run.status !== 'stalled') throw new Error('Retro runs when every slice is done or the run is stalled.');
   if (run.retroRecorded) throw new Error('The retro for this run is already recorded.');
 }
@@ -796,9 +822,12 @@ export function recordRetro(ws: Workspace, run: Run, retro: Retro, filed: FiledI
   return slice;
 }
 
-/** Marks the run done once every slice is done and the retro is recorded: the stack is ready to submit. */
+/**
+ * Marks the run done once every slice is done, no carried items wait for a follow-up slice, and the retro is
+ * recorded: the stack is ready to submit.
+ */
 export function settle(run: Run) {
-  if (run.status !== 'running' || !run.retroRecorded) return;
+  if (run.status !== 'running' || !run.retroRecorded || run.waiting.length > 0) return;
   if (!run.slices.every(slice => slice.status === 'done')) return;
   run.status = 'done';
   addEvent(run, 'stack-ready', run.slices.map(slice => slice.branch).join(' <- '));
@@ -874,10 +903,16 @@ async function landStack(ws: Workspace, run: Run, landOn: string) {
   return `${landed}. No PRs were opened.\n`;
 }
 
+/** What to do about the items waiting on the run for the end-of-run follow-up slice. */
+function waitingNotice(run: Run) {
+  return `Carried items wait for the end of the run (${run.waiting.length}). Call factory_follow_up for them (title, what to build, acceptance, seams or noTestReason, estimate); its slice takes every waiting item. The retro waits until then.`;
+}
+
 /** The one thing the orchestrator should do next, in words a model can act on. */
 export function nextAction(run: Run): string {
   if (run.status === 'intake') return 'Clarify the issue with the user, then propose slices with factory_plan.';
   if (run.status === 'done') {
+    if (run.waiting.length > 0) return waitingNotice(run);
     return run.landOn === undefined
       ? `The stack is ready. Tell the user they can open draft PRs with /factory submit ${run.feature}.`
       : `The stack is ready. Tell the user that /factory submit ${run.feature} fast-forwards ${run.landOn} to the top slice.`;
@@ -889,6 +924,7 @@ export function nextAction(run: Run): string {
   if (run.status !== 'running') return `The run is ${run.status}. The user resumes it with /factory resume ${run.feature}.`;
   if (slice === undefined) {
     if (run.slices.some(candidate => candidate.status === 'pending')) return 'Call factory_next to start the next slice.';
+    if (run.waiting.length > 0) return waitingNotice(run);
     return 'Every slice is done. Run the retro (skill://retro) and record it with factory_retro.';
   }
   const where = `slice ${slice.id} "${slice.title}"`;
@@ -936,5 +972,7 @@ export function summarize(ws: Workspace, run: Run) {
     sliceTokenBudget: ws.config.sliceTokenBudget,
     source: { kind: run.source.kind, ref: run.source.ref, title: run.source.title },
     status: run.status,
+    /** Carried items waiting for the next factory_follow_up slice (factory_carry `to: "end"`). */
+    waiting: run.waiting,
   };
 }

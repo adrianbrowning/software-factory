@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { type Finding, readRun, REVIEW_DOMAINS, ticketPath, type Workspace } from '../src/run.ts';
 import { completeSlice, fixObservations, pathSkips, recordDecisions, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
-import { applyReslice, approvePlan, carryObservations, nextAction, nextSlice, pauseRun, planFollowUp, planReslice, planSlices, resolveBase, resolveStall, resumeRun, saveChecks, startRun } from '../src/workflow.ts';
+import { addFollowUp, applyReslice, approvePlan, carryObservations, nextAction, nextSlice, parseRetro, pauseRun, planFollowUp, planReslice, planSlices, recordRetro, resolveBase, resolveStall, resumeRun, saveChecks, startRun } from '../src/workflow.ts';
 import { checkRuns, commit, countedCheck, finding, green, newRun, review, roots, sh, slice, start, step, workspace } from './helpers.ts';
 
 describe('slice loop gates', () => {
@@ -808,6 +808,140 @@ describe('slice loop gates', () => {
     await assert.rejects(step(ws, run => carryObservations(ws, run, { note: 'Later.', to: '02' })), /Slice 02 is active; factory_carry takes a pending slice/);
     await assert.rejects(step(ws, run => carryObservations(ws, run, { note: 'Later.', to: '09' })), /No slice 09\. Slices: 01, 02, 03/);
     assert.deepEqual(readRun(ws, 'demo').slices, before.slices, 'a refused carry changes nothing');
+  });
+
+  it('queues carried work on the run for the end-of-run follow-up without changing any slice', async () => {
+    const ws = workspace({ maxRounds: 2 });
+    await newRun(ws, [slice('Feature'), slice('Second', ['Feature'])]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const opened = await step(ws, run => startReview(ws, run));
+    await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming')]);
+    await step(ws, run => recordReview(ws, run));
+    const before = readRun(ws, 'demo');
+
+    await step(ws, run => carryObservations(ws, run, { note: 'Also log the parse time.', observations: ['thermo-naming'], to: 'end' }));
+    const after = readRun(ws, 'demo');
+    assert.deepEqual(after.slices, before.slices, 'no slice changes');
+    assert.equal(after.waiting.length, 1);
+    assert.match(after.waiting[0] ?? '', /^### From green review 01-r1 of slice 01 "Feature"\n\nAlso log the parse time\.\n\n#### \[observation\] thermo-naming/);
+    await step(ws, run => completeSlice(ws, run));
+    assert.equal(nextAction(readRun(ws, 'demo')), 'Call factory_next to start the next slice.', 'a pending slice comes before the follow-up');
+  });
+
+  /** A one-slice run whose slice is green with a thermo-naming observation, carried with a note to the end of the run. */
+  async function queuedRun() {
+    const ws = workspace({ maxRounds: 2 });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const opened = await step(ws, run => startReview(ws, run));
+    await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming')]);
+    await step(ws, run => recordReview(ws, run));
+    await step(ws, run => carryObservations(ws, run, { note: 'Also log the parse time.', to: 'end' }));
+    await step(ws, run => carryObservations(ws, run, { observations: ['thermo-naming'], to: 'end' }));
+    return ws;
+  }
+
+  const followUp = { acceptance: ['logged'], estimateTokens: 500, seams: ['cli'], title: 'Polish', whatToBuild: 'Polish' };
+
+  it('takes every waiting item into the next follow-up slice ticket and empties the queue', async () => {
+    const ws = await queuedRun();
+    await step(ws, run => completeSlice(ws, run));
+    const added = await step(ws, run => addFollowUp(ws, run, followUp));
+    const run = readRun(ws, 'demo');
+    assert.deepEqual(run.waiting, []);
+    assert.equal(run.slices[1]?.carried.length, 2);
+    const ticket = readFileSync(ticketPath(ws, 'demo', added), 'utf8');
+    assert.match(ticket, /## Carried-in work[\s\S]*Also log the parse time\.[\s\S]*#### \[observation\] thermo-naming/);
+  });
+
+  it('points nextAction to factory_follow_up only while items wait and no slice is pending', async () => {
+    const ws = await queuedRun();
+    assert.match(nextAction(readRun(ws, 'demo')), /^Call factory_complete_slice for slice 01/);
+    await step(ws, run => completeSlice(ws, run));
+    assert.equal(
+      nextAction(readRun(ws, 'demo')),
+      'Carried items wait for the end of the run (2). Call factory_follow_up for them (title, what to build, acceptance, seams or noTestReason, estimate); its slice takes every waiting item. The retro waits until then.',
+    );
+    await step(ws, run => addFollowUp(ws, run, followUp));
+    assert.equal(nextAction(readRun(ws, 'demo')), 'Call factory_next to start the next slice.');
+  });
+
+  it('refuses the retro while items wait, and runs it once the follow-up slice took them', async () => {
+    const ws = await queuedRun();
+    assert.throws(() => parseRetro(ws, readRun(ws, 'demo'), []), (error: Error) => /Finish the pending slices first/.test(error.message) && !/Call factory_follow_up/.test(error.message));
+    await step(ws, run => completeSlice(ws, run));
+    assert.throws(() => parseRetro(ws, readRun(ws, 'demo'), []), /Carried items wait for the end of the run \(2\)\. Call factory_follow_up for them/);
+    await assert.rejects(step(ws, run => recordRetro(ws, run, { apply: [], file: [], findings: [] })), /Carried items wait for the end of the run \(2\)/);
+    await step(ws, run => addFollowUp(ws, run, followUp));
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'polish.txt');
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => recordRetro(ws, run, parseRetro(ws, run, [])));
+    assert.equal(readRun(ws, 'demo').status, 'done');
+  });
+
+  it('refuses the retro on a stalled run with waiting items by pointing to /factory resume, not factory_follow_up', async () => {
+    const ws = workspace({ maxRounds: 1 });
+    await newRun(ws, [slice('Feature'), slice('Next', ['Feature'])]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await green(ws);
+    await step(ws, run => carryObservations(ws, run, { note: 'Also log the parse time.', to: 'end' }));
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => nextSlice(ws, run));
+    sh(ws.root, 'rm', '-q', 'ok');
+    sh(ws.root, 'commit', '-qm', 'drop ok');
+    await step(ws, run => runChecks(ws, run));
+    await step(ws, run => runChecks(ws, run));
+    await step(ws, run => resolveStall(ws, run, 'pause'));
+    const run = readRun(ws, 'demo');
+    assert.equal(run.status, 'stalled');
+    assert.throws(
+      () => parseRetro(ws, run, []),
+      (error: Error) =>
+        /Carried items wait for the end of the run \(1\)/.test(error.message) &&
+        /fix budget of slice 02 "Next" is used up.*\/factory resume demo asks whether to raise it/.test(error.message) &&
+        !/Call factory_follow_up/.test(error.message),
+    );
+  });
+
+  it('refuses the retro on a paused, finished run with waiting items by pointing to /factory resume, not factory_follow_up', async () => {
+    const ws = await queuedRun();
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => pauseRun(run, 'test'));
+    assert.throws(
+      () => parseRetro(ws, readRun(ws, 'demo'), []),
+      (error: Error) => /Tell the user to \/factory resume demo first/.test(error.message) && !/Call factory_follow_up/.test(error.message),
+    );
+  });
+
+  it('keeps a run with waiting items from settling after the retro slice', async () => {
+    const ws = workspace({ maxRounds: 2 });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run =>
+      recordRetro(ws, run, parseRetro(ws, run, [{ action: 'apply', category: 'automated-checks', detail: 'Add a lint rule', severity: 'high', target: 'repo', title: 'Lint rule' }])),
+    );
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'lint.txt');
+    await step(ws, run => runChecks(ws, run));
+    const opened = await step(ws, run => startReview(ws, run));
+    await review(ws, opened.reviewId, [{ ...finding('thermo', 'observation', 'naming'), path: 'lint.txt' }]);
+    await step(ws, run => recordReview(ws, run));
+    await step(ws, run => carryObservations(ws, run, { observations: ['thermo-naming'], to: 'end' }));
+    await step(ws, run => completeSlice(ws, run));
+    const run = readRun(ws, 'demo');
+    assert.equal(run.status, 'running');
+    assert.match(nextAction(run), /^Carried items wait for the end of the run \(1\)\. Call factory_follow_up/);
+    assert.throws(() => parseRetro(ws, run, []), /^Error: Carried items wait for the end of the run \(1\)/, 'the queue refusal comes before "already recorded"');
   });
 
   it('keeps carried work through a re-slice: the first child takes the split slice items, later slices keep theirs', async () => {

@@ -188,6 +188,11 @@ const runSchema = z.object({
   source: sourceSchema,
   status: z.enum(['done', 'intake', 'paused', 'running', 'stalled']),
   trunk: text,
+  /**
+   * Work carried with factory_carry `to: "end"`, as ticket sections: it waits on the run until the next
+   * factory_follow_up takes all of it into its slice's ticket. The retro waits for an empty queue.
+   */
+  waiting: z.array(text).default([]),
   version: z.literal(1),
 }).transform(({ slices, ...run }) => ({ ...run, slices: slices.map(slice => legacySlice(slice, run.checks)) }));
 export type Run = z.infer<typeof runSchema>;

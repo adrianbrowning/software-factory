@@ -359,4 +359,48 @@ describe('used-up fix budget', () => {
     await assert.rejects(call('factory_carry', { note: 'Later.', to: '01' }, { confirm: async () => (dialogs++, true) }), /Slice 01 is active; factory_carry takes a pending slice/);
     assert.equal(dialogs, 0);
   });
+
+  it('queues work for the end with factory_carry, lists it in factory_status, refuses factory_retro, and factory_follow_up takes it', async () => {
+    using run = await budgetRun(['Feature']);
+    const { call, ws } = run;
+    await greenWithObservation(ws, 1);
+    const asked: string[] = [];
+    const yes = { confirm: async (title: string, body: string) => (asked.push(`${title}\n${body}`), true) };
+    const before = readRun(ws, 'demo').slices;
+
+    const queued = await call('factory_carry', { note: 'Log the parse time.', observations: ['thermo-naming'], to: 'end' }, yes);
+    assert.match(asked[0] ?? '', /^Carry to the end of the run\?\n- Note: Log the parse time\.\n- thermo-naming: naming\n\nSlice 01 keeps its green review\. They wait on the run: the next factory_follow_up slice builds them/);
+    assert.match(queued.content[0]?.text ?? '', /^Queued the note, thermo-naming for the next factory_follow_up slice \(1 waiting\)\.\nNext: Call factory_complete_slice for slice 01/);
+    assert.deepEqual(readRun(ws, 'demo').slices, before);
+
+    const status = await call('factory_status', {});
+    assert.match(status.content[0]?.text ?? '', /"waiting": \[\n\s+"### From green review 01-r1 of slice 01 \\"Feature\\"\\n\\nLog the parse time\.\\n\\n#### \[observation\] thermo-naming/);
+
+    await withRun(ws, 'demo', current => completeSlice(ws, current));
+    await assert.rejects(call('factory_retro', { findings: [] }), /Carried items wait for the end of the run \(1\)\. Call factory_follow_up for them/);
+
+    const followUp = { acceptance: ['logged'], estimateTokens: 500, seams: ['cli'], title: 'Polish', whatToBuild: 'Polish' };
+    const added = await call('factory_follow_up', followUp, yes);
+    assert.match(asked[1] ?? '', /The slice also takes the carried items waiting on the run \(1\)\./);
+    assert.match(added.content[0]?.text ?? '', /^Slice 02 "Polish" is added on .*, with the waiting carried items \(1\)\.\nNext: Call factory_next/);
+    const state = readRun(ws, 'demo');
+    assert.deepEqual(state.waiting, []);
+    assert.match(readFileSync(ticketPath(ws, 'demo', state.slices[1] ?? assert.fail('no slice')), 'utf8'), /## Carried-in work[\s\S]*Log the parse time\./);
+  });
+
+  it('does not send a paused stall to the retro while carried items wait', async () => {
+    using run = await budgetRun(['Feature', 'Second']);
+    const { call, ws } = run;
+    await greenWithObservation(ws, 1);
+    await call('factory_carry', { note: 'Log the parse time.', to: 'end' }, { confirm: async () => true });
+    await withRun(ws, 'demo', current => completeSlice(ws, current));
+    await withRun(ws, 'demo', current => nextSlice(ws, current));
+    commit(ws, 'bad');
+    await call('factory_checks', {});
+    const paused = await call('factory_checks', {}, { select: async () => 'Pause the run' });
+    const text = paused.content[0]?.text ?? '';
+    assert.match(text, /The user paused the run\. The fix budget of slice 02 "Second" is used up/);
+    assert.match(text, /Carried items wait on the run \(1\), so the retro waits: after \/factory resume, a factory_follow_up slice takes them \(Next: asks for it once every existing slice is done\)\. Stop now\./);
+    assert.doesNotMatch(text, /Run the retro now/);
+  });
 });

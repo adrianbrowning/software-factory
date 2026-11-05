@@ -155,12 +155,14 @@ const carrySchema = z.object({
   note: z
     .string()
     .optional()
-    .describe('Work the user wants built in the pending slice, in full, for its ticket. Give it, observations, or both'),
+    .describe('Work the user wants built in a later slice, in full, for its ticket. Give it, observations, or both'),
   observations: z
     .array(z.string().min(1))
     .optional()
     .describe('Ids of observations from the green review of the active slice that the user chose to carry, for example "thermo-naming"'),
-  to: z.string().regex(/^\d{2}$/).describe('Id of the pending slice whose ticket takes the work, for example "03"'),
+  to: z
+    .union([z.string().regex(/^\d{2}$/), z.literal('end')])
+    .describe('Id of the pending slice whose ticket takes the work, for example "03"; or "end": the work waits on the run for the next factory_follow_up slice'),
 });
 const emptySchema = z.object({});
 
@@ -250,13 +252,16 @@ async function decideStall(ctx: ExtensionContext, ws: Workspace, feature: string
         { description: 'Stop here; /factory resume asks whether to raise the fix budget.', label: 'Pause the run' },
       ])
     : undefined;
-  const status = await withRun(ws, feature, current => {
+  const settled = await withRun(ws, feature, current => {
     resolveStall(ws, current, choice === more ? 'continue' : 'pause');
-    return current.status;
+    return { status: current.status, waiting: current.waiting.length };
   });
-  return status === 'stalled'
-    ? `\nThe user paused the run. ${stallNotice(run, slice)} Run the retro now (skill://retro, then factory_retro) so this stall improves future runs, then stop.`
-    : `\nThe user allowed ${ws.config.maxRounds} more fix rounds.`;
+  if (settled.status !== 'stalled') return `\nThe user allowed ${ws.config.maxRounds} more fix rounds.`;
+  const retro =
+    settled.waiting === 0
+      ? 'Run the retro now (skill://retro, then factory_retro) so this stall improves future runs, then stop.'
+      : `Carried items wait on the run (${settled.waiting}), so the retro waits: after /factory resume, a factory_follow_up slice takes them (Next: asks for it once every existing slice is done). Stop now.`;
+  return `\nThe user paused the run. ${stallNotice(run, slice)} ${retro}`;
 }
 
 function planSummary(slices: Run['slices']) {
@@ -551,7 +556,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
       if (result.green) {
         const notes =
           result.observations.length > 0
-            ? `\nObservations (non-blocking):\n${result.observations.join('\n\n')}\nAsk the user where each goes: fixed in this slice (factory_fix with their ids), or carried into the ticket of a pending slice (factory_carry with their ids and that slice id; this slice stays green).`
+            ? `\nObservations (non-blocking):\n${result.observations.join('\n\n')}\nAsk the user where each goes: fixed in this slice (factory_fix with their ids), carried into the ticket of a pending slice (factory_carry with their ids and that slice id), or queued for one follow-up slice at the end of the run (factory_carry with their ids and to "end"). This slice stays green when they are carried.`
             : '';
         const bug = '\nWhen the user finds a bug in this slice before it is done, call factory_fix with the bug (and any observation ids).';
         return reply(`Review is green.${notes}${bug}\nNext: ${nextAction(readRun(ws, feature))}`);
@@ -608,27 +613,37 @@ export default function softwareFactory(pi: ExtensionAPI) {
   tool({
     caller: 'main',
     description:
-      'After a green review, carry review observations the user chose (observations), a free-text note (note), or both into the ticket of a pending slice (to), after the user agreed. That slice builds them and its reviewers check them; the active slice keeps its green review.',
+      'After a green review, carry review observations the user chose (observations), a free-text note (note), or both into the ticket of a pending slice (to), or with to "end" onto the run\'s queue for the next factory_follow_up slice, after the user agreed. That slice builds them and its reviewers check them; the active slice keeps its green review. The retro waits until the queue is empty.',
     label: 'Factory: carry work into a pending slice',
     name: 'factory_carry',
     schema: carrySchema,
     async run(params, ws, ctx) {
       const feature = activeFeature(ws);
-      // Refuses empty input, a slice without a green review, an unknown observation id, or a target that is not a
-      // pending slice, without a dialog.
+      // Refuses empty input, a slice without a green review, an unknown observation id, or a target that is neither
+      // "end" nor a pending slice, without a dialog.
       const planned = planCarry(ws, readRun(ws, feature), params);
       const items = [
         ...(planned.note === undefined ? [] : [`- Note: ${evidenceHead(planned.note, 1_000)}`]),
         ...planned.observations.map(finding => `- ${finding.id}: ${finding.title}`),
       ];
       const what = [...(planned.note === undefined ? [] : ['the note']), ...planned.observations.map(finding => finding.id)].join(', ');
-      const body = `${items.join('\n')}\n\nSlice ${planned.slice.id} keeps its green review. Slice ${planned.target.id} builds these, and its reviewers check them.`;
-      if (!(await confirm(ctx, `Carry into slice ${planned.target.id} "${planned.target.title}"?`, body))) {
+      const target = planned.target;
+      const builder =
+        target === undefined
+          ? 'They wait on the run: the next factory_follow_up slice builds them, and its reviewers check them. The retro waits until then.'
+          : `Slice ${target.id} builds these, and its reviewers check them.`;
+      const body = `${items.join('\n')}\n\nSlice ${planned.slice.id} keeps its green review. ${builder}`;
+      const title = target === undefined ? 'Carry to the end of the run?' : `Carry into slice ${target.id} "${target.title}"?`;
+      if (!(await confirm(ctx, title, body))) {
         return reply(`The user did not carry the work. Ask how to handle the observations or the note.\nNext: ${nextAction(readRun(ws, feature))}`);
       }
       return withRun(ws, feature, run => {
-        const { target } = carryObservations(ws, run, params);
-        return reply(`Carried ${what} into slice ${target.id} "${target.title}". Ticket: ${ticketPath(ws, run.feature, target)}\nNext: ${nextAction(run)}`);
+        const carried = carryObservations(ws, run, params).target;
+        const where =
+          carried === undefined
+            ? `Queued ${what} for the next factory_follow_up slice (${run.waiting.length} waiting).`
+            : `Carried ${what} into slice ${carried.id} "${carried.title}". Ticket: ${ticketPath(ws, run.feature, carried)}`;
+        return reply(`${where}\nNext: ${nextAction(run)}`);
       });
     },
   });
@@ -663,20 +678,23 @@ export default function softwareFactory(pi: ExtensionAPI) {
   tool({
     caller: 'main',
     description:
-      'Add one slice on top of the stack, after the user agreed, for work found after a slice was done (for example a non-blocking review observation). The done slices and their PRs stay as reviewed; the new slice comes last and gets its own checks, review, and PR.',
+      'Add one slice on top of the stack, after the user agreed, for work found after a slice was done (for example a non-blocking review observation). Every carried item waiting on the run (factory_carry to "end") goes into its ticket. The done slices and their PRs stay as reviewed; the new slice comes last and gets its own checks, review, and PR.',
     label: 'Factory: follow-up slice',
     name: 'factory_follow_up',
     schema: followUpSchema,
     async run(params, ws, ctx) {
       const feature = activeFeature(ws);
-      const planned = planFollowUp(ws, readRun(ws, feature), params);
-      const body = `${params.whatToBuild}\n\nAcceptance:\n${params.acceptance.map(item => `- ${item}`).join('\n')}\n\nThe slice branches from ${planned.parentBranch}. The slices below it are not changed. The run needs a new retro before /factory submit.`;
+      const current = readRun(ws, feature);
+      const planned = planFollowUp(ws, current, params);
+      const carried = current.waiting.length === 0 ? '' : `\n\nThe slice also takes the carried items waiting on the run (${current.waiting.length}).`;
+      const body = `${params.whatToBuild}\n\nAcceptance:\n${params.acceptance.map(item => `- ${item}`).join('\n')}${carried}\n\nThe slice branches from ${planned.parentBranch}. The slices below it are not changed. The run needs a new retro before /factory submit.`;
       if (!(await confirm(ctx, `Add follow-up slice "${params.title}"?`, body))) {
         return reply('The user did not add the follow-up slice. Ask how to handle the work.');
       }
       return withRun(ws, feature, run => {
         const slice = addFollowUp(ws, run, params);
-        return reply(`Slice ${slice.id} "${slice.title}" is added on ${slice.branch}.\nNext: ${nextAction(run)}`);
+        const taken = slice.carried.length === 0 ? '' : `, with the waiting carried items (${slice.carried.length})`;
+        return reply(`Slice ${slice.id} "${slice.title}" is added on ${slice.branch}${taken}.\nNext: ${nextAction(run)}`);
       });
     },
   });
