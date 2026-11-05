@@ -47,9 +47,14 @@ type TestContext = { agent: { depth: number; id: string; kind: 'main' | 'sub'; n
 const ctx = (kind: 'main' | 'sub', name: string): TestContext => ({ agent: { depth: 1, id: `${name}-1`, kind, name }, cwd: process.cwd(), hasUI: false });
 
 describe('tool registration', () => {
-  it('advertises each tool schema as JSON Schema', () => {
+  it('advertises each tool schema as JSON Schema, with the scope fix item verdicts and their statuses', () => {
     const submit = load().get('factory_review_submit');
-    assert.deepEqual(Object.keys(submit?.parameters.properties ?? {}).toSorted(), ['domain', 'findings', 'reviewId']);
+    assert.deepEqual(Object.keys(submit?.parameters.properties ?? {}).toSorted(), ['domain', 'findings', 'fixItems', 'reviewId']);
+    assert.deepEqual(submit?.parameters.required?.toSorted(), ['domain', 'findings', 'reviewId']);
+    const fixItems = submit?.parameters.properties?.fixItems as { description?: string; items?: { properties?: { status?: { enum?: string[] } }; required?: string[] } };
+    assert.deepEqual(fixItems.items?.properties?.status?.enum, ['fixed', 'not-a-defect', 'waived', 'open']);
+    assert.deepEqual(fixItems.items?.required?.toSorted(), ['id', 'reason', 'status']);
+    assert.match(fixItems.description ?? '', /^Scope domain only, and required for it/);
   });
 
   it('makes the orchestrator choose the review domains to skip', () => {

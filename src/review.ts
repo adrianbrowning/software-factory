@@ -19,6 +19,9 @@ import {
   type Domain,
   type Finding,
   findingListSchema,
+  type FixItem,
+  type FixVerdict,
+  fixVerdictSchema,
   Invalidated,
   REQUIRED_REVIEW_DOMAINS,
   REVIEW_DOMAINS,
@@ -276,7 +279,7 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   const listed =
     fixItems.length === 0
       ? 'None.'
-      : `The fix rounds since the last recorded review asked the implementer to fix these items, and the implementer has since committed. Check whether the code still has each problem in your domain. Report a review finding that remains under the same id; leave out one the fix resolved.\n\n${UNTRUSTED_NOTE}\n\n${fixItems.join('\n')}`;
+      : `The fix rounds since the last recorded review asked the implementer to fix these items, and the implementer has since committed. The scope reviewer gives each item a verdict in fixItems of factory_review_submit: fixed, not-a-defect, waived, or open. Check each item against the diff and the code, not the implementer's claims: not-a-defect needs evidence from the diff or code, waived needs a recorded decision, and an item left open blocks the slice and carries into the next round. Every other domain checks whether the code still has each problem in its domain, and reports one that remains as a finding under the same id.\n\n${UNTRUSTED_NOTE}\n\n${fixItems.join('\n')}`;
   const byPath = (await pathSkips(files, committedContent(ws.root, range, checked.sha))).filter(
     entry => !kept.includes(entry.domain) && !skippedNames.includes(entry.domain),
   );
@@ -374,9 +377,14 @@ function requireInDiff(lines: Record<string, [number, number][]>, finding: Findi
 /**
  * Stores one domain reviewer's findings as its own file, so parallel reviewers never share a write. Each domain is
  * submitted by one agent, before validation; that agent may replace its submission any number of times until then,
- * so it can always remove a stale finding. The run records the latest file's hash.
+ * so it can always remove a stale finding. The run records the latest file's hash. The scope domain also gives a
+ * verdict for every fix item the review lists (see checkFixVerdicts), which the run keeps.
  */
-export function submitDomain(ws: Workspace, run: Run, input: { agentId: string; domain: string; findings: unknown; reviewId: string }) {
+export function submitDomain(
+  ws: Workspace,
+  run: Run,
+  input: { agentId: string; domain: string; findings: unknown; fixItems?: unknown; reviewId: string },
+) {
   const review = requireReview(run, input.reviewId);
   const domain = z.enum(REVIEW_DOMAINS).parse(input.domain);
   if (!reviewDomains(review.skipped).includes(domain)) throw new Error(`Review ${review.id} skipped the ${domain} domain.`);
@@ -400,10 +408,45 @@ export function submitDomain(ws: Workspace, run: Run, input: { agentId: string; 
       }
     }
   }
+  let verdicts: FixVerdict[] | undefined;
+  if (domain === 'scope') {
+    if (input.fixItems === undefined) throw new Error('The scope domain gives fixItems: a verdict for each FIX ITEMS id, [] when the review data lists none.');
+    verdicts = z.array(fixVerdictSchema).parse(input.fixItems);
+    checkFixVerdicts(requireActive(run).fixItems, verdicts, review.decisions);
+  } else if (input.fixItems !== undefined) {
+    throw new Error('Only the scope domain gives fix item verdicts; leave out fixItems.');
+  }
   const content = `${JSON.stringify(findings, null, 2)}\n`;
   writeAtomic(domainFile(ws, run, review.id, domain), content);
   review.submissions[domain] = { agentId: input.agentId, hash: sha256(content) };
+  if (verdicts !== undefined) review.fixVerdicts = verdicts;
   return findings.length;
+}
+
+/**
+ * Throws unless `verdicts` give exactly one verdict for each listed fix item, and a waived item, and only a waived
+ * item, names one of the review's `decisionCount` decisions.
+ */
+function checkFixVerdicts(items: FixItem[], verdicts: FixVerdict[], decisionCount: number) {
+  const listed = new Set(items.map(item => item.id));
+  const seen = new Set<string>();
+  for (const verdict of verdicts) {
+    if (seen.has(verdict.id)) throw new Error(`Fix item "${verdict.id}" has more than one verdict.`);
+    seen.add(verdict.id);
+  }
+  const unknown = [...seen].filter(id => !listed.has(id));
+  if (unknown.length > 0) throw new Error(`Unknown fix item ids: ${unknown.join(', ')}. Give verdicts only for the ids the FIX ITEMS section lists.`);
+  const missing = [...listed].filter(id => !seen.has(id));
+  if (missing.length > 0) throw new Error(`Give a verdict for every fix item. Missing: ${missing.join(', ')}`);
+  const misplaced = verdicts.filter(verdict => verdict.status !== 'waived' && verdict.decision !== undefined).map(verdict => verdict.id);
+  if (misplaced.length > 0) throw new Error(`Only a waived fix item names a decision: ${misplaced.join(', ')}`);
+  for (const verdict of verdicts) {
+    if (verdict.status !== 'waived') continue;
+    if (verdict.decision === undefined) throw new Error(`Fix item "${verdict.id}" is waived, so it must name the recorded decision that waives it.`);
+    if (verdict.decision > decisionCount) {
+      throw new Error(`Fix item "${verdict.id}" names decision ${verdict.decision}, but the review data lists ${decisionCount} decisions.`);
+    }
+  }
 }
 
 export function readDomainFindings(ws: Workspace, run: Run, reviewId: string) {
@@ -585,35 +628,45 @@ export async function recordReview(ws: Workspace, run: Run) {
   const kept = keptFindings(findings, validation);
   const blocking = kept.filter(finding => finding.severity !== 'observation');
   const observations = kept.filter(finding => finding.severity === 'observation');
-  // critical and high both block the slice, so the recorded verdict follows the gate.
-  const verdict = blocking.length > 0 ? 'CHANGES_REQUESTED' : 'APPROVED';
+  const verdicts = review.fixVerdicts ?? [];
+  // An item without a closing verdict stays open; a blocking finding under its id already carries it.
+  const open = slice.fixItems.filter(
+    item => !blocking.some(finding => finding.id === item.id) && (verdicts.find(entry => entry.id === item.id)?.status ?? 'open') === 'open',
+  );
+  // critical and high findings and open fix items all block the slice, so the recorded verdict follows the gate.
+  const verdict = blocking.length > 0 || open.length > 0 ? 'CHANGES_REQUESTED' : 'APPROVED';
   writeAtomic(
     join(reviewDir(ws, run.feature, review.id), 'review.json'),
-    `${JSON.stringify({ downgraded: validation.downgrade, dropped: validation.dropped, escalated: validation.escalate, findings: kept, verdict }, null, 2)}\n`,
+    `${JSON.stringify({ downgraded: validation.downgrade, dropped: validation.dropped, escalated: validation.escalate, findings: kept, fixItems: verdicts, verdict }, null, 2)}\n`,
   );
   const detail = `${review.id} kept ${kept.length} (${countBy(kept, 'severity')}) downgraded ${validation.downgrade.length} escalated ${validation.escalate.length} dropped ${validation.dropped.length} by-domain ${countBy(kept, 'domain')}`;
-  // The recorded review checked every fix item gathered before it.
+  // The recorded review checked every fix item gathered before it; the open ones go into the next fix file.
   slice.fixItems = [];
 
-  if (blocking.length === 0) {
+  if (verdict === 'APPROVED') {
     slice.phase = 'ready';
     slice.green = { decisions: review.decisions };
     addEvent(run, 'review-green', detail, slice);
     return { green: true as const, observations: observations.map(finding => renderFinding(finding, run.decisions)) };
   }
-  addEvent(run, 'review-blocking', `${detail}; blocking ${blocking.map(finding => finding.id).join(', ')}`, slice);
+  const blockingIds = [...blocking.map(finding => finding.id), ...open.map(item => `${item.id} (open fix item)`)];
+  addEvent(run, 'review-blocking', `${detail}; blocking ${blockingIds.join(', ')}`, slice);
+  const sections = [
+    ...(blocking.length === 0 ? [] : [`## Blocking review findings from ${review.id}\n\n${blocking.map(finding => renderFinding(finding, run.decisions, '###')).join('\n\n')}`]),
+    ...(open.length === 0 ? [] : [`## Open fix items from ${review.id}\n\n${open.map(item => renderOpenItem(item, verdicts)).join('\n\n')}`]),
+  ];
   return {
     blocking: blocking.length,
     green: false as const,
-    ...requestFix(
-      ws,
-      run,
-      slice,
-      `## Blocking review findings from ${review.id}\n\n${blocking.map(finding => renderFinding(finding, run.decisions, '###')).join('\n\n')}`,
-      review.sha,
-      blocking.map(findingItem),
-    ),
+    open: open.length,
+    ...requestFix(ws, run, slice, sections.join('\n\n'), review.sha, [...blocking.map(findingItem), ...open.map(({ id, summary }) => ({ id, summary }))]),
   };
+}
+
+/** A fix item the scope reviewer left open, with where it was asked for and the reviewer's reason. */
+function renderOpenItem(item: FixItem, verdicts: FixVerdict[]) {
+  const reason = verdicts.find(entry => entry.id === item.id)?.reason;
+  return `### \`${item.id}\`\n\n- Asked in: ${item.path} (round ${item.round})\n- Item: ${item.summary}\n- Scope reviewer: ${reason === undefined ? 'no verdict' : evidence(reason, 2_000)}`;
 }
 
 function findingItem(finding: Finding) {
