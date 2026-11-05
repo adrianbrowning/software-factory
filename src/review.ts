@@ -306,10 +306,10 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   };
 }
 
-/** The slices stacked after `slice`, so reviewers can tell work the plan gives a later slice from a gap in this one. */
+/** The slices stacked after `slice` that are not done, so reviewers can tell work the plan gives a later slice from a gap in this one. */
 function renderLaterSlices(run: Run, slice: Slice) {
-  const later = run.slices.slice(run.slices.indexOf(slice) + 1);
-  if (later.length === 0) return '## LATER SLICES\n\nNone. This is the last slice of the plan.';
+  const later = run.slices.slice(run.slices.indexOf(slice) + 1).filter(item => item.status !== 'done');
+  if (later.length === 0) return '## LATER SLICES\n\nNone. No pending slice follows this one.';
   const listed = later.map(
     item => `### ${item.id}: ${item.title}\n\n**What to build:** ${item.whatToBuild}\n\n${item.acceptance.map(line => `- ${line}`).join('\n')}`,
   );
