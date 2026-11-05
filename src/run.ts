@@ -104,6 +104,14 @@ const reviewSchema = z.object({
   validation: submissionSchema.optional(),
 });
 
+/**
+ * One thing a fix round asked the implementer to fix: a review finding by its id, or a factory-assigned id for a bug
+ * (`bug-f<N>`), a reopen reason (`reopen-f<N>`), a failed check (`check-f<N>-<k>`, with its command), or a working
+ * tree the checks changed (`tree-f<N>`). `path` and `round` name the fix file that asked for it.
+ */
+const fixItemSchema = z.object({ command: text.optional(), id: text, path: text, round: z.number().int().positive(), summary: text });
+export type FixItem = z.infer<typeof fixItemSchema>;
+
 const sliceSchema = sliceInputSchema.extend({
   branch: text,
   /** Work carried in from earlier slices' green reviews (factory_carry), as ticket sections; renderTicket lists them. */
@@ -120,6 +128,8 @@ const sliceSchema = sliceInputSchema.extend({
   fixPath: text.optional(),
   /** Commit the current fix file describes; checks on the same commit mean the fix round changed nothing. */
   fixFromSha: sha.optional(),
+  /** Fix items from every fix round since the slice's last recorded review; recording a review clears them. */
+  fixItems: z.array(fixItemSchema).default([]),
   fixRounds: z.number().int().nonnegative(),
   /**
    * The green review of the checked commit (`checked.sha`, see `greenCommit`): how many recorded decisions it covered,

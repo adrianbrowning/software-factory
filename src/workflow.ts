@@ -1,7 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
-import { evidence, redact } from './evidence.ts';
+import { evidence, evidenceLine, redact } from './evidence.ts';
 import { gh, git } from './exec.ts';
 import { greenObservations, renderFinding } from './review.ts';
 import {
@@ -9,6 +9,7 @@ import {
   addEvent,
   discardReview,
   dropPass,
+  type FixItem,
   greenCommit,
   hasPass,
   outdatedGreenCount,
@@ -282,6 +283,7 @@ function makeSlice(ws: Workspace, run: Run, input: SliceInput, index: number, pa
     branch: `${ws.config.branchPrefix}/${run.feature}/${id}-${slugify(input.title)}`,
     carried: [],
     compactions: 0,
+    fixItems: [],
     fixRounds: 0,
     id,
     parentBranch,
@@ -584,15 +586,26 @@ export async function nextSlice(ws: Workspace, run: Run) {
   return slice;
 }
 
-/** Writes the fix file and moves the slice to `fix`. `sha` is the commit the fix file describes. */
-export function requestFix(ws: Workspace, run: Run, slice: Slice, body: string, sha: string) {
-  const fixPath = join(runDir(ws, run.feature), 'fixes', `${slice.id}-f${slice.fixRounds + 1}.md`);
+/** The round number of the slice's next fix file, which factory-assigned fix item ids carry (for example `bug-f2`). */
+export function nextFixRound(slice: Slice) {
+  return slice.fixRounds + 1;
+}
+
+/**
+ * Writes the fix file and moves the slice to `fix`. `sha` is the commit the fix file describes. `items` are what the
+ * fix file asks the implementer to fix; the fix file lists them, and the slice gathers them for its next review.
+ */
+export function requestFix(ws: Workspace, run: Run, slice: Slice, body: string, sha: string, items: Omit<FixItem, 'path' | 'round'>[]) {
+  const round = nextFixRound(slice);
+  const fixPath = join(runDir(ws, run.feature), 'fixes', `${slice.id}-f${round}.md`);
   const context = [
     `- Ticket (seams and acceptance criteria): ${ticketPath(ws, run.feature, slice)}`,
     `- Branch: ${slice.branch}`,
     `- Checks to run before committing: ${run.checks.join('; ')}`,
   ].join('\n');
-  writeAtomic(fixPath, `# Fix slice ${slice.id}: ${slice.title}\n\n${context}\n\n${UNTRUSTED_NOTE}\n\n${body}\n`);
+  const listed = items.map(item => `- \`${item.id}\`: ${item.summary}`).join('\n');
+  writeAtomic(fixPath, `# Fix slice ${slice.id}: ${slice.title}\n\n${context}\n\n${UNTRUSTED_NOTE}\n\n## Fix items\n\n${listed}\n\n${body}\n`);
+  slice.fixItems.push(...items.map(item => ({ ...item, path: fixPath, round })));
   slice.fixPath = fixPath;
   slice.fixFromSha = sha;
   dropPass(slice, 'fix');
@@ -651,7 +664,8 @@ export async function reopenSlice(ws: Workspace, run: Run, id: string, reason: s
   run.retroRecorded = false;
   const paused = active === undefined ? '' : `; slice ${active.id} back to pending at ${active.phase}`;
   addEvent(run, 'reopen', `${slice.branch} at ${doneSha.slice(0, 12)}${paused}`, slice);
-  return { slice, ...requestFix(ws, run, slice, `## Bug found after slice ${id} was done\n\n${evidence(reason, 4_000)}${listed}`, doneSha) };
+  const item = { id: `reopen-f${nextFixRound(slice)}`, summary: evidenceLine(`Bug found after slice ${id} was done: ${reason}`) };
+  return { slice, ...requestFix(ws, run, slice, `## Bug found after slice ${id} was done\n\n${evidence(reason, 4_000)}${listed}`, doneSha, [item]) };
 }
 
 export function resolveStall(ws: Workspace, run: Run, choice: 'continue' | 'pause') {

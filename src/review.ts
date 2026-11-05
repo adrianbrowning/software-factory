@@ -7,7 +7,7 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import { evidence, redact } from './evidence.ts';
+import { evidence, evidenceLine, redact } from './evidence.ts';
 import { git, runShell, type CommandResult } from './exec.ts';
 import {
   activeSlice,
@@ -18,6 +18,7 @@ import {
   outdatedGreenCount,
   type Domain,
   type Finding,
+  type FixItem,
   findingListSchema,
   Invalidated,
   REQUIRED_REVIEW_DOMAINS,
@@ -34,6 +35,7 @@ import {
 import { storedReport } from './report.ts';
 import { head, porcelain, requireClean, requireOnBranch, snapshot } from './repo.ts';
 import {
+  nextFixRound,
   pauseRun,
   renderTicket,
   requestFix,
@@ -151,18 +153,23 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   const summary = results.map(({ command, result }) => describeCheck(command, result));
   if (failed.length === 0 && dirty === '') return { commits, report, unchanged, ...(await passChecks(ws, run, slice, sha, summary, false)) };
 
+  const round = nextFixRound(slice);
   const sections = failed.map(
     ({ command, result }) =>
       `## ${describeCheck(command, result)}\n\n### stdout\n\n\`\`\`\n${evidence(result.stdout)}\n\`\`\`\n\n### stderr\n\n\`\`\`\n${evidence(result.stderr)}\n\`\`\``,
   );
-  if (dirty !== '') sections.push(`## Checks changed the working tree\n\nCommit or revert these files:\n\n\`\`\`\n${evidence(dirty, 2_000)}\n\`\`\``);
+  const items: Omit<FixItem, 'path' | 'round'>[] = failed.map(({ command, result }, index) => ({ command, id: `check-f${round}-${index + 1}`, summary: describeCheck(command, result) }));
+  if (dirty !== '') {
+    sections.push(`## Checks changed the working tree\n\nCommit or revert these files:\n\n\`\`\`\n${evidence(dirty, 2_000)}\n\`\`\``);
+    items.push({ id: `tree-f${round}`, summary: 'Checks changed the working tree' });
+  }
   addEvent(
     run,
     'checks-fail',
     [...failed.map(({ command }) => command), ...(dirty === '' ? [] : ['working tree changed'])].join('; '),
     slice,
   );
-  return { commits, passed: false as const, report, summary, unchanged, ...requestFix(ws, run, slice, sections.join('\n\n'), sha) };
+  return { commits, passed: false as const, report, summary, unchanged, ...requestFix(ws, run, slice, sections.join('\n\n'), sha, items) };
 }
 
 /** Moves the slice to review with check `results` passed on `sha`. `reused` marks stored results that stand, when no check ran. */
@@ -265,7 +272,13 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   const diff = await git(ws.root, '-c', 'core.quotePath=false', 'diff', '--no-ext-diff', range);
   if (diff.trim() === '') throw new Error(`No changes in ${range}; the implementer committed nothing.`);
   const files = await changedPaths(ws.root, range);
-  const previous = previousBlocking(ws, run, slice);
+  const fixItems = slice.fixItems.map(
+    item => `- \`${item.id}\` (${item.path}, round ${item.round}): ${item.summary}${item.command === undefined ? '' : `; check \`${item.command}\``}`,
+  );
+  const listed =
+    fixItems.length === 0
+      ? 'None.'
+      : `The fix rounds since the last recorded review asked the implementer to fix these items, and the implementer has since committed. Check whether the code still has each problem in your domain. Report a review finding that remains under the same id; leave out one the fix resolved.\n\n${UNTRUSTED_NOTE}\n\n${fixItems.join('\n')}`;
   const byPath = (await pathSkips(files, committedContent(ws.root, range, checked.sha))).filter(
     entry => !kept.includes(entry.domain) && !skippedNames.includes(entry.domain),
   );
@@ -276,7 +289,7 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   const dataFile = join(reviewDir(ws, run.feature, id), 'data.md');
   writeAtomic(
     dataFile,
-    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n## CHECKS\n\nThe factory ran every configured check on \`${checked.sha}\` and all passed. Do not run them again.\n\n${checked.results.map(result => `- ${result}`).join('\n')}\n\n${previous}## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files.join('\n')}\n`,
+    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n## CHECKS\n\nThe factory ran every configured check on \`${checked.sha}\` and all passed. Do not run them again.\n\n${checked.results.map(result => `- ${result}`).join('\n')}\n\n## FIX ITEMS\n\n${listed}\n\n## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files.join('\n')}\n`,
   );
   const lines = changedLines(diff, files);
   slice.review = { decisions: run.decisions.length, id, lines, sha: checked.sha, skipped, snapshot: await snapshot(ws.root), submissions: {} };
@@ -290,27 +303,6 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
     referenceDir: REVIEW_REFERENCE_DIR,
     reviewId: id,
   };
-}
-
-/**
- * The blocking findings of the slice's last recorded review, as a data file section, so this round's reviewers check
- * whether each problem remains and report it under the same id. Walks back past reviews discarded before they were
- * recorded (no review.json). Empty for a first review.
- */
-function previousBlocking(ws: Workspace, run: Run, slice: Slice) {
-  const recorded = (n: number) => join(reviewDir(ws, run.feature, `${slice.id}-r${n}`), 'review.json');
-  let n = slice.reviews;
-  while (n > 0 && !existsSync(recorded(n))) n--;
-  if (n === 0) return '';
-  const id = `${slice.id}-r${n}`;
-  const path = recorded(n);
-  const { findings } = z.object({ findings: findingListSchema }).parse(JSON.parse(readFileSync(path, 'utf8')));
-  const blocking = findings.filter(finding => finding.severity !== 'observation');
-  if (blocking.length === 0) return '';
-  const items = blocking.map(
-    finding => `- \`${finding.id}\` [${finding.severity}] ${finding.path}${finding.line === undefined ? '' : `:${finding.line}`}: ${evidence(finding.title, 500)}`,
-  );
-  return `## PREVIOUS REVIEW\n\nReview ${id} sent these blocking findings to the implementer, who has since committed a fix. Check whether the code still has each problem in your domain. Report a problem that remains under the same id; leave out one the fix resolved.\n\n${items.join('\n')}\n\n`;
 }
 
 /**
@@ -602,6 +594,8 @@ export async function recordReview(ws: Workspace, run: Run) {
     `${JSON.stringify({ downgraded: validation.downgrade, dropped: validation.dropped, escalated: validation.escalate, findings: kept, verdict }, null, 2)}\n`,
   );
   const detail = `${review.id} kept ${kept.length} (${countBy(kept, 'severity')}) downgraded ${validation.downgrade.length} escalated ${validation.escalate.length} dropped ${validation.dropped.length} by-domain ${countBy(kept, 'domain')}`;
+  // The recorded review checked every fix item gathered before it.
+  slice.fixItems = [];
 
   if (blocking.length === 0) {
     slice.phase = 'ready';
@@ -613,8 +607,20 @@ export async function recordReview(ws: Workspace, run: Run) {
   return {
     blocking: blocking.length,
     green: false as const,
-    ...requestFix(ws, run, slice, `Blocking review findings from ${review.id}:\n\n${blocking.map(finding => renderFinding(finding, run.decisions)).join('\n\n')}`, review.sha),
+    ...requestFix(
+      ws,
+      run,
+      slice,
+      `Blocking review findings from ${review.id}:\n\n${blocking.map(finding => renderFinding(finding, run.decisions)).join('\n\n')}`,
+      review.sha,
+      blocking.map(findingItem),
+    ),
   };
+}
+
+/** A review finding as a fix item: its id, and its severity, location, and title as the summary. */
+function findingItem(finding: Finding) {
+  return { id: finding.id, summary: `[${finding.severity}] ${finding.path}${finding.line === undefined ? '' : `:${finding.line}`}: ${evidenceLine(finding.title, 500)}` };
 }
 
 /** What the user chose to fix in the active slice after its green review: observation ids, a free-text bug, or both. */
@@ -671,7 +677,11 @@ export function fixObservations(ws: Workspace, run: Run, request: FixRequest, re
       ? []
       : [`## Observations from green review ${review.id} the user chose to fix\n\n${why}\n\n${observations.map(finding => renderFinding(finding, run.decisions)).join('\n\n')}`]),
   ];
-  return requestFix(ws, run, slice, sections.join('\n\n'), review.sha);
+  const items = [
+    ...(bug === undefined ? [] : [{ id: `bug-f${nextFixRound(slice)}`, summary: evidenceLine(`Bug found after green review ${review.id}: ${bug}`) }]),
+    ...observations.map(findingItem),
+  ];
+  return requestFix(ws, run, slice, sections.join('\n\n'), review.sha, items);
 }
 
 /**

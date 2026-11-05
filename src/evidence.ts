@@ -25,3 +25,9 @@ export function evidenceHead(value: string, limit: number) {
   const redacted = redact(value);
   return redacted.length <= limit ? redacted : `${redacted.slice(0, limit)}\n...[truncated]`;
 }
+
+/** Redacts common credential shapes, then keeps the first `limit` characters on one line, for a list item's summary. */
+export function evidenceLine(value: string, limit = 300) {
+  const line = redact(value).replace(/\s+/g, ' ').trim();
+  return line.length <= limit ? line : `${line.slice(0, limit)}…`;
+}
