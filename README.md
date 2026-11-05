@@ -260,8 +260,12 @@ task:
 `<scratchDir>/<feature>/` holds `state.json` (schema-validated on every read), `issue.md`, one ticket per slice
 under `issues/`, fix files under `fixes/`, the latest implementer report per slice under `reports/<slice>.md`, review
 data, per-domain findings, validation and `review.json` under
-`reviews/<slice>-r<n>/`, and `retro.md`. The review data file lists the ticket, each check's result and duration on
-the reviewed commit, the blocking findings of the previous round (after a fix), the diff, and the changed files.
+`reviews/<slice>-r<n>/`, and `retro.md`. Each fix file lists its fix items under `## Fix items`: review findings by id,
+and factory-assigned ids for a bug (`bug-f<N>`), a reopen reason (`reopen-f<N>`), a failed check (`check-f<N>-<k>`),
+and a working tree the checks changed (`tree-f<N>`). The review data file lists the ticket, each check's result and
+duration on the reviewed commit, a `## FIX ITEMS` section with every fix item from the fix rounds since the last
+recorded review (id, fix file and round, summary; None when there are none), the diff, and the changed files.
+Recording a review clears the gathered fix items.
 Each reviewer writes only its own domain file, so parallel reviewers never share a write. The submit tool rejects a
 finding whose `path` the diff does not change, or whose `line` is outside that file's new-side hunks.
 

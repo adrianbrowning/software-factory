@@ -13,7 +13,7 @@ export const implementerReportSchema = z.object({
   fixItems: z
     .array(reportItem)
     .optional()
-    .describe('Fix mode only: each fix file item by its id or check name, with `fixed in <sha>`, `already fixed`, or `not a defect: <why>`'),
+    .describe('Fix mode only: each id from the fix file\'s "## Fix items", exactly as listed, with `fixed in <sha>`, `already fixed`, or `not a defect: <why>`'),
   open: z.array(reportItem).describe('Anything unfinished, and any stop report (NEEDS SEAM, SLICE TOO BIG, MISSING DEPENDENCY); empty when nothing is open'),
 });
 export type ImplementerReport = z.infer<typeof implementerReportSchema>;

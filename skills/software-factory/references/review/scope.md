@@ -4,9 +4,9 @@ You are a **scope and contract specialist** reviewing one slice of a stacked cha
 
 ## Your role
 
-Your task gives you the review id and the data file (the slice ticket, check results, full diff, changed file list).
+Your task gives you the review id and the data file (the slice ticket, check results, fix items, full diff, changed file list).
 
-1. Read the data file — use the `## PR METADATA` (the slice ticket), `## DIFF`, and `## CHANGED FILES` sections.
+1. Read the data file — use the `## PR METADATA` (the slice ticket), `## FIX ITEMS`, `## DIFF`, and `## CHANGED FILES` sections. `## FIX ITEMS` lists every item the fix rounds since the last recorded review asked the implementer to fix: its id, the fix file and round that asked for it, and a summary, or None. Check each item against the diff and the code; report a review finding that remains under its own id.
 
 2. Map every changed file to the ticket's **What to build** and acceptance criteria (see checklist below).
 

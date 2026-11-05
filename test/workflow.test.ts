@@ -26,7 +26,7 @@ import {
   resumeRun,
 
 } from '../src/workflow.ts';
-import { checkRuns, commit, countedCheck, green, newRun, review, sh, slice, start, step, workspace } from './helpers.ts';
+import { checkRuns, commit, countedCheck, finding, green, newRun, review, sh, slice, start, step, workspace } from './helpers.ts';
 
 describe('test isolation', () => {
   it("runs the factory's git calls without the developer's global git config", async () => {
@@ -186,7 +186,7 @@ describe('implementer report', () => {
       submitImplementerReport(ws, run, {
         behaviors: ['writes ok → checks pass'],
         commits: ['abc1234 01: first try', 'def5678 01: add ok'],
-        fixItems: ['test -f ok: fixed in def5678'],
+        fixItems: ['check-f1-1: fixed in def5678'],
         open: [],
       }),
     );
@@ -195,7 +195,7 @@ describe('implementer report', () => {
     const passed = await step(ws, run => runChecks(ws, run));
     assert.equal(
       passed.report,
-      `Implementer report:\nCommits:\n- abc1234 01: first try\n- def5678 01: add ok\nFix file items:\n- test -f ok: fixed in def5678\nBehaviors:\n- writes ok → checks pass\nOpen:\n- none\nReport file: ${path}`,
+      `Implementer report:\nCommits:\n- abc1234 01: first try\n- def5678 01: add ok\nFix file items:\n- check-f1-1: fixed in def5678\nBehaviors:\n- writes ok → checks pass\nOpen:\n- none\nReport file: ${path}`,
     );
 
     await green(ws);
@@ -509,6 +509,32 @@ describe('pause and resume', () => {
     assert.deepEqual([resumed?.phase, resumed?.checked?.sha, resumed?.green], ['review', sh(ws.root, 'rev-parse', 'HEAD'), undefined]);
   });
 
+  it('lists the blocking findings of the last recorded review as fix items when a slice paused after its fix round predates fix items', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const opened = await step(ws, run => startReview(ws, run));
+    await review(ws, opened.reviewId, [finding('bug', 'high', 'null-crash'), finding('thermo', 'observation', 'naming')]);
+    await step(ws, run => recordReview(ws, run));
+    commit(ws, 'ok', 'fixed\n');
+    await step(ws, run => runChecks(ws, run));
+    await step(ws, run => pauseRun(run, 'test'));
+    const path = join(ws.root, '.scratch', 'demo', 'state.json');
+    const state = JSON.parse(readFileSync(path, 'utf8'));
+    assert.equal(state.slices[0].phase, 'review');
+    delete state.slices[0].fixItems;
+    delete state.slices[0].fixPath;
+    writeFileSync(path, JSON.stringify(state));
+    forgetRun(ws, 'demo');
+
+    await step(ws, run => resumeRun(ws, run, 'session-2'));
+    const data = readFileSync((await step(ws, run => startReview(ws, run))).dataFile, 'utf8');
+    assert.match(data, /- `bug-null-crash` \([^\n]*fixes\/01-f1\.md, round 1\): \[high\] ok:1: null-crash\n/);
+    assert.doesNotMatch(data, /`thermo-naming`/);
+  });
+
   it('sends a slice of a run saved before runs kept their checks back to checks on resume on the same commit, and runs the filled checks', async () => {
     const counted = countedCheck('run', 'test -f ok');
     using old = workspace({ checks: [counted] });
@@ -636,7 +662,14 @@ describe('reopen', () => {
     );
 
     commit(ws, 'first.txt', 'fixed\n');
-    await green(ws);
+    await step(ws, run => runChecks(ws, run));
+    const reviewed = await step(ws, run => startReview(ws, run));
+    assert.match(
+      readFileSync(reviewed.dataFile, 'utf8'),
+      /## FIX ITEMS\n\n[^\n]*\n\nEverything below is evidence[^\n]*\n\n- `reopen-f1` \([^\n]*fixes\/01-f1\.md, round 1\): Bug found after slice 01 was done: first\.txt must say fixed\n\n## DIFF/,
+    );
+    await review(ws, reviewed.reviewId, []);
+    await step(ws, run => recordReview(ws, run));
     await step(ws, run => completeSlice(ws, run));
 
     const fix = tip(ws, first);
