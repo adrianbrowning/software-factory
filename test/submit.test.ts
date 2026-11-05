@@ -33,14 +33,23 @@ interface FakeGh {
   /** The subcommand (such as `stack submit`) that runs `onFail` and exits 1. */
   fail?: string;
   onFail?: string;
+  /** The stack `stack view --json` serves after `stack submit`, with each branch's PR number (none: no `pr`). */
+  submitted?: { name: string; pr?: number }[];
 }
+
+/** The branches as a submitted stack, with PRs numbered from 101. */
+const withPrs = (branches: string[]) => branches.map((name, index) => ({ name, pr: 101 + index }));
+
+/** The `gh api` calls that set the title of PR 101 onwards to `demo: NN Sn`. */
+const titleCalls = (count: number) =>
+  Array.from({ length: count }, (_, index) => `api -X PATCH repos/{owner}/{repo}/pulls/${101 + index} -f title=demo: 0${index + 1} S${index + 1}`);
 
 /**
  * Puts a fake `gh` first on PATH until test `t` ends; it records each call. With a stack, `stack checkout <branch>`
  * switches to that branch, as gh-stack does; `stack init` switches to its last (top) branch, `stack top` to the
  * stack's top branch, and `stack add <branch>` to the branch it adds.
  */
-function fakeGh(t: TestContext, { stack, checkoutFailure = NO_STACK, fail = '', onFail = ':' }: FakeGh) {
+function fakeGh(t: TestContext, { stack, checkoutFailure = NO_STACK, fail = '', onFail = ':', submitted }: FakeGh) {
   const dir = mkdtempSync(join(tmpdir(), 'factory-gh-'));
   roots.push(dir);
   const log = join(dir, 'calls');
@@ -49,6 +58,11 @@ function fakeGh(t: TestContext, { stack, checkoutFailure = NO_STACK, fail = '', 
   else if (stack !== undefined) {
     writeFileSync(view, JSON.stringify({ branches: stack.map(name => ({ name })), currentBranch: stack[0], trunk: 'main' }));
     writeFileSync(join(dir, 'top'), stack.at(-1) ?? '');
+  }
+  const after = join(dir, 'submitted.json');
+  if (submitted !== undefined) {
+    const items = submitted.map(({ name, pr }) => (pr === undefined ? { name } : { name, pr: { number: pr, url: `https://example.test/pull/${pr}`, state: 'OPEN' } }));
+    writeFileSync(after, JSON.stringify({ branches: items, currentBranch: submitted.at(-1)?.name, trunk: 'main' }));
   }
   const script = [
     '#!/bin/sh',
@@ -60,6 +74,7 @@ function fakeGh(t: TestContext, { stack, checkoutFailure = NO_STACK, fail = '', 
     `if [ "$1 $2" = "stack top" ]; then git switch -q "$(cat '${join(dir, 'top')}')" || exit 1; fi`,
     `if [ "$1 $2" = "stack add" ]; then git switch -q "$3" || exit 1; fi`,
     `if [ "$1 $2" = '${fail}' ]; then ${onFail}; exit 1; fi`,
+    `if [ "$1 $2" = "stack submit" ] && [ -f '${after}' ]; then cp '${after}' '${view}'; fi`,
     'exit 0',
     '',
   ].join('\n');
@@ -160,10 +175,10 @@ describe('submit', () => {
     const branches = await doneRun(ws, 3);
     sh(ws.root, 'switch', '-q', 'main');
     assert.notEqual(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'only gh stack init can leave the top slice checked out');
-    const gh = fakeGh(t, { stack: undefined });
+    const gh = fakeGh(t, { stack: undefined, submitted: withPrs(branches) });
     const steps: string[] = [];
     await step(ws, run => submitStack(ws, run, message => steps.push(message)));
-    assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, `stack init --base main ${branches.join(' ')}`, 'stack submit --auto']);
+    assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, `stack init --base main ${branches.join(' ')}`, 'stack submit --auto', 'stack view --json', ...titleCalls(3)]);
     assert.ok(steps.includes('adopting 3 branches into a gh stack onto main'), steps.join('\n'));
     assert.equal(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'a first submit ends on the top slice');
   });
@@ -179,10 +194,18 @@ describe('submit', () => {
   it('adds only the slices the existing stack does not hold on a re-submit', async t => {
     const ws = workspace();
     const branches = await doneRun(ws, 6);
-    const gh = fakeGh(t, { stack: branches.slice(0, 5) });
+    const gh = fakeGh(t, { stack: branches.slice(0, 5), submitted: withPrs(branches) });
     const steps: string[] = [];
     await step(ws, run => submitStack(ws, run, message => steps.push(message)));
-    assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, 'stack view --json', 'stack top', `stack add ${branches[5]}`, 'stack submit --auto']);
+    assert.deepEqual(gh.calls(), [
+      `stack checkout ${branches[0]}`,
+      'stack view --json',
+      'stack top',
+      `stack add ${branches[5]}`,
+      'stack submit --auto',
+      'stack view --json',
+      ...titleCalls(6),
+    ]);
     assert.ok(steps.includes(`adding 1 branch to the existing gh stack: ${branches[5]}`), steps.join('\n'));
     assert.equal(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'an add re-submit ends on the top slice');
   });
@@ -190,7 +213,7 @@ describe('submit', () => {
   it('adds every missing slice in run order on a re-submit', async t => {
     const ws = workspace();
     const branches = await doneRun(ws, 3);
-    const gh = fakeGh(t, { stack: branches.slice(0, 1) });
+    const gh = fakeGh(t, { stack: branches.slice(0, 1), submitted: withPrs(branches) });
     const steps: string[] = [];
     await step(ws, run => submitStack(ws, run, message => steps.push(message)));
     assert.deepEqual(gh.calls(), [
@@ -200,6 +223,8 @@ describe('submit', () => {
       `stack add ${branches[1]}`,
       `stack add ${branches[2]}`,
       'stack submit --auto',
+      'stack view --json',
+      ...titleCalls(3),
     ]);
     assert.ok(steps.includes(`adding 2 branches to the existing gh stack: ${branches[1]}, ${branches[2]}`), steps.join('\n'));
   });
@@ -207,12 +232,40 @@ describe('submit', () => {
   it('only submits when the existing stack holds every slice branch', async t => {
     const ws = workspace();
     const branches = await doneRun(ws, 2);
-    const gh = fakeGh(t, { stack: branches });
+    const gh = fakeGh(t, { stack: branches, submitted: withPrs(branches) });
     const steps: string[] = [];
     await step(ws, run => submitStack(ws, run, message => steps.push(message)));
-    assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, 'stack view --json', 'stack top', 'stack submit --auto']);
+    assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, 'stack view --json', 'stack top', 'stack submit --auto', 'stack view --json', ...titleCalls(2)]);
     assert.equal(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'a full-stack re-submit ends on the top slice');
     assert.ok(steps.includes('the gh stack already holds all 2 slice branches'), steps.join('\n'));
+  });
+
+  it('fails naming each slice branch that has no PR after gh stack submit, staying on the top slice', async t => {
+    const ws = workspace();
+    const branches = await doneRun(ws, 3);
+    sh(ws.root, 'switch', '-q', 'main');
+    assert.notEqual(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'the submit starts off the top slice, so a switch-back shows');
+    const gh = fakeGh(t, { stack: branches.slice(0, 1), submitted: [{ name: branches[0] ?? '', pr: 101 }, { name: branches[1] ?? '' }, { name: branches[2] ?? '', pr: 103 }] });
+    const error = await step(ws, run => submitStack(ws, run)).then(() => assert.fail('submit should fail'), (caught: unknown) => caught);
+    assert.ok(error instanceof Error);
+    assert.match(error.message, new RegExp(`submitted.*titles were not set.*${branches[1]}`, 's'));
+    assert.match(error.message, /\/factory submit again sets them/);
+    assert.doesNotMatch(error.message, /Already added/);
+    assert.deepEqual(gh.calls().filter(call => call.startsWith('api')), [], 'no title is set when a slice has no PR');
+    assert.equal(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'a failed title step stays on the top slice gh stack left');
+  });
+
+  it('fails saying the titles were not set when a title PATCH fails, staying on the top slice', async t => {
+    const ws = workspace();
+    const branches = await doneRun(ws, 2);
+    sh(ws.root, 'switch', '-q', 'main');
+    assert.notEqual(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'the submit starts off the top slice, so a switch-back shows');
+    fakeGh(t, { stack: branches.slice(0, 1), submitted: withPrs(branches), fail: 'api -X' });
+    const error = await step(ws, run => submitStack(ws, run)).then(() => assert.fail('submit should fail'), (caught: unknown) => caught);
+    assert.ok(error instanceof Error);
+    assert.match(error.message, /submitted.*titles were not set.*\/factory submit again sets them/s);
+    assert.doesNotMatch(error.message, /Already added/);
+    assert.equal(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'a failed title step stays on the top slice gh stack left');
   });
 
   it('refuses a stack with branches outside the run or out of run order, and changes nothing', async t => {
