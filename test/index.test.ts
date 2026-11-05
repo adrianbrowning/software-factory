@@ -7,10 +7,10 @@ import { after, describe, it } from 'node:test';
 import type { ExtensionAPI } from '@oh-my-pi/pi-coding-agent';
 import { loadConfig } from '../src/config.ts';
 import softwareFactory, { MAX_IDLE_STOP_ATTEMPTS, stopDecision } from '../src/index.ts';
-import { type Run, withRun } from '../src/run.ts';
-import { runChecks, startReview } from '../src/review.ts';
-import { approvePlan, nextSlice, planSlices } from '../src/workflow.ts';
-import { sh, tempRepo } from './helpers.ts';
+import { readRun, type Run, withRun, type Workspace } from '../src/run.ts';
+import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
+import { approvePlan, nextSlice, pauseRun, planSlices, resolveStall } from '../src/workflow.ts';
+import { commit, finding, green, review, sh, slice, tempRepo } from './helpers.ts';
 
 type Registered = {
   execute: (...args: unknown[]) => Promise<unknown>;
@@ -167,5 +167,123 @@ describe('factory_checks', () => {
     const reply = (await call('factory_checks', {})) as { content: { text: string }[] };
     const sha = sh(root, 'rev-parse', 'HEAD');
     assert.match(reply.content[0]?.text ?? '', new RegExp(`All checks already passed on ${sha}; reusing their results, no check ran\\.`));
+  });
+});
+
+describe('used-up fix budget', () => {
+  type Ui = { confirm?: (title: string, body: string) => Promise<boolean>; select?: () => Promise<string | undefined> };
+  type Reply = { content: { text: string }[] };
+
+  /**
+   * A run started through the loaded tools with maxRounds 1, its plan approved and slice 01 started. Checks pass once
+   * `ok` is committed and `bad` is not. `call` runs a tool with the given dialog stubs; the repo goes when `using` ends.
+   */
+  async function budgetRun(slices: string[]) {
+    const repo = tempRepo('factory-budget-', { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok', '! test -f bad'], maxRounds: 1 }) });
+    const tools = load();
+    const call = async (name: string, params: unknown, ui: Ui = {}) => {
+      const caller = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { notify() {}, ...ui } };
+      const tool = tools.get(name);
+      if (tool === undefined) throw new Error('no tool');
+      return (await tool.execute('id', params, undefined, undefined, caller)) as Reply;
+    };
+    await call('factory_start', { feature: 'demo', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } });
+    const ws: Workspace = { config: loadConfig(repo.root), root: repo.root };
+    await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, slices.map(title => slice(title)))));
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    return { ...repo, call, ws };
+  }
+
+  /**
+   * Fails checks once, or twice with the user continuing the stall the second failure hits (roundLimit 2), then takes
+   * the slice to green with one thermo observation.
+   */
+  async function greenWithObservation(ws: Workspace, failures: 1 | 2) {
+    commit(ws, 'work.txt');
+    for (let i = 0; i < failures; i += 1) await withRun(ws, 'demo', run => runChecks(ws, run));
+    if (failures === 2) {
+      assert.equal(readRun(ws, 'demo').slices[0]?.stalled, true);
+      await withRun(ws, 'demo', run => resolveStall(ws, run, 'continue'));
+    }
+    commit(ws, 'ok');
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+    await review(ws, reviewId, [finding('thermo', 'observation', 'naming')]);
+    await withRun(ws, 'demo', run => recordReview(ws, run));
+  }
+
+  it('explains the used-up budget after a pause, and resume asks to raise it by maxRounds', async () => {
+    using run = await budgetRun(['Feature']);
+    const { call, ws } = run;
+    await greenWithObservation(ws, 2);
+
+    const fixed = await call('factory_fix', { observations: ['thermo-naming'], reason: 'tidy' }, { confirm: async () => true, select: async () => 'Pause the run' });
+    assert.doesNotMatch(fixed.content[0]?.text ?? '', /The run is (paused|stalled)/);
+    assert.match(
+      fixed.content[0]?.text ?? '',
+      /The user paused the run\. The fix budget of slice 01 "Feature" is used up after 2 fix rounds\. Tell the user that \/factory resume demo asks whether to raise it/,
+    );
+
+    const asked: string[] = [];
+    const ask = (answer: boolean) => ({ confirm: async (title: string, body: string) => (asked.push(`${title}\n${body}`), answer) });
+    await assert.rejects(
+      call('factory_start', { resume: 'demo' }, ask(false)),
+      /kept "demo" stalled\. The fix budget of slice 01 "Feature" is used up.*\/factory resume demo asks whether to raise it/,
+    );
+    assert.match(asked[0] ?? '', /slice 01 "Feature" used up its fix budget of 2 rounds/);
+    assert.match(asked[0] ?? '', /Raise the fix budget by 1 rounds and resume\?/);
+    assert.equal(readRun(ws, 'demo').status, 'stalled');
+
+    await call('factory_start', { resume: 'demo' }, ask(true));
+    const resumed = readRun(ws, 'demo');
+    assert.deepEqual([resumed.status, resumed.slices[0]?.stalled, resumed.slices[0]?.roundLimit], ['running', false, 3]);
+  });
+
+  it('keeps the plain resume wording for a paused run that is not stalled', async () => {
+    using run = await budgetRun(['Feature']);
+    const { call, ws } = run;
+    await withRun(ws, 'demo', current => pauseRun(current, 'test'));
+    const asked: string[] = [];
+    await assert.rejects(call('factory_start', { resume: 'demo' }, { confirm: async (_title, body) => (asked.push(body), false) }), /The user kept "demo" paused\./);
+    assert.deepEqual(asked, ['Resume "demo" (paused)?']);
+    assert.equal(readRun(ws, 'demo').status, 'paused');
+  });
+
+  it('refuses factory_reopen of a done slice on a paused stall with the stall notice, before any dialog', async () => {
+    using run = await budgetRun(['Feature', 'Second']);
+    const { call, ws } = run;
+    commit(ws, 'ok');
+    await green(ws);
+    await withRun(ws, 'demo', current => completeSlice(ws, current));
+    await withRun(ws, 'demo', current => nextSlice(ws, current));
+    commit(ws, 'bad');
+    for (let i = 0; i < 2; i += 1) await withRun(ws, 'demo', current => runChecks(ws, current));
+    await withRun(ws, 'demo', current => resolveStall(ws, current, 'pause'));
+
+    let dialogs = 0;
+    await assert.rejects(
+      call('factory_reopen', { reason: 'bug', slice: '01' }, { confirm: async () => (dialogs++, true) }),
+      /fix budget of slice 02 "Second" is used up.*\/factory resume demo asks whether to raise it/,
+    );
+    assert.equal(dialogs, 0);
+  });
+
+  it('asks to raise the budget on resume when a stall was interrupted before the user chose', async () => {
+    using run = await budgetRun(['Feature']);
+    const { call, ws } = run;
+    await greenWithObservation(ws, 1);
+    const interrupted = { confirm: async () => true, select: async () => Promise.reject(new Error('omp exited')) };
+    await assert.rejects(call('factory_fix', { observations: ['thermo-naming'], reason: 'tidy' }, interrupted));
+    assert.deepEqual([readRun(ws, 'demo').status, readRun(ws, 'demo').slices[0]?.stalled], ['running', true]);
+
+    const asked: string[] = [];
+    const ask = (answer: boolean) => ({ confirm: async (_title: string, body: string) => (asked.push(body), answer) });
+    await assert.rejects(call('factory_start', { resume: 'demo' }, ask(false)), /kept "demo" stalled/);
+    assert.match(asked[0] ?? '', /Raise the fix budget by 1 rounds and resume\?/);
+    assert.equal(readRun(ws, 'demo').status, 'stalled');
+
+    await call('factory_start', { resume: 'demo' }, ask(true));
+    const resumed = readRun(ws, 'demo');
+    assert.deepEqual([resumed.status, resumed.slices[0]?.stalled, resumed.slices[0]?.roundLimit], ['running', false, 2]);
   });
 });

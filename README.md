@@ -129,6 +129,11 @@ with the whole team, set `checks` in `.omp/factory.json` instead; then the facto
 While a run is active, the session cannot end until the run is done, paused, or stalled. The third stop attempt in a
 row without progress pauses the run instead.
 
+When a slice uses up its fix budget (from checks, review, `factory_fix`, or `factory_reopen`), a dialog asks whether to
+continue with `maxRounds` more fix rounds or pause. A paused stall leaves the run stalled, and the tool reply and its
+`Next:` line say so. `/factory resume <feature>` on a stalled run names the slice and its used rounds and asks
+whether to raise the fix budget by `maxRounds` and resume; declining keeps the run stalled.
+
 ### Land on an existing branch
 
 Use this when you want the work on a branch that you already have, and you do not want new PRs. At intake, tell
@@ -203,7 +208,7 @@ working tree, and unknown keys are rejected.
 | `checks` | Asked on the first run | Check commands every slice must pass, in order. Unset: the first `factory_start` in the repository opens a dialog with the `lint`, `typecheck`, `test` scripts chosen, and other check-like `package.json` scripts and `.github/workflows` `run:` commands as commented suggestions. The choice is saved in `scratchDir`, and later runs reuse it with no dialog. `/factory checks` changes it for new runs; a run keeps the checks it started with |
 | `checkPath` | `[]` | Directories put before the omp process `PATH` when checks run. Each entry is an absolute path or starts with `~/`. Use it when a check command is not found (exit 127), for example `["~/Library/pnpm/bin"]`. Find the directory with `command -v <tool>` in your terminal |
 | `checkTimeoutMs` | `600000` | Per-check timeout; the whole process group is killed |
-| `maxRounds` | `3` | Fix rounds per slice before the user decides to continue or pause |
+| `maxRounds` | `3` | Fix rounds per slice before the user decides to continue or pause; each continue, and each yes to the `/factory resume` question on a stalled run, adds this many |
 | `sliceTokenBudget` | `400000` | Planned context per slice: 40% of a 1M window |
 | `baseRef` / `trunk` | `origin/HEAD`'s branch, else `origin/main` / `main` | Default base: slice 01 branches from the commit `baseRef` points at when the plan is approved. Unset, it is the remote default branch that `origin/HEAD` points at (`origin/master` in a repository whose trunk is master), else `origin/main`. The stack is based on `trunk`, which defaults to `baseRef` without its git remote (`origin/main` → `main`; a local `feature/auth` stays `feature/auth`). A run that builds on unmerged work names that branch as `baseRef` in `factory_plan`, and its PRs then target it. The plan event in `state.json` records the pinned base |
 | `branchPrefix` | `factory` | Branches are `<prefix>/<feature>/<NN>-<slug>` |

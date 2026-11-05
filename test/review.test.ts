@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { type Finding, readRun, REVIEW_DOMAINS, type Workspace } from '../src/run.ts';
 import { completeSlice, fixObservations, pathSkips, recordDecisions, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
-import { approvePlan, nextAction, nextSlice, planSlices, resolveBase, resolveStall, saveChecks, startRun } from '../src/workflow.ts';
+import { approvePlan, nextAction, nextSlice, pauseRun, planFollowUp, planSlices, resolveBase, resolveStall, resumeRun, saveChecks, startRun } from '../src/workflow.ts';
 import { checkRuns, commit, countedCheck, finding, green, newRun, review, roots, sh, slice, start, step, workspace } from './helpers.ts';
 
 describe('slice loop gates', () => {
@@ -311,7 +311,7 @@ describe('slice loop gates', () => {
     assert.ok(!(await failChecks()).passed);
     const stalled = await failChecks();
     assert.ok(!stalled.passed && stalled.stalled);
-    await assert.rejects(failChecks(), /stalled/);
+    await assert.rejects(failChecks(), /fix budget of slice 01 "Feature" is used up/);
 
     await step(ws, run => resolveStall(ws, run, 'pause'));
     assert.equal(readRun(ws, 'demo').status, 'stalled');
@@ -319,6 +319,59 @@ describe('slice loop gates', () => {
     assert.equal(readRun(ws, 'demo').status, 'running');
     const again = await failChecks();
     assert.ok(!again.passed && again.stalled, 'the continue round is used by the first failure after it');
+  });
+
+  it('tells the user a stalled run asks on resume whether to raise the used-up fix budget', async () => {
+    const ws = workspace({ maxRounds: 1 });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'work.txt');
+    await step(ws, run => runChecks(ws, run));
+    await step(ws, run => runChecks(ws, run));
+    await step(ws, run => resolveStall(ws, run, 'pause'));
+    const next = nextAction(readRun(ws, 'demo'));
+    assert.match(next, /fix budget of slice 01 "Feature" is used up/);
+    assert.match(next, /\/factory resume demo asks whether to raise it/);
+    assert.doesNotMatch(next, /The run is stalled/);
+    const notice = /fix budget of slice 01 "Feature" is used up.*\/factory resume demo asks whether to raise it/;
+    await assert.rejects(step(ws, run => runChecks(ws, run)), notice);
+  });
+
+  it('refuses a follow-up slice with the stall notice, on an interrupted stall and on a paused one', async () => {
+    const ws = workspace({ maxRounds: 1 });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'work.txt');
+    await step(ws, run => runChecks(ws, run));
+    await step(ws, run => runChecks(ws, run));
+    const followUp = () => step(ws, run => planFollowUp(ws, run, { acceptance: ['x'], estimateTokens: 500, seams: ['cli'], title: 'More', whatToBuild: 'More' }));
+    const notice = /fix budget of slice 01 "Feature" is used up.*\/factory resume demo asks whether to raise it/;
+    assert.equal(readRun(ws, 'demo').status, 'running');
+    await assert.rejects(followUp(), notice);
+    await step(ws, run => resolveStall(ws, run, 'pause'));
+    await assert.rejects(followUp(), notice);
+  });
+
+  it('keeps the plain resume wording for a paused run that is not stalled', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => pauseRun(run, 'test'));
+    assert.equal(nextAction(readRun(ws, 'demo')), 'The run is paused. The user resumes it with /factory resume demo.');
+  });
+
+  it('raises the budget by maxRounds, not by the used rounds, when a stalled run resumes', async () => {
+    const ws = workspace({ maxRounds: 1 });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'work.txt');
+    for (let i = 0; i < 2; i += 1) await step(ws, run => runChecks(ws, run));
+    await step(ws, run => resolveStall(ws, run, 'continue'));
+    await step(ws, run => runChecks(ws, run));
+    await step(ws, run => resolveStall(ws, run, 'pause'));
+    assert.equal(readRun(ws, 'demo').slices[0]?.roundLimit, 2);
+    await step(ws, run => resumeRun(ws, run, 'session-2'));
+    const run = readRun(ws, 'demo');
+    assert.deepEqual([run.status, run.slices[0]?.stalled, run.slices[0]?.roundLimit], ['running', false, 3]);
   });
 
   it('invalidates a review when the working tree or HEAD changes during it', async () => {
