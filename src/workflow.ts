@@ -91,15 +91,15 @@ async function configuredBase(ws: Workspace) {
 
 /**
  * The base slice 01 stacks on: the ref the user named, pinned to the commit it pointed at when the plan was approved.
- * `landOn` is set when the user wants the stack landed on an existing local branch instead of opened as PRs.
+ * `landOn` is set when the user wants the stack's PRs opened onto an existing branch; it is then also the trunk.
  */
 export type Base = { baseRef: string; baseSha: string; landOn?: string; trunk: string };
 
 /**
  * Resolves the run's base. `baseRef` overrides the configured base when the work builds on an unmerged branch; the
- * trunk then defaults to that branch, so the stack's PRs target it. `landOn` names an existing local branch that
- * `/factory submit` fast-forwards to the top slice; it is the base when `baseRef` is not given, and must be at or
- * below the base so the fast-forward is possible.
+ * trunk then defaults to that branch, so the stack's PRs target it. `landOn` names an existing local branch that the
+ * stack's PRs target instead: it is the trunk, the base when `baseRef` is not given, and must be at or below the base
+ * so the slices build on it.
  */
 export async function resolveBase(
   ws: Workspace,
@@ -118,7 +118,7 @@ export async function resolveBase(
   }
   const chosen = override.baseRef ?? landOn;
   const baseRef = chosen ?? (await configuredBase(ws));
-  const trunk = override.trunk ?? (chosen === undefined ? ws.config.trunk : undefined) ?? (await branchName(ws.root, baseRef));
+  const trunk = landOn ?? override.trunk ?? (chosen === undefined ? ws.config.trunk : undefined) ?? (await branchName(ws.root, baseRef));
   let baseSha: string;
   try {
     baseSha = (await git(ws.root, 'rev-parse', '--verify', '--quiet', `${baseRef}^{commit}`)).trim();
@@ -136,7 +136,7 @@ export async function resolveBase(
     await git(ws.root, 'merge-base', '--is-ancestor', landSha, baseSha);
   } catch {
     throw new Error(
-      `"${landOn}" is not at or below ${baseRef} (${baseSha.slice(0, 12)}), so /factory submit could not fast-forward it to the stack. Name a local branch the base builds on.`,
+      `"${landOn}" is not at or below ${baseRef} (${baseSha.slice(0, 12)}), so the slices would not build on it. Name a local branch the base builds on.`,
     );
   }
   return { baseRef, baseSha, landOn, trunk };
@@ -542,7 +542,7 @@ export function approvePlan(ws: Workspace, run: Run, slices: Slice[], base?: Bas
   for (const slice of slices) writeTicket(ws, run, slice);
   run.status = 'running';
   const pinned = run.baseSha === undefined ? '' : ` (${run.baseSha.slice(0, 12)})`;
-  const target = run.landOn === undefined ? `PRs target ${run.trunk}` : `lands on ${run.landOn}`;
+  const target = run.landOn === undefined ? `PRs target ${run.trunk}` : `PRs target landOn branch ${run.landOn}`;
   addEvent(
     run,
     'plan',
@@ -924,7 +924,7 @@ export function nextAction(run: Run): string {
     if (run.waiting.length > 0) return waitingNotice(run);
     return run.landOn === undefined
       ? `The stack is ready. Tell the user they can open draft PRs with /factory submit ${run.feature}.`
-      : `The stack is ready. Tell the user that /factory submit ${run.feature} fast-forwards ${run.landOn} to the top slice.`;
+      : `The stack is ready. Tell the user that /factory submit ${run.feature} opens draft PRs onto ${run.landOn}, once ${run.landOn} is on origin.`;
   }
   const slice = activeSlice(run);
   if (slice?.stalled) {

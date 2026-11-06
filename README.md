@@ -45,8 +45,8 @@ flowchart TD
 
 User gates: questions at intake, slice-plan approval, seam additions, re-slice approval, stalled fix loops, fixing
 observations of a green review, reopening a done slice, retro actions, and `/factory submit`. The plugin opens PRs
-only when you run `/factory submit`, and it never merges. A run planned with `landOn` opens no PRs: `/factory submit`
-fast-forwards that existing local branch to the top slice, without a checkout or a merge commit.
+only when you run `/factory submit`, and it never merges. A run planned with `landOn` opens its draft slice PRs onto
+that existing branch instead of the trunk.
 While `/factory submit` runs, it shows each step as a notification and in the status line, for example the
 `gh stack submit` push, which can take a few minutes.
 A second `/factory submit`, for example after a follow-up slice, adds the new slice branches to the existing gh stack
@@ -67,7 +67,7 @@ its agents load.
 | Node.js 24 or later (`engines`: `>=24`) | Always: runs the plugin's TypeScript directly | [nodejs.org](https://nodejs.org) or your version manager |
 | pnpm 10 | Always: installs the plugin's dependencies | `corepack enable` (the repo pins the version in `packageManager`) |
 | `gh`, authenticated | GitHub issues, and filing retro findings on the factory repo | `brew install gh && gh auth login` |
-| [`gh-stack`](https://github.com/github/gh-stack) | Only for `/factory submit` that opens PRs; not for `landOn` runs | `gh extension install github/gh-stack` |
+| [`gh-stack`](https://github.com/github/gh-stack) | Only for `/factory submit`, which opens the PRs | `gh extension install github/gh-stack` |
 | Atlassian MCP server | Only for Jira issues | Add it to omp's MCP servers |
 
 `npx` in the skill commands below comes with Node.js.
@@ -142,24 +142,20 @@ whether to raise the fix budget by `maxRounds` and resume; declining keeps the r
 
 ### Land on an existing branch
 
-Use this when you want the work on a branch that you already have, and you do not want new PRs. At intake, tell
-the orchestrator, for example: "Put this on my branch `EXT2-953-closeOrReload`. Do not open PRs." It passes that
-branch to `factory_plan` as `landOn`.
+Use this when you want the work on a branch that you already have, instead of on the trunk. At intake, tell the
+orchestrator, for example: "Put this on my branch `EXT2-953-closeOrReload`." It passes that branch to
+`factory_plan` as `landOn`.
 
 - Give the branch name as `git branch` lists it. The plan refuses `origin/…`, `refs/heads/…`, revision expressions
   such as `main^{commit}`, and branches that do not exist.
-- The branch is also the base, unless you pick a different base. Then the branch must be at or below that base.
-- The plan dialog shows `/factory submit fast-forwards <branch> to the top slice; no PRs`.
+- The branch is the trunk of the stack: the slice PRs target it. It is also the base, unless you pick a different
+  base. Then the branch must be at or below that base.
+- The plan dialog shows `/factory submit opens one draft PR per slice onto <branch>`.
 - The factory still builds and reviews each slice on its own `<prefix>/<feature>/<NN>-<slug>` branch.
 
-When the run is done, run `/factory submit` and confirm `Fast-forward <branch>?`. The factory moves your branch to
-the reviewed commit of the top slice. It does not check out, merge, or push. It refuses, and changes nothing, when:
-
-- a slice branch moved after its review;
-- your branch is checked out in a worktree (switch that worktree to a different branch first);
-- your branch is gone, or has commits that are not in the stack.
-
-Then push your branch. You can delete the slice branches.
+When the run is done, push your branch if origin does not have it yet, then run `/factory submit` and confirm
+`Open draft PRs?`. As for any run, gh stack opens or updates one draft PR per slice, here onto your branch. The
+factory never pushes or moves your branch, and it refuses, before any gh call, while origin does not have it.
 
 ### Fix observations or a bug before a slice is done
 
@@ -282,9 +278,8 @@ finding whose `path` the diff does not change, or whose `line` is outside that f
 
 The review gate snapshots `HEAD` plus `git status` when a review opens and rejects the review if either changes.
 A slice completes only when `HEAD` is still the commit that passed checks and review, and `/factory submit`
-refuses any branch whose tip is not its reviewed commit. With `landOn`, it also refuses while that branch is
-checked out in any worktree or when it is no longer an ancestor of the top slice; the ref update is
-compare-and-swap.
+refuses any branch whose tip is not its reviewed commit. With `landOn`, it also refuses while origin does not have
+that branch.
 
 Checks refuse a slice that holds commits another branch or remote outside the run also holds (a merge, rebase,
 or fast-forward onto other work), so the review diff is only the slice's own commits. A backup branch that copies a
