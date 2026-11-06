@@ -1,6 +1,7 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
+import { effectiveModels } from './config.ts';
 import { evidence, evidenceLine, redact } from './evidence.ts';
 import { gh, git } from './exec.ts';
 import { greenObservations, renderFinding } from './review.ts';
@@ -249,6 +250,7 @@ export async function startRun(ws: Workspace, input: { feature: string; sessionI
     decisions: [],
     events: [],
     feature: input.feature,
+    models: ws.config.models,
     ownerSessionId: input.sessionId,
     retroRecorded: false,
     slices: [],
@@ -963,6 +965,8 @@ export function summarize(ws: Workspace, run: Run) {
   return {
     events: run.events.slice(-30),
     feature: run.feature,
+    /** Each role's model from the run snapshot, or `inherit`. */
+    models: effectiveModels(run.models),
     nextAction: nextAction(run),
     runDir: runDir(ws, run.feature),
     slices: run.slices.map(slice => ({

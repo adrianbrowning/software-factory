@@ -13,6 +13,68 @@ const INSTALL_COMMAND = /^(npm|pnpm|yarn|bun)\s+(ci|i|install)\b/;
 const text = z.string().min(1);
 const positiveInt = z.number().int().positive();
 
+/** Agent roles the factory can route to a model. */
+export const MODEL_ROLES = ['orchestrator', 'implementer', 'reviewer', 'validator', 'explorer'] as const;
+export type ModelRole = (typeof MODEL_ROLES)[number];
+export const REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+
+const SUBAGENT_EFFORT_ERROR = "omp cannot set a subagent's reasoning effort from the factory; only models.orchestrator takes reasoningEffort";
+
+/** A subagent role's model. The spawn hook can choose the model but not the child's reasoning effort. */
+const subagentModelSchema = z
+  .object({
+    /** Exact `provider/id`, or an `@role` alias, resolved with omp's model selection. */
+    model: text,
+    reasoningEffort: z.never({ error: SUBAGENT_EFFORT_ERROR }).optional(),
+    /** Patterns omp tries, in order, when `model` cannot serve the spawn. The only fallback the factory allows. */
+    fallbacks: z.array(text).optional(),
+  })
+  .strict();
+
+/** The orchestrator's model and effort, which the user selects at omp launch. */
+const orchestratorModelSchema = subagentModelSchema.extend({ reasoningEffort: z.enum(REASONING_EFFORTS).optional() });
+export type RoleModel = z.infer<typeof orchestratorModelSchema>;
+
+/** Role to model policy. A role without an entry inherits omp's own choice. */
+export const modelsSchema = z
+  .object({
+    orchestrator: orchestratorModelSchema.optional(),
+    implementer: subagentModelSchema.optional(),
+    reviewer: subagentModelSchema.optional(),
+    validator: subagentModelSchema.optional(),
+    explorer: subagentModelSchema.optional(),
+  })
+  .strict();
+export type RoleModels = z.infer<typeof modelsSchema>;
+
+/** Throws, naming the role, when a configured model or fallback does not resolve with omp's model selection. */
+export function requireAvailableModels(models: RoleModels, resolve: (spec: string) => unknown) {
+  for (const role of MODEL_ROLES) {
+    const entry = models[role];
+    if (entry === undefined) continue;
+    const specs: [string, string][] = [['model', entry.model], ...(entry.fallbacks ?? []).map((fallback): [string, string] => ['fallback', fallback])];
+    for (const [kind, spec] of specs) {
+      if (resolve(spec) === undefined) throw new Error(`${CONFIG_PATH}: models.${role}: ${kind} "${spec}" is not available in this omp session.`);
+    }
+  }
+}
+
+/** Every role with its configured entry, or `inherit` when omp's own choice stands. */
+export function effectiveModels(models: RoleModels) {
+  return Object.fromEntries(MODEL_ROLES.map(role => [role, models[role] ?? 'inherit'])) as Record<ModelRole, RoleModel | 'inherit'>;
+}
+
+/** The role mapping as one line, such as `implementer provider/id (fallbacks: a, b)` per role. */
+export function describeModels(models: RoleModels) {
+  return MODEL_ROLES.map(role => {
+    const entry = models[role];
+    if (entry === undefined) return `${role} inherit`;
+    const effort = entry.reasoningEffort === undefined ? '' : ` effort ${entry.reasoningEffort}`;
+    const fallbacks = entry.fallbacks === undefined || entry.fallbacks.length === 0 ? '' : ` (fallbacks: ${entry.fallbacks.join(', ')})`;
+    return `${role} ${entry.model}${effort}${fallbacks}`;
+  }).join('; ');
+}
+
 const configSchema = z
   .object({
     /** Ref the first slice branches from. Unset: the remote default branch from `origin/HEAD`, else `origin/main`. */
@@ -27,6 +89,8 @@ const configSchema = z
     factoryRepo: text.default('adrianbrowning/software-factory'),
     /** Fix rounds a slice gets before it stalls for a user decision; each "continue" grants this many more. */
     maxRounds: positiveInt.default(3),
+    /** Model and reasoning effort per factory role, snapshotted into each run at start. Unset roles inherit. */
+    models: modelsSchema.default({}),
     /** Run state directory, relative to the repository root. Kept out of git via info/exclude. */
     scratchDir: text.default('.scratch'),
     /**

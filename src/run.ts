@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
-import type { FactoryConfig } from './config.ts';
+import { type FactoryConfig, modelsSchema } from './config.ts';
 
 /** The cc-pr-review domains. Each has a vendored reference under skills/software-factory/references/review/. */
 export const REVIEW_DOMAINS = [
@@ -230,6 +230,8 @@ const runSchema = z.object({
   feature: text,
   /** Existing local branch that `/factory submit` fast-forwards to the top slice, instead of opening PRs. */
   landOn: text.optional(),
+  /** Role to model policy from `models` in factory.json, fixed when the run starts. Empty in runs from before it was kept. */
+  models: modelsSchema.default({}),
   ownerSessionId: text,
   retroRecorded: z.boolean(),
   slices: z.array(legacySliceSchema),

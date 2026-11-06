@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from '@oh-my-pi/pi-coding-agent';
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { CONFIG_PATH, checksPrompt, loadConfig, parseChecks, suggestChecks } from './config.ts';
+import { CONFIG_PATH, checksPrompt, describeModels, loadConfig, parseChecks, requireAvailableModels, suggestChecks } from './config.ts';
 import { evidence, evidenceHead } from './evidence.ts';
 import {
   activeSlice,
@@ -374,6 +374,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         if (current !== undefined && readRun(ws, current).status === 'running') {
           throw new Error(`Run "${current}" is still running in this repository. Finish or /factory pause it first.`);
         }
+        requireAvailableModels(ws.config.models, spec => ctx.models.resolve(spec));
         const source = await loadSource(ctx, ws, params.source);
         await ensureChecks(ctx, ws);
         run = await startRun(ws, { feature: params.feature, sessionId, source });
@@ -381,7 +382,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
       activeRuns.set(ws.root, run.feature);
       await pi.setActiveTools([...new Set([...pi.getActiveTools(), ...ORCHESTRATION_TOOLS])]);
       return reply(
-        `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${ws.config.maxRounds}.\nNext: ${nextAction(run)}`,
+        `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${ws.config.maxRounds}.\nNext: ${nextAction(run)}`,
         summarize(ws, run),
       );
     },
@@ -899,11 +900,24 @@ export default function softwareFactory(pi: ExtensionAPI) {
   pi.on('turn_end', async (_event, ctx) => trackImplementer(ctx, false));
   pi.on('auto_compaction_start', async (_event, ctx) => trackImplementer(ctx, true));
   // A new implementer the orchestrator spawns starts a new report round; reviving or messaging one is not a spawn, so
-  // a follow-up turn keeps its report.
+  // a follow-up turn keeps its report. The run's model snapshot routes the spawn; a role without an entry inherits. The
+  // hook sets the model only: a `:<effort>` suffix on the returned pattern does not reach the child's thinking level.
   pi.on('before_subagent_spawn', async (event, ctx) => {
     if (ctx.agent.kind !== 'main' || event.agent !== IMPLEMENTER) return;
     const ws = await workspace(ctx.cwd);
     const feature = activeRuns.get(ws.root);
-    if (feature !== undefined) await withRun(ws, feature, run => startImplementerSession(ws, run));
+    if (feature === undefined) return;
+    return withRun(ws, feature, run => {
+      const entry = run.models.implementer;
+      if (entry !== undefined && ctx.models.resolve(entry.model) === undefined) {
+        return {
+          block: true,
+          reason: `Software factory: models.implementer: model "${entry.model}" from the run snapshot no longer resolves in this omp session, so the spawn is refused rather than switched to another model. Make the model available, or start a new run with another models.implementer.`,
+        };
+      }
+      startImplementerSession(ws, run);
+      if (entry === undefined) return;
+      return { model: [entry.model, ...(entry.fallbacks ?? [])], note: 'Software factory: models.implementer from the run snapshot.' };
+    });
   });
 }
