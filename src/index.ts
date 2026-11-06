@@ -918,6 +918,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
     const feature = activeRuns.get(ws.root);
     if (feature === undefined) return;
     return withRun(ws, feature, run => {
+      if (role === 'explorer' && run.status !== 'intake' && run.status !== 'running') return;
       const entry = run.models[role];
       if (entry !== undefined && ctx.models.resolve(entry.model) === undefined) {
         return {

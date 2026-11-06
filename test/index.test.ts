@@ -702,4 +702,16 @@ describe('model routing', () => {
     repo.available.add('x/e');
     assert.equal(await repo.spawn('scout'), undefined);
   });
+
+  it('does not route or block scout spawns once the run is paused', async () => {
+    using repo = routedRepo({ explorer: { model: 'x/e' } });
+    repo.available.add('x/e');
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    const ws: Workspace = { config: loadConfig(repo.root), root: repo.root };
+    await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')])));
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    await withRun(ws, 'demo', run => pauseRun(run, 'test'));
+    repo.available.clear();
+    assert.equal(await repo.spawn('scout'), undefined);
+  });
 });

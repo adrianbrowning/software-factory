@@ -267,7 +267,7 @@ agent frontmatter, then the parent model) stands, and the factory returns no mod
 | `implementer` | `factory-implementer` spawns |
 | `reviewer` | `factory-reviewer` spawns, for every review domain |
 | `validator` | `factory-review-validator` spawns |
-| `explorer` | spawns of any agent named `scout` while a run is active in the repository; none outside a run |
+| `explorer` | spawns of any agent named `scout` while a run in the repository is in intake or running; none outside a run or while it is paused, stalled or done |
 
 One `reviewer` model covers every domain. Per-domain reviewer models are not supported: omp's spawn event does not
 carry the review domain, so the factory cannot tell the reviewers apart. Routing changes only the model; no agent's
