@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
-import { type FactoryConfig, modelsSchema } from './config.ts';
+import { type FactoryConfig, MODEL_ROLES, modelsSchema } from './config.ts';
 
 /** The cc-pr-review domains. Each has a vendored reference under skills/software-factory/references/review/. */
 export const REVIEW_DOMAINS = [
@@ -217,7 +217,25 @@ function legacySlice({ checkedSha, checkResults, greenDecisions, greenSha, ...sl
   return { ...slice, checked, green };
 }
 
+/**
+ * What a spawned factory agent (or a routed scout) actually ran, recorded from inside its session on its first turn:
+ * the live model and thinking level (`unset` when the session has none), so a fallback model shows. `slice` is the
+ * slice active then; a scout during intake has none.
+ */
+const agentRecordSchema = z.object({
+  agentId: text,
+  model: text,
+  name: text,
+  role: z.enum(MODEL_ROLES),
+  sessionId: text,
+  slice: z.string().optional(),
+  thinking: text,
+});
+export type AgentRecord = z.infer<typeof agentRecordSchema>;
+
 const runSchema = z.object({
+  /** One record per spawned factory agent session and routed scout session. Empty in runs from before it was kept. */
+  agents: z.array(agentRecordSchema).default([]),
   baseRef: text,
   /** Commit `baseRef` pointed at when the plan was approved; slice 01 branches from it. */
   baseSha: z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/).optional(),

@@ -309,6 +309,13 @@ user or plugin agent named `scout`, which replaces omp's bundled `scout`, is rou
   too when `reasoningEffort` is set. On a mismatch they stop with an error that names `models.orchestrator`, the
   configured and the live selection, and the `--model`/`--thinking` flags to relaunch with. The factory never switches
   the session model. Without an `orchestrator` entry nothing is checked.
+- Each factory child (`factory-implementer`, `factory-reviewer`, `factory-review-validator`, spawned by `task` or
+  eval `agent()`) and each routed `scout` records, from inside its own session on its first turn, the model and
+  thinking level omp actually runs it on, with its agent id, name and role. A child that omp ran on a configured
+  fallback is recorded with the fallback. Each session is recorded once, and only a direct child of the main session
+  that started or resumed the run, as only its spawns are routed; a scout only while the run is in intake or running.
+  `factory_status` lists the records under each slice's `agents`, and those from when no slice was active (such as an
+  intake scout) under `agentsOutsideSlices`.
 
 ## Run state
 
