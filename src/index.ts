@@ -907,10 +907,11 @@ export default function softwareFactory(pi: ExtensionAPI) {
   pi.on('turn_end', async (_event, ctx) => trackImplementer(ctx, false));
   pi.on('auto_compaction_start', async (_event, ctx) => trackImplementer(ctx, true));
   // A new implementer the orchestrator spawns starts a new report round; reviving or messaging one is not a spawn, so
-  // a follow-up turn keeps its report. The run's model snapshot routes factory agent spawns and any agent named `scout`
-  // (the explorer role; the event does not say whether it is omp's bundled one); a role without an entry inherits. The
-  // spawn event does not carry a review domain, so one reviewer model covers every domain. The hook sets the model
-  // only: a `:<effort>` suffix on the returned pattern does not reach the child's thinking level.
+  // a follow-up turn keeps its report. The run's model snapshot routes factory agent spawns from the main session, and
+  // main-session spawns of any agent named `scout` (the explorer role; the event does not say whether it is omp's
+  // bundled one) only while the run is in intake or running; a role without an entry inherits. The spawn event does not
+  // carry a review domain, so one reviewer model covers every domain. The hook sets the model only: a `:<effort>` suffix
+  // on the returned pattern does not reach the child's thinking level.
   pi.on('before_subagent_spawn', async (event, ctx) => {
     const role = ctx.agent.kind === 'main' ? SPAWN_ROLES[event.agent] : undefined;
     if (role === undefined) return;

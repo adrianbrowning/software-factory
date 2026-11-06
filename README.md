@@ -270,8 +270,8 @@ agent frontmatter, then the parent model) stands, and the factory returns no mod
 | `explorer` | spawns of any agent named `scout` while a run in the repository is in intake or running; none outside a run or while it is paused, stalled or done |
 
 One `reviewer` model covers every domain. Per-domain reviewer models are not supported: omp's spawn event does not
-carry the review domain, so the factory cannot tell the reviewers apart. Routing changes only the model; no agent's
-tools or gates change.
+carry the review domain, so the factory cannot tell the reviewers apart. Only spawns from the main session are routed:
+an agent a subagent spawns inherits. Routing changes only the model; no agent's tools or gates change.
 
 The `explorer` role matches by name only: omp's spawn event does not say where an agent was defined, so a project,
 user or plugin agent named `scout`, which replaces omp's bundled `scout`, is routed too.
