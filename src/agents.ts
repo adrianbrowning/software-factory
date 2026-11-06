@@ -1,17 +1,20 @@
 import type { ExtensionContext } from '@oh-my-pi/pi-coding-agent';
-import type { ModelRole } from './config.ts';
+import type { SpawnRole } from './config.ts';
 import { activeSlice, type AgentRecord, withRun, type Workspace } from './run.ts';
 
 export const IMPLEMENTER = 'factory-implementer';
 export const REVIEWER = 'factory-reviewer';
 export const VALIDATOR = 'factory-review-validator';
-/** Spawned agent to the role whose snapshotted model routes it. Any agent named `scout` (omp's bundled explorer, or one that replaces it) is the explorer. */
-export const SPAWN_ROLES: Partial<Record<string, Exclude<ModelRole, 'orchestrator'>>> = {
-  [IMPLEMENTER]: 'implementer',
-  [REVIEWER]: 'reviewer',
-  [VALIDATOR]: 'validator',
-  scout: 'explorer',
-};
+/**
+ * Spawned agent to the role whose snapshotted model routes it. Any agent named `scout` (omp's bundled explorer, or one
+ * that replaces it) is the explorer. A Map, so an agent named after an Object prototype key has no role.
+ */
+export const SPAWN_ROLES = new Map<string, SpawnRole>([
+  [IMPLEMENTER, 'implementer'],
+  [REVIEWER, 'reviewer'],
+  [VALIDATOR, 'validator'],
+  ['scout', 'explorer'],
+]);
 
 /** Child sessions whose first turn this process has seen, so only a first turn is audited. It does not dedupe records. */
 const turned = new Set<string>();
@@ -29,7 +32,7 @@ export async function auditChild(
   thinking: string | undefined,
   active: { feature: string; mainId: string; ws: Workspace } | undefined,
 ) {
-  const role = ctx.agent.kind === 'sub' && Object.hasOwn(SPAWN_ROLES, ctx.agent.name) ? SPAWN_ROLES[ctx.agent.name] : undefined;
+  const role = ctx.agent.kind === 'sub' ? SPAWN_ROLES.get(ctx.agent.name) : undefined;
   const sessionId = ctx.sessionManager.getSessionId();
   if (role === undefined || turned.has(sessionId)) return;
   turned.add(sessionId);

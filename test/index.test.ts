@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import type { ExtensionAPI } from '@oh-my-pi/pi-coding-agent';
@@ -578,8 +578,9 @@ describe('model routing', () => {
   /**
    * A repo whose factory.json holds `models` (omitted when undefined), with the extension loaded. `available` is the set
    * of specs ctx.models.resolve finds; tests may change it. `live` is the session's model (ctx.models.current), the
-   * ctx.model omp falls back on (`ctxModel`), and the thinking level; tests may change it. `call` runs a tool as main; `spawn` fires
-   * before_subagent_spawn for `agent` from main. The repo goes when `using` ends.
+   * ctx.model omp falls back on (`ctxModel`), and the thinking level; tests may change it. `call` runs a tool as main;
+   * `spawn` fires before_subagent_spawn for `agent` from main, or from the subagent `from`; `stop` fires session_stop
+   * in main. The repo goes when `using` ends.
    */
   function routedRepo(models: unknown) {
     const config = { baseRef: 'main', checks: ['test -f ok'], ...(models === undefined ? {} : { models }) };
@@ -605,8 +606,9 @@ describe('model routing', () => {
       ui: { confirm: async () => true, notify() {} },
     };
     const call = async (name: string, params: unknown) => JSON.stringify(await tools.get(name)?.execute('id', params, undefined, undefined, main));
-    const spawn = (agent: string, cwd = repo.root) =>
-      handlers.get('before_subagent_spawn')?.({ agent, invocationKind: 'task', patterns: ['@task'], type: 'before_subagent_spawn' }, { ...main, cwd });
+    const spawn = (agent: string, cwd = repo.root, from: TestContext['agent'] = main.agent) =>
+      handlers.get('before_subagent_spawn')?.({ agent, invocationKind: 'task', patterns: ['@task'], type: 'before_subagent_spawn' }, { ...main, agent: from, cwd });
+    const stop = () => handlers.get('session_stop')?.({ session_id: 'session', type: 'session_stop' }, main);
     const command = (args: string) => commands.get('factory')?.handler(args, main);
     const statusModels = async () => {
       const status: { details: { models: unknown } } = JSON.parse(await call('factory_status', {}));
@@ -614,27 +616,32 @@ describe('model routing', () => {
     };
     let children = 0;
     /**
-     * A child session of agent `name` that runs `model` at `thinking` in `cwd`: its own extension instance, as omp loads
-     * one per session, sharing this process's module state. `parentId` is the spawning agent, by default this main
-     * session. `turn` fires turn_end in it.
+     * A child session of agent `name` that runs `model` (none when undefined) at `thinking` in `cwd`: its own extension
+     * instance, as omp loads one per session, sharing this process's module state. `parentId` is the spawning agent, by
+     * default this main session. `turn` fires turn_end in it; `usage` sets the context tokens it reports and counts
+     * how often the extension asked.
      */
-    const child = (name: string, model: string, thinking: string | undefined, parentId = main.agent.id, cwd = repo.root) => {
+    const child = (name: string, model: string | undefined, thinking: string | undefined, parentId = main.agent.id, cwd = repo.root) => {
       children += 1;
       const childHandlers = new Map<string, Handler>();
       load([], childHandlers, new Map(), () => thinking);
       // Session ids are unique across repos, so no record from another test's run can match.
       const sessionId = `child-session-${children}@${repo.root}`;
+      const usage = { reads: 0, tokens: 0 };
       const context = {
         agent: { depth: 1, id: `${children}-${name}`, kind: 'sub', name, parentId },
         cwd,
-        getContextUsage: () => ({ tokens: 0 }),
+        getContextUsage: () => {
+          usage.reads += 1;
+          return { tokens: usage.tokens };
+        },
         hasUI: false,
-        model: asModel(model),
+        model: model === undefined ? undefined : asModel(model),
         sessionManager: { getSessionId: () => sessionId },
       };
-      return { context, turn: () => childHandlers.get('turn_end')?.({ type: 'turn_end' }, context) };
+      return { context, turn: () => childHandlers.get('turn_end')?.({ type: 'turn_end' }, context), usage };
     };
-    return { ...repo, available, call, child, command, live, spawn, statusModels };
+    return { ...repo, available, call, child, command, live, spawn, statusModels, stop };
   }
 
   it('refuses to start when a configured model does not resolve, naming the role', async () => {
@@ -823,10 +830,44 @@ describe('model routing', () => {
     }
   });
 
-  it('does not route scout spawns outside an active run', async () => {
-    using repo = routedRepo({ explorer: { model: 'x/e' } });
-    repo.available.add('x/e');
+  it('does not route or block factory-role and scout spawns in a repo with no run while another repo has one', async () => {
+    const models = { explorer: { model: 'x/e' }, reviewer: { model: 'x/r' } };
+    using other = routedRepo(models);
+    using repo = routedRepo(models);
+    for (const each of [other, repo]) for (const spec of ['x/e', 'x/r']) each.available.add(spec);
+    await other.call('factory_start', { feature: 'demo', source: SOURCE });
     assert.equal(await repo.spawn('scout'), undefined);
+    assert.equal(await repo.spawn('factory-reviewer'), undefined);
+  });
+
+  it('does not route spawns a subagent makes during an active run', async () => {
+    using repo = routedRepo({ explorer: { model: 'x/e' }, reviewer: { model: 'x/r' } });
+    for (const spec of ['x/e', 'x/r']) repo.available.add(spec);
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    const reviewer = ctx('sub', 'factory-reviewer').agent;
+    assert.equal(await repo.spawn('scout', repo.root, reviewer), undefined);
+    assert.equal(await repo.spawn('factory-reviewer', repo.root, reviewer), undefined);
+  });
+
+  it('does not route or block a spawn of an agent named after an Object prototype key', async () => {
+    using repo = routedRepo({ reviewer: { model: 'x/r' } });
+    repo.available.add('x/r');
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    writeFileSync(statePath({ config: loadConfig(repo.root), root: repo.root }, 'demo'), '{not json');
+    for (const agent of ['constructor', 'toString', 'hasOwnProperty']) assert.equal(await repo.spawn(agent), undefined);
+  });
+
+  it('routes reviewer, validator and scout spawns without saving the run state; an implementer spawn saves it', async () => {
+    const models = { explorer: { model: 'x/e' }, implementer: { model: 'x/i' }, reviewer: { model: 'x/r' }, validator: { model: 'x/v' } };
+    using repo = routedRepo(models);
+    for (const spec of ['x/e', 'x/i', 'x/r', 'x/v']) repo.available.add(spec);
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    const path = statePath({ config: loadConfig(repo.root), root: repo.root }, 'demo');
+    const saved = statSync(path).ino;
+    for (const agent of ['factory-reviewer', 'factory-review-validator', 'scout']) await repo.spawn(agent);
+    assert.equal(statSync(path).ino, saved);
+    await repo.spawn('factory-implementer');
+    assert.notEqual(statSync(path).ino, saved);
   });
 
   it('returns no model, without throwing, for a scout spawn from a cwd outside any git repo', async () => {
@@ -855,7 +896,7 @@ describe('model routing', () => {
     const config = join(repo.root, '.omp/factory.json');
     const other = { model: 'y/other' };
     writeFileSync(config, JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], models: { reviewer: { model: 'x/r', reasoningEffort: 'high' } } }));
-    assert.throws(() => loadConfig(repo.root));
+    assert.throws(() => loadConfig(repo.root), /omp cannot set a subagent's reasoning effort[\s\S]*at models\.reviewer\.reasoningEffort/);
     await routes();
     writeFileSync(config, JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], models: { explorer: other, implementer: other, reviewer: other, validator: other } }));
     await routes();

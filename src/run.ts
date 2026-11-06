@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
-import { type FactoryConfig, MODEL_ROLES, modelsSchema } from './config.ts';
+import { type FactoryConfig, modelsSchema, SPAWN_MODEL_ROLES } from './config.ts';
 
 /** The cc-pr-review domains. Each has a vendored reference under skills/software-factory/references/review/. */
 export const REVIEW_DOMAINS = [
@@ -226,7 +226,7 @@ const agentRecordSchema = z.object({
   agentId: text,
   model: text,
   name: text,
-  role: z.enum(MODEL_ROLES),
+  role: z.enum(SPAWN_MODEL_ROLES),
   sessionId: text,
   slice: z.string().optional(),
   thinking: text,

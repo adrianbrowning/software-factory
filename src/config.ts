@@ -13,8 +13,11 @@ const INSTALL_COMMAND = /^(npm|pnpm|yarn|bun)\s+(ci|i|install)\b/;
 const text = z.string().min(1);
 const positiveInt = z.number().int().positive();
 
+/** Roles of the agents the main session spawns; the orchestrator is the main session itself. */
+export const SPAWN_MODEL_ROLES = ['implementer', 'reviewer', 'validator', 'explorer'] as const;
+export type SpawnRole = (typeof SPAWN_MODEL_ROLES)[number];
 /** Agent roles the factory can route to a model. */
-export const MODEL_ROLES = ['orchestrator', 'implementer', 'reviewer', 'validator', 'explorer'] as const;
+export const MODEL_ROLES = ['orchestrator', ...SPAWN_MODEL_ROLES] as const;
 export type ModelRole = (typeof MODEL_ROLES)[number];
 export const REASONING_EFFORTS = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
 
@@ -62,6 +65,22 @@ export function requireAvailableModels(models: RoleModels, resolve: (spec: strin
 /** Every role with its configured entry, or `inherit` when omp's own choice stands. */
 export function effectiveModels(models: RoleModels) {
   return Object.fromEntries(MODEL_ROLES.map(role => [role, models[role] ?? 'inherit'])) as Record<ModelRole, RoleModel | 'inherit'>;
+}
+
+/**
+ * The spawn hook's answer for a role's snapshotted entry: nothing without an entry, so omp's own choice stands; a block
+ * naming the role when the model no longer resolves, rather than a switch to another model; else the model and its
+ * configured fallbacks.
+ */
+export function routeSpawn(role: SpawnRole, entry: RoleModel | undefined, resolve: (spec: string) => unknown) {
+  if (entry === undefined) return undefined;
+  if (resolve(entry.model) === undefined) {
+    return {
+      block: true as const,
+      reason: `Software factory: models.${role}: model "${entry.model}" from the run snapshot no longer resolves in this omp session, so the spawn is refused rather than switched to another model. Make the model available, or start a new run with another models.${role}.`,
+    };
+  }
+  return { model: [entry.model, ...(entry.fallbacks ?? [])], note: `Software factory: models.${role} from the run snapshot.` };
 }
 
 /** A model as omp names it. */
