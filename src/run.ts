@@ -217,6 +217,27 @@ function legacySlice({ checkedSha, checkResults, greenDecisions, greenSha, ...sl
   return { ...slice, checked, green };
 }
 
+const RETRO_CATEGORIES = [
+  'navigation',
+  'automated-checks',
+  'coding-standards',
+  'agents-md',
+  'tool-economy',
+  'no-ops',
+  'information-access',
+] as const;
+
+export const RETRO_SEVERITIES = ['high', 'medium', 'low'] as const;
+
+/** A retro finding as the run keeps it: everything but its detail, which retro.md holds. */
+export const storedRetroFindingSchema = z.object({
+  action: z.enum(['apply', 'file-issue', 'skip']).describe('apply: repo change in a final slice; file-issue: factory issue'),
+  category: z.enum(RETRO_CATEGORIES),
+  severity: z.enum(RETRO_SEVERITIES),
+  target: z.enum(['repo', 'factory']).describe('repo: the repository worked on; factory: this plugin'),
+  title: z.string().min(1),
+});
+
 const runSchema = z.object({
   baseRef: text,
   /** Commit `baseRef` pointed at when the plan was approved; slice 01 branches from it. */
@@ -231,6 +252,8 @@ const runSchema = z.object({
   /** Existing branch the stack's PRs target, set when the user asked for the work on it; the trunk equals it. */
   landOn: text.optional(),
   ownerSessionId: text,
+  /** The findings of the recorded retro, by severity; a new retro replaces them. Empty in runs from before they were kept. */
+  retroFindings: z.array(storedRetroFindingSchema).default([]),
   retroRecorded: z.boolean(),
   slices: z.array(legacySliceSchema),
   source: sourceSchema,

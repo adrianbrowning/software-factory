@@ -4,7 +4,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { startImplementerSession, submitImplementerReport } from '../src/report.ts';
-import { forgetRun, greenCommit, readRun, REVIEW_DOMAINS, ticketPath, type Workspace } from '../src/run.ts';
+import { forgetRun, greenCommit, readRun, REVIEW_DOMAINS, statePath, ticketPath, type Workspace } from '../src/run.ts';
 import { completeSlice, recordDecisions, recordReview, REVIEW_REFERENCE_DIR, runChecks, startReview } from '../src/review.ts';
 import {
   addFollowUp,
@@ -646,6 +646,43 @@ describe('retro', () => {
     );
     const run = readRun(ws, 'demo');
     assert.deepEqual([added?.blockedBy, run.status], [['Feature'], 'running']);
+  });
+
+  it('keeps each recorded finding in the run state, and a new retro replaces them', async () => {
+    using ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+
+    await step(ws, run =>
+      recordRetro(ws, run, parseRetro(ws, run, [
+        { action: 'skip', category: 'no-ops', detail: 'minor', severity: 'low', target: 'repo', title: 'Low one' },
+        { action: 'file-issue', category: 'tool-economy', detail: 'big', severity: 'high', target: 'factory', title: 'High one' },
+      ])),
+    );
+    assert.deepEqual(readRun(ws, 'demo').retroFindings, [
+      { action: 'file-issue', category: 'tool-economy', severity: 'high', target: 'factory', title: 'High one' },
+      { action: 'skip', category: 'no-ops', severity: 'low', target: 'repo', title: 'Low one' },
+    ]);
+    await step(ws, run => reopenSlice(ws, run, '01', 'bug'));
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run =>
+      recordRetro(ws, run, parseRetro(ws, run, [{ action: 'skip', category: 'navigation', detail: 'd', severity: 'medium', target: 'repo', title: 'Second' }])),
+    );
+    assert.deepEqual(readRun(ws, 'demo').retroFindings, [{ action: 'skip', category: 'navigation', severity: 'medium', target: 'repo', title: 'Second' }]);
+  });
+
+  it('loads a state file written before retro findings were kept, with none', async () => {
+    using ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    const path = statePath(ws, 'demo');
+    const { retroFindings: _dropped, ...legacy } = JSON.parse(readFileSync(path, 'utf8'));
+    writeFileSync(path, JSON.stringify(legacy));
+    forgetRun(ws, 'demo');
+    assert.deepEqual(readRun(ws, 'demo').retroFindings, []);
   });
 });
 
