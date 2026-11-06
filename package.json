@@ -9,7 +9,7 @@
     "extensions": ["./src/index.ts"]
   },
   "scripts": {
-    "test": "node --import ./test/git-env.ts --test test/*.test.ts",
+    "test": "node --import ./test/git-env.ts --test --test-concurrency=12 test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "engines": {
