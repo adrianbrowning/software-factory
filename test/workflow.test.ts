@@ -60,6 +60,14 @@ describe('base resolution', () => {
     assert.equal(readRun(ws, 'demo').trunk, 'dev');
   });
 
+  it('makes the landOn branch the trunk, with or without a baseRef', async () => {
+    using ws = workspace({ baseRef: 'main', trunk: 'main' });
+    sh(ws.root, 'branch', 'ext-953');
+    assert.equal((await resolveBase(ws, { landOn: 'ext-953' })).trunk, 'ext-953');
+    assert.equal((await resolveBase(ws, { baseRef: 'main', landOn: 'ext-953' })).trunk, 'ext-953');
+    assert.equal((await resolveBase(ws, { baseRef: 'main', landOn: 'ext-953', trunk: 'release' })).trunk, 'ext-953');
+  });
+
   it('defaults the base to the remote default branch from origin/HEAD, else origin/main', async () => {
     using ws = workspace({ baseRef: undefined, trunk: undefined });
     await assert.rejects(resolveBase(ws), /Base ref "origin\/main" does not exist/);

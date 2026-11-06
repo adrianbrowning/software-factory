@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { greenCommit, readRun, type Workspace } from '../src/run.ts';
+import { forgetRun, readRun, statePath, type Workspace } from '../src/run.ts';
 import { completeSlice } from '../src/review.ts';
 import { planSubmit, submitStack } from '../src/submit.ts';
 import { approvePlan, nextSlice, parseRetro, planSlices, recordRetro, resolveBase } from '../src/workflow.ts';
@@ -15,6 +15,22 @@ async function doneRun(ws: Workspace, count: number) {
   for (const [index] of titles.entries()) {
     await step(ws, run => nextSlice(ws, run));
     commit(ws, index === 0 ? 'ok' : `s${index + 1}.txt`);
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+  }
+  await step(ws, run => recordRetro(ws, run, parseRetro(ws, run, [])));
+  sh(ws.root, 'switch', '-q', 'main');
+  return readRun(ws, 'demo').slices.map(item => item.branch);
+}
+
+/** A done run of two chained slices planned with `landOn`, each with a reviewed commit, checked out on `main`. */
+async function doneLandOnRun(ws: Workspace, landOn: string) {
+  await start(ws);
+  const base = await resolveBase(ws, { landOn });
+  await step(ws, run => approvePlan(ws, run, planSlices(ws, run, [slice('S1'), slice('S2', ['S1'])], base), base));
+  for (const file of ['ok', 's2.txt']) {
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, file);
     await green(ws);
     await step(ws, run => completeSlice(ws, run));
   }
@@ -105,42 +121,67 @@ describe('submit', () => {
     await assert.rejects(step(ws, run => submitStack(ws, run)), new RegExp(`moved after their green review.*${started?.branch}`));
   });
 
-  it('lands a multi-slice run on an existing branch by fast-forwarding it to the top slice, without checkout', async () => {
+  it('submits a landOn run as a gh stack onto the landOn branch, leaving that branch where it was', async () => {
     using ws = workspace();
     sh(ws.root, 'switch', '-q', '-c', 'ext-953');
     commit(ws, 'ext.txt');
     sh(ws.root, 'switch', '-q', 'main');
     await assert.rejects(resolveBase(ws, { baseRef: 'main', landOn: 'ext-953' }), /"ext-953" is not at or below main/);
-    await start(ws);
-    const base = await resolveBase(ws, { landOn: 'ext-953' });
-    assert.equal(base.baseRef, 'ext-953');
-    await step(ws, run => approvePlan(ws, run, planSlices(ws, run, [slice('One'), slice('Two', ['One'])], base), base));
-    assert.match(readRun(ws, 'demo').events.find(event => event.kind === 'plan')?.detail ?? '', /lands on ext-953/);
-    for (const file of ['ok', 'two.txt']) {
-      await step(ws, run => nextSlice(ws, run));
-      commit(ws, file);
-      await green(ws);
-      await step(ws, run => completeSlice(ws, run));
-    }
-    await step(ws, run => recordRetro(ws, run, parseRetro(ws, run, [])));
-    const top = readRun(ws, 'demo').slices[1];
-    const checkedOut = sh(ws.root, 'branch', '--show-current');
-
-    sh(ws.root, 'switch', '-q', 'ext-953');
-    await assert.rejects(step(ws, run => submitStack(ws, run)), /ext-953 is checked out/);
-    sh(ws.root, 'switch', '-q', checkedOut);
-    using linked = tempDir('factory-wt-');
-    sh(ws.root, 'worktree', 'add', '-q', linked.root, 'ext-953');
-    await assert.rejects(step(ws, run => submitStack(ws, run)), /ext-953 is checked out in .*factory-wt-/);
-    sh(ws.root, 'worktree', 'remove', linked.root);
-
+    const branches = await doneLandOnRun(ws, 'ext-953');
+    assert.match(readRun(ws, 'demo').events.find(event => event.kind === 'plan')?.detail ?? '', /PRs target landOn branch ext-953/);
+    const landOn = sh(ws.root, 'rev-parse', 'ext-953');
+    // origin is this repository, so it holds ext-953.
+    sh(ws.root, 'remote', 'add', 'origin', ws.root);
+    using gh = fakeGh({ stack: undefined, submitted: withPrs(branches) });
     const steps: string[] = [];
-    const output = await step(ws, run => submitStack(ws, run, message => steps.push(message)));
-    assert.deepEqual(steps, ['checking the working tree and the slice branches', 'fast-forwarding ext-953 to the top slice']);
-    assert.match(output, /ext-953 fast-forwarded to .*No PRs were opened/);
-    assert.equal(sh(ws.root, 'rev-parse', 'ext-953'), top === undefined ? undefined : greenCommit(top));
-    assert.equal(sh(ws.root, 'branch', '--show-current'), checkedOut, 'the checkout is unchanged');
-    assert.equal(sh(ws.root, 'rev-list', '--merges', '--count', 'ext-953'), '0');
+    await step(ws, run => submitStack(ws, run, message => steps.push(message)));
+    assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, `stack init --base ext-953 ${branches.join(' ')}`, 'stack submit --auto', 'stack view --json', ...titleCalls(2)]);
+    assert.ok(steps.includes('adopting 2 branches into a gh stack onto ext-953'), steps.join('\n'));
+    assert.equal(sh(ws.root, 'rev-parse', 'ext-953'), landOn, 'submit does not move the landOn branch');
+  });
+
+  it('submits a landOn run whose state stored a different trunk onto the landOn branch', async () => {
+    using ws = workspace();
+    sh(ws.root, 'branch', 'ext-953');
+    const branches = await doneLandOnRun(ws, 'ext-953');
+    // A state written before trunk followed landOn stored the old trunk.
+    const state = JSON.parse(readFileSync(statePath(ws, 'demo'), 'utf8'));
+    writeFileSync(statePath(ws, 'demo'), JSON.stringify({ ...state, trunk: 'main' }));
+    forgetRun(ws, 'demo');
+    sh(ws.root, 'remote', 'add', 'origin', ws.root);
+    using gh = fakeGh({ stack: undefined, submitted: withPrs(branches) });
+    await step(ws, run => submitStack(ws, run));
+    assert.ok(gh.calls().includes(`stack init --base ext-953 ${branches.join(' ')}`), gh.calls().join('\n'));
+  });
+
+  it('refuses a landOn run whose branch is not on origin, before any gh call', async () => {
+    using ws = workspace();
+    sh(ws.root, 'branch', 'ext-953');
+    const branches = await doneLandOnRun(ws, 'ext-953');
+    using remote = tempDir('factory-origin-');
+    sh(remote.root, 'init', '-q', '--bare');
+    sh(ws.root, 'remote', 'add', 'origin', remote.root);
+    sh(ws.root, 'push', '-q', 'origin', 'main');
+    const before = sh(ws.root, 'for-each-ref', '--format=%(refname) %(objectname)');
+    const checkedOut = sh(ws.root, 'branch', '--show-current');
+    using gh = fakeGh({ stack: undefined, submitted: withPrs(branches) });
+    await assert.rejects(step(ws, run => submitStack(ws, run)), /ext-953 is not on origin.*[Pp]ush it/s);
+    assert.deepEqual(gh.calls(), []);
+    assert.equal(sh(ws.root, 'for-each-ref', '--format=%(refname) %(objectname)'), before, 'no ref moved');
+    assert.equal(sh(ws.root, 'branch', '--show-current'), checkedOut);
+  });
+
+  it('refuses a landOn run with no origin remote with the push-first message, before any gh call', async () => {
+    using ws = workspace();
+    sh(ws.root, 'branch', 'ext-953');
+    const branches = await doneLandOnRun(ws, 'ext-953');
+    using gh = fakeGh({ stack: undefined, submitted: withPrs(branches) });
+    await assert.rejects(step(ws, run => submitStack(ws, run)), (error: Error) => {
+      assert.match(error.message, /could not read origin to check for ext-953.*git push origin ext-953/s);
+      assert.ok(error.cause instanceof Error);
+      return true;
+    });
+    assert.deepEqual(gh.calls(), []);
   });
 
   it('refuses at plan time a landOn that is a revision expression or not a local branch', async () => {
@@ -150,26 +191,6 @@ describe('submit', () => {
       await assert.rejects(resolveBase(ws, { baseRef: 'main', landOn: name }), /is not an existing local branch/, name);
     }
     assert.equal((await resolveBase(ws, { baseRef: 'main', landOn: 'main' })).landOn, 'main');
-  });
-
-  it('refuses to land when the target branch moved off the stack', async () => {
-    using ws = workspace();
-    sh(ws.root, 'branch', 'target');
-    await start(ws);
-    const base = await resolveBase(ws, { landOn: 'target' });
-    await step(ws, run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')], base), base));
-    await step(ws, run => nextSlice(ws, run));
-    commit(ws, 'ok');
-    await green(ws);
-    await step(ws, run => completeSlice(ws, run));
-    await step(ws, run => recordRetro(ws, run, parseRetro(ws, run, [])));
-    const slices = sh(ws.root, 'branch', '--show-current');
-    sh(ws.root, 'switch', '-q', 'target');
-    commit(ws, 'elsewhere.txt');
-    const moved = sh(ws.root, 'rev-parse', 'HEAD');
-    sh(ws.root, 'switch', '-q', slices);
-    await assert.rejects(step(ws, run => submitStack(ws, run)), /target is gone or moved off the stack's base/);
-    assert.equal(sh(ws.root, 'rev-parse', 'target'), moved);
   });
 
   it('adopts every slice branch with gh stack init on a first submit', async () => {

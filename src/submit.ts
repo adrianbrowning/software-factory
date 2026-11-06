@@ -48,7 +48,8 @@ async function readStack(root: string, branch: string) {
 /**
  * Submits the reviewed stack. On a first submit it adopts every slice branch into one gh-stack stack and opens draft
  * PRs; on a re-submit, when slice 01 is already stacked, it adds only the slice branches that stack lacks.
- * A run with `landOn` instead fast-forwards that local branch to the top slice; no PRs are opened. Never merges.
+ * A run with `landOn` stacks onto that branch (its trunk), and is refused before any gh call while origin lacks it;
+ * submit never pushes or moves the landOn branch. Never merges.
  * Only the user-invoked `/factory submit` command calls this; no model-callable tool does. `progress` names each step
  * before it starts, so the user sees what the submit is waiting on.
  */
@@ -67,8 +68,16 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
     );
   }
   if (run.landOn !== undefined) {
-    progress(`fast-forwarding ${run.landOn} to the top slice`);
-    return landStack(ws, run, run.landOn);
+    progress(`checking that origin has ${run.landOn}`);
+    const heads = await git(ws.root, 'ls-remote', '--heads', 'origin', `refs/heads/${run.landOn}`).catch((cause: unknown) => {
+      throw new Error(
+        `Submit could not read origin to check for ${run.landOn}. Make sure the origin remote exists and has the branch (git push origin ${run.landOn}), then run /factory submit again. Nothing was submitted.`,
+        { cause },
+      );
+    });
+    if (heads.trim() === '') {
+      throw new Error(`${run.landOn} is not on origin, so its slice PRs have no branch to target. Push it first (git push origin ${run.landOn}), then run /factory submit again. Nothing was submitted.`);
+    }
   }
   const branches = run.slices.map(slice => slice.branch);
   const bottom = branches[0];
@@ -149,35 +158,4 @@ async function setTitles(root: string, run: Run, progress: (step: string) => voi
   for (const slice of run.slices) {
     await gh(root, 'api', '-X', 'PATCH', `repos/{owner}/{repo}/pulls/${prs.get(slice.branch)}`, '-f', `title=${run.feature}: ${slice.id} ${slice.title}`);
   }
-}
-
-/**
- * Fast-forwards `landOn` to the top slice's green commit with a compare-and-swap ref update: no checkout, no merge
- * commit, and a branch that moved since the ancestry check is left alone.
- */
-async function landStack(ws: Workspace, run: Run, landOn: string) {
-  const top = run.slices.at(-1);
-  const green = top === undefined ? undefined : greenCommit(top);
-  if (top === undefined || green === undefined) throw new Error(`Run "${run.feature}" has no reviewed slice to land.`);
-  const ref = `refs/heads/${landOn}`;
-  // Any worktree (this one or a linked one) with the branch checked out would be left behind by the ref update.
-  const worktree = (await git(ws.root, 'worktree', 'list', '--porcelain'))
-    .split('\n\n')
-    .map(block => block.split('\n'))
-    .find(lines => lines.includes(`branch ${ref}`));
-  if (worktree !== undefined) {
-    const path = worktree[0]?.replace(/^worktree /, '');
-    throw new Error(`${landOn} is checked out in ${path}, and moving it would leave that working tree behind. Switch it to another branch, then run /factory submit again.`);
-  }
-  let old: string;
-  try {
-    old = (await git(ws.root, 'rev-parse', '--verify', '--quiet', `${ref}^{commit}`)).trim();
-    await git(ws.root, 'merge-base', '--is-ancestor', old, green);
-  } catch {
-    throw new Error(`${landOn} is gone or moved off the stack's base, so it cannot fast-forward to ${top.branch}. Nothing changed.`);
-  }
-  await git(ws.root, 'update-ref', '-m', `factory: land ${run.feature}`, ref, green, old);
-  const landed = `${landOn} fast-forwarded to ${top.branch} (${green.slice(0, 12)})`;
-  addEvent(run, 'submit', landed);
-  return `${landed}. No PRs were opened.\n`;
 }

@@ -228,7 +228,7 @@ const runSchema = z.object({
   decisions: z.array(text).default([]),
   events: z.array(z.object({ at: text, detail: z.string(), kind: text, slice: z.string().optional() })),
   feature: text,
-  /** Existing local branch that `/factory submit` fast-forwards to the top slice, instead of opening PRs. */
+  /** Existing branch the stack's PRs target, set when the user asked for the work on it; the trunk equals it. */
   landOn: text.optional(),
   ownerSessionId: text,
   retroRecorded: z.boolean(),
@@ -242,7 +242,13 @@ const runSchema = z.object({
    */
   waiting: z.array(text).default([]),
   version: z.literal(1),
-}).transform(({ slices, ...run }) => ({ ...run, slices: slices.map(slice => legacySlice(slice, run.checks)) }));
+}).transform(({ slices, ...run }) => ({
+  ...run,
+  slices: slices.map(slice => legacySlice(slice, run.checks)),
+  // LEGACY-STATE(landon-trunk): runs planned before trunk followed landOn stored the old trunk (baseRef or an explicit
+  // trunk); a landOn run always stacks onto landOn. Remove once no run planned before the release that ties them is left.
+  trunk: run.landOn ?? run.trunk,
+}));
 export type Run = z.infer<typeof runSchema>;
 
 export type Workspace = { config: FactoryConfig; root: string };
