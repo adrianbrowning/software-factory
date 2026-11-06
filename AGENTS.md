@@ -5,3 +5,7 @@ orchestrator workflow, and `agents/` the implementer, reviewer, and validator de
 `src/`, judgement in the skill and agents.
 
 The plugin opens PRs only through the user-invoked `/factory submit` command, and never merges.
+
+Writing or reviewing omp event hooks, or tests that share module state: follow CODING_STANDARDS.md.
+
+Prove hook or child-session behavior with a real omp run, see docs/smoke-testing.md.

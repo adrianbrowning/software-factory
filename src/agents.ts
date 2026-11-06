@@ -23,6 +23,11 @@ export const SPAWN_ROLES = new Map<string, SpawnRole>([
  */
 const turned = new Set<string>();
 
+/** Test-only: forgets every audited session, so each test starts with no process-local audit state. */
+export function resetAudit() {
+  turned.clear();
+}
+
 /**
  * Records the model and thinking level omp actually runs a factory child or scout session on (a configured fallback
  * included), under the active slice of the run, routed or not: the record states what ran. A child is recorded when

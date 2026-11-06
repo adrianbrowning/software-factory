@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from '@oh-my-pi/pi-coding-agent';
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { auditChild, IMPLEMENTER, REVIEWER, SPAWN_ROLES, VALIDATOR } from './agents.ts';
+import { auditChild, IMPLEMENTER, REVIEWER, resetAudit, SPAWN_ROLES, VALIDATOR } from './agents.ts';
 import { CONFIG_PATH, checksPrompt, describeModels, loadConfig, parseChecks, requireAvailableModels, requireOrchestrator, type RoleModels, routeSpawn, suggestChecks } from './config.ts';
 import { evidence, evidenceHead } from './evidence.ts';
 import {
@@ -205,6 +205,14 @@ async function cachedRoot(cwd: string) {
     roots.set(cwd, root);
   }
   return root;
+}
+
+/** Test-only: clears the module-level run state (active runs, stop attempts, cached roots, audited sessions), so tests do not share it. */
+export function resetModuleState() {
+  activeRuns.clear();
+  stopAttempts.clear();
+  roots.clear();
+  resetAudit();
 }
 
 /** The repository root of `cwd`, or undefined outside any git repo, which has no run. */
