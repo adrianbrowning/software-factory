@@ -185,14 +185,13 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
 
   const records: FixRecord[] = failed.map(({ command, result }) => {
     const described = describeCheck(command, result);
-    const section = `### stdout\n\n\`\`\`\n${evidence(result.stdout)}\n\`\`\`\n\n### stderr\n\n\`\`\`\n${evidence(result.stderr)}\n\`\`\``;
-    return { heading: `## ${described}`, item: { kind: 'check', summary: described }, section };
+    const section = `## ${described}\n\n### stdout\n\n\`\`\`\n${evidence(result.stdout)}\n\`\`\`\n\n### stderr\n\n\`\`\`\n${evidence(result.stderr)}\n\`\`\``;
+    return { item: { kind: 'check', summary: described }, section };
   });
   if (dirty !== '') {
     records.push({
-      heading: '## Checks changed the working tree',
       item: { kind: 'tree', summary: 'Checks changed the working tree' },
-      section: `Commit or revert these files:\n\n\`\`\`\n${evidence(dirty, 2_000)}\n\`\`\``,
+      section: `## Checks changed the working tree\n\nCommit or revert these files:\n\n\`\`\`\n${evidence(dirty, 2_000)}\n\`\`\``,
     });
   }
   addEvent(
@@ -689,7 +688,7 @@ export async function recordReview(ws: Workspace, run: Run) {
   addEvent(run, 'review-blocking', `${detail}; blocking ${blockingIds.join(', ')}`, slice);
   const records: FixRecord[] = [
     ...blocking.map(finding => findingRecord(finding, `## Blocking review findings from ${review.id}`, run.decisions)),
-    ...open.map(item => ({ heading: `## Open fix items from ${review.id}`, item: { id: item.id, summary: item.summary }, section: renderOpenItem(item, verdictOf.get(item.id)) })),
+    ...open.map(item => ({ group: `## Open fix items from ${review.id}`, item: { id: item.id, summary: item.summary }, section: renderOpenItem(item, verdictOf.get(item.id)) })),
   ];
   return { blocking: blocking.length, green: false as const, open: open.length, ...requestFix(ws, run, slice, review.sha, records) };
 }
@@ -699,10 +698,10 @@ function renderOpenItem(item: FixItem, verdict: FixVerdict | undefined) {
   return `### \`${item.id}\`\n\n- Asked in: ${item.path} (round ${item.round})\n- Item: ${item.summary}\n- Scope reviewer: ${verdict === undefined ? 'no verdict' : evidence(verdict.reason, 2_000)}`;
 }
 
-/** A finding as a fix record: its id and summary `[severity] path:line: title` as the fix item, rendered under `heading`. */
-function findingRecord(finding: Finding, heading: string, decisions: string[]): FixRecord {
+/** A finding as a fix record in `group`: its id and summary `[severity] path:line: title` as the fix item. */
+function findingRecord(finding: Finding, group: string, decisions: string[]): FixRecord {
   const summary = `[${finding.severity}] ${finding.path}${finding.line === undefined ? '' : `:${finding.line}`}: ${evidenceLine(finding.title, 500)}`;
-  return { heading, item: { id: finding.id, summary }, section: renderFinding(finding, decisions, '###') };
+  return { group, item: { id: finding.id, summary }, section: renderFinding(finding, decisions, '###') };
 }
 
 /** What the user chose to fix in the active slice after its green review: observation ids, a free-text bug, or both. */
@@ -758,9 +757,8 @@ export function fixObservations(ws: Workspace, run: Run, request: FixRequest, re
       ? []
       : [
           {
-            heading: `## Bug found after green review ${review.id}`,
             item: { kind: 'bug' as const, summary: evidenceLine(`Bug found after green review ${review.id}: ${bug}`) },
-            section: `${why}\n\n${redact(bug)}`,
+            section: `## Bug found after green review ${review.id}\n\n${why}\n\n${redact(bug)}`,
           },
         ]),
     ...observations.map(finding => findingRecord(finding, `## Observations from green review ${review.id} the user chose to fix\n\n${why}`, run.decisions)),

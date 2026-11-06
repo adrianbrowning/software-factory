@@ -630,10 +630,11 @@ export async function nextSlice(ws: Workspace, run: Run) {
 export type FixItemInput = { id: string; summary: string } | { kind: 'bug' | 'check' | 'reopen' | 'tree'; summary: string };
 
 /**
- * One thing a fix round asks for: the fix item, and its section of the fix file under `heading`. Consecutive records
- * with the same heading share it, so a group (the blocking findings of a review) has one heading over its sections.
+ * One thing a fix round asks for: the fix item, and its section of the fix file. A record without `group` has its own
+ * heading in `section`. Consecutive records with the same `group` share it as their heading, so a group (the blocking
+ * findings of a review) has one heading over its sections.
  */
-export type FixRecord = { heading: string; item: FixItemInput; section: string };
+export type FixRecord = { group?: string; item: FixItemInput; section: string };
 
 /**
  * Writes the fix file and moves the slice to `fix`. `sha` is the commit the fix file describes. `records` are what the
@@ -648,10 +649,11 @@ export function requestFix(ws: Workspace, run: Run, slice: Slice, sha: string, r
     const id = item.kind === 'check' ? `check-f${round}-${++checks}` : `${item.kind}-f${round}`;
     return { id, summary: item.summary };
   });
-  const groups: string[] = [];
-  records.forEach(({ heading, section }, index) => {
-    if (records[index - 1]?.heading === heading) groups[groups.length - 1] += `\n\n${section}`;
-    else groups.push(`${heading}\n\n${section}`);
+  const parts: string[] = [];
+  records.forEach(({ group, section }, index) => {
+    if (group === undefined) parts.push(section);
+    else if (records[index - 1]?.group === group) parts[parts.length - 1] += `\n\n${section}`;
+    else parts.push(`${group}\n\n${section}`);
   });
   const fixPath = join(runDir(ws, run.feature), 'fixes', `${slice.id}-f${round}.md`);
   const context = [
@@ -660,7 +662,7 @@ export function requestFix(ws: Workspace, run: Run, slice: Slice, sha: string, r
     `- Checks to run before committing: ${run.checks.join('; ')}`,
   ].join('\n');
   const listed = items.map(item => `- \`${item.id}\`: ${item.summary}`).join('\n');
-  writeAtomic(fixPath, `# Fix slice ${slice.id}: ${slice.title}\n\n${context}\n\n${UNTRUSTED_NOTE}\n\n## Fix items\n\n${listed}\n\n${groups.join('\n\n')}\n`);
+  writeAtomic(fixPath, `# Fix slice ${slice.id}: ${slice.title}\n\n${context}\n\n${UNTRUSTED_NOTE}\n\n## Fix items\n\n${listed}\n\n${parts.join('\n\n')}\n`);
   slice.fixItems.push(...items.map(item => ({ ...item, path: fixPath, round })));
   slice.fixPath = fixPath;
   slice.fixFromSha = sha;
@@ -721,8 +723,8 @@ export async function reopenSlice(ws: Workspace, run: Run, id: string, reason: s
   const paused = active === undefined ? '' : `; slice ${active.id} back to pending at ${active.phase}`;
   addEvent(run, 'reopen', `${slice.branch} at ${doneSha.slice(0, 12)}${paused}`, slice);
   const item = { kind: 'reopen' as const, summary: evidenceLine(`Bug found after slice ${id} was done: ${reason}`) };
-  const section = `${evidence(reason, 4_000)}${listed}`;
-  return { slice, ...requestFix(ws, run, slice, doneSha, [{ heading: `## Bug found after slice ${id} was done`, item, section }]) };
+  const section = `## Bug found after slice ${id} was done\n\n${evidence(reason, 4_000)}${listed}`;
+  return { slice, ...requestFix(ws, run, slice, doneSha, [{ item, section }]) };
 }
 
 export function resolveStall(ws: Workspace, run: Run, choice: 'continue' | 'pause') {
