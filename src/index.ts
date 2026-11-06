@@ -129,9 +129,9 @@ const planToolSchema = planSchema.extend({
     .min(1)
     .optional()
     .describe(
-      'Only when the user asked for the work on an existing branch: a local branch that the stack PRs target instead of the trunk; /factory submit opens one draft PR per slice onto it once the user has pushed it to origin. It is the base when baseRef is omitted',
+      'Only when the user asked for the work on an existing branch: a local branch that the stack PRs target instead of the trunk; /factory submit opens one draft PR per slice onto it once the user has pushed it so origin has its local tip. It is the base when baseRef is omitted',
     ),
-  trunk: z.string().min(1).optional().describe('Branch the stack PRs target; defaults to baseRef without its remote. Ignored with landOn, which is the trunk'),
+  trunk: z.string().min(1).optional().describe('Branch the stack PRs target; defaults to baseRef without its remote. Cannot be combined with landOn, which is the trunk'),
 });
 const seamsSchema = z.object({ seams: z.array(z.string().min(1)).min(1).describe('Seams the user agreed, as public interfaces') });
 const reviewStartSchema = z.object({
@@ -398,8 +398,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
       const feature = activeFeature(ws);
       const base = await resolveBase(ws, { baseRef: params.baseRef, landOn: params.landOn, trunk: params.trunk });
       const slices = planSlices(ws, readRun(ws, feature), params.slices, base);
-      const target = base.landOn === undefined ? `PRs target ${base.trunk}` : `/factory submit opens one draft PR per slice onto ${base.landOn}`;
-      const where = `Slice 01 branches from ${base.baseRef} (${base.baseSha.slice(0, 12)}); ${target}.`;
+      const where = `Slice 01 branches from ${base.baseRef} (${base.baseSha.slice(0, 12)}); PRs target ${base.trunk}.`;
       if (!(await confirm(ctx, `Approve ${slices.length} slices for "${feature}"?`, `${where}\n\n${planSummary(slices)}`))) {
         return reply('The user rejected the plan. Ask what to change, then call factory_plan again.');
       }

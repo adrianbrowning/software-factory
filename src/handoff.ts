@@ -1,28 +1,26 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { evidenceHead, evidenceLine, redact } from './evidence.ts';
-import { type Finding, findingListSchema, REVIEW_DOMAINS, reviewDir, type Run, runDir, type Workspace, writeAtomic } from './run.ts';
+import { evidenceHead, evidenceLine } from './evidence.ts';
+import { type Finding, findingListSchema, REVIEW_DOMAINS, reviewDir, type Run, runDir, type Slice, type Workspace, writeAtomic } from './run.ts';
 import { configuredTrunk } from './workflow.ts';
 
-/** A slice PR as `gh stack view --json` names it after submit. */
-export type SlicePr = { number: number; url?: string | undefined };
+/** A slice and its PR, as `gh stack view --json` names it after submit. */
+export type SlicePr = { number: number; slice: Slice; url: string };
 
 const list = (items: string[]) => (items.length === 0 ? 'None' : items.join('\n'));
 
 /**
  * The single PR that lands a landOn run on the trunk: the source issue title, and a Markdown body from run state.
  * `observations` holds the kept observations of each slice's final green review, by slice id; `prs` each slice's PR,
- * by branch. Fails for a slice whose PR has no URL or that has no recorded review. Issue and finding text is redacted.
+ * in run order. Fails for a slice that has no recorded review. Issue and finding text is redacted.
  */
-export function renderHandoff(run: Run, observations: Map<string, Finding[]>, prs: Map<string, SlicePr>) {
-  const reviewed = run.slices.map(slice => {
-    const url = prs.get(slice.branch)?.url;
-    if (url === undefined) throw new Error(`gh stack view --json gave no PR URL for ${slice.branch}.`);
+export function renderHandoff(run: Run, observations: Map<string, Finding[]>, prs: SlicePr[]) {
+  const reviewed = prs.map(({ slice, url }) => {
     if (slice.review === undefined) throw new Error(`Slice ${slice.id} has no recorded review.`);
     return { review: slice.review, slice, url };
   });
-  const title = redact(run.source.title).replace(/\s+/g, ' ').trim();
+  const title = evidenceLine(run.source.title, Infinity);
   const label = (slice: Run['slices'][number]) => `${slice.id} ${evidenceLine(slice.title)}`;
   const issue = [
     `- Ref: ${evidenceLine(run.source.ref)}`,
@@ -85,9 +83,11 @@ function finalObservations(ws: Workspace, run: Run) {
 /**
  * Writes the landOn run's single-PR handoff to `<run dir>/pr.md` (the title as its heading, then the body) and returns
  * what the user does next: merge the stack into landOn, then open one PR from it to the configured trunk.
- * Fails, writing nothing, when renderHandoff does. Opens no PR and merges nothing.
+ * Fails, writing nothing, for a run without landOn or when renderHandoff fails. Opens no PR and merges nothing.
  */
-export async function writeHandoff(ws: Workspace, run: Run, landOn: string, prs: Map<string, SlicePr>) {
+export async function writeHandoff(ws: Workspace, run: Run, prs: SlicePr[]) {
+  const { landOn } = run;
+  if (landOn === undefined) throw new Error(`Run "${run.feature}" has no landOn branch, so it has no single-PR handoff.`);
   const { body, title } = renderHandoff(run, finalObservations(ws, run), prs);
   const trunk = await configuredTrunk(ws);
   const path = join(runDir(ws, run.feature), 'pr.md');

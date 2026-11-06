@@ -91,9 +91,12 @@ async function configuredBase(ws: Workspace) {
   return 'origin/main';
 }
 
-/** The repository's configured trunk: `trunk` from the config, else the configured base without its remote. */
-export async function configuredTrunk(ws: Workspace) {
-  return ws.config.trunk ?? (await branchName(ws.root, await configuredBase(ws)));
+/**
+ * The repository's configured trunk: `trunk` from the config, else the configured base without its remote. Pass
+ * `baseRef` when the configured base is already resolved.
+ */
+export async function configuredTrunk(ws: Workspace, baseRef?: string) {
+  return ws.config.trunk ?? (await branchName(ws.root, baseRef ?? (await configuredBase(ws))));
 }
 
 /**
@@ -105,14 +108,16 @@ export type Base = { baseRef: string; baseSha: string; landOn?: string; trunk: s
 /**
  * Resolves the run's base. `baseRef` overrides the configured base when the work builds on an unmerged branch; the
  * trunk then defaults to that branch, so the stack's PRs target it. `landOn` names an existing local branch that the
- * stack's PRs target instead: it is the trunk, the base when `baseRef` is not given, and must be at or below the base
- * so the slices build on it.
+ * stack's PRs target instead: it is the trunk, so an explicit `trunk` beside it is refused. It is the base when
+ * `baseRef` is not given, and must be at or below the base so the slices build on it; when the base is above it,
+ * slice 01's PR onto it also shows the base's commits it does not have yet.
  */
 export async function resolveBase(
   ws: Workspace,
   override: { baseRef?: string | undefined; landOn?: string | undefined; trunk?: string | undefined } = {},
 ): Promise<Base> {
   const { landOn } = override;
+  if (landOn !== undefined && override.trunk !== undefined) throw new Error(`landOn ${landOn} is the stack's trunk; omit trunk when you pass landOn.`);
   // An exact branch name, not a revision expression such as `main^{commit}` that rev-parse would also accept.
   let landSha: string | undefined;
   if (landOn !== undefined) {
@@ -243,11 +248,13 @@ export async function startRun(ws: Workspace, input: { feature: string; sessionI
     throw new Error(`Run "${input.feature}" already exists. Use /factory resume ${input.feature}.`);
   }
   const source = sourceSchema.parse(input.source);
+  // The title becomes the landOn handoff's PR title and pr.md heading; a blank one would leave both empty.
+  if (source.title.trim() === '') throw new Error('The source title is blank. Give the issue a title, then call factory_start again.');
   const checks = checksSchema.parse(repoChecks(ws));
   // The base is resolved and pinned at plan approval, where the user can still pick a different one; the plan
   // event records it.
   const baseRef = await configuredBase(ws);
-  const trunk = ws.config.trunk ?? (await branchName(ws.root, baseRef));
+  const trunk = await configuredTrunk(ws, baseRef);
   await excludeScratch(ws);
   const run: Run = {
     baseRef,
@@ -550,11 +557,10 @@ export function approvePlan(ws: Workspace, run: Run, slices: Slice[], base?: Bas
   for (const slice of slices) writeTicket(ws, run, slice);
   run.status = 'running';
   const pinned = run.baseSha === undefined ? '' : ` (${run.baseSha.slice(0, 12)})`;
-  const target = run.landOn === undefined ? `PRs target ${run.trunk}` : `PRs target landOn branch ${run.landOn}`;
   addEvent(
     run,
     'plan',
-    `${slices.length} slices approved on base ${run.baseRef}${pinned}, ${target}: ${slices.map(slice => `${slice.id} ${slice.title}`).join('; ')}`,
+    `${slices.length} slices approved on base ${run.baseRef}${pinned}, PRs target ${run.trunk}: ${slices.map(slice => `${slice.id} ${slice.title}`).join('; ')}`,
   );
 }
 
@@ -914,7 +920,7 @@ export function nextAction(run: Run): string {
     if (run.waiting.length > 0) return waitingNotice(run);
     return run.landOn === undefined
       ? `The stack is ready. Tell the user they can open draft PRs with /factory submit ${run.feature}.`
-      : `The stack is ready. Tell the user that /factory submit ${run.feature} opens draft PRs onto ${run.landOn}, once ${run.landOn} is on origin.`;
+      : `The stack is ready. Tell the user that /factory submit ${run.feature} opens draft PRs onto ${run.landOn}, once they have pushed ${run.landOn} so origin has its local tip.`;
   }
   const slice = activeSlice(run);
   if (slice?.stalled) {

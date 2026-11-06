@@ -22,7 +22,7 @@ import {
   reopenSlice,
   resolveBase,
   resumeRun,
-
+  startRun,
 } from '../src/workflow.ts';
 import { checkRuns, commit, countedCheck, green, newRun, review, sh, slice, start, step, workspace } from './helpers.ts';
 
@@ -60,12 +60,12 @@ describe('base resolution', () => {
     assert.equal(readRun(ws, 'demo').trunk, 'dev');
   });
 
-  it('makes the landOn branch the trunk, with or without a baseRef', async () => {
+  it('makes the landOn branch the trunk, with or without a baseRef, and refuses an explicit trunk beside it', async () => {
     using ws = workspace({ baseRef: 'main', trunk: 'main' });
     sh(ws.root, 'branch', 'ext-953');
     assert.equal((await resolveBase(ws, { landOn: 'ext-953' })).trunk, 'ext-953');
     assert.equal((await resolveBase(ws, { baseRef: 'main', landOn: 'ext-953' })).trunk, 'ext-953');
-    assert.equal((await resolveBase(ws, { baseRef: 'main', landOn: 'ext-953', trunk: 'release' })).trunk, 'ext-953');
+    await assert.rejects(resolveBase(ws, { baseRef: 'main', landOn: 'ext-953', trunk: 'release' }), /landOn ext-953 is the stack's trunk; omit trunk/);
   });
 
   it('defaults the base to the remote default branch from origin/HEAD, else origin/main', async () => {
@@ -124,6 +124,14 @@ describe('issue sources', () => {
     assert.deepEqual(fileSource(ws, 'issue.md'), { body: 'Intro\n\n# Export data\n\nBody\n', kind: 'file', ref: 'issue.md', title: 'Export data' });
     assert.equal(fileSource(ws, 'plain.txt').title, 'plain.txt');
     assert.throws(() => fileSource(ws, 'missing.md'), /missing\.md does not exist/);
+  });
+
+  it('refuses to start a run whose source title is only whitespace', async () => {
+    using ws = workspace();
+    for (const title of [' ', '\n\t ']) {
+      await assert.rejects(startRun(ws, { feature: 'demo', sessionId: 's', source: { body: '', kind: 'text', ref: 'r', title } }), /source title is blank/);
+    }
+    assert.ok(!existsSync(statePath(ws, 'demo')), 'no run is started');
   });
 });
 

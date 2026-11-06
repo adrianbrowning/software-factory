@@ -49,9 +49,10 @@ async function readStack(root: string, branch: string) {
 /**
  * Submits the reviewed stack. On a first submit it adopts every slice branch into one gh-stack stack and opens draft
  * PRs; on a re-submit, when slice 01 is already stacked, it adds only the slice branches that stack lacks.
- * A run with `landOn` stacks onto that branch (its trunk), and is refused before any gh call while origin lacks it;
- * submit never pushes or moves the landOn branch. Once its PRs are titled, it writes the single-PR handoff (pr.md) and
- * returns what the user does next. Never merges, and never opens the PR from landOn to the trunk.
+ * A run with `landOn` stacks onto that branch (its trunk), and is refused before any gh call while origin lacks it or
+ * origin's tip of it is not the local one; submit never pushes or moves the landOn branch. For a landOn run, once the
+ * PRs are titled, it also writes the single-PR handoff (pr.md) and returns what the user does next. Never merges, and
+ * never opens the PR from landOn to the trunk.
  * Only the user-invoked `/factory submit` command calls this; no model-callable tool does. `progress` names each step
  * before it starts, so the user sees what the submit is waiting on.
  */
@@ -70,7 +71,7 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
     );
   }
   if (run.landOn !== undefined) {
-    progress(`checking that origin has ${run.landOn}`);
+    progress(`checking that origin has ${run.landOn} at its local tip`);
     const heads = await git(ws.root, 'ls-remote', '--heads', 'origin', `refs/heads/${run.landOn}`).catch((cause: unknown) => {
       throw new Error(
         `Submit could not read origin to check for ${run.landOn}. Make sure the origin remote exists and has the branch (git push origin ${run.landOn}), then run /factory submit again. Nothing was submitted.`,
@@ -79,6 +80,16 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
     });
     if (heads.trim() === '') {
       throw new Error(`${run.landOn} is not on origin, so its slice PRs have no branch to target. Push it first (git push origin ${run.landOn}), then run /factory submit again. Nothing was submitted.`);
+    }
+    // ls-remote prints `<sha>\trefs/heads/<landOn>`. The slices build on the local branch, so an origin tip that is not
+    // the local one would put the local commits origin lacks into slice 01's PR. Origin may instead be ahead (a teammate
+    // pushed to it), where a push is rejected, or both may have new commits, so the message names all three remedies.
+    const local = (await git(ws.root, 'rev-parse', `refs/heads/${run.landOn}`)).trim();
+    const remote = heads.split('\t')[0] ?? '';
+    if (remote !== local) {
+      throw new Error(
+        `${run.landOn} on origin (${remote.slice(0, 12)}) is not the local ${run.landOn} (${local.slice(0, 12)}) that the slices build on. Push your local commits (git push origin ${run.landOn}), or, if origin is ahead, update the local ${run.landOn} first (switch to ${run.landOn} and run git pull --ff-only origin ${run.landOn}), or, if both have new commits, merge origin's ${run.landOn} into the local ${run.landOn} (do not rebase: the slices build on its current commits) and push it; then run /factory submit again. Nothing was submitted.`,
+      );
     }
   }
   const branches = run.slices.map(slice => slice.branch);
@@ -136,7 +147,7 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
   }
   addEvent(run, 'submit', 'stack submitted as draft PRs');
   // The stack and its PRs are now on GitHub; a title failure leaves the checkout where gh stack put it.
-  let prs: Map<string, SlicePr>;
+  let prs: SlicePr[];
   try {
     prs = await setTitles(ws.root, run, progress);
   } catch (caught) {
@@ -148,7 +159,7 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
   if (run.landOn === undefined) return output;
   progress('writing the single-PR handoff (pr.md)');
   try {
-    return `${output}${output.endsWith('\n') || output === '' ? '' : '\n'}${await writeHandoff(ws, run, run.landOn, prs)}\n`;
+    return `${output}${output.endsWith('\n') || output === '' ? '' : '\n'}${await writeHandoff(ws, run, prs)}\n`;
   } catch (caught) {
     throw new Error(
       `The stack and its PRs were submitted and titled, but the handoff (pr.md) was not written: ${caught instanceof Error ? caught.message : String(caught)}\nRunning /factory submit again writes it.`,
@@ -159,18 +170,30 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
 
 /**
  * Sets every slice PR's title to `<feature>: NN <slice title>`, overwriting any other title, and returns each slice's
- * PR by branch. Uses the REST API, not `gh pr edit`, which fails on repositories with Projects (classic). Fails,
- * setting no title, when a slice has no PR.
+ * PR in run order for the landOn handoff (empty for a run without landOn). Uses the REST API, not `gh pr edit`, which
+ * fails on repositories with Projects (classic). Fails, setting no title, when a slice has no PR, or, on a landOn run,
+ * when its PR has no URL.
  */
 async function setTitles(root: string, run: Run, progress: (step: string) => void) {
   progress('setting the slice PR titles');
   const view = stackView.parse(JSON.parse(await gh(root, 'stack', 'view', '--json')));
-  const prs = new Map<string, SlicePr>();
-  for (const item of view.branches) if (item.pr !== undefined) prs.set(item.name, item.pr);
-  const missing = run.slices.filter(slice => !prs.has(slice.branch)).map(slice => slice.branch);
-  if (missing.length > 0) throw new Error(`gh stack submit left these slice branches with no PR: ${missing.join(', ')}.`);
+  const byBranch = new Map(view.branches.map(item => [item.name, item.pr]));
+  const noPr: string[] = [];
+  const titled: { number: number; slice: Run['slices'][number]; url: string | undefined }[] = [];
   for (const slice of run.slices) {
-    await gh(root, 'api', '-X', 'PATCH', `repos/{owner}/{repo}/pulls/${prs.get(slice.branch)?.number}`, '-f', `title=${run.feature}: ${slice.id} ${slice.title}`);
+    const pr = byBranch.get(slice.branch);
+    if (pr === undefined) noPr.push(slice.branch);
+    else titled.push({ number: pr.number, slice, url: pr.url });
+  }
+  if (noPr.length > 0) throw new Error(`gh stack submit left these slice branches with no PR: ${noPr.join(', ')}.`);
+  let prs: SlicePr[] = [];
+  if (run.landOn !== undefined) {
+    const noUrl = titled.filter(pr => pr.url === undefined).map(pr => pr.slice.branch);
+    if (noUrl.length > 0) throw new Error(`gh stack view gave no PR URL for these slice branches, so the handoff cannot link them: ${noUrl.join(', ')}.`);
+    prs = titled.filter((pr): pr is SlicePr => pr.url !== undefined);
+  }
+  for (const { number, slice } of titled) {
+    await gh(root, 'api', '-X', 'PATCH', `repos/{owner}/{repo}/pulls/${number}`, '-f', `title=${run.feature}: ${slice.id} ${slice.title}`);
   }
   return prs;
 }
