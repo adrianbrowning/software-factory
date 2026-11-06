@@ -272,6 +272,25 @@ describe('submit', () => {
     assert.deepEqual(gh.calls(), []);
   });
 
+  it('refuses a landOn run whose branch has diverged from origin, telling the user to merge or rebase then push, before any gh call', async () => {
+    using ws = workspace();
+    sh(ws.root, 'branch', 'ext-953');
+    using remote = tempDir('factory-origin-');
+    sh(remote.root, 'init', '-q', '--bare');
+    sh(ws.root, 'remote', 'add', 'origin', remote.root);
+    // A teammate's commit on origin's ext-953, and a different local commit the origin lacks.
+    sh(ws.root, 'switch', '-q', 'ext-953');
+    commit(ws, 'teammate.txt');
+    sh(ws.root, 'push', '-q', 'origin', 'ext-953');
+    sh(ws.root, 'reset', '-q', '--hard', 'HEAD~1');
+    commit(ws, 'local.txt');
+    sh(ws.root, 'switch', '-q', 'main');
+    const branches = await doneRun(ws, 2, { landOn: 'ext-953' });
+    using gh = fakeGh({ stack: undefined, submitted: withPrs(branches) });
+    await assert.rejects(step(ws, run => submitStack(ws, run)), /if both have new commits, merge or rebase origin's ext-953 into the local ext-953 and push it.*Nothing was submitted\./s);
+    assert.deepEqual(gh.calls(), []);
+  });
+
   it('refuses a landOn run with no origin remote with the push-first message, before any gh call', async () => {
     using ws = workspace();
     sh(ws.root, 'branch', 'ext-953');
