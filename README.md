@@ -259,7 +259,9 @@ task:
 ### Role models
 
 `models` sets the model per factory role. A role without an entry inherits: omp's own choice (agent model overrides,
-agent frontmatter, then the parent model) stands, and the factory returns no model for it.
+agent frontmatter, then the parent model) stands, and the factory returns no model for it. Only `implementer` spawns
+are routed so far. Entries for `orchestrator`, `reviewer`, `validator` and `explorer` are validated, kept in the run
+and shown, but do not yet change a model.
 
 ```json
 {
