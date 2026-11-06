@@ -19,15 +19,19 @@ type Registered = {
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 
-/** Registers the extension against a recording `pi` and returns its tools by name; `activated` collects what setActiveTools gets, `handlers` records its event hooks. */
-function load(activated: string[] = [], handlers = new Map<string, Handler>()) {
+type Command = { handler: (args: string, ctx: unknown) => Promise<void> };
+
+/** Registers the extension against a recording `pi` and returns its tools by name; `activated` collects what setActiveTools gets, `handlers` records its event hooks, `commands` its slash commands. */
+function load(activated: string[] = [], handlers = new Map<string, Handler>(), commands = new Map<string, Command>()) {
   const tools = new Map<string, Registered>();
   const pi = {
     getActiveTools: () => [],
     on(event: string, handler: Handler) {
       handlers.set(event, handler);
     },
-    registerCommand() {},
+    registerCommand(name: string, command: Command) {
+      commands.set(name, command);
+    },
     registerTool(tool: Registered) {
       tools.set(tool.name, tool);
     },
@@ -578,7 +582,8 @@ describe('model routing', () => {
     const config = { baseRef: 'main', checks: ['test -f ok'], ...(models === undefined ? {} : { models }) };
     const repo = tempRepo('factory-models-', { '.omp/factory.json': JSON.stringify(config) });
     const handlers = new Map<string, Handler>();
-    const tools = load([], handlers);
+    const commands = new Map<string, Command>();
+    const tools = load([], handlers, commands);
     const available = new Set<string>();
     const main = {
       ...ctx('main', 'main'),
@@ -590,11 +595,12 @@ describe('model routing', () => {
     };
     const call = async (name: string, params: unknown) => JSON.stringify(await tools.get(name)?.execute('id', params, undefined, undefined, main));
     const spawn = (agent: string) => handlers.get('before_subagent_spawn')?.({ agent, invocationKind: 'task', patterns: ['@task'], type: 'before_subagent_spawn' }, main);
+    const command = (args: string) => commands.get('factory')?.handler(args, main);
     const statusModels = async () => {
       const status: { details: { models: unknown } } = JSON.parse(await call('factory_status', {}));
       return status.details.models;
     };
-    return { ...repo, available, call, spawn, statusModels };
+    return { ...repo, available, call, command, spawn, statusModels };
   }
 
   it('refuses to start when a configured model does not resolve, naming the role', async () => {
@@ -710,7 +716,8 @@ describe('model routing', () => {
     const ws: Workspace = { config: loadConfig(repo.root), root: repo.root };
     await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')])));
     await withRun(ws, 'demo', run => nextSlice(ws, run));
-    await withRun(ws, 'demo', run => pauseRun(run, 'test'));
+    await repo.command('pause');
+    assert.equal(readRun(ws, 'demo').status, 'paused');
     repo.available.clear();
     assert.equal(await repo.spawn('scout'), undefined);
   });
