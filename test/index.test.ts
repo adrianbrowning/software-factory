@@ -1025,12 +1025,49 @@ describe('model routing', () => {
     );
   });
 
-  it('records nothing, without throwing, for a scout turn outside any factory run or outside any git repo', async () => {
+  it('records nothing, without throwing, for a scout turn outside any factory run', async () => {
     using repo = routedRepo(undefined);
     writeFileSync(join(repo.root, '.omp/factory.json'), '{not json');
     await repo.child('scout', 'x/e', 'low').turn();
+  });
+
+  it('records nothing, without throwing, for a scout turn outside any git repo while a run is active', async () => {
+    using repo = routedRepo(undefined);
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
     using outside = tempDir('factory-nogit-');
     await repo.child('scout', 'x/e', 'low', undefined, outside.root).turn();
+    assert.deepEqual(readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo').agents, []);
+  });
+
+  it("records a child session that runs no model as model 'unset'", async () => {
+    using repo = routedRepo(undefined);
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    await repo.child('scout', undefined, 'low').turn();
+    assert.deepEqual(
+      readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo').agents.map(agent => [agent.model, agent.thinking]),
+      [['unset', 'low']],
+    );
+  });
+
+  it('records a child on a later turn once when its first audit write fails, and still tracks the implementer on the failed turn', async () => {
+    using repo = routedRepo(undefined);
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    const ws: Workspace = { config: loadConfig(repo.root), root: repo.root };
+    await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')])));
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    const path = statePath(ws, 'demo');
+    const saved = readFileSync(path, 'utf8');
+    const implementer = repo.child('factory-implementer', 'x/i', 'medium');
+    writeFileSync(path, '{not json');
+    await assert.rejects(Promise.resolve(implementer.turn()), /changed outside the factory tools/);
+    assert.equal(implementer.usage.reads, 1);
+    writeFileSync(path, saved);
+    await implementer.turn();
+    await implementer.turn();
+    assert.deepEqual(
+      readRun(ws, 'demo').agents.map(agent => agent.sessionId),
+      [`child-session-1@${repo.root}`],
+    );
   });
 
   it('records a scout through the run remembered when it started, without reloading factory.json', async () => {

@@ -925,8 +925,11 @@ export default function softwareFactory(pi: ExtensionAPI) {
 
   pi.on('turn_end', async (_event, ctx) => {
     const found = await runForCwd(ctx.cwd);
-    await auditChild(ctx, pi.getThinkingLevel(), found);
-    await trackImplementer(ctx, found, false);
+    try {
+      await auditChild(ctx, pi.getThinkingLevel(), found);
+    } finally {
+      await trackImplementer(ctx, found, false);
+    }
   });
   pi.on('auto_compaction_start', async (_event, ctx) => trackImplementer(ctx, await runForCwd(ctx.cwd), true));
   // A new implementer the orchestrator spawns starts a new report round; reviving or messaging one is not a spawn, so
