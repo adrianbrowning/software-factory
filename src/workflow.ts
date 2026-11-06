@@ -24,6 +24,8 @@ import {
   standingChecks,
   type Source,
   sourceSchema,
+  storedRetroFindingSchema,
+  RETRO_SEVERITIES,
   statePath,
   ticketPath,
   type Workspace,
@@ -250,6 +252,7 @@ export async function startRun(ws: Workspace, input: { feature: string; sessionI
     events: [],
     feature: input.feature,
     ownerSessionId: input.sessionId,
+    retroFindings: [],
     retroRecorded: false,
     slices: [],
     source,
@@ -780,27 +783,8 @@ export async function resumeRun(ws: Workspace, run: Run, sessionId: string) {
   addEvent(run, 'resume', `session ${sessionId}`);
 }
 
-export const RETRO_CATEGORIES = [
-  'navigation',
-  'automated-checks',
-  'coding-standards',
-  'agents-md',
-  'tool-economy',
-  'no-ops',
-  'information-access',
-] as const;
-
-const RETRO_SEVERITIES = ['high', 'medium', 'low'] as const;
-
-export const retroFindingSchema = z
-  .object({
-    action: z.enum(['apply', 'file-issue', 'skip']).describe('apply: repo change in a final slice; file-issue: factory issue'),
-    category: z.enum(RETRO_CATEGORIES),
-    detail: z.string().min(1),
-    severity: z.enum(RETRO_SEVERITIES),
-    target: z.enum(['repo', 'factory']).describe('repo: the repository worked on; factory: this plugin'),
-    title: z.string().min(1),
-  })
+export const retroFindingSchema = storedRetroFindingSchema
+  .extend({ detail: z.string().min(1) })
   .refine(finding => finding.action !== 'apply' || finding.target === 'repo', 'only repo findings can be applied')
   .refine(finding => finding.action !== 'file-issue' || finding.target === 'factory', 'only factory findings become issues');
 export type RetroFinding = z.infer<typeof retroFindingSchema>;
@@ -894,6 +878,7 @@ export function recordRetro(ws: Workspace, run: Run, retro: Retro, filed: FiledI
     `# Retro: ${run.source.title}\n\n${section('repo', 'Target repository')}\n${section('factory', 'Software factory')}`,
   );
   run.retroRecorded = true;
+  run.retroFindings = retro.findings.map(({ detail: _detail, ...stored }) => stored);
   const repoCount = retro.findings.filter(finding => finding.target === 'repo').length;
   addEvent(run, 'retro', `${retro.findings.length} findings: repo=${repoCount} factory=${retro.findings.length - repoCount}`);
   const slice = retro.slice === undefined ? undefined : pushSlice(ws, run, retro.slice);
