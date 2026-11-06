@@ -157,6 +157,15 @@ When the run is done, push your branch if origin does not have it yet, then run 
 `Open draft PRs?`. As for any run, gh stack opens or updates one draft PR per slice, here onto your branch. The
 factory never pushes or moves your branch, and it refuses, before any gh call, while origin does not have it.
 
+Once the slice PRs are open and titled, submit writes a single-PR handoff to `<scratchDir>/<feature>/pr.md`: the
+source issue title as its heading, then a body with the issue, a summary, each slice's change and PR link, check
+results, review rounds and reviewed domains, decisions, outstanding concerns (kept observations of each slice's final
+green review, retro findings not applied, stalls and budget overruns, or `None`), retro findings applied, and the
+feature name. Issue and finding text is redacted. The submit output tells you to merge the stack into your branch,
+then open one PR from it to the configured trunk (`trunk`, else the configured base without its remote),
+and names `pr.md` and the PR title. The factory never opens that PR and never merges. A run without `landOn` writes
+no `pr.md`.
+
 ### Fix observations or a bug before a slice is done
 
 A green review can list non-blocking observations. When you want some of them fixed in the active slice, the
