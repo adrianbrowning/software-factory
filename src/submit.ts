@@ -10,11 +10,12 @@
  */
 import { z } from 'zod';
 import { gh, git } from './exec.ts';
+import { type SlicePr, writeHandoff } from './handoff.ts';
 import { head, requireClean } from './repo.ts';
 import { addEvent, greenCommit, type Run, type Workspace } from './run.ts';
 
 /** The part of `gh stack view --json` submit reads: the stack's branches, bottom (closest to trunk) first, with each branch's PR when it has one. */
-const stackView = z.object({ branches: z.array(z.object({ name: z.string(), pr: z.object({ number: z.number() }).optional() })) });
+const stackView = z.object({ branches: z.array(z.object({ name: z.string(), pr: z.object({ number: z.number(), url: z.string().optional() }).optional() })) });
 
 export type SubmitPlan = { kind: 'init' } | { kind: 'refuse'; outside: string[]; unordered: string[] } | { kind: 'add'; missing: string[] };
 
@@ -49,7 +50,8 @@ async function readStack(root: string, branch: string) {
  * Submits the reviewed stack. On a first submit it adopts every slice branch into one gh-stack stack and opens draft
  * PRs; on a re-submit, when slice 01 is already stacked, it adds only the slice branches that stack lacks.
  * A run with `landOn` stacks onto that branch (its trunk), and is refused before any gh call while origin lacks it;
- * submit never pushes or moves the landOn branch. Never merges.
+ * submit never pushes or moves the landOn branch. Once its PRs are titled, it writes the single-PR handoff (pr.md) and
+ * returns what the user does next. Never merges, and never opens the PR from landOn to the trunk.
  * Only the user-invoked `/factory submit` command calls this; no model-callable tool does. `progress` names each step
  * before it starts, so the user sees what the submit is waiting on.
  */
@@ -134,28 +136,41 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
   }
   addEvent(run, 'submit', 'stack submitted as draft PRs');
   // The stack and its PRs are now on GitHub; a title failure leaves the checkout where gh stack put it.
+  let prs: Map<string, SlicePr>;
   try {
-    await setTitles(ws.root, run, progress);
+    prs = await setTitles(ws.root, run, progress);
   } catch (caught) {
     throw new Error(
       `The stack and its PRs were submitted, but the PR titles were not set: ${caught instanceof Error ? caught.message : String(caught)}\nRunning /factory submit again sets them.`,
       { cause: caught },
     );
   }
-  return output;
+  if (run.landOn === undefined) return output;
+  progress('writing the single-PR handoff (pr.md)');
+  try {
+    return `${output}${output.endsWith('\n') || output === '' ? '' : '\n'}${await writeHandoff(ws, run, run.landOn, prs)}\n`;
+  } catch (caught) {
+    throw new Error(
+      `The stack and its PRs were submitted and titled, but the handoff (pr.md) was not written: ${caught instanceof Error ? caught.message : String(caught)}\nRunning /factory submit again writes it.`,
+      { cause: caught },
+    );
+  }
 }
 
 /**
- * Sets every slice PR's title to `<feature>: NN <slice title>`, overwriting any other title. Uses the REST API, not
- * `gh pr edit`, which fails on repositories with Projects (classic). Fails, setting no title, when a slice has no PR.
+ * Sets every slice PR's title to `<feature>: NN <slice title>`, overwriting any other title, and returns each slice's
+ * PR by branch. Uses the REST API, not `gh pr edit`, which fails on repositories with Projects (classic). Fails,
+ * setting no title, when a slice has no PR.
  */
 async function setTitles(root: string, run: Run, progress: (step: string) => void) {
   progress('setting the slice PR titles');
   const view = stackView.parse(JSON.parse(await gh(root, 'stack', 'view', '--json')));
-  const prs = new Map(view.branches.map(item => [item.name, item.pr?.number]));
-  const missing = run.slices.filter(slice => prs.get(slice.branch) === undefined).map(slice => slice.branch);
+  const prs = new Map<string, SlicePr>();
+  for (const item of view.branches) if (item.pr !== undefined) prs.set(item.name, item.pr);
+  const missing = run.slices.filter(slice => !prs.has(slice.branch)).map(slice => slice.branch);
   if (missing.length > 0) throw new Error(`gh stack submit left these slice branches with no PR: ${missing.join(', ')}.`);
   for (const slice of run.slices) {
-    await gh(root, 'api', '-X', 'PATCH', `repos/{owner}/{repo}/pulls/${prs.get(slice.branch)}`, '-f', `title=${run.feature}: ${slice.id} ${slice.title}`);
+    await gh(root, 'api', '-X', 'PATCH', `repos/{owner}/{repo}/pulls/${prs.get(slice.branch)?.number}`, '-f', `title=${run.feature}: ${slice.id} ${slice.title}`);
   }
+  return prs;
 }

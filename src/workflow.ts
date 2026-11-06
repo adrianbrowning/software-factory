@@ -91,6 +91,11 @@ async function configuredBase(ws: Workspace) {
   return 'origin/main';
 }
 
+/** The repository's configured trunk: `trunk` from the config, else the configured base without its remote. */
+export async function configuredTrunk(ws: Workspace) {
+  return ws.config.trunk ?? (await branchName(ws.root, await configuredBase(ws)));
+}
+
 /**
  * The base slice 01 stacks on: the ref the user named, pinned to the commit it pointed at when the plan was approved.
  * `landOn` is set when the user wants the stack's PRs opened onto an existing branch; it is then also the trunk.
