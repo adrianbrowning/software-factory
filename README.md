@@ -312,8 +312,9 @@ user or plugin agent named `scout`, which replaces omp's bundled `scout`, is rou
 - Each factory child (`factory-implementer`, `factory-reviewer`, `factory-review-validator`, spawned by `task` or
   eval `agent()`) and each routed `scout` records, from inside its own session on its first turn, the model and
   thinking level omp actually runs it on, with its agent id, name and role. A child that omp ran on a configured
-  fallback is recorded with the fallback. Each session is recorded once, and only a direct child of the main session
-  that started or resumed the run, as only its spawns are routed; a scout only while the run is in intake or running.
+  fallback is recorded with the fallback. Each session is recorded once, and only when the run's spawn hook routed
+  its spawn: a direct child of the main session, and a scout only when it was spawned while the run was in intake or
+  running. A child spawned before the run started, or a scout spawned while it was paused, is not recorded later.
   `factory_status` lists the records under each slice's `agents`, and those from when no slice was active (such as an
   intake scout) under `agentsOutsideSlices`.
 
