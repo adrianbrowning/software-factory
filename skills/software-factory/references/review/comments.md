@@ -59,6 +59,7 @@ Your task gives you the review id and the data file (PR metadata, full diff, cha
 
 - **High:** the comment is false or stale and would mislead a reader
 - **Observation:** every other finding (restates the code, narration, lost context, commented-out code, agent narration, dividers, hedges)
+- **Wording:** ambiguous or unclear wording is High only when the finding names a real reader action that the wording makes wrong; otherwise it is an Observation. The validator applies this bar (`agents/factory-review-validator.md`, step 5).
 - **Critical:** never. A bad comment does not block a merge.
 
 ---

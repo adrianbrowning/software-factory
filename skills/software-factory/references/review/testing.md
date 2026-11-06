@@ -41,6 +41,8 @@ Severity: **High** by default. **Critical** when the tautological test is the on
 
 Apart from rules 7 and 8 and tautological tests, your job is missing coverage. The quality of tests the PR adds or changes (weak assertions, implementation-detail assertions, over-mocking, async/flake risk, fixtures, test naming) belongs to the test-validity reviewer.
 
+**Prose criteria** — an acceptance criterion about prose (docs, READMEs, agent prompts, skills, comments) is checked by reading the diff. A missing test for it is not a finding. A test that only matches prose text is not wanted: report it as an Observation. See the validator's step 5 (`agents/factory-review-validator.md`).
+
 ---
 
 ## Report Format
