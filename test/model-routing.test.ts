@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, it } from 'node:test';
+import { beforeEach, describe, it } from 'node:test';
 import { loadConfig } from '../src/config.ts';
 import type * as agents from '../src/agents.ts';
 import { resetModuleState } from '../src/index.ts';
@@ -14,19 +14,19 @@ import { type Command, ctx, type Handler, load, type TestContext } from './exten
 import { commit, slice, tempRepo } from './helpers.ts';
 
 describe('model routing', () => {
+  beforeEach(() => resetModuleState());
+
   const IMPLEMENTER_MODEL = { fallbacks: ['openai/gpt-5.2', '@slow'], model: 'anthropic/claude-sonnet-4-5' };
   const SOURCE = { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' };
 
   /**
-   * A repo whose factory.json holds `models` (omitted when undefined), with the extension loaded. It first clears the
-   * module-level run state, so no run or audit from an earlier routedRepo leaks in. `available` is the set
+   * A repo whose factory.json holds `models` (omitted when undefined), with the extension loaded. `available` is the set
    * of specs ctx.models.resolve finds; tests may change it. `live` is the session's model (ctx.models.current), the
    * ctx.model omp falls back on (`ctxModel`), and the thinking level; tests may change it. `call` runs a tool as main;
    * `spawn` fires before_subagent_spawn for `agent` from main, or from the subagent `from`; `stop` fires session_stop
    * in main. The repo goes when `using` ends.
    */
   function routedRepo(models: unknown) {
-    resetModuleState();
     const config = { baseRef: 'main', checks: ['test -f ok'], ...(models === undefined ? {} : { models }) };
     const repo = tempRepo('factory-models-', { '.omp/factory.json': JSON.stringify(config) });
     const handlers = new Map<string, Handler>();
@@ -286,14 +286,16 @@ describe('model routing', () => {
     }
   });
 
-  it('does not route or block factory-role and scout spawns in a repo with no run while another repo has one', async () => {
+  it('does not route or block factory-role and scout spawns in a repo with no run while another repo has one, which keeps routing', async () => {
     const models = { explorer: { model: 'x/e' }, reviewer: { model: 'x/r' } };
     using other = routedRepo(models);
-    using repo = routedRepo(models);
-    for (const each of [other, repo]) for (const spec of ['x/e', 'x/r']) each.available.add(spec);
+    for (const spec of ['x/e', 'x/r']) other.available.add(spec);
     await other.call('factory_start', { feature: 'demo', source: SOURCE });
+    using repo = routedRepo(models);
+    for (const spec of ['x/e', 'x/r']) repo.available.add(spec);
     assert.equal(await repo.spawn('scout'), undefined);
     assert.equal(await repo.spawn('factory-reviewer'), undefined);
+    assert.deepEqual(await other.spawn('scout'), { model: ['x/e'], note: 'Software factory: models.explorer from the run snapshot.' });
   });
 
   it('does not route spawns a subagent makes during an active run', async () => {

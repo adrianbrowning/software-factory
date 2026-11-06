@@ -2,14 +2,16 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, it } from 'node:test';
+import { beforeEach, describe, it } from 'node:test';
 import { ctx, type Handler, load, type TestContext } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
-import { MAX_IDLE_STOP_ATTEMPTS, stopDecision } from '../src/index.ts';
+import { MAX_IDLE_STOP_ATTEMPTS, resetModuleState, stopDecision } from '../src/index.ts';
 import { readRun, type Run, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, pauseRun, planSlices, resolveStall } from '../src/workflow.ts';
 import { commit, finding, green, review, sh, slice, tempRepo } from './helpers.ts';
+
+beforeEach(() => resetModuleState());
 
 describe('tool registration', () => {
   it('advertises each tool schema as JSON Schema, with the scope fix item verdicts as one shape per status', () => {
