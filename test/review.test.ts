@@ -1,18 +1,16 @@
-import './git-env.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { type Finding, readRun, REVIEW_DOMAINS, ticketPath, type Workspace } from '../src/run.ts';
 import { completeSlice, fixObservations, pathSkips, recordDecisions, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
 import { addFollowUp, applyReslice, approvePlan, carryObservations, nextAction, nextSlice, parseRetro, pauseRun, planFollowUp, planReslice, planSlices, recordRetro, reopenSlice, resolveBase, resolveStall, resumeRun, saveChecks, startRun } from '../src/workflow.ts';
-import { checkRuns, commit, countedCheck, finding, fixItems, green, greenWithObservation, newRun, noFixItems, review, roots, sh, slice, start, step, workspace } from './helpers.ts';
+import { checkRuns, commit, countedCheck, finding, fixItems, green, greenWithObservation, newRun, noFixItems, review, sh, slice, start, step, tempDir, workspace } from './helpers.ts';
 
 describe('slice loop gates', { concurrency: 4 }, () => {
   it('takes a slice from red checks through a blocking review to done', async () => {
-    const ws = workspace({ maxRounds: 2 });
+    using ws = workspace({ maxRounds: 2 });
     await newRun(ws, [slice('Feature')]);
 
     const started = await step(ws, run => nextSlice(ws, run));
@@ -64,7 +62,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('refuses checks on an empty slice and flags a fix round that committed nothing', async () => {
-    const ws = workspace({ maxRounds: 5 });
+    using ws = workspace({ maxRounds: 5 });
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     await assert.rejects(step(ws, run => runChecks(ws, run)), /Slice 01 has no commits past main/);
@@ -87,7 +85,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('starts each later slice from the slice below it and reviews only its own diff', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('First'), slice('Second', ['First'])]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -106,7 +104,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('stacks slice 01 on the pinned commit of a user-chosen base branch', async () => {
-    const ws = workspace();
+    using ws = workspace();
     sh(ws.root, 'switch', '-q', '-c', 'ext-950');
     commit(ws, 'ext.txt');
     const pinned = sh(ws.root, 'rev-parse', 'HEAD');
@@ -130,7 +128,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('refuses checks on a slice that fast-forwarded onto another branch', async () => {
-    const ws = workspace();
+    using ws = workspace();
     sh(ws.root, 'switch', '-q', '-c', 'ext-950');
     commit(ws, 'ext.txt');
     sh(ws.root, 'switch', '-q', 'main');
@@ -142,7 +140,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('lists the slice commits and changed files in the checks result and the numbered user decisions in the review data', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -158,7 +156,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('lists the later slices of the plan in the review data but not in the ticket', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [
       slice('First'),
       slice('Second', ['First'], { acceptance: ['Second works', 'Second logs'], whatToBuild: 'Build the second part.' }),
@@ -194,7 +192,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('leaves done later slices out of the review data of a reopened slice', async () => {
-    const ws = workspace({ maxRounds: 2 });
+    using ws = workspace({ maxRounds: 2 });
     await newRun(ws, [slice('First'), slice('Second', ['First']), slice('Third', ['Second'])]);
     for (const file of ['ok', 'second.txt', 'third.txt']) {
       await step(ws, run => nextSlice(ws, run));
@@ -210,7 +208,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('lists only the not-done later slices in the review data of a reopened slice', async () => {
-    const ws = workspace({ maxRounds: 2 });
+    using ws = workspace({ maxRounds: 2 });
     await newRun(ws, [slice('First'), slice('Second', ['First']), slice('Third', ['Second'])]);
     for (const file of ['ok', 'second.txt']) {
       await step(ws, run => nextSlice(ws, run));
@@ -228,7 +226,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('drops the stored check results whenever the checked commit stops being current', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -304,7 +302,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('fails checks that leave the working tree changed, and lists that as a fix item of the next review', async () => {
-    const ws = workspace({ checks: ['touch ok stray.txt'] });
+    using ws = workspace({ checks: ['touch ok stray.txt'] });
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'work.txt');
@@ -322,7 +320,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('refuses a check whose command is not found as an environment error, not a fix round', async () => {
-    const ws = workspace({ checks: ['factory-missing-tool --run'] });
+    using ws = workspace({ checks: ['factory-missing-tool --run'] });
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'work.txt');
@@ -333,17 +331,16 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     assert.equal(after?.fixPath, undefined);
     assert.equal(existsSync(join(ws.root, '.scratch', 'demo', 'fixes')), false);
 
-    const bin = mkdtempSync(join(tmpdir(), 'factory-bin-'));
-    roots.push(bin);
-    writeFileSync(join(bin, 'factory-missing-tool'), '#!/bin/sh\nexit 0\n');
-    chmodSync(join(bin, 'factory-missing-tool'), 0o755);
-    ws.config.checkPath = [bin];
+    using bin = tempDir('factory-bin-');
+    writeFileSync(join(bin.root, 'factory-missing-tool'), '#!/bin/sh\nexit 0\n');
+    chmodSync(join(bin.root, 'factory-missing-tool'), 0o755);
+    ws.config.checkPath = [bin.root];
     assert.equal((await step(ws, run => runChecks(ws, run))).passed, true);
   });
 
   it('refuses a wrapped command-not-found that exits with another code, in bash and dash wording', async () => {
     for (const line of ['sh: pnpm: command not found', 'sh: 1: pnpm: not found', '/bin/sh: line 1: pnpm: command not found']) {
-      const ws = workspace({ checks: [`printf '%s\\n' '${line}' >&2; exit 1`] });
+      using ws = workspace({ checks: [`printf '%s\\n' '${line}' >&2; exit 1`] });
       await newRun(ws, [slice('Feature')]);
       await step(ws, run => nextSlice(ws, run));
       commit(ws, 'work.txt');
@@ -353,7 +350,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('counts an ordinary failure that mentions "not found" as a fix round', async () => {
-    const ws = workspace({ checks: [`printf 'error: module not found\\n' >&2; exit 1`] });
+    using ws = workspace({ checks: [`printf 'error: module not found\\n' >&2; exit 1`] });
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'work.txt');
@@ -362,7 +359,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('reports a check that runs past its timeout', async () => {
-    const ws = workspace({ checks: ['sleep 5'], checkTimeoutMs: 100 });
+    using ws = workspace({ checks: ['sleep 5'], checkTimeoutMs: 100 });
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'work.txt');
@@ -372,7 +369,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('gates a run on the checks it started with; changed saved checks reach new runs only', async () => {
-    const ws = workspace({ checks: undefined });
+    using ws = workspace({ checks: undefined });
     await assert.rejects(start(ws), /Choose at least one check command/);
     await saveChecks(ws, ['test -f ok']);
     assert.equal(sh(ws.root, 'status', '--porcelain'), '');
@@ -386,7 +383,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('stalls when the fix budget is used, and each continue grants maxRounds more fixes', async () => {
-    const ws = workspace({ maxRounds: 1 });
+    using ws = workspace({ maxRounds: 1 });
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'work.txt');
@@ -413,7 +410,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('tells the user a stalled run asks on resume whether to raise the used-up fix budget', async () => {
-    const ws = workspace({ maxRounds: 1 });
+    using ws = workspace({ maxRounds: 1 });
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'work.txt');
@@ -429,7 +426,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('refuses a follow-up slice with the stall notice, on an interrupted stall and on a paused one', async () => {
-    const ws = workspace({ maxRounds: 1 });
+    using ws = workspace({ maxRounds: 1 });
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'work.txt');
@@ -444,14 +441,14 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('keeps the plain resume wording for a paused run that is not stalled', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => pauseRun(run, 'test'));
     assert.equal(nextAction(readRun(ws, 'demo')), 'The run is paused. The user resumes it with /factory resume demo.');
   });
 
   it('raises the budget by maxRounds, not by the used rounds, when a stalled run resumes', async () => {
-    const ws = workspace({ maxRounds: 1 });
+    using ws = workspace({ maxRounds: 1 });
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'work.txt');
@@ -467,7 +464,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
 
   it('invalidates a review when the working tree or HEAD changes during it', async () => {
     for (const change of ['untracked', 'commit'] as const) {
-      const ws = workspace();
+      using ws = workspace();
       await newRun(ws, [slice('Feature')]);
       await step(ws, run => nextSlice(ws, run));
       commit(ws, 'ok');
@@ -485,7 +482,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('refuses to complete a slice whose HEAD moved after the green review, and requires new checks', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -497,7 +494,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('discards an open review when a decision lands during it, and reopens review on the same commit', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -535,7 +532,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('keeps the last recorded blocking findings in the next review after a decision discards the review in between', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -556,7 +553,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('refuses to complete a slice when a decision lands after its green review, until a new review goes green', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -574,7 +571,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   const olderDecision = (ws: Workspace) => step(ws, run => void run.decisions.push('Decision an older factory recorded.'));
 
   it('reopens review on the green commit at completion when an older state file holds a decision newer than the green review', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -589,7 +586,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('opens a new review of the green commit without checks when an older state file holds a decision newer than the green review', async () => {
-    const again = workspace();
+    using again = workspace();
     await newRun(again, [slice('Feature')]);
     await step(again, run => nextSlice(again, run));
     commit(again, 'ok');
@@ -609,7 +606,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('discards a review at record time when an older state file holds a decision newer than it', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -626,7 +623,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('opens a new review on the green commit without checks when a decision lands after the green review', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -665,7 +662,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('still refuses a review of a green slice with no newer decision, and sends a moved HEAD back to checks', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -682,7 +679,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('sends a ready slice from an older state file back to checks when HEAD moved from the green commit', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -696,7 +693,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('leaves the slice untouched when a decision lands with no open or green review', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -708,7 +705,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('refuses a decision that names a done or unknown slice and records none of the batch', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('First'), slice('Second', ['First'])]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -725,7 +722,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('fixes observations the user chose from a green review in a tracked round that needs new checks and a new review', async () => {
-    const ws = workspace({ maxRounds: 2 });
+    using ws = workspace({ maxRounds: 2 });
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -762,7 +759,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('counts a fix round for observations toward the fix budget', async () => {
-    const ws = workspace({ maxRounds: 1 });
+    using ws = workspace({ maxRounds: 1 });
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'work.txt');
@@ -779,7 +776,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('fixes a bug the user found after a green review in a tracked round that needs new checks and a new review', async () => {
-    const ws = workspace({ maxRounds: 2 });
+    using ws = workspace({ maxRounds: 2 });
     await greenWithObservation(ws);
 
     const fixed = await step(ws, run => fixObservations(ws, run, { bug: '    at parse (src/p.ts:3): empty input crashes the parser.' }, 'Found while demoing.'));
@@ -797,7 +794,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('keeps the start of a long bug report in the fix file', async () => {
-    const ws = workspace({ maxRounds: 2 });
+    using ws = workspace({ maxRounds: 2 });
     await greenWithObservation(ws);
 
     const bug = `Saving a draft loses the title.\n${'log line\n'.repeat(600)}`;
@@ -808,7 +805,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('writes both the bug and the chosen observations into one fix file', async () => {
-    const ws = workspace({ maxRounds: 2 });
+    using ws = workspace({ maxRounds: 2 });
     await greenWithObservation(ws);
     const fixed = await step(ws, run => fixObservations(ws, run, { bug: 'Empty input crashes.', observations: ['thermo-naming'] }, 'Fix both now.'));
     const fix = readFileSync(fixed.fixPath, 'utf8');
@@ -818,7 +815,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('refuses a fix with neither a bug nor observations, and changes nothing', async () => {
-    const ws = workspace({ maxRounds: 2 });
+    using ws = workspace({ maxRounds: 2 });
     await greenWithObservation(ws);
     for (const request of [{}, { observations: [] }, { bug: '' }]) {
       await assert.rejects(step(ws, run => fixObservations(ws, run, request, 'tidy')), /factory_fix needs a bug, observation ids, or both/);
@@ -827,7 +824,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('refuses a bug fix on a slice with no green review', async () => {
-    const ws = workspace({ maxRounds: 2 });
+    using ws = workspace({ maxRounds: 2 });
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -835,7 +832,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('counts a fix round for a bug toward the fix budget', async () => {
-    const ws = workspace({ maxRounds: 1 });
+    using ws = workspace({ maxRounds: 1 });
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'work.txt');
@@ -852,7 +849,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('carries chosen observations and a note into a pending slice ticket, which its review data file shows, and leaves the active slice green', async () => {
-    const ws = workspace({ maxRounds: 2 });
+    using ws = workspace({ maxRounds: 2 });
     await newRun(ws, [slice('Feature'), slice('Second', ['Feature'])]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -879,7 +876,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('refuses a carry with nothing to carry, without a green review, with unknown observation ids, or to a slice that is not pending', async () => {
-    const ws = workspace({ maxRounds: 2 });
+    using ws = workspace({ maxRounds: 2 });
     await newRun(ws, [slice('Feature'), slice('Second', ['Feature']), slice('Third', ['Second'])]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -908,7 +905,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('queues carried work on the run for the end-of-run follow-up without changing any slice', async () => {
-    const ws = workspace({ maxRounds: 2 });
+    using ws = workspace({ maxRounds: 2 });
     await newRun(ws, [slice('Feature'), slice('Second', ['Feature'])]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -927,9 +924,8 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     assert.equal(nextAction(readRun(ws, 'demo')), 'Call factory_next to start the next slice.', 'a pending slice comes before the follow-up');
   });
 
-  /** A one-slice run whose slice is green with a thermo-naming observation, carried with a note to the end of the run. */
-  async function queuedRun() {
-    const ws = workspace({ maxRounds: 2 });
+  /** Starts a one-slice run in `ws` whose slice is green with a thermo-naming observation, carried with a note to the end of the run. */
+  async function queuedRun(ws: Workspace) {
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -939,13 +935,13 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     await step(ws, run => recordReview(ws, run));
     await step(ws, run => carryObservations(ws, run, { note: 'Also log the parse time.', to: 'end' }));
     await step(ws, run => carryObservations(ws, run, { observations: ['thermo-naming'], to: 'end' }));
-    return ws;
   }
 
   const followUp = { acceptance: ['logged'], estimateTokens: 500, seams: ['cli'], title: 'Polish', whatToBuild: 'Polish' };
 
   it('takes every waiting item into the next follow-up slice ticket and empties the queue', async () => {
-    const ws = await queuedRun();
+    using ws = workspace({ maxRounds: 2 });
+    await queuedRun(ws);
     await step(ws, run => completeSlice(ws, run));
     const added = await step(ws, run => addFollowUp(ws, run, followUp));
     const run = readRun(ws, 'demo');
@@ -956,7 +952,8 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('points nextAction to factory_follow_up only while items wait and no slice is pending', async () => {
-    const ws = await queuedRun();
+    using ws = workspace({ maxRounds: 2 });
+    await queuedRun(ws);
     assert.match(nextAction(readRun(ws, 'demo')), /^Call factory_complete_slice for slice 01/);
     await step(ws, run => completeSlice(ws, run));
     assert.equal(
@@ -968,7 +965,8 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('refuses the retro while items wait, and runs it once the follow-up slice took them', async () => {
-    const ws = await queuedRun();
+    using ws = workspace({ maxRounds: 2 });
+    await queuedRun(ws);
     assert.throws(() => parseRetro(ws, readRun(ws, 'demo'), []), (error: Error) => /Finish the pending slices first/.test(error.message) && !/Call factory_follow_up/.test(error.message));
     await step(ws, run => completeSlice(ws, run));
     assert.throws(() => parseRetro(ws, readRun(ws, 'demo'), []), /Carried items wait for the end of the run \(2\)\. Call factory_follow_up for them/);
@@ -983,7 +981,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('refuses the retro on a stalled run with waiting items by pointing to /factory resume, not factory_follow_up', async () => {
-    const ws = workspace({ maxRounds: 1 });
+    using ws = workspace({ maxRounds: 1 });
     await newRun(ws, [slice('Feature'), slice('Next', ['Feature'])]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -1008,7 +1006,8 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('refuses the retro on a paused, finished run with waiting items by pointing to /factory resume, not factory_follow_up', async () => {
-    const ws = await queuedRun();
+    using ws = workspace({ maxRounds: 2 });
+    await queuedRun(ws);
     await step(ws, run => completeSlice(ws, run));
     await step(ws, run => pauseRun(run, 'test'));
     assert.throws(
@@ -1018,7 +1017,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('keeps a run with waiting items from settling after the retro slice', async () => {
-    const ws = workspace({ maxRounds: 2 });
+    using ws = workspace({ maxRounds: 2 });
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -1042,7 +1041,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   it('keeps carried work through a re-slice: the first child takes the split slice items, later slices keep theirs', async () => {
-    const ws = workspace({ maxRounds: 2 });
+    using ws = workspace({ maxRounds: 2 });
     await newRun(ws, [slice('Feature'), slice('Big', ['Feature']), slice('Last', ['Big'])]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -1063,25 +1062,25 @@ describe('slice loop gates', { concurrency: 4 }, () => {
 });
 
 describe('review submissions', { concurrency: 4 }, () => {
-  /** Opens a review of a slice that commits `ok`. By default it keeps the path-ruled domains, so every domain reviews. */
+  /** Opens a review in `ws` of a slice that commits `ok`. By default it keeps the path-ruled domains, so every domain reviews. */
   async function openReview(
+    ws: Workspace,
     decisions: string[] = [],
     skip: { domain: Finding['domain']; reason: string }[] = [],
     input = slice('Feature'),
     keep: Finding['domain'][] = (['react-ts', 'test-validity', 'devops'] as const).filter(domain => !skip.some(entry => entry.domain === domain)),
   ) {
-    const ws = workspace();
     await newRun(ws, [input]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
     if (decisions.length > 0) await step(ws, run => recordDecisions(ws, run, decisions));
     await step(ws, run => runChecks(ws, run));
-    const opened = await step(ws, run => startReview(ws, run, skip, keep));
-    return { ws, ...opened };
+    return step(ws, run => startReview(ws, run, skip, keep));
   }
 
   it('checks domain and id prefix separately, and lets the validator only select', async () => {
-    const { reviewId, ws } = await openReview();
+    using ws = workspace();
+    const { reviewId } = await openReview(ws);
     const submit = (domain: Finding['domain'], findings: Finding[]) =>
       step(ws, run => submitDomain(ws, run, { agentId: `r-${domain}`, domain, findings, reviewId, ...noFixItems(domain) }));
 
@@ -1106,7 +1105,8 @@ describe('review submissions', { concurrency: 4 }, () => {
   });
 
   it('lets a reviewer replace its findings any number of times until validation', async () => {
-    const { findingsDir, reviewId, ws } = await openReview();
+    using ws = workspace();
+    const { findingsDir, reviewId } = await openReview(ws);
     const submit = (domain: Finding['domain'], findings: Finding[]) =>
       step(ws, run => submitDomain(ws, run, { agentId: `r-${domain}`, domain, findings, reviewId, ...noFixItems(domain) }));
     for (const domain of REVIEW_DOMAINS) await submit(domain, []);
@@ -1129,7 +1129,7 @@ describe('review submissions', { concurrency: 4 }, () => {
   });
 
   it('accepts a finding only on a changed path and inside a new-side hunk', async () => {
-    const ws = workspace();
+    using ws = workspace();
     commit(ws, 'long.txt', Array.from({ length: 20 }, (_, index) => `line ${index + 1}\n`).join(''));
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
@@ -1184,7 +1184,7 @@ describe('review submissions', { concurrency: 4 }, () => {
   });
 
   it('keeps react-ts for a JavaScript file that imports React at the checked commit, not for plain or deleted ones', async () => {
-    const ws = workspace();
+    using ws = workspace();
     commit(ws, 'gone.js', "import React from 'react';\n");
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
@@ -1203,7 +1203,8 @@ describe('review submissions', { concurrency: 4 }, () => {
   });
 
   it('skips path-ruled-out domains unless kept, alongside the orchestrator skips', async () => {
-    const { domains, pathSkipped, ws } = await openReview([], [{ domain: 'performance', reason: 'no hot path' }], slice('Feature'), []);
+    using ws = workspace();
+    const { domains, pathSkipped } = await openReview(ws, [], [{ domain: 'performance', reason: 'no hot path' }], slice('Feature'), []);
     assert.deepEqual(pathSkipped.map(entry => entry.domain), ['react-ts', 'test-validity', 'devops']);
     assert.deepEqual(domains, ['security', 'testing', 'holistic', 'thermo', 'bug', 'scope', 'comments']);
     await assert.rejects(
@@ -1211,7 +1212,7 @@ describe('review submissions', { concurrency: 4 }, () => {
       /skipped the devops domain/,
     );
 
-    const kept = workspace();
+    using kept = workspace();
     await newRun(kept, [slice('Feature')]);
     await step(kept, run => nextSlice(kept, run));
     commit(kept, 'ok');
@@ -1230,7 +1231,8 @@ describe('review submissions', { concurrency: 4 }, () => {
   });
 
   it('lets the validator correct its verdict once, so a confirmed blocking finding blocks', async () => {
-    const { reviewId, ws } = await openReview();
+    using ws = workspace();
+    const { reviewId } = await openReview(ws);
     for (const domain of REVIEW_DOMAINS) {
       const findings = domain === 'testing' ? [finding('testing', 'high', 'mutation-survives')] : [];
       await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings, reviewId, ...noFixItems(domain) }));
@@ -1250,14 +1252,16 @@ describe('review submissions', { concurrency: 4 }, () => {
   });
 
   it('refuses a validation after the review is recorded', async () => {
-    const { reviewId, ws } = await openReview();
+    using ws = workspace();
+    const { reviewId } = await openReview(ws);
     await review(ws, reviewId, []);
     assert.ok((await step(ws, run => recordReview(ws, run))).green);
     await assert.rejects(step(ws, run => submitValidation(ws, run, { agentId: 'validator', dropped: [], keep: [], reviewId })), /already recorded/);
   });
 
   it('blocks on findings that break a recorded decision', async () => {
-    const { reviewId, ws } = await openReview(['The shared field is a non-optional record.']);
+    using ws = workspace();
+    const { reviewId } = await openReview(ws, ['The shared field is a non-optional record.']);
     const submit = (domain: Finding['domain'], findings: Finding[]) =>
       step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings, reviewId, ...noFixItems(domain) }));
     const declared = { ...finding('react-ts', 'high', 'undefined-field'), decision: 1 };
@@ -1294,7 +1298,7 @@ describe('review submissions', { concurrency: 4 }, () => {
   });
 
   it('skips the domains the orchestrator leaves out, but never the required ones', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -1322,12 +1326,14 @@ describe('review submissions', { concurrency: 4 }, () => {
 
   it('lets a slice without test seams skip the testing domain', async () => {
     const docs = slice('Docs', [], { noTestReason: 'docs only', seams: [] });
-    const { domains } = await openReview([], [{ domain: 'testing', reason: 'docs only' }, { domain: 'test-validity', reason: 'docs only' }], docs);
+    using ws = workspace();
+    const { domains } = await openReview(ws, [], [{ domain: 'testing', reason: 'docs only' }, { domain: 'test-validity', reason: 'docs only' }], docs);
     assert.ok(!domains.includes('testing'));
   });
 
   it('merges duplicates across domains into the most severe kept finding', async () => {
-    const { reviewId, ws } = await openReview();
+    using ws = workspace();
+    const { reviewId } = await openReview(ws);
     const same = { path: 'ok', problem: 'TS5097', title: 'ts-extension-import' };
     for (const domain of REVIEW_DOMAINS) {
       const findings =
@@ -1362,7 +1368,8 @@ describe('review submissions', { concurrency: 4 }, () => {
   });
 
   it('turns downgraded blocking findings into non-blocking observations', async () => {
-    const { reviewId, ws } = await openReview();
+    using ws = workspace();
+    const { reviewId } = await openReview(ws);
     for (const domain of REVIEW_DOMAINS) {
       const findings =
         domain === 'thermo'
@@ -1386,7 +1393,8 @@ describe('review submissions', { concurrency: 4 }, () => {
   });
 
   it('rejects findings submitted after validation', async () => {
-    const { reviewId, ws } = await openReview();
+    using ws = workspace();
+    const { reviewId } = await openReview(ws);
     for (const domain of REVIEW_DOMAINS.filter(domain => domain !== 'bug')) {
       await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings: [], reviewId, ...noFixItems(domain) }));
     }
@@ -1399,7 +1407,8 @@ describe('review submissions', { concurrency: 4 }, () => {
   });
 
   it('rejects a findings file edited after it was submitted', async () => {
-    const { findingsDir, reviewId, ws } = await openReview();
+    using ws = workspace();
+    const { findingsDir, reviewId } = await openReview(ws);
     for (const domain of REVIEW_DOMAINS) {
       await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings: domain === 'security' ? [finding('security', 'critical', 'leak')] : [], reviewId, ...noFixItems(domain) }));
     }

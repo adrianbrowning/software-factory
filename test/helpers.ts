@@ -1,10 +1,8 @@
-import './git-env.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { after } from 'node:test';
 import type { FactoryConfig } from '../src/config.ts';
 import { type Finding, type FixVerdict, readRun, REVIEW_DOMAINS, type SliceInput, type Workspace, withRun } from '../src/run.ts';
 import { recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
@@ -28,22 +26,28 @@ export function initRepo(root: string, files: Record<string, string>) {
   return root;
 }
 
-/** A temp git repository with a base commit of `files`, removed when the `using` scope that holds it ends. */
-export function tempRepo(prefix: string, files: Record<string, string>) {
-  const root = initRepo(realpathSync(mkdtempSync(join(tmpdir(), prefix))), files);
-  return { root, [Symbol.dispose]: () => rmSync(root, { force: true, recursive: true }) };
+/** A temp directory, removed when the `using` scope that holds it ends. */
+export function tempDir(prefix: string) {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
+  // Retries cover ENOTEMPTY when the OS (macOS writes .DS_Store) adds a file while the tree is being removed.
+  return { root, [Symbol.dispose]: () => rmSync(root, { force: true, maxRetries: 3, recursive: true }) };
 }
 
-/** Temp directories removed when the test file ends. */
-export const roots: string[] = [];
-after(() => {
-  for (const root of roots) rmSync(root, { force: true, recursive: true });
-});
+/** A temp git repository with a base commit of `files`, removed when the `using` scope that holds it ends. */
+export function tempRepo(prefix: string, files: Record<string, string>) {
+  const repo = tempDir(prefix);
+  try {
+    initRepo(repo.root, files);
+  } catch (error) {
+    repo[Symbol.dispose]();
+    throw error;
+  }
+  return repo;
+}
 
-/** A workspace on a temp repository, removed when the `using` scope that holds it ends, or else when the test file ends. */
+/** A workspace on a temp repository, removed when the `using` scope that holds it ends. */
 export function workspace(overrides: Partial<FactoryConfig> = {}): Workspace & Disposable {
   const repo = tempRepo('factory-', { 'README.md': 'base\n' });
-  roots.push(repo.root);
   return {
     ...repo,
     config: {

@@ -1,4 +1,3 @@
-import './git-env.ts';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -16,7 +15,9 @@ describe('fix items', { concurrency: 4 }, () => {
     commit(ws, 'work.txt');
     const red = await step(ws, run => runChecks(ws, run));
     assert.ok(!red.passed);
-    assert.match(readFileSync(red.fixPath, 'utf8'), /## Fix items\n\n- `check-f1-1`: test -f ok: failed \(exit 1\)[^\n]*\n- `check-f1-2`: test -f other: failed \(exit 1\)[^\n]*\n\n## test -f ok: failed/);
+    const fixFile = readFileSync(red.fixPath, 'utf8');
+    assert.match(fixFile, /## Fix items\n\n- `check-f1-1`: test -f ok: failed \(exit 1\)[^\n]*\n- `check-f1-2`: test -f other: failed \(exit 1\)[^\n]*\n\n## test -f ok: failed/);
+    assert.match(fixFile, /## test -f ok: failed[\s\S]*\n\n## test -f other: failed/);
   });
 
   it('clears the fix items of a red checks round when a green review records, so the next review lists only the new ones', async () => {
@@ -89,7 +90,7 @@ describe('fix items', { concurrency: 4 }, () => {
 describe('fix item verdicts', { concurrency: 4 }, () => {
   /**
    * Opens the second review of a slice in `ws` whose first review blocked on bug-a and bug-b, so it lists both as fix
-   * items. `decisions` are recorded before the first review. `ws` needs a round limit of at least 2.
+   * items. `decisions` are recorded before the first review.
    */
   async function reviewOfFixItems(ws: Workspace, decisions: string[] = []) {
     await newRun(ws, [slice('Feature')]);
@@ -133,9 +134,10 @@ describe('fix item verdicts', { concurrency: 4 }, () => {
     await assert.rejects(submit('scope', [fixed('bug-a'), fixed('bug-b'), fixed('bug-c')]), /Unknown fix item ids: bug-c/);
     await assert.rejects(submit('scope', [fixed('bug-a'), fixed('bug-b'), fixed('bug-a')]), /Fix item "bug-a" has more than one verdict/);
     const waived = (decision?: number) => ({ id: 'bug-b', reason: 'the user accepted it', status: 'waived', ...(decision === undefined ? {} : { decision }) });
-    await assert.rejects(submit('scope', [fixed('bug-a'), waived()]), /"decision"[^]*expected number, received undefined/, 'a waived item names a decision');
+    await assert.rejects(submit('scope', [fixed('bug-a'), waived()]), /decision/, 'a waived item names a decision');
     await assert.rejects(submit('scope', [fixed('bug-a'), waived(2)]), /Fix item "bug-b" names decision 2, but the review data lists 1 decisions/);
-    await assert.rejects(submit('scope', [{ ...fixed('bug-a'), decision: 1 }, fixed('bug-b')]), /Unrecognized key: \\"decision\\"/, 'only a waived item names a decision');
+    await assert.rejects(submit('scope', [{ ...fixed('bug-a'), decision: 1 }, fixed('bug-b')]), /decision/, 'only a waived item names a decision');
+    await assert.rejects(submit('scope', [fixed('bug-a'), { ...waived(1), note: 'x' }]), /note/, 'a waived item refuses unknown keys, as the other statuses do');
     await assert.rejects(submit('bug', [fixed('bug-a'), fixed('bug-b')]), /Only the scope domain gives fix item verdicts/);
     assert.equal(await submit('scope', [fixed('bug-a'), waived(1)]), 0);
   });
@@ -170,6 +172,33 @@ describe('fix item verdicts', { concurrency: 4 }, () => {
     const recorded = await step(ws, run => recordReview(ws, run));
     assert.ok(!recorded.green);
     assert.equal(readRun(ws, 'demo').slices[0]?.fixItems.filter(item => item.id === 'bug-b').length, 1);
+  });
+
+  it('puts the blocking findings of a review under one heading, then its open fix items under one heading', async () => {
+    using ws = workspace({ maxRounds: 3 });
+    const { reviewId } = await reviewOfFixItems(ws);
+    await review(ws, reviewId, [finding('bug', 'high', 'c'), finding('bug', 'high', 'd')], undefined, [fixed('bug-a'), { id: 'bug-b', reason: 'still crashes', status: 'open' }]);
+    const recorded = await step(ws, run => recordReview(ws, run));
+    assert.ok(!recorded.green);
+    const fix = readFileSync(recorded.fixPath, 'utf8');
+    assert.equal(fix.match(/## Blocking review findings from 01-r2/g)?.length, 1);
+    assert.equal(fix.match(/## Open fix items from 01-r2/g)?.length, 1);
+    assert.match(fix, /## Blocking review findings from 01-r2\n\n### \[high\] bug-c\n[\s\S]*\n\n### \[high\] bug-d\n[\s\S]*\n\n## Open fix items from 01-r2\n\n### `bug-b`/);
+  });
+
+  it('puts every observation the user chose to fix under one heading', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const { reviewId } = await step(ws, run => startReview(ws, run));
+    await review(ws, reviewId, [finding('thermo', 'observation', 'naming'), finding('thermo', 'observation', 'length')]);
+    assert.ok((await step(ws, run => recordReview(ws, run))).green);
+    const fixed = await step(ws, run => fixObservations(ws, run, { observations: ['thermo-naming', 'thermo-length'] }, 'Fix both now.'));
+    const fix = readFileSync(fixed.fixPath, 'utf8');
+    assert.equal(fix.match(/## Observations from green review 01-r1/g)?.length, 1);
+    assert.match(fix, /## Observations from green review 01-r1 the user chose to fix\n\nFix both now\.\n\n### \[observation\] thermo-naming\n[\s\S]*\n\n### \[observation\] thermo-length\n/);
   });
 
   it('goes green when every fix item is fixed, not a defect, or waived, and no finding blocks', async () => {

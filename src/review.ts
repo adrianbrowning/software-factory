@@ -633,10 +633,15 @@ function countBy(findings: Finding[], key: 'domain' | 'severity') {
     .join(' ');
 }
 
+/** Where a finding points: `path:line`, or `path` when it names no line. */
+function findingLocation(finding: Finding) {
+  return `${finding.path}${finding.line === undefined ? '' : `:${finding.line}`}`;
+}
+
 /** A finding as a markdown section under a `heading` of the given level (`##` by default). */
 export function renderFinding(finding: Finding, decisions: string[], heading = '##') {
   const decision = finding.decision === undefined ? '' : `\n- Breaks decision ${finding.decision}: ${decisions[finding.decision - 1] ?? ''}`;
-  return `${heading} [${finding.severity}] ${finding.id}\n\n- Location: ${finding.path}${finding.line === undefined ? '' : `:${finding.line}`}\n- Title: ${evidence(finding.title, 500)}\n- Problem: ${evidence(finding.problem, 2_000)}\n- Fix: ${evidence(finding.fix, 2_000)}\n- Fix prompt: ${evidence(finding.fix_prompt, 2_000)}${decision}`;
+  return `${heading} [${finding.severity}] ${finding.id}\n\n- Location: ${findingLocation(finding)}\n- Title: ${evidence(finding.title, 500)}\n- Problem: ${evidence(finding.problem, 2_000)}\n- Fix: ${evidence(finding.fix, 2_000)}\n- Fix prompt: ${evidence(finding.fix_prompt, 2_000)}${decision}`;
 }
 
 export async function recordReview(ws: Workspace, run: Run) {
@@ -700,7 +705,7 @@ function renderOpenItem(item: FixItem, verdict: FixVerdict | undefined) {
 
 /** A finding as a fix record in `group`: its id and summary `[severity] path:line: title` as the fix item. */
 function findingRecord(finding: Finding, group: string, decisions: string[]): FixRecord {
-  const summary = `[${finding.severity}] ${finding.path}${finding.line === undefined ? '' : `:${finding.line}`}: ${evidenceLine(finding.title, 500)}`;
+  const summary = `[${finding.severity}] ${findingLocation(finding)}: ${evidenceLine(finding.title, 500)}`;
   return { group, item: { id: finding.id, summary }, section: renderFinding(finding, decisions, '###') };
 }
 

@@ -1,26 +1,27 @@
-import './git-env.ts';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { homedir, tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { after, describe, it } from 'node:test';
+import { describe, it } from 'node:test';
 import { checksPrompt, detectChecks, loadConfig, parseChecks, runCommands, suggestChecks } from '../src/config.ts';
 import { evidence, evidenceLine } from '../src/evidence.ts';
 import { runShell } from '../src/exec.ts';
+import { tempDir, workspace } from './helpers.ts';
 
-const dirs: string[] = [];
-after(() => {
-  for (const dir of dirs) rmSync(dir, { force: true, recursive: true });
-});
-
-function dir(files: Record<string, string> = {}) {
-  const root = mkdtempSync(join(tmpdir(), 'factory-unit-'));
-  dirs.push(root);
+/** Writes `files` (path → content) under `root` and returns `root`. */
+function writeFiles(root: string, files: Record<string, string>) {
   for (const [name, content] of Object.entries(files)) {
     mkdirSync(join(root, name, '..'), { recursive: true });
     writeFileSync(join(root, name), content);
   }
   return root;
+}
+
+/** A temp dir holding `files`, removed when the `using` scope that holds it ends. */
+function dir(files: Record<string, string> = {}) {
+  const temp = tempDir('factory-unit-');
+  writeFiles(temp.root, files);
+  return temp;
 }
 
 const scripts = (names: string[], extra: Record<string, unknown> = {}) =>
@@ -35,10 +36,24 @@ function alive(pid: number) {
   }
 }
 
+describe('test temp dirs', () => {
+  it('removes a temp dir and a workspace repo when the using scope that holds them ends', () => {
+    let roots: string[];
+    {
+      using dir = tempDir('factory-unit-');
+      using ws = workspace();
+      roots = [dir.root, ws.root];
+      assert.ok(roots.every(root => existsSync(root)));
+    }
+    assert.deepEqual(roots.filter(root => existsSync(root)), []);
+  });
+});
+
 describe('runShell', () => {
   // A real child process: the process-group kill is the behavior under test, so the timeout uses the real clock.
   it('kills the whole process group on timeout', async () => {
-    const root = dir();
+    using temp = dir();
+    const { root } = temp;
     const result = await runShell(`sleep 30 & echo $! > ${join(root, 'pid')}; wait`, root, 200);
     assert.equal(result.timedOut, true);
     assert.equal(alive(Number(readFileSync(join(root, 'pid'), 'utf8'))), false);
@@ -46,7 +61,8 @@ describe('runShell', () => {
 
   it('stops a running command when the signal aborts', async () => {
     const controller = new AbortController();
-    const pending = runShell('sleep 30', dir(), 60_000, controller.signal);
+    using temp = dir();
+    const pending = runShell('sleep 30', temp.root, 60_000, controller.signal);
     controller.abort();
     const result = await pending;
     assert.notEqual(result.exitCode, 0);
@@ -54,48 +70,55 @@ describe('runShell', () => {
   });
 
   it('keeps the tail of output past the capture limit', async () => {
-    const result = await runShell(`head -c 1500000 /dev/zero | tr '\\0' a; echo END`, dir(), 10_000);
+    using temp = dir();
+    const result = await runShell(`head -c 1500000 /dev/zero | tr '\\0' a; echo END`, temp.root, 10_000);
     assert.ok(result.stdout.endsWith('END\n'));
     assert.ok(Buffer.byteLength(result.stdout) <= 1_000_000);
   });
 
   it('reports a missing working directory as exit 127', async () => {
-    const result = await runShell('true', join(dir(), 'missing'), 1_000);
+    using temp = dir();
+    const result = await runShell('true', join(temp.root, 'missing'), 1_000);
     assert.equal(result.exitCode, 127);
   });
 });
 
 describe('loadConfig', () => {
   it('detects lint, typecheck and test in that order with the declared package manager', () => {
-    const root = dir({ 'package.json': scripts(['test', 'build', 'lint', 'typecheck'], { packageManager: 'pnpm@10.0.0' }) });
-    assert.deepEqual(detectChecks(root), ['pnpm run lint', 'pnpm run typecheck', 'pnpm run test']);
+    using temp = dir({ 'package.json': scripts(['test', 'build', 'lint', 'typecheck'], { packageManager: 'pnpm@10.0.0' }) });
+    assert.deepEqual(detectChecks(temp.root), ['pnpm run lint', 'pnpm run typecheck', 'pnpm run test']);
   });
 
   it('falls back to the lockfile, then npm', () => {
-    assert.deepEqual(detectChecks(dir({ 'package.json': scripts(['test']), 'yarn.lock': '' })), ['yarn run test']);
-    assert.deepEqual(detectChecks(dir({ 'bun.lock': '', 'package.json': scripts(['test']) })), ['bun run test']);
-    assert.deepEqual(detectChecks(dir({ 'package.json': scripts(['test']) })), ['npm run test']);
+    using yarn = dir({ 'package.json': scripts(['test']), 'yarn.lock': '' });
+    using bun = dir({ 'bun.lock': '', 'package.json': scripts(['test']) });
+    using npm = dir({ 'package.json': scripts(['test']) });
+    assert.deepEqual(detectChecks(yarn.root), ['yarn run test']);
+    assert.deepEqual(detectChecks(bun.root), ['bun run test']);
+    assert.deepEqual(detectChecks(npm.root), ['npm run test']);
   });
 
   it('rejects invalid and unknown keys, naming the file', () => {
-    const config = (value: unknown) => dir({ '.omp/factory.json': JSON.stringify(value), 'package.json': scripts(['test']) });
+    using temp = dir({ 'package.json': scripts(['test']) });
+    const config = (value: unknown) => writeFiles(temp.root, { '.omp/factory.json': JSON.stringify(value) });
     assert.throws(() => loadConfig(config({ maxRounds: 0 })), /factory\.json[\s\S]*maxRounds/);
     assert.throws(() => loadConfig(config({ checks: [] })), /factory\.json[\s\S]*checks/);
     assert.throws(() => loadConfig(config({ maxRound: 3 })), /factory\.json[\s\S]*maxRound/);
     assert.throws(() => loadConfig(config(null)), /factory\.json/);
-    assert.throws(() => loadConfig(dir({ '.omp/factory.json': '{ nope', 'package.json': scripts(['test']) })), /factory\.json: invalid JSON/);
+    assert.throws(() => loadConfig(writeFiles(temp.root, { '.omp/factory.json': '{ nope' })), /factory\.json: invalid JSON/);
     assert.throws(() => loadConfig(config({ scratchDir: '../outside' })), /scratchDir/);
   });
 
   it('expands ~/ in checkPath and rejects relative entries', () => {
-    const config = (value: unknown) => dir({ '.omp/factory.json': JSON.stringify(value), 'package.json': scripts(['test']) });
+    using temp = dir({ 'package.json': scripts(['test']) });
+    const config = (value: unknown) => writeFiles(temp.root, { '.omp/factory.json': JSON.stringify(value) });
     assert.deepEqual(loadConfig(config({ checkPath: ['~/Library/pnpm/bin', '/opt/bin'] })).checkPath, [join(homedir(), 'Library/pnpm/bin'), '/opt/bin']);
     assert.throws(() => loadConfig(config({ checkPath: ['node_modules/.bin'] })), /factory\.json: "checkPath" entry "node_modules\/\.bin"/);
   });
 
   it('normalizes scratchDir', () => {
-    const root = dir({ '.omp/factory.json': JSON.stringify({ scratchDir: './runs/' }), 'package.json': scripts(['test']) });
-    assert.equal(loadConfig(root).scratchDir, 'runs');
+    using temp = dir({ '.omp/factory.json': JSON.stringify({ scratchDir: './runs/' }), 'package.json': scripts(['test']) });
+    assert.equal(loadConfig(temp.root).scratchDir, 'runs');
   });
 });
 
@@ -136,11 +159,11 @@ describe('check setup suggestions', () => {
   });
 
   it('chooses lint/typecheck/test and offers other check scripts and CI commands not already covered', () => {
-    const root = dir({
+    using temp = dir({
       '.github/workflows/build.yml': workflow,
       'package.json': scripts(['lint', 'test', 'test:watch', 'lint:fix', 'check:build', 'dev'], { packageManager: 'pnpm@10.0.0' }),
     });
-    assert.deepEqual(suggestChecks(root, {}), {
+    assert.deepEqual(suggestChecks(temp.root, {}), {
       chosen: ['pnpm run lint', 'pnpm run test'],
       scripts: ['pnpm run check:build'],
       workflows: ['pnpm exec playwright test --project=chromium', 'node scripts/verify.js --strict'],
@@ -148,8 +171,9 @@ describe('check setup suggestions', () => {
   });
 
   it('chooses the configured checks, and works with no package.json', () => {
-    assert.deepEqual(suggestChecks(dir(), { checks: ['make test'] }), { chosen: ['make test'], scripts: [], workflows: [] });
-    assert.deepEqual(suggestChecks(dir(), {}), { chosen: [], scripts: [], workflows: [] });
+    using temp = dir();
+    assert.deepEqual(suggestChecks(temp.root, { checks: ['make test'] }), { chosen: ['make test'], scripts: [], workflows: [] });
+    assert.deepEqual(suggestChecks(temp.root, {}), { chosen: [], scripts: [], workflows: [] });
   });
 
   it('runs the chosen lines and ignores the commented suggestions until uncommented', () => {
