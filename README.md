@@ -310,11 +310,15 @@ user or plugin agent named `scout`, which replaces omp's bundled `scout`, is rou
   configured and the live selection, and the `--model`/`--thinking` flags to relaunch with. The factory never switches
   the session model. Without an `orchestrator` entry nothing is checked.
 - Each factory child (`factory-implementer`, `factory-reviewer`, `factory-review-validator`, spawned by `task` or
-  eval `agent()`) and each routed `scout` records, from inside its own session on its first turn, the model and
-  thinking level omp actually runs it on, with its agent id, name and role. A child that omp ran on a configured
-  fallback is recorded with the fallback. Each session is recorded once, and only when the run's spawn hook routed
-  its spawn: a direct child of the main session, and a scout only when it was spawned while the run was in intake or
-  running. A child spawned before the run started, or a scout spawned while it was paused, is not recorded later.
+  eval `agent()`) and each `scout` records, from inside its own session when its first turn ends, the model and
+  thinking level omp actually runs it on, with its session id, agent id, name and role. A child that omp ran on a
+  configured fallback is recorded with the fallback. omp's spawn event names no child, so the record states what
+  actually ran, not whether the spawn hook routed it; compare it with the run's snapshot model in `factory_status` to
+  see a mismatch. A child is recorded when the main session that started or resumed the run spawned it and its first
+  turn ends while this omp process remembers the run, whatever the run's status: a scout spawned while the run is
+  paused, or a child whose first turn ends after the run is done, is recorded too. A child whose first turn ended
+  before the run started, or outside any run or git repo, is not recorded. Each session is recorded once, checked
+  against the run's stored records by session id.
   `factory_status` lists the records under each slice's `agents`, and those from when no slice was active (such as an
   intake scout) under `agentsOutsideSlices`.
 

@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from '@oh-my-pi/pi-coding-agent';
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { auditChild, IMPLEMENTER, noteRoutedSpawn, REVIEWER, SPAWN_ROLES, VALIDATOR } from './agents.ts';
+import { auditChild, IMPLEMENTER, REVIEWER, SPAWN_ROLES, VALIDATOR } from './agents.ts';
 import { CONFIG_PATH, checksPrompt, describeModels, loadConfig, parseChecks, requireAvailableModels, type RoleModels, suggestChecks } from './config.ts';
 import { evidence, evidenceHead } from './evidence.ts';
 import {
@@ -945,7 +945,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
   }
 
   pi.on('turn_end', async (_event, ctx) => {
-    await auditChild(ctx, pi.getThinkingLevel(), rootOf);
+    await auditChild(ctx, pi.getThinkingLevel(), await childRun(ctx));
     await trackImplementer(ctx, false);
   });
   pi.on('auto_compaction_start', async (_event, ctx) => trackImplementer(ctx, true));
@@ -957,7 +957,6 @@ export default function softwareFactory(pi: ExtensionAPI) {
   // on the returned pattern does not reach the child's thinking level. Routing never reloads factory.json: it finds the
   // run through the workspace remembered when the run started or resumed. A cwd outside any git repo has no run, so it
   // goes unrouted. When the run state cannot be read, a scout spawn goes unrouted and a factory-role spawn is blocked.
-  // Each routed spawn is noted for the audit, which records exactly the children it routed.
   pi.on('before_subagent_spawn', async (event, ctx) => {
     const role = ctx.agent.kind === 'main' ? SPAWN_ROLES[event.agent] : undefined;
     if (role === undefined) return;
@@ -978,7 +977,6 @@ export default function softwareFactory(pi: ExtensionAPI) {
           };
         }
         if (role === 'implementer') startImplementerSession(active.ws, run);
-        noteRoutedSpawn(ctx.agent.id, event.agent, active);
         if (entry === undefined) return;
         return { model: [entry.model, ...(entry.fallbacks ?? [])], note: `Software factory: models.${role} from the run snapshot.` };
       });

@@ -218,7 +218,7 @@ function legacySlice({ checkedSha, checkResults, greenDecisions, greenSha, ...sl
 }
 
 /**
- * What a spawned factory agent (or a routed scout) actually ran, recorded from inside its session on its first turn:
+ * What a factory agent or scout spawned by the run's main session actually ran, routed or not, recorded from inside its session:
  * the live model and thinking level (`unset` when the session has none), so a fallback model shows. `slice` is the
  * slice active then; a scout during intake has none.
  */
@@ -234,7 +234,7 @@ const agentRecordSchema = z.object({
 export type AgentRecord = z.infer<typeof agentRecordSchema>;
 
 const runSchema = z.object({
-  /** One record per spawned factory agent session and routed scout session. Empty in runs from before it was kept. */
+  /** One record per factory agent or scout session the run's main session spawned. Empty in runs from before it was kept. */
   agents: z.array(agentRecordSchema).default([]),
   baseRef: text,
   /** Commit `baseRef` pointed at when the plan was approved; slice 01 branches from it. */

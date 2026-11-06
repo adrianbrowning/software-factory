@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import type { ExtensionAPI } from '@oh-my-pi/pi-coding-agent';
 import { loadConfig } from '../src/config.ts';
+import type * as agents from '../src/agents.ts';
 import softwareFactory, { MAX_IDLE_STOP_ATTEMPTS, stopDecision } from '../src/index.ts';
 import { readRun, type Run, statePath, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
@@ -618,7 +619,7 @@ describe('model routing', () => {
       children += 1;
       const childHandlers = new Map<string, Handler>();
       load([], childHandlers, new Map(), () => thinking);
-      // Session ids are unique across repos, as the audit's handled set is process-wide.
+      // Session ids are unique across repos, so no record from another test's run can match.
       const sessionId = `child-session-${children}@${repo.root}`;
       const context = {
         agent: { depth: 1, id: `${children}-${name}`, kind: 'sub', name, parentId },
@@ -628,7 +629,7 @@ describe('model routing', () => {
         model: asModel(model),
         sessionManager: { getSessionId: () => sessionId },
       };
-      return { turn: () => childHandlers.get('turn_end')?.({ type: 'turn_end' }, context) };
+      return { context, turn: () => childHandlers.get('turn_end')?.({ type: 'turn_end' }, context) };
     };
     return { ...repo, available, call, child, command, live, spawn, statusModels };
   }
@@ -862,7 +863,7 @@ describe('model routing', () => {
     assert.equal(await repo.spawn('scout'), undefined);
   });
 
-  it('records each factory child and a routed scout once per session with its actual model and thinking level, and factory_status lists them per slice', async () => {
+  it('records each factory child and a scout once per session with its actual model and thinking level, and factory_status lists them per slice', async () => {
     using repo = routedRepo({ explorer: { model: 'x/e' }, implementer: IMPLEMENTER_MODEL, reviewer: { model: 'x/r' }, validator: { model: 'x/v' } });
     for (const spec of ['x/e', 'x/r', 'x/v', IMPLEMENTER_MODEL.model, ...IMPLEMENTER_MODEL.fallbacks]) repo.available.add(spec);
     await repo.call('factory_start', { feature: 'demo', source: SOURCE });
@@ -893,28 +894,60 @@ describe('model routing', () => {
     ]);
   });
 
-  it('records only a scout whose spawn was routed: not one spawned before the run started or while it was paused, even when its first turn ends while the run runs', async () => {
-    using repo = routedRepo({ explorer: { model: 'x/e' } });
-    repo.available.add('x/e');
-    assert.equal(await repo.spawn('scout'), undefined);
-    const early = repo.child('scout', 'x/e', 'low');
+  it('records each session once from the run records, though two children share an agent name and turn several times', async () => {
+    using repo = routedRepo({ reviewer: { model: 'x/r' } });
+    repo.available.add('x/r');
     await repo.call('factory_start', { feature: 'demo', source: SOURCE });
     const ws: Workspace = { config: loadConfig(repo.root), root: repo.root };
+    await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')])));
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    await repo.spawn('factory-reviewer');
+    await repo.spawn('factory-reviewer');
+    const a = repo.child('factory-reviewer', 'x/r', 'high');
+    await a.turn();
+    await a.turn();
+    // A's session resumed in a new process: a fresh audit module has seen no turn of it, so only the run's stored
+    // records keep it from being recorded twice.
+    // A dynamic import with a query string loads a second module instance, as a new process would.
+    const fresh: typeof agents = await import(new URL('../src/agents.ts?process=2', import.meta.url).href);
+    await fresh.auditChild(a.context as never, 'high', { feature: 'demo', mainId: 'main-1', ws });
+    const b = repo.child('factory-reviewer', 'x/r', 'high');
+    await b.turn();
+    assert.deepEqual(
+      readRun(ws, 'demo').agents.map(agent => agent.sessionId),
+      [`child-session-1@${repo.root}`, `child-session-2@${repo.root}`],
+    );
+  });
+
+  it('does not record a child whose first turn ended before the run started, on its later turns in the run', async () => {
+    using repo = routedRepo(undefined);
+    const early = repo.child('scout', 'x/e', 'low');
     await early.turn();
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    await early.turn();
+    assert.deepEqual(readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo').agents, []);
+  });
+
+  it('records what actually ran for a scout spawned while the run is paused, and for a child once the run is done', async () => {
+    using repo = routedRepo({ explorer: { model: 'x/e' } });
+    repo.available.add('x/e');
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    const ws: Workspace = { config: loadConfig(repo.root), root: repo.root };
     await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')])));
     await repo.command('pause');
-    assert.equal(readRun(ws, 'demo').status, 'paused');
     assert.equal(await repo.spawn('scout'), undefined);
-    const resumed = repo.child('scout', 'x/e', 'low');
-    assert.equal(await repo.spawn('scout'), undefined);
-    const pausedTurn = repo.child('scout', 'x/e', 'low');
-    await pausedTurn.turn();
-    await repo.call('factory_start', { resume: 'demo' });
-    assert.equal(readRun(ws, 'demo').status, 'running');
-    await resumed.turn();
-    await resumed.turn();
-    await pausedTurn.turn();
-    assert.deepEqual(readRun(ws, 'demo').agents, []);
+    await repo.child('scout', 'openai/gpt-5.2', 'low').turn();
+    await withRun(ws, 'demo', run => {
+      run.status = 'done';
+    });
+    await repo.child('factory-implementer', 'x/i', 'medium').turn();
+    assert.deepEqual(
+      readRun(ws, 'demo').agents.map(agent => [agent.name, agent.model, agent.thinking]),
+      [
+        ['scout', 'openai/gpt-5.2', 'low'],
+        ['factory-implementer', 'x/i', 'medium'],
+      ],
+    );
   });
 
   it('records nothing, without throwing, for a scout turn outside any factory run or outside any git repo', async () => {
@@ -925,7 +958,7 @@ describe('model routing', () => {
     await repo.child('scout', 'x/e', 'low', undefined, outside.root).turn();
   });
 
-  it('records a routed scout through the run it was routed in, without reloading factory.json', async () => {
+  it('records a scout through the run remembered when it started, without reloading factory.json', async () => {
     using repo = routedRepo({ explorer: { model: 'x/e' } });
     repo.available.add('x/e');
     await repo.call('factory_start', { feature: 'demo', source: SOURCE });
@@ -939,7 +972,7 @@ describe('model routing', () => {
     );
   });
 
-  it('does not record a scout another subagent spawned, as only main-session spawns are routed', async () => {
+  it('does not record a scout another subagent spawned, as only children of the run main session are recorded', async () => {
     using repo = routedRepo({ explorer: { model: 'x/e' } });
     repo.available.add('x/e');
     await repo.call('factory_start', { feature: 'demo', source: SOURCE });

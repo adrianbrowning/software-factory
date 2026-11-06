@@ -973,7 +973,7 @@ export function summarize(ws: Workspace, run: Run) {
     nextAction: nextAction(run),
     runDir: runDir(ws, run.feature),
     slices: run.slices.map(slice => ({
-      /** The actual model and thinking level of each factory agent and routed scout that ran for the slice. */
+      /** The actual model and thinking level of each factory agent and scout that ran for the slice, routed or not. */
       agents: run.agents.filter(agent => agent.slice === slice.id),
       branch: slice.branch,
       compactions: slice.compactions,
