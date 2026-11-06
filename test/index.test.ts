@@ -716,6 +716,8 @@ describe('model routing', () => {
     const ws: Workspace = { config: loadConfig(repo.root), root: repo.root };
     await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')])));
     await withRun(ws, 'demo', run => nextSlice(ws, run));
+    assert.equal(readRun(ws, 'demo').status, 'running');
+    assert.deepEqual(await repo.spawn('scout'), { model: ['x/e'], note: 'Software factory: models.explorer from the run snapshot.' });
     await repo.command('pause');
     assert.equal(readRun(ws, 'demo').status, 'paused');
     repo.available.clear();
