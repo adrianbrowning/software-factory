@@ -69,7 +69,13 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
   }
   if (run.landOn !== undefined) {
     progress(`checking that origin has ${run.landOn}`);
-    if ((await git(ws.root, 'ls-remote', '--heads', 'origin', `refs/heads/${run.landOn}`)).trim() === '') {
+    const heads = await git(ws.root, 'ls-remote', '--heads', 'origin', `refs/heads/${run.landOn}`).catch((cause: unknown) => {
+      throw new Error(
+        `Submit could not read origin to check for ${run.landOn}. Make sure the origin remote exists and has the branch (git push origin ${run.landOn}), then run /factory submit again. Nothing was submitted.`,
+        { cause },
+      );
+    });
+    if (heads.trim() === '') {
       throw new Error(`${run.landOn} is not on origin, so its slice PRs have no branch to target. Push it first (git push origin ${run.landOn}), then run /factory submit again. Nothing was submitted.`);
     }
   }

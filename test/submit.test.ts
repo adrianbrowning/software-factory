@@ -171,6 +171,19 @@ describe('submit', () => {
     assert.equal(sh(ws.root, 'branch', '--show-current'), checkedOut);
   });
 
+  it('refuses a landOn run with no origin remote with the push-first message, before any gh call', async () => {
+    using ws = workspace();
+    sh(ws.root, 'branch', 'ext-953');
+    const branches = await doneLandOnRun(ws, 'ext-953');
+    using gh = fakeGh({ stack: undefined, submitted: withPrs(branches) });
+    await assert.rejects(step(ws, run => submitStack(ws, run)), (error: Error) => {
+      assert.match(error.message, /could not read origin to check for ext-953.*git push origin ext-953/s);
+      assert.ok(error.cause instanceof Error);
+      return true;
+    });
+    assert.deepEqual(gh.calls(), []);
+  });
+
   it('refuses at plan time a landOn that is a revision expression or not a local branch', async () => {
     using ws = workspace();
     sh(ws.root, 'update-ref', 'refs/remotes/origin/main', 'main');
