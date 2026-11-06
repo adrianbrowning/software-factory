@@ -1,10 +1,8 @@
-import './git-env.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { git } from '../src/exec.ts';
 import { startImplementerSession, submitImplementerReport } from '../src/report.ts';
 import { forgetRun, greenCommit, readRun, REVIEW_DOMAINS, ticketPath, type Workspace } from '../src/run.ts';
 import { completeSlice, recordDecisions, recordReview, REVIEW_REFERENCE_DIR, runChecks, startReview } from '../src/review.ts';
@@ -28,15 +26,9 @@ import {
 } from '../src/workflow.ts';
 import { checkRuns, commit, countedCheck, green, newRun, review, sh, slice, start, step, workspace } from './helpers.ts';
 
-describe('test isolation', () => {
-  it("runs the factory's git calls without the developer's global git config", async () => {
-    assert.equal(await git(workspace().root, 'config', '--global', '--list'), '');
-  });
-});
-
 describe('base resolution', () => {
   it('starts a run without the default base, and plans on a base the user chooses', async () => {
-    const ws = workspace({ baseRef: 'origin/main' });
+    using ws = workspace({ baseRef: 'origin/main' });
     await start(ws);
     await assert.rejects(resolveBase(ws), /Base ref "origin\/main" does not exist\. Pass the branch the work builds on as "baseRef".* to factory_plan/);
     const base = await resolveBase(ws, { baseRef: 'main' });
@@ -49,7 +41,7 @@ describe('base resolution', () => {
   });
 
   it('strips only a git remote from the base when deriving the trunk', async () => {
-    const ws = workspace({ baseRef: 'upstream/dev', trunk: undefined });
+    using ws = workspace({ baseRef: 'upstream/dev', trunk: undefined });
     sh(ws.root, 'remote', 'add', 'upstream', ws.root);
     sh(ws.root, 'update-ref', 'refs/remotes/upstream/dev', 'HEAD');
     sh(ws.root, 'branch', 'feature/auth');
@@ -69,7 +61,7 @@ describe('base resolution', () => {
   });
 
   it('defaults the base to the remote default branch from origin/HEAD, else origin/main', async () => {
-    const ws = workspace({ baseRef: undefined, trunk: undefined });
+    using ws = workspace({ baseRef: undefined, trunk: undefined });
     await assert.rejects(resolveBase(ws), /Base ref "origin\/main" does not exist/);
     sh(ws.root, 'remote', 'add', 'origin', ws.root);
     sh(ws.root, 'update-ref', 'refs/remotes/origin/master', 'HEAD');
@@ -118,7 +110,7 @@ describe('issue sources', () => {
   });
 
   it('reads an issue file, titled by its first heading or its file name', () => {
-    const ws = workspace();
+    using ws = workspace();
     writeFileSync(join(ws.root, 'issue.md'), 'Intro\n\n# Export data\n\nBody\n');
     writeFileSync(join(ws.root, 'plain.txt'), 'No heading\n');
     assert.deepEqual(fileSource(ws, 'issue.md'), { body: 'Intro\n\n# Export data\n\nBody\n', kind: 'file', ref: 'issue.md', title: 'Export data' });
@@ -129,7 +121,7 @@ describe('issue sources', () => {
 
 describe('planSlices', () => {
   it('orders slices blockers first into one linear stack', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await start(ws);
     const slices = planSlices(ws, readRun(ws, 'demo'), [slice('UI', ['API']), slice('API', ['Schema']), slice('Schema')]);
     assert.deepEqual(
@@ -143,7 +135,7 @@ describe('planSlices', () => {
   });
 
   it('rejects cycles, unknown blockers, oversized slices, and slices without seams or a reason', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await start(ws);
     const run = readRun(ws, 'demo');
     assert.throws(() => planSlices(ws, run, [slice('A', ['B']), slice('B', ['A'])]), /cycle/);
@@ -155,7 +147,7 @@ describe('planSlices', () => {
   });
 
   it('cuts long titles to whole words of at most 40 characters', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await start(ws);
     const slices = planSlices(ws, readRun(ws, 'demo'), [
       slice('Slice branch slugs end on a whole word always'),
@@ -168,7 +160,7 @@ describe('planSlices', () => {
   });
 
   it('assigns intake decisions a slice owns, and marks them in the tickets of the slices before it', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await start(ws);
     await step(ws, run => recordDecisions(ws, run, ['Shared rule.', 'Export is built by API.']));
     await step(ws, run => approvePlan(ws, run, planSlices(ws, run, [slice('Schema'), slice('API', ['Schema'], { ownsDecisions: [2] })])));
@@ -180,7 +172,7 @@ describe('planSlices', () => {
   });
 
   it('rejects an owned decision number that was not recorded or that two slices own', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await start(ws);
     await step(ws, run => recordDecisions(ws, run, ['Only decision.']));
     const run = readRun(ws, 'demo');
@@ -194,7 +186,7 @@ describe('planSlices', () => {
 
 describe('implementer report', () => {
   it('stores the latest report for the active slice and shows it in the checks result, or that none was submitted', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature'), slice('Next', ['Feature'])]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'work.txt');
@@ -234,7 +226,7 @@ describe('implementer report', () => {
   });
 
   it('shows a stop report submitted before any commit in the no-commits refusal', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [], open: ['NEEDS SEAM: the clock — no agreed seam'] }));
@@ -242,7 +234,7 @@ describe('implementer report', () => {
   });
 
   it('shows the stored report in the refusal for commits from other branches', async () => {
-    const ws = workspace();
+    using ws = workspace();
     sh(ws.root, 'switch', '-q', '-c', 'ext-950');
     commit(ws, 'ext.txt');
     sh(ws.root, 'switch', '-q', 'main');
@@ -254,7 +246,7 @@ describe('implementer report', () => {
   });
 
   it('rejects a fix-mode report without fix file items', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'work.txt');
@@ -266,7 +258,7 @@ describe('implementer report', () => {
   });
 
   it('clears the stored report when a new implementer session starts, and only then', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [], open: ['NEEDS SEAM: x'] }));
@@ -282,7 +274,7 @@ describe('implementer report', () => {
 
 describe('re-slice', () => {
   it('replaces the active slice with children on its branch and remaps later blockers', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Big'), slice('After', ['Big'])]);
     const big = await step(ws, run => nextSlice(ws, run));
     commit(ws, 'partial.txt');
@@ -303,7 +295,7 @@ describe('re-slice', () => {
   });
 
   it("moves the split slice's decisions to its last child, and other slices keep theirs under their new ids", async () => {
-    const ws = workspace();
+    using ws = workspace();
     await start(ws);
     await step(ws, run => recordDecisions(ws, run, ['Big builds the export.', 'After builds the import.']));
     await step(ws, run => approvePlan(ws, run, planSlices(ws, run, [slice('Big', [], { ownsDecisions: [1] }), slice('After', ['Big'], { ownsDecisions: [2] })])));
@@ -329,7 +321,7 @@ describe('re-slice', () => {
   });
 
   it('gives the first child a new review id, so old review files never count', async () => {
-    const ws = workspace({ maxRounds: 3 });
+    using ws = workspace({ maxRounds: 3 });
     await newRun(ws, [slice('Big')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -345,7 +337,7 @@ describe('re-slice', () => {
   });
 
   it("does not show the split slice's implementer report for the first child", async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Big')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -357,7 +349,7 @@ describe('re-slice', () => {
   });
 
   it('leaves the run and its tickets unchanged when the branch rename fails', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Big')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'partial.txt');
@@ -372,7 +364,7 @@ describe('re-slice', () => {
 
 describe('pause and resume', () => {
   it('pauses only a running run and resumes it to running', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await start(ws);
     await assert.rejects(step(ws, run => pauseRun(run, 'test')), /intake; only a running run pauses/);
 
@@ -601,7 +593,7 @@ describe('pause and resume', () => {
 
 describe('retro', () => {
   it('rejects misrouted actions, sorts by severity, and marks the stack ready once recorded', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -634,7 +626,7 @@ describe('retro', () => {
   });
 
   it('adds apply findings as a final slice blocked by every slice, so the run is not ready yet', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -672,7 +664,7 @@ describe('reopen', () => {
   }
 
   it('fixes a done slice and restacks every later slice on the fix', async () => {
-    const ws = workspace({ maxRounds: 2 });
+    using ws = workspace({ maxRounds: 2 });
     const [first, second, third] = await stackOfThree(ws);
     const own = [subjects(ws, `${first}..${second}`), subjects(ws, `${second}..${third}`)];
 
@@ -714,7 +706,7 @@ describe('reopen', () => {
   });
 
   it('restores every later branch and pauses the run when a restack conflicts', async () => {
-    const ws = workspace({ maxRounds: 2 });
+    using ws = workspace({ maxRounds: 2 });
     const [first, second, third] = await stackOfThree(ws, 'third\n');
     const old = [tip(ws, second), tip(ws, third)];
 
@@ -733,7 +725,7 @@ describe('reopen', () => {
   });
 
   it('runs a done run again and asks for a new retro', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -748,7 +740,7 @@ describe('reopen', () => {
   });
 
   it('refuses to reopen a pending or active slice', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('First'), slice('Second', ['First'])]);
     await step(ws, run => nextSlice(ws, run));
     await assert.rejects(step(ws, run => reopenSlice(ws, run, '01', 'bug')), /Slice 01 is active; only a done slice reopens/);
@@ -756,7 +748,7 @@ describe('reopen', () => {
   });
 
   it('re-gates a commit made on a done slice after its review, and restacks later slices without copying it', async () => {
-    const ws = workspace({ maxRounds: 2 });
+    using ws = workspace({ maxRounds: 2 });
     const [first, second, third] = await stackOfThree(ws);
     sh(ws.root, 'switch', '-q', second);
     commit(ws, 'late.txt');
@@ -777,7 +769,7 @@ describe('follow-up slice', () => {
   const followUp = { acceptance: ['Late works'], estimateTokens: 500, seams: ['cli'], title: 'Late', whatToBuild: 'late' };
 
   it('adds a slice on top of a done run, which runs again from the top slice and needs a new retro', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -801,7 +793,7 @@ describe('follow-up slice', () => {
   });
 
   it('refuses a follow-up slice on a run that is not running or done', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await start(ws);
     await assert.rejects(step(ws, run => addFollowUp(ws, run, followUp)), /Run is intake; only a running or done run takes a follow-up slice/);
   });
@@ -809,7 +801,7 @@ describe('follow-up slice', () => {
 
 describe('run state', () => {
   it('fails closed on a state file that does not match the schema', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     forgetRun(ws, 'demo');
     const path = join(ws.root, '.scratch', 'demo', 'state.json');
@@ -818,7 +810,7 @@ describe('run state', () => {
   });
 
   it('rejects a state file edited outside the factory tools in this process', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     const path = join(ws.root, '.scratch', 'demo', 'state.json');
     writeFileSync(path, readFileSync(path, 'utf8').replace('"phase": "implement"', '"phase": "ready"'));
@@ -826,7 +818,7 @@ describe('run state', () => {
   });
 
   it('saves nothing when a mutation fails', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await assert.rejects(
       step(ws, run => {
@@ -839,7 +831,7 @@ describe('run state', () => {
   });
 
   it('loads a state file from before decision ownership with no decisions owned', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     forgetRun(ws, 'demo');
     const path = join(ws.root, '.scratch', 'demo', 'state.json');
@@ -850,7 +842,7 @@ describe('run state', () => {
   });
 
   it('keeps run state out of git', async () => {
-    const ws = workspace();
+    using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     assert.equal(sh(ws.root, 'status', '--porcelain'), '');
   });

@@ -66,7 +66,7 @@ const verdictId = text.describe('Fix item id, exactly as the FIX ITEMS section l
  * that waives it; no other status names one.
  */
 export const fixVerdictSchema = z.discriminatedUnion('status', [
-  z.object({
+  z.strictObject({
     decision: z.number().int().positive().describe('Number of the recorded user decision that waives the item'),
     id: verdictId,
     reason: verdictReason,

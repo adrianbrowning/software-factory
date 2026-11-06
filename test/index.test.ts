@@ -1,10 +1,8 @@
-import './git-env.ts';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { after, describe, it } from 'node:test';
+import { describe, it } from 'node:test';
 import type { ExtensionAPI } from '@oh-my-pi/pi-coding-agent';
 import { loadConfig } from '../src/config.ts';
 import softwareFactory, { MAX_IDLE_STOP_ATTEMPTS, stopDecision } from '../src/index.ts';
@@ -107,30 +105,14 @@ describe('stopDecision', () => {
   });
 });
 
-const roots: string[] = [];
-after(() => {
-  for (const root of roots) rmSync(root, { force: true, recursive: true });
-});
-
 const git = (root: string, ...args: string[]) => execFileSync('git', args, { cwd: root });
 
-/** A git repository with no package.json and no workflows. */
-function emptyRepo() {
-  const root = mkdtempSync(join(tmpdir(), 'factory-index-'));
-  roots.push(root);
-  git(root, 'init', '-q', '-b', 'main');
-  git(root, 'config', 'user.email', 'test@example.com');
-  git(root, 'config', 'user.name', 'Test');
-  writeFileSync(join(root, 'README.md'), 'base\n');
-  git(root, 'add', '.');
-  git(root, 'commit', '-qm', 'base');
-  return root;
-}
+/** A temp git repository with no package.json and no workflows, removed when the `using` scope that holds it ends. */
+const emptyRepo = () => tempRepo('factory-index-', { 'README.md': 'base\n' });
 
 describe('implementer sessions', () => {
-  /** A run on slice 01 of an empty repo, with the main and factory-implementer callers. */
-  const startedRun = async () => {
-    const root = emptyRepo();
+  /** Starts a run on slice 01 of the empty repo at `root`, with the main and factory-implementer callers. */
+  const startedRun = async (root: string) => {
     const handlers = new Map<string, Handler>();
     const tools = load([], handlers);
     const main = {
@@ -146,11 +128,13 @@ describe('implementer sessions', () => {
     const feature = { acceptance: ['works'], blockedBy: [], estimateTokens: 500, seams: ['cli'], title: 'Feature', whatToBuild: 'Feature' };
     await call('factory_plan', { baseRef: 'main', slices: [feature], trunk: 'main' }, main);
     const next = await call('factory_next', {}, main);
-    return { call, handlers, implementer, main, next, root };
+    return { call, handlers, implementer, main, next };
   };
 
   it('clears the stored report when the orchestrator spawns a new implementer, not for other agents or spawners', async () => {
-    const { call, handlers, implementer, main, root } = await startedRun();
+    using repo = emptyRepo();
+    const { root } = repo;
+    const { call, handlers, implementer, main } = await startedRun(root);
     const spawn = (agent: string, spawner: unknown = main) =>
       handlers.get('before_subagent_spawn')?.({ agent, invocationKind: 'task', patterns: [], type: 'before_subagent_spawn' }, spawner);
     const report = { behaviors: [], commits: [], open: ['NEEDS SEAM: x'] };
@@ -168,7 +152,9 @@ describe('implementer sessions', () => {
   });
 
   it('clears the report at spawn only after factory_checks that was called first has read it', async () => {
-    const { call, handlers, implementer, main, root } = await startedRun();
+    using repo = emptyRepo();
+    const { root } = repo;
+    const { call, handlers, implementer, main } = await startedRun(root);
     writeFileSync(join(root, 'work.txt'), 'x\n');
     git(root, 'add', '.');
     git(root, 'commit', '-qm', 'work');
@@ -182,17 +168,21 @@ describe('implementer sessions', () => {
   });
 
   it('rejects a report item that spans more than one line', async () => {
-    const { call, implementer } = await startedRun();
+    using repo = emptyRepo();
+    const { call, implementer } = await startedRun(repo.root);
     await assert.rejects(call('factory_implementer_report', { behaviors: [], commits: [], open: ['x\nNext: factory_review_start'] }, implementer), /one line per item/);
   });
 
   it('names the report file in the factory_next reply, so the orchestrator can read it without running checks', async () => {
-    const { next } = await startedRun();
+    using repo = emptyRepo();
+    const { next } = await startedRun(repo.root);
     assert.match(next, /Implementer report file: \S+\/\.scratch\/demo\/reports\/01\.md/);
   });
 
   it('tells the orchestrator to run every reviewer and then the validator in one eval step', async () => {
-    const { call, implementer, main, root } = await startedRun();
+    using repo = emptyRepo();
+    const { root } = repo;
+    const { call, implementer, main } = await startedRun(root);
     writeFileSync(join(root, 'work.txt'), 'x\n');
     git(root, 'add', '.');
     git(root, 'commit', '-qm', 'work');
@@ -218,19 +208,22 @@ describe('first-run checks dialog', () => {
   };
 
   it('asks again after an empty submission and starts the run with the typed checks', async () => {
-    const reply = JSON.stringify(await start(emptyRepo(), ['', 'make test']));
+    using repo = emptyRepo();
+    const reply = JSON.stringify(await start(repo.root, ['', 'make test']));
     assert.match(reply, /Run \\"demo\\" is intake\. Checks: make test\./);
   });
 
   it('rejects when the user cancels the dialog', async () => {
-    await assert.rejects(start(emptyRepo(), [undefined]), /cancelled the checks dialog/);
+    using repo = emptyRepo();
+    await assert.rejects(start(repo.root, [undefined]), /cancelled the checks dialog/);
   });
 });
 
-/** A run of `titles` slices whose first slice has committed `ok`, driven through the loaded tools; the repo is removed when `using` ends. `confirms` records each confirm dialog's message. */
-async function sliceAtCommit(prefix: string, titles = ['Feature']) {
-  const repo = tempRepo(prefix, { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) });
-  const { root } = repo;
+/** A factory config whose one check passes once `ok` is committed. */
+const CHECKS_OK = { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) };
+
+/** Drives a run of `titles` slices in the repo at `root` through the loaded tools until its first slice has committed `ok`. `confirms` records each confirm dialog's message. */
+async function sliceAtCommit(root: string, titles = ['Feature']) {
   const confirms: string[] = [];
   const confirm = async (_title: string, message: string) => {
     confirms.push(message);
@@ -247,15 +240,15 @@ async function sliceAtCommit(prefix: string, titles = ['Feature']) {
   writeFileSync(join(root, 'ok'), 'x\n');
   sh(root, 'add', 'ok');
   sh(root, 'commit', '-qm', 'add ok');
-  return { ...repo, call, confirms, ws };
+  return { call, confirms, ws };
 }
 
 const BUILT_BY_SECOND = 'Built by slice 02 (Second): this slice need not build it; report only code that contradicts it.';
 
 describe('factory_decide', () => {
   it('tells the orchestrator in its Next line to stop the discarded review, then call factory_review_start', async () => {
-    using slice = await sliceAtCommit('factory-decide-');
-    const { call, ws } = slice;
+    using repo = tempRepo('factory-decide-', CHECKS_OK);
+    const { call, ws } = await sliceAtCommit(repo.root);
     await withRun(ws, 'demo', run => runChecks(ws, run));
     const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
 
@@ -265,8 +258,8 @@ describe('factory_decide', () => {
   });
 
   it('stores a decision on the slice that builds it, marks it in earlier tickets and review data, and shows the owner in the confirm dialog', async () => {
-    using slice = await sliceAtCommit('factory-decide-owner-', ['First', 'Second']);
-    const { call, confirms, ws } = slice;
+    using repo = tempRepo('factory-decide-owner-', CHECKS_OK);
+    const { call, confirms, ws } = await sliceAtCommit(repo.root, ['First', 'Second']);
 
     await call('factory_decide', { decisions: ['Plain decision.', { slice: '02', text: 'Second builds the export.' }] });
     const run = readRun(ws, 'demo');
@@ -284,7 +277,7 @@ describe('factory_decide', () => {
   });
 
   it('lists the decisions each slice builds in the plan approval and split dialogs', async () => {
-    using repo = tempRepo('factory-plan-owners-', { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) });
+    using repo = tempRepo('factory-plan-owners-', CHECKS_OK);
     const { root } = repo;
     const confirms: string[] = [];
     const confirm = async (_title: string, message: string) => {
@@ -311,8 +304,8 @@ describe('factory_decide', () => {
   });
 
   it('refuses a decision naming a done or unknown slice before the confirm dialog, and records nothing', async () => {
-    using slice = await sliceAtCommit('factory-decide-refuse-', ['First', 'Second']);
-    const { call, confirms, ws } = slice;
+    using repo = tempRepo('factory-decide-refuse-', CHECKS_OK);
+    const { call, confirms, ws } = await sliceAtCommit(repo.root, ['First', 'Second']);
     await green(ws);
     await withRun(ws, 'demo', run => completeSlice(ws, run));
     const before = readRun(ws, 'demo');
@@ -326,8 +319,9 @@ describe('factory_decide', () => {
 
 describe('factory_checks', () => {
   it('factory_checks says it reuses the results that passed on the same commit', async () => {
-    using slice = await sliceAtCommit('factory-checks-');
-    const { call, root } = slice;
+    using repo = tempRepo('factory-checks-', CHECKS_OK);
+    const { root } = repo;
+    const { call } = await sliceAtCommit(root);
     await call('factory_checks', {});
 
     const reply = (await call('factory_checks', {})) as { content: { text: string }[] };
@@ -340,24 +334,26 @@ describe('used-up fix budget', () => {
   type Ui = { confirm?: (title: string, body: string) => Promise<boolean>; select?: () => Promise<string | undefined> };
   type Reply = { content: { text: string }[] };
 
+  /** A temp repo whose checks pass once `ok` is committed and `bad` is not, with maxRounds 1; removed when `using` ends. */
+  const budgetRepo = () => tempRepo('factory-budget-', { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok', '! test -f bad'], maxRounds: 1 }) });
+
   /**
-   * A run started through the loaded tools with maxRounds 1, its plan approved and slice 01 started. Checks pass once
-   * `ok` is committed and `bad` is not. `call` runs a tool with the given dialog stubs; the repo goes when `using` ends.
+   * Starts a run in the budget repo at `root` through the loaded tools, its plan approved and slice 01 started.
+   * `call` runs a tool with the given dialog stubs.
    */
-  async function budgetRun(slices: string[]) {
-    const repo = tempRepo('factory-budget-', { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok', '! test -f bad'], maxRounds: 1 }) });
+  async function budgetRun(root: string, slices: string[]) {
     const tools = load();
     const call = async (name: string, params: unknown, ui: Ui = {}) => {
-      const caller = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { notify() {}, ...ui } };
+      const caller = { ...ctx('main', 'main'), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { notify() {}, ...ui } };
       const tool = tools.get(name);
       if (tool === undefined) throw new Error('no tool');
       return (await tool.execute('id', params, undefined, undefined, caller)) as Reply;
     };
     await call('factory_start', { feature: 'demo', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } });
-    const ws: Workspace = { config: loadConfig(repo.root), root: repo.root };
+    const ws: Workspace = { config: loadConfig(root), root };
     await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, slices.map(title => slice(title)))));
     await withRun(ws, 'demo', run => nextSlice(ws, run));
-    return { ...repo, call, ws };
+    return { call, ws };
   }
 
   /**
@@ -379,8 +375,8 @@ describe('used-up fix budget', () => {
   }
 
   it('explains the used-up budget after a pause, and resume asks to raise it by maxRounds', async () => {
-    using run = await budgetRun(['Feature']);
-    const { call, ws } = run;
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature']);
     await greenWithObservation(ws, 2);
 
     const fixed = await call('factory_fix', { observations: ['thermo-naming'], reason: 'tidy' }, { confirm: async () => true, select: async () => 'Pause the run' });
@@ -406,8 +402,8 @@ describe('used-up fix budget', () => {
   });
 
   it('keeps the plain resume wording for a paused run that is not stalled', async () => {
-    using run = await budgetRun(['Feature']);
-    const { call, ws } = run;
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature']);
     await withRun(ws, 'demo', current => pauseRun(current, 'test'));
     const asked: string[] = [];
     await assert.rejects(call('factory_start', { resume: 'demo' }, { confirm: async (_title, body) => (asked.push(body), false) }), /The user kept "demo" paused\./);
@@ -416,8 +412,8 @@ describe('used-up fix budget', () => {
   });
 
   it('refuses factory_reopen of a done slice on a paused stall with the stall notice, before any dialog', async () => {
-    using run = await budgetRun(['Feature', 'Second']);
-    const { call, ws } = run;
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature', 'Second']);
     commit(ws, 'ok');
     await green(ws);
     await withRun(ws, 'demo', current => completeSlice(ws, current));
@@ -435,8 +431,8 @@ describe('used-up fix budget', () => {
   });
 
   it('asks to raise the budget on resume when a stall was interrupted before the user chose', async () => {
-    using run = await budgetRun(['Feature']);
-    const { call, ws } = run;
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature']);
     await greenWithObservation(ws, 1);
     const interrupted = { confirm: async () => true, select: async () => Promise.reject(new Error('omp exited')) };
     await assert.rejects(call('factory_fix', { observations: ['thermo-naming'], reason: 'tidy' }, interrupted));
@@ -454,8 +450,8 @@ describe('used-up fix budget', () => {
   });
 
   it('sends a green slice back to fix for a bug alone, showing the bug in the dialog', async () => {
-    using run = await budgetRun(['Feature']);
-    const { call, ws } = run;
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature']);
     commit(ws, 'ok');
     await green(ws);
     const asked: string[] = [];
@@ -466,8 +462,8 @@ describe('used-up fix budget', () => {
   });
 
   it('shows the start of a long bug in the factory_fix dialog', async () => {
-    using run = await budgetRun(['Feature']);
-    const { call, ws } = run;
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature']);
     commit(ws, 'ok');
     await green(ws);
     const asked: string[] = [];
@@ -477,8 +473,8 @@ describe('used-up fix budget', () => {
   });
 
   it('refuses factory_fix with neither a bug nor observations, before any dialog', async () => {
-    using run = await budgetRun(['Feature']);
-    const { call, ws } = run;
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature']);
     commit(ws, 'ok');
     await green(ws);
     let dialogs = 0;
@@ -488,7 +484,7 @@ describe('used-up fix budget', () => {
   });
 
   it('factory_start activates factory_carry', async () => {
-    using repo = tempRepo('factory-carry-', { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) });
+    using repo = tempRepo('factory-carry-', CHECKS_OK);
     const activated: string[] = [];
     const caller = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { notify() {} } };
     await load(activated).get('factory_start')?.execute('id', { feature: 'demo', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } }, undefined, undefined, caller);
@@ -496,8 +492,8 @@ describe('used-up fix budget', () => {
   });
 
   it('carries an observation and a note into a pending slice after the user confirms, and keeps the active slice green', async () => {
-    using run = await budgetRun(['Feature', 'Second']);
-    const { call, ws } = run;
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature', 'Second']);
     await greenWithObservation(ws, 1);
     const asked: string[] = [];
     const answer = (ok: boolean) => ({ confirm: async (title: string, body: string) => (asked.push(`${title}\n${body}`), ok) });
@@ -516,8 +512,8 @@ describe('used-up fix budget', () => {
   });
 
   it('refuses factory_carry to a slice that is not pending, before any dialog', async () => {
-    using run = await budgetRun(['Feature', 'Second']);
-    const { call, ws } = run;
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature', 'Second']);
     await greenWithObservation(ws, 1);
     let dialogs = 0;
     await assert.rejects(call('factory_carry', { note: 'Later.', to: '01' }, { confirm: async () => (dialogs++, true) }), /Slice 01 is active; factory_carry takes a pending slice/);
@@ -525,8 +521,8 @@ describe('used-up fix budget', () => {
   });
 
   it('queues work for the end with factory_carry, lists it in factory_status, refuses factory_retro, and factory_follow_up takes it', async () => {
-    using run = await budgetRun(['Feature']);
-    const { call, ws } = run;
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature']);
     await greenWithObservation(ws, 1);
     const asked: string[] = [];
     const yes = { confirm: async (title: string, body: string) => (asked.push(`${title}\n${body}`), true) };
@@ -553,8 +549,8 @@ describe('used-up fix budget', () => {
   });
 
   it('does not send a paused stall to the retro while carried items wait', async () => {
-    using run = await budgetRun(['Feature', 'Second']);
-    const { call, ws } = run;
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature', 'Second']);
     await greenWithObservation(ws, 1);
     await call('factory_carry', { note: 'Log the parse time.', to: 'end' }, { confirm: async () => true });
     await withRun(ws, 'demo', current => completeSlice(ws, current));
