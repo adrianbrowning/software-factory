@@ -16,14 +16,15 @@ Unit tests fake omp. To prove what omp itself does with a hook or a child sessio
    { "baseRef": "main", "checks": ["true"], "models": { "explorer": { "model": "<provider/id>" } } }
    ```
 
-3. Run omp in print mode with only this plugin loaded. `--wait-async` keeps omp alive until background children finish. `--max-cost 2` caps the spend:
+3. Run omp in print mode from inside the throwaway repo, with only this plugin loaded. omp must start there: the factory reads `.omp/factory.json` and keeps its run state in the repo of omp's cwd. `--wait-async` keeps omp alive until background children finish. `--max-cost 2` caps the spend:
 
    ```sh
-   omp -p --wait-async --no-extensions -e <this repo> --model <id> --thinking <level> --max-cost 2 '<prompt>'
+   cd "$repo"
+   omp -p --wait-async --no-extensions -e <absolute path of this plugin checkout> --model <id> --thinking <level> --max-cost 2 '<prompt>'
    ```
 
 4. In the prompt, spawn children with the `task` tool, or with `agent()` inside `eval`.
 
-5. Read each child session file at `~/.omp/agent/sessions/<cwd-slug>/<session>/<agent>.jsonl`. It shows the model the child ran on, and its `thinking_level_change` event shows the thinking level.
+5. Read each child session file at `~/.omp/agent/sessions/<cwd-slug>/<session>/<agent>.jsonl`, where `<cwd-slug>` is the slug of the throwaway repo path. It shows the model the child ran on, and its `thinking_level_change` event shows the thinking level.
 
-6. Delete the throwaway repo afterwards: `rm -rf "$repo"`.
+6. Leave the throwaway repo and delete it: `cd - && rm -rf "$repo"`.
