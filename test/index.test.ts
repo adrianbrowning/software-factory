@@ -728,6 +728,24 @@ describe('model routing', () => {
     assert.equal(await repo.spawn('scout'), undefined);
   });
 
+  it('blocks a reviewer, validator or implementer spawn, naming the role and the error, when factory.json is invalid', async () => {
+    using repo = routedRepo({ reviewer: { model: 'x/r' } });
+    repo.available.add('x/r');
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    const invalid = { baseRef: 'main', checks: ['test -f ok'], models: { reviewer: { model: 'x/r', reasoningEffort: 'high' } } };
+    writeFileSync(join(repo.root, '.omp/factory.json'), JSON.stringify(invalid));
+    for (const [agent, role] of [
+      ['factory-reviewer', 'reviewer'],
+      ['factory-review-validator', 'validator'],
+      ['factory-implementer', 'implementer'],
+    ] as const) {
+      const result = (await repo.spawn(agent)) as { block: boolean; reason: string };
+      assert.equal(result.block, true);
+      assert.match(result.reason, new RegExp(`models\\.${role}: .*factory\\.json`));
+      assert.match(result.reason, /reasoningEffort/);
+    }
+  });
+
   it('does not route or block scout spawns once the run is paused', async () => {
     using repo = routedRepo({ explorer: { model: 'x/e' } });
     repo.available.add('x/e');

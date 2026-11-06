@@ -911,7 +911,8 @@ export default function softwareFactory(pi: ExtensionAPI) {
   // main-session spawns of any agent named `scout` (the explorer role; the event does not say whether it is omp's
   // bundled one) only while the run is in intake or running; a role without an entry inherits. The spawn event does not
   // carry a review domain, so one reviewer model covers every domain. The hook sets the model only: a `:<effort>` suffix
-  // on the returned pattern does not reach the child's thinking level.
+  // on the returned pattern does not reach the child's thinking level. When the workspace fails to load (no git repo,
+  // invalid factory.json), a scout spawn goes unrouted, but a factory-role spawn is blocked with the error.
   pi.on('before_subagent_spawn', async (event, ctx) => {
     const role = ctx.agent.kind === 'main' ? SPAWN_ROLES[event.agent] : undefined;
     if (role === undefined) return;
@@ -919,8 +920,13 @@ export default function softwareFactory(pi: ExtensionAPI) {
     let ws: Workspace;
     try {
       ws = await workspace(ctx.cwd);
-    } catch {
-      return;
+    } catch (error) {
+      if (role === 'explorer') return;
+      const message = error instanceof Error ? error.message : String(error);
+      return {
+        block: true,
+        reason: `Software factory: models.${role}: cannot route this spawn because .omp/factory.json failed to load (${message}), so the spawn is refused rather than run on another model. Fix .omp/factory.json and spawn again.`,
+      };
     }
     const feature = activeRuns.get(ws.root);
     if (feature === undefined) return;
