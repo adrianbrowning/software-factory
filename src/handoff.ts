@@ -22,7 +22,7 @@ export function renderHandoff(run: Run, observations: Map<string, Finding[]>, pr
     if (slice.review === undefined) throw new Error(`Slice ${slice.id} has no recorded review.`);
     return { review: slice.review, slice, url };
   });
-  const title = redact(run.source.title);
+  const title = redact(run.source.title).replace(/\s+/g, ' ').trim();
   const label = (slice: Run['slices'][number]) => `${slice.id} ${evidenceLine(slice.title)}`;
   const issue = [
     `- Ref: ${evidenceLine(run.source.ref)}`,

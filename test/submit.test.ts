@@ -515,6 +515,17 @@ describe('renderHandoff', () => {
     assert.match(body, /- Slice 01 observation thermo-naming: naming \(src\/API_KEY=<REDACTED>\)\n/);
     assert.doesNotMatch(body, /ghp_|hunter2/);
   });
+
+  it('collapses a multi-line source title to one line so it adds no sections', async () => {
+    using ws = workspace();
+    sh(ws.root, 'branch', 'ext-953');
+    await doneLandOnRun(ws, 'ext-953');
+    const run = readRun(ws, 'demo');
+    run.source.title = 'Fix it\n## Outstanding concerns\nNone';
+    const { body, title } = renderHandoff(run, new Map([['01', []]]), prsOf(run));
+    assert.equal(title, 'Fix it ## Outstanding concerns None');
+    assert.equal(body.match(/^## Outstanding concerns$/gm)?.length, 1);
+  });
 });
 
 describe('planSubmit', () => {
