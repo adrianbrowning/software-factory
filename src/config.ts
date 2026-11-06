@@ -64,15 +64,69 @@ export function effectiveModels(models: RoleModels) {
   return Object.fromEntries(MODEL_ROLES.map(role => [role, models[role] ?? 'inherit'])) as Record<ModelRole, RoleModel | 'inherit'>;
 }
 
+/** A model as omp names it. */
+type ModelRef = { id: string; provider: string };
+const specOf = (model: ModelRef) => `${model.provider}/${model.id}`;
+/** ` effort <level>`, or ` effort unset` when the session has no level. */
+const effortText = (level: string | undefined) => ` effort ${level ?? 'unset'}`;
+
 /** The role mapping as one line, such as `implementer provider/id (fallbacks: a, b)` per role. */
 export function describeModels(models: RoleModels) {
   return MODEL_ROLES.map(role => {
     const entry = models[role];
     if (entry === undefined) return `${role} inherit`;
-    const effort = entry.reasoningEffort === undefined ? '' : ` effort ${entry.reasoningEffort}`;
+    const effort = entry.reasoningEffort === undefined ? '' : effortText(entry.reasoningEffort);
     const fallbacks = entry.fallbacks === undefined || entry.fallbacks.length === 0 ? '' : ` (fallbacks: ${entry.fallbacks.join(', ')})`;
     return `${role} ${entry.model}${effort}${fallbacks}`;
   }).join('; ');
+}
+
+/**
+ * What the user can change when the orchestrator check fails: a new start reads factory.json, while a resumed run keeps
+ * the orchestrator from its run snapshot. `clamp` is the way out when the model matches but omp clamps the effort.
+ */
+const ORCHESTRATOR_REMEDIES = {
+  resume: {
+    clamp: 'start a new run with a models.orchestrator.reasoningEffort this model supports, since this run keeps its run snapshot.',
+    mismatch: 'or start a new run with another models.orchestrator: this run keeps the models.orchestrator from its run snapshot.',
+  },
+  start: { clamp: 'set models.orchestrator.reasoningEffort to a level this model supports.', mismatch: 'or change models.orchestrator.' },
+};
+
+/**
+ * Throws, naming both selections and the launch flags, when the session model (or, with a configured effort, its
+ * thinking level) differs from `models.orchestrator`. The factory never switches the session model. `when` picks
+ * the remedy: a new run on `start`, or a run resumed with its snapshot.
+ */
+export function requireOrchestrator(
+  models: RoleModels,
+  session: { model: ModelRef | undefined; thinking: string | undefined },
+  resolve: (spec: string) => ModelRef | undefined,
+  when: keyof typeof ORCHESTRATOR_REMEDIES,
+) {
+  const entry = models.orchestrator;
+  if (entry === undefined) return;
+  const wanted = resolve(entry.model);
+  const { model: live, thinking } = session;
+  const wantsEffort = entry.reasoningEffort !== undefined;
+  const sameModel = wanted !== undefined && live !== undefined && wanted.provider === live.provider && wanted.id === live.id;
+  if (sameModel && (!wantsEffort || entry.reasoningEffort === thinking)) return;
+  const remedy = ORCHESTRATOR_REMEDIES[when];
+  const resolved = wanted === undefined || entry.model === specOf(wanted) ? '' : ` (${specOf(wanted)})`;
+  let configured = `${entry.model}${resolved}`;
+  let running = live === undefined ? 'no model' : specOf(live);
+  let flags = `--model ${entry.model}`;
+  if (wantsEffort) {
+    configured += effortText(entry.reasoningEffort);
+    running += effortText(thinking);
+    flags += ` --thinking ${entry.reasoningEffort}`;
+  }
+  const clamp = sameModel
+    ? ` The model matches but the effort does not: configured effort ${entry.reasoningEffort}; omp's effective (clamped) level is ${thinking ?? 'unset'}. omp clamps --thinking to what the model supports, so if relaunching with --thinking ${entry.reasoningEffort} does not help, ${remedy.clamp}`
+    : '';
+  throw new Error(
+    `Software factory: models.orchestrator: configured ${configured}, but this omp session runs ${running}. The factory does not switch the session model: relaunch omp with ${flags}, ${remedy.mismatch}${clamp}`,
+  );
 }
 
 const configSchema = z

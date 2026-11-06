@@ -577,8 +577,8 @@ describe('model routing', () => {
 
   /**
    * A repo whose factory.json holds `models` (omitted when undefined), with the extension loaded. `available` is the set
-   * of specs ctx.models.resolve finds; tests may change it. `live` is the session's model (ctx.models.current) and
-   * thinking level; tests may change it. `call` runs a tool as main; `spawn` fires
+   * of specs ctx.models.resolve finds; tests may change it. `live` is the session's model (ctx.models.current), the
+   * ctx.model omp falls back on (`ctxModel`), and the thinking level; tests may change it. `call` runs a tool as main; `spawn` fires
    * before_subagent_spawn for `agent` from main. The repo goes when `using` ends.
    */
   function routedRepo(models: unknown) {
@@ -586,12 +586,15 @@ describe('model routing', () => {
     const repo = tempRepo('factory-models-', { '.omp/factory.json': JSON.stringify(config) });
     const handlers = new Map<string, Handler>();
     const commands = new Map<string, Command>();
-    const live: { model: string | undefined; thinking: string | undefined } = { model: undefined, thinking: 'off' };
+    const live: { ctxModel: string | undefined; model: string | undefined; thinking: string | undefined } = { ctxModel: undefined, model: undefined, thinking: 'off' };
     const tools = load([], handlers, commands, () => live.thinking);
     const available = new Set<string>();
     const asModel = (spec: string) => ({ id: spec.slice(spec.indexOf('/') + 1), provider: spec.slice(0, spec.indexOf('/')) });
     const main = {
       ...ctx('main', 'main'),
+      get model() {
+        return live.ctxModel === undefined ? undefined : asModel(live.ctxModel);
+      },
       cwd: repo.root,
       hasUI: true,
       models: {
@@ -648,14 +651,25 @@ describe('model routing', () => {
     repo.available.add('anthropic/claude-opus-4-5');
     repo.live.model = 'openai/gpt-5.2';
     repo.live.thinking = 'high';
-    await assert.rejects(
-      repo.call('factory_start', { feature: 'demo', source: SOURCE }),
-      /models\.orchestrator: .*anthropic\/claude-opus-4-5 effort high.*openai\/gpt-5\.2 effort high.*--model anthropic\/claude-opus-4-5 --thinking high/,
-    );
+    await assert.rejects(repo.call('factory_start', { feature: 'demo', source: SOURCE }), (error: Error) => {
+      assert.match(error.message, /models\.orchestrator: .*anthropic\/claude-opus-4-5 effort high.*openai\/gpt-5\.2 effort high.*--model anthropic\/claude-opus-4-5 --thinking high/);
+      assert.doesNotMatch(error.message, /model matches/);
+      return true;
+    });
+    repo.live.model = 'openrouter/claude-opus-4-5';
+    await assert.rejects(repo.call('factory_start', { feature: 'demo', source: SOURCE }), /models\.orchestrator: .*this omp session runs openrouter\/claude-opus-4-5 effort high/);
     repo.live.model = 'anthropic/claude-opus-4-5';
     repo.live.thinking = 'low';
     await assert.rejects(repo.call('factory_start', { feature: 'demo', source: SOURCE }), /models\.orchestrator: .*effort high.*anthropic\/claude-opus-4-5 effort low/);
     repo.live.thinking = 'high';
+    assert.match(await repo.call('factory_start', { feature: 'demo', source: SOURCE }), /Run \\"demo\\" is/);
+  });
+
+  it("falls back on ctx.model when omp reports no current model, and names 'no model' when it has neither", async () => {
+    using repo = routedRepo({ orchestrator: { model: 'anthropic/claude-opus-4-5' } });
+    repo.available.add('anthropic/claude-opus-4-5');
+    await assert.rejects(repo.call('factory_start', { feature: 'demo', source: SOURCE }), /models\.orchestrator: .*runs no model/);
+    repo.live.ctxModel = 'anthropic/claude-opus-4-5';
     assert.match(await repo.call('factory_start', { feature: 'demo', source: SOURCE }), /Run \\"demo\\" is/);
   });
 
@@ -700,6 +714,20 @@ describe('model routing', () => {
     });
     repo.live.thinking = 'high';
     assert.match(await repo.call('factory_start', { resume: 'demo' }), /Run \\"demo\\" is/);
+  });
+
+  it('gives the new-run remedy in the clamp hint on resume, as the run keeps its snapshotted effort', async () => {
+    using repo = routedRepo({ orchestrator: { model: 'anthropic/claude-opus-4-5', reasoningEffort: 'max' } });
+    repo.available.add('anthropic/claude-opus-4-5');
+    repo.live.model = 'anthropic/claude-opus-4-5';
+    repo.live.thinking = 'max';
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    repo.live.thinking = 'xhigh';
+    await assert.rejects(repo.call('factory_start', { resume: 'demo' }), (error: Error) => {
+      assert.match(error.message, /The model matches but the effort does not.*start a new run with a models\.orchestrator\.reasoningEffort this model supports/);
+      assert.doesNotMatch(error.message, /set models\.orchestrator\.reasoningEffort/);
+      return true;
+    });
   });
 
   it('snapshots the role mapping into the run: factory_start and factory_status show it, and a later factory.json edit or a resume does not change it', async () => {

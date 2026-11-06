@@ -3,7 +3,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { auditChild, IMPLEMENTER, REVIEWER, SPAWN_ROLES, VALIDATOR } from './agents.ts';
-import { CONFIG_PATH, checksPrompt, describeModels, loadConfig, parseChecks, requireAvailableModels, type RoleModels, suggestChecks } from './config.ts';
+import { CONFIG_PATH, checksPrompt, describeModels, loadConfig, parseChecks, requireAvailableModels, requireOrchestrator, type RoleModels, suggestChecks } from './config.ts';
 import { evidence, evidenceHead } from './evidence.ts';
 import {
   activeSlice,
@@ -353,28 +353,10 @@ export default function softwareFactory(pi: ExtensionAPI) {
     });
   }
 
-  /**
-   * Throws, naming both selections and the launch flags, when the live session model (or, with a configured effort,
-   * the thinking level) differs from `models.orchestrator`. The factory never switches the session model.
-   */
-  function requireOrchestratorSession(models: RoleModels, ctx: ExtensionContext, remedy: string) {
-    const entry = models.orchestrator;
-    if (entry === undefined) return;
-    const wanted = ctx.models.resolve(entry.model);
-    const live = ctx.models.current() ?? ctx.model;
-    const thinking = pi.getThinkingLevel();
-    const sameModel = wanted !== undefined && live !== undefined && wanted.provider === live.provider && wanted.id === live.id;
-    if (sameModel && (entry.reasoningEffort === undefined || entry.reasoningEffort === thinking)) return;
-    const effort = (level: string | undefined) => ` effort ${level ?? 'unset'}`;
-    const configured = `${entry.model}${wanted === undefined || entry.model === `${wanted.provider}/${wanted.id}` ? '' : ` (${wanted.provider}/${wanted.id})`}${entry.reasoningEffort === undefined ? '' : effort(entry.reasoningEffort)}`;
-    const running = `${live === undefined ? 'no model' : `${live.provider}/${live.id}`}${entry.reasoningEffort === undefined ? '' : effort(thinking)}`;
-    const flags = `--model ${entry.model}${entry.reasoningEffort === undefined ? '' : ` --thinking ${entry.reasoningEffort}`}`;
-    const clamp = sameModel
-      ? ` The model matches but the effort does not: configured effort ${entry.reasoningEffort}; omp's effective (clamped) level is ${thinking ?? 'unset'}. omp clamps --thinking to what the model supports, so if relaunching with --thinking ${entry.reasoningEffort} does not help, set models.orchestrator.reasoningEffort to a level this model supports.`
-      : '';
-    throw new Error(
-      `Software factory: models.orchestrator: configured ${configured}, but this omp session runs ${running}. The factory does not switch the session model: relaunch omp with ${flags}, ${remedy}${clamp}`,
-    );
+  /** The orchestrator check on this session's live model (omp's current one, else ctx.model) and thinking level. */
+  function requireOrchestratorSession(models: RoleModels, ctx: ExtensionContext, when: 'resume' | 'start') {
+    if (models.orchestrator === undefined) return;
+    requireOrchestrator(models, { model: ctx.models.current() ?? ctx.model, thinking: pi.getThinkingLevel() }, spec => ctx.models.resolve(spec), when);
   }
 
   const STALL_DESCRIPTION =
@@ -396,7 +378,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         if (!existsSync(statePath(ws, feature))) throw new Error(`No run named "${feature}".`);
         forgetRun(ws, feature);
         const current = readRun(ws, feature);
-        requireOrchestratorSession(current.models, ctx, 'or start a new run with another models.orchestrator: this run keeps the models.orchestrator from its run snapshot.');
+        requireOrchestratorSession(current.models, ctx, 'resume');
         const slice = activeSlice(current);
         if (slice?.stalled) {
           const body = `In "${feature}", slice ${slice.id} "${slice.title}" used up its fix budget of ${slice.roundLimit} rounds. Raise the fix budget by ${ws.config.maxRounds} rounds and resume?`;
@@ -421,7 +403,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
           throw new Error(`Run "${current}" is still running in this repository. Finish or /factory pause it first.`);
         }
         requireAvailableModels(ws.config.models, spec => ctx.models.resolve(spec));
-        requireOrchestratorSession(ws.config.models, ctx, 'or change models.orchestrator.');
+        requireOrchestratorSession(ws.config.models, ctx, 'start');
         const source = await loadSource(ctx, ws, params.source);
         await ensureChecks(ctx, ws);
         run = await startRun(ws, { feature: params.feature, sessionId, source });
