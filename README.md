@@ -259,9 +259,22 @@ task:
 ### Role models
 
 `models` sets the model per factory role. A role without an entry inherits: omp's own choice (agent model overrides,
-agent frontmatter, then the parent model) stands, and the factory returns no model for it. Only `implementer` spawns
-are routed so far. Entries for `orchestrator`, `reviewer`, `validator` and `explorer` are validated, kept in the run
-and shown, but do not yet change a model.
+agent frontmatter, then the parent model) stands, and the factory returns no model for it.
+
+| Role | Routes |
+| --- | --- |
+| `orchestrator` | Nothing; you choose its model at omp launch |
+| `implementer` | `factory-implementer` spawns |
+| `reviewer` | `factory-reviewer` spawns, for every review domain |
+| `validator` | `factory-review-validator` spawns |
+| `explorer` | spawns of any agent named `scout` while a run is active in the repository; none outside a run |
+
+One `reviewer` model covers every domain. Per-domain reviewer models are not supported: omp's spawn event does not
+carry the review domain, so the factory cannot tell the reviewers apart. Routing changes only the model; no agent's
+tools or gates change.
+
+The `explorer` role matches by name only: omp's spawn event does not say where an agent was defined, so a project,
+user or plugin agent named `scout`, which replaces omp's bundled `scout`, is routed too.
 
 ```json
 {
@@ -280,9 +293,9 @@ and shown, but do not yet change a model.
   the start with an error that names the role, for example `models.implementer`.
 - The run keeps the mapping it started with, as it keeps its checks. `factory_start` and `factory_status` show it per
   role (`inherit` for a role with no entry). Editing `.omp/factory.json` or resuming does not change a running run.
-- Every `factory-implementer` spawn of the run (build, fix, reopened, and follow-up slices) gets the model and its
-  fallbacks. When the model no longer resolves, the spawn is refused with a reason that names the role. The factory
-  does not switch to another model.
+- Every routed spawn of the run (for the implementer: build, fix, reopened, and follow-up slices) gets its role's
+  model and fallbacks. When the model no longer resolves, the spawn is refused with a reason that names the role. The
+  factory does not switch to another model.
 - `reasoningEffort` (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`) is accepted only for `orchestrator`, whose
   model and effort you choose at omp launch (`--model`, `--thinking`). omp gives the factory no way to set a
   subagent's reasoning effort: a real omp spawn ignored an effort suffix on the model. A `reasoningEffort` on

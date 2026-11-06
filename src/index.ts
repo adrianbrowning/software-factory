@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from '@oh-my-pi/pi-coding-agent';
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { CONFIG_PATH, checksPrompt, describeModels, loadConfig, parseChecks, requireAvailableModels, suggestChecks } from './config.ts';
+import { CONFIG_PATH, checksPrompt, describeModels, loadConfig, type ModelRole, parseChecks, requireAvailableModels, suggestChecks } from './config.ts';
 import { evidence, evidenceHead } from './evidence.ts';
 import {
   activeSlice,
@@ -82,6 +82,13 @@ import {
 const IMPLEMENTER = 'factory-implementer';
 const REVIEWER = 'factory-reviewer';
 const VALIDATOR = 'factory-review-validator';
+/** Spawned agent to the role whose snapshotted model routes it. Any agent named `scout` (omp's bundled explorer, or one that replaces it) is the explorer. */
+const SPAWN_ROLES: Partial<Record<string, Exclude<ModelRole, 'orchestrator'>>> = {
+  [IMPLEMENTER]: 'implementer',
+  [REVIEWER]: 'reviewer',
+  [VALIDATOR]: 'validator',
+  scout: 'explorer',
+};
 const DEFAULT_FACTORY_REPO = 'adrianbrowning/software-factory';
 /** Tools `factory_start` activates; they stay out of every other session's tool list. */
 const ORCHESTRATION_TOOLS = [
@@ -900,24 +907,27 @@ export default function softwareFactory(pi: ExtensionAPI) {
   pi.on('turn_end', async (_event, ctx) => trackImplementer(ctx, false));
   pi.on('auto_compaction_start', async (_event, ctx) => trackImplementer(ctx, true));
   // A new implementer the orchestrator spawns starts a new report round; reviving or messaging one is not a spawn, so
-  // a follow-up turn keeps its report. The run's model snapshot routes the spawn; a role without an entry inherits. The
-  // hook sets the model only: a `:<effort>` suffix on the returned pattern does not reach the child's thinking level.
+  // a follow-up turn keeps its report. The run's model snapshot routes factory agent spawns and any agent named `scout`
+  // (the explorer role; the event does not say whether it is omp's bundled one); a role without an entry inherits. The
+  // spawn event does not carry a review domain, so one reviewer model covers every domain. The hook sets the model
+  // only: a `:<effort>` suffix on the returned pattern does not reach the child's thinking level.
   pi.on('before_subagent_spawn', async (event, ctx) => {
-    if (ctx.agent.kind !== 'main' || event.agent !== IMPLEMENTER) return;
+    const role = ctx.agent.kind === 'main' ? SPAWN_ROLES[event.agent] : undefined;
+    if (role === undefined) return;
     const ws = await workspace(ctx.cwd);
     const feature = activeRuns.get(ws.root);
     if (feature === undefined) return;
     return withRun(ws, feature, run => {
-      const entry = run.models.implementer;
+      const entry = run.models[role];
       if (entry !== undefined && ctx.models.resolve(entry.model) === undefined) {
         return {
           block: true,
-          reason: `Software factory: models.implementer: model "${entry.model}" from the run snapshot no longer resolves in this omp session, so the spawn is refused rather than switched to another model. Make the model available, or start a new run with another models.implementer.`,
+          reason: `Software factory: models.${role}: model "${entry.model}" from the run snapshot no longer resolves in this omp session, so the spawn is refused rather than switched to another model. Make the model available, or start a new run with another models.${role}.`,
         };
       }
-      startImplementerSession(ws, run);
+      if (role === 'implementer') startImplementerSession(ws, run);
       if (entry === undefined) return;
-      return { model: [entry.model, ...(entry.fallbacks ?? [])], note: 'Software factory: models.implementer from the run snapshot.' };
+      return { model: [entry.model, ...(entry.fallbacks ?? [])], note: `Software factory: models.${role} from the run snapshot.` };
     });
   });
 }

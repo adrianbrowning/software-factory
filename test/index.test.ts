@@ -663,4 +663,43 @@ describe('model routing', () => {
     await repo.call('factory_start', { feature: 'demo', source: SOURCE });
     assert.equal(await repo.spawn('factory-implementer'), undefined);
   });
+
+  it('routes reviewer, validator and scout spawns to their own snapshotted models, independently of the implementer', async () => {
+    const models = {
+      explorer: { model: 'google/gemini-flash' },
+      implementer: { model: 'anthropic/claude-sonnet-4-5' },
+      reviewer: { fallbacks: ['openai/gpt-5.2'], model: 'anthropic/claude-opus-4-5' },
+      validator: { model: 'openai/o3' },
+    };
+    using repo = routedRepo(models);
+    for (const spec of ['google/gemini-flash', 'anthropic/claude-sonnet-4-5', 'anthropic/claude-opus-4-5', 'openai/gpt-5.2', 'openai/o3']) repo.available.add(spec);
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    assert.deepEqual(await repo.spawn('factory-reviewer'), { model: ['anthropic/claude-opus-4-5', 'openai/gpt-5.2'], note: 'Software factory: models.reviewer from the run snapshot.' });
+    assert.deepEqual(await repo.spawn('factory-review-validator'), { model: ['openai/o3'], note: 'Software factory: models.validator from the run snapshot.' });
+    assert.deepEqual(await repo.spawn('scout'), { model: ['google/gemini-flash'], note: 'Software factory: models.explorer from the run snapshot.' });
+    assert.deepEqual(await repo.spawn('factory-implementer'), { model: ['anthropic/claude-sonnet-4-5'], note: 'Software factory: models.implementer from the run snapshot.' });
+    assert.equal(await repo.spawn('task'), undefined);
+  });
+
+  it('blocks a reviewer, validator or scout spawn, naming the role, when its snapshotted model no longer resolves', async () => {
+    using repo = routedRepo({ explorer: { model: 'x/e' }, reviewer: { model: 'x/r' }, validator: { model: 'x/v' } });
+    for (const spec of ['x/e', 'x/r', 'x/v']) repo.available.add(spec);
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    repo.available.clear();
+    for (const [agent, role, model] of [
+      ['factory-reviewer', 'reviewer', 'x/r'],
+      ['factory-review-validator', 'validator', 'x/v'],
+      ['scout', 'explorer', 'x/e'],
+    ] as const) {
+      const result = (await repo.spawn(agent)) as { block: boolean; reason: string };
+      assert.equal(result.block, true);
+      assert.match(result.reason, new RegExp(`models\\.${role}: model "${model}" from the run snapshot no longer resolves`));
+    }
+  });
+
+  it('does not route scout spawns outside an active run', async () => {
+    using repo = routedRepo({ explorer: { model: 'x/e' } });
+    repo.available.add('x/e');
+    assert.equal(await repo.spawn('scout'), undefined);
+  });
 });
