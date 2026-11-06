@@ -450,6 +450,16 @@ describe('submit', () => {
     assert.deepEqual(gh.calls().filter(call => call.startsWith('api')), titleCalls(2), 'the titles are set before the handoff');
     assert.ok(!existsSync(join(runDir(ws, 'demo'), 'pr.md')));
   });
+
+  it('names the configured trunk, not main, as the target of the one PR in the landOn handoff', async () => {
+    using ws = workspace({ trunk: 'release' });
+    sh(ws.root, 'branch', 'ext-953');
+    const branches = await doneLandOnRun(ws, 'ext-953');
+    sh(ws.root, 'remote', 'add', 'origin', ws.root);
+    using _gh = fakeGh({ stack: undefined, submitted: withPrs(branches) });
+    const output = await step(ws, run => submitStack(ws, run));
+    assert.ok(output.includes('open one PR from ext-953 to release.'), output);
+  });
 });
 
 describe('renderHandoff', () => {
