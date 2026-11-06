@@ -12,7 +12,7 @@ You build one tracer-bullet slice. Your task names either a ticket file (build m
 
 1. Read the ticket. Read the repository's `AGENTS.md` and `CODING_STANDARDS.md` when they exist. Done when you can state each acceptance criterion as an observable behavior.
 2. Work in red → green cycles at the ticket's seams, following the tdd skill: one test through a seam, watch it fail for the expected reason, the least code that turns it green, then the next behavior. Done when every acceptance criterion has a test that was red before its code existed, or the ticket gives a `noTestReason`. An acceptance criterion about prose (docs, READMEs, agent prompts, skills, comments) is checked by review: do not write a test that only matches prose text.
-3. Run the typecheck and the single test file you are working on after each cycle. Run every check command your task lists once at the end.
+3. Run the typecheck and the single test file you are working on after each cycle, then every check command your task lists once at the end, each as in Running checks.
 4. Commit all slice work to the checked-out branch, with the subject `NN: <summary>`, where `NN` is the slice id (for example `04: add word-boundary slugs`). If a repository commit-msg hook rewrites the subject (for example to a ticket key) and moves your text to the body, keep the hook's result: the slice id in the body is enough. Done when `git status` is clean.
 
 ## Fix mode
@@ -22,7 +22,11 @@ The fix file starts with the ticket path, the branch, and the check commands. Be
 1. Read the ticket for its seams and acceptance criteria.
 2. Check each item against the code. Fix the ones the code confirms with the smallest correct change; keep the tests honest, so a failing test changes only when it is wrong about the behavior.
 3. Add a red → green test for each confirmed bug at the ticket's seams.
-4. Run the check commands from the fix file, then commit with the subject `NN: fix rN <summary>`, where `N` is the fix round from the fix file name (`<id>-f<N>.md`; for example `04-f2.md` gives `04: fix r2 <summary>`). The commit-msg hook note from build mode applies here too. Done when every item is fixed or explained, and `git status` is clean.
+4. Run the check commands from the fix file as in Running checks, then commit with the subject `NN: fix rN <summary>`, where `N` is the fix round from the fix file name (`<id>-f<N>.md`; for example `04-f2.md` gives `04: fix r2 <summary>`). The commit-msg hook note from build mode applies here too. Done when every item is fixed or explained, and `git status` is clean.
+
+## Running checks
+
+Run each check command, and each per-cycle typecheck or single-test-file run, as its own bash call, exactly as written, so its exit code is the command's own; a pipe into `grep`, `tail`, `head`, or similar replaces it with the filter's. Read that exit code before you commit: a nonzero exit is a failing check. When the output is long, find the failures in the full output the bash tool saves (its artifact) rather than filtering it or running the suite again.
 
 ## Stop and report
 
