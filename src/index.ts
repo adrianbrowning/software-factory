@@ -211,17 +211,15 @@ async function cachedRoot(cwd: string) {
 const rootOf = (cwd: string) => cachedRoot(cwd).catch(() => undefined);
 
 async function workspace(cwd: string): Promise<Workspace> {
-  let root = roots.get(cwd);
-  if (root === undefined) {
-    root = await repoRoot(cwd);
-    roots.set(cwd, root);
-  }
+  const root = await cachedRoot(cwd);
   return { config: loadConfig(root), root };
 }
 
+const NO_ACTIVE_RUN = 'No active factory run. Start one with /factory <issue>, or /factory resume <feature>.';
+
 function activeFeature(ws: Workspace) {
   const feature = activeRuns.get(ws.root)?.feature;
-  if (feature === undefined) throw new Error('No active factory run. Start one with /factory <issue>, or /factory resume <feature>.');
+  if (feature === undefined) throw new Error(NO_ACTIVE_RUN);
   return feature;
 }
 
@@ -825,15 +823,24 @@ export default function softwareFactory(pi: ExtensionAPI) {
     async handler(args, ctx) {
       const [verb = '', ...rest] = args.trim().split(/\s+/);
       const argument = rest.join(' ');
-      const ws = await workspace(ctx.cwd);
+      // status and pause act on the active run through the workspace it started or resumed with; without one, status
+      // lists the runs of the current factory.json.
+      const active = await runForCwd(ctx.cwd);
       if (verb === '' || verb === 'status') {
-        const feature = activeRuns.get(ws.root)?.feature;
+        const ws = active?.ws ?? (await workspace(ctx.cwd));
         const runsDir = join(ws.root, ws.config.scratchDir);
         const known = existsSync(runsDir) ? readdirSync(runsDir).filter(name => existsSync(statePath(ws, name))) : [];
-        const active = feature === undefined ? 'none' : `${feature}: ${nextAction(readRun(ws, feature))}`;
-        ctx.ui.notify(`Active run: ${active}\nRuns: ${known.join(', ') || 'none'}`, 'info');
+        const current = active === undefined ? 'none' : `${active.feature}: ${nextAction(readRun(ws, active.feature))}`;
+        ctx.ui.notify(`Active run: ${current}\nRuns: ${known.join(', ') || 'none'}`, 'info');
         return;
       }
+      if (verb === 'pause') {
+        if (active === undefined) throw new Error(NO_ACTIVE_RUN);
+        await withRun(active.ws, active.feature, run => pauseRun(run, 'user paused the run'));
+        ctx.ui.notify(`Paused "${active.feature}".`, 'info');
+        return;
+      }
+      const ws = await workspace(ctx.cwd);
       if (verb === 'checks') {
         if (ws.config.checks !== undefined) {
           ctx.ui.notify(`Checks come from "checks" in ${CONFIG_PATH}: ${ws.config.checks.join('; ')}. Edit that file to change them.`, 'info');
@@ -846,12 +853,6 @@ export default function softwareFactory(pi: ExtensionAPI) {
         }
         await saveChecks(ws, checks);
         ctx.ui.notify(`Saved checks: ${checks.join('; ')}. New runs use them; a run that already started keeps its checks.`, 'info');
-        return;
-      }
-      if (verb === 'pause') {
-        const feature = activeFeature(ws);
-        await withRun(ws, feature, run => pauseRun(run, 'user paused the run'));
-        ctx.ui.notify(`Paused "${feature}".`, 'info');
         return;
       }
       if (verb === 'resume') {
@@ -888,14 +889,9 @@ export default function softwareFactory(pi: ExtensionAPI) {
 
   pi.on('session_stop', async (event, ctx) => {
     if (ctx.agent.kind !== 'main') return;
-    let ws: Workspace;
-    try {
-      ws = await workspace(ctx.cwd);
-    } catch {
-      return;
-    }
-    const feature = activeRuns.get(ws.root)?.feature;
-    if (feature === undefined) return;
+    const active = await runForCwd(ctx.cwd);
+    if (active === undefined) return;
+    const { feature, ws } = active;
     const run = readRun(ws, feature);
     const decision = stopDecision(run, event.session_id, stopAttempts.get(feature));
     if (decision.action === 'allow') return;
@@ -909,11 +905,9 @@ export default function softwareFactory(pi: ExtensionAPI) {
     return { decision: 'block', reason: `Software factory run "${feature}" is not finished. Next: ${nextAction(run)}` };
   });
 
-  /** Measures each implementer's context so the retro can see slices that outgrew the budget. */
-  async function trackImplementer(ctx: ExtensionContext, compacted: boolean) {
-    if (ctx.agent.kind !== 'sub' || ctx.agent.name !== IMPLEMENTER) return;
-    const found = await runForCwd(ctx.cwd);
-    if (found === undefined) return;
+  /** Measures each implementer's context so the retro can see slices that outgrew the budget. `found` is its active run. */
+  async function trackImplementer(ctx: ExtensionContext, found: { feature: string; ws: Workspace } | undefined, compacted: boolean) {
+    if (ctx.agent.kind !== 'sub' || ctx.agent.name !== IMPLEMENTER || found === undefined) return;
     const { feature, ws } = found;
     const tokens = ctx.getContextUsage()?.tokens ?? 0;
     const peak = activeSlice(readRun(ws, feature))?.peakContextTokens;
@@ -930,10 +924,11 @@ export default function softwareFactory(pi: ExtensionAPI) {
   }
 
   pi.on('turn_end', async (_event, ctx) => {
-    await auditChild(ctx, pi.getThinkingLevel(), await runForCwd(ctx.cwd));
-    await trackImplementer(ctx, false);
+    const found = await runForCwd(ctx.cwd);
+    await auditChild(ctx, pi.getThinkingLevel(), found);
+    await trackImplementer(ctx, found, false);
   });
-  pi.on('auto_compaction_start', async (_event, ctx) => trackImplementer(ctx, true));
+  pi.on('auto_compaction_start', async (_event, ctx) => trackImplementer(ctx, await runForCwd(ctx.cwd), true));
   // A new implementer the orchestrator spawns starts a new report round; reviving or messaging one is not a spawn, so
   // a follow-up turn keeps its report. The run's model snapshot routes factory agent spawns from the main session, and
   // main-session spawns of any agent named `scout` (the explorer role; the event does not say whether it is omp's

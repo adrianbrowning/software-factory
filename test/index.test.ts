@@ -9,7 +9,7 @@ import type * as agents from '../src/agents.ts';
 import softwareFactory, { MAX_IDLE_STOP_ATTEMPTS, stopDecision } from '../src/index.ts';
 import { readRun, type Run, statePath, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
-import { approvePlan, nextSlice, pauseRun, planSlices, resolveStall } from '../src/workflow.ts';
+import { approvePlan, nextAction, nextSlice, pauseRun, planSlices, resolveStall } from '../src/workflow.ts';
 import { commit, finding, green, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
 
 type Registered = {
@@ -591,6 +591,7 @@ describe('model routing', () => {
     const tools = load([], handlers, commands, () => live.thinking);
     const available = new Set<string>();
     const asModel = (spec: string) => ({ id: spec.slice(spec.indexOf('/') + 1), provider: spec.slice(0, spec.indexOf('/')) });
+    const notes: string[] = [];
     const main = {
       ...ctx('main', 'main'),
       get model() {
@@ -603,7 +604,12 @@ describe('model routing', () => {
         resolve: (spec: string) => (available.has(spec) ? asModel(spec === '@slow' ? 'anthropic/claude-sonnet-4-5' : spec) : undefined),
       },
       sessionManager: { getSessionId: () => 'session' },
-      ui: { confirm: async () => true, notify() {} },
+      ui: {
+        confirm: async () => true,
+        notify(message: string) {
+          notes.push(message);
+        },
+      },
     };
     const call = async (name: string, params: unknown) => JSON.stringify(await tools.get(name)?.execute('id', params, undefined, undefined, main));
     const spawn = (agent: string, cwd = repo.root, from: TestContext['agent'] = main.agent) =>
@@ -641,7 +647,7 @@ describe('model routing', () => {
       };
       return { context, turn: () => childHandlers.get('turn_end')?.({ type: 'turn_end' }, context), usage };
     };
-    return { ...repo, available, call, child, command, live, spawn, statusModels, stop };
+    return { ...repo, available, call, child, command, live, notes, spawn, statusModels, stop };
   }
 
   it('refuses to start when a configured model does not resolve, naming the role', async () => {
@@ -1039,6 +1045,25 @@ describe('model routing', () => {
       readRun(ws, 'demo').agents.map(agent => agent.role),
       ['explorer'],
     );
+  });
+
+  it('finds the run through the workspace it started with for implementer tracking, session_stop and /factory status and pause, after a factory.json edit', async () => {
+    using repo = routedRepo(undefined);
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    const ws: Workspace = { config: loadConfig(repo.root), root: repo.root };
+    await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')])));
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    writeFileSync(join(repo.root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], scratchDir: 'elsewhere' }));
+    const implementer = repo.child('factory-implementer', 'x/i', 'medium');
+    implementer.usage.tokens = 1234;
+    await implementer.turn();
+    assert.equal(readRun(ws, 'demo').slices[0]?.peakContextTokens, 1234);
+    assert.deepEqual(await repo.stop(), { decision: 'block', reason: `Software factory run "demo" is not finished. Next: ${nextAction(readRun(ws, 'demo'))}` });
+    await repo.command('status');
+    assert.match(repo.notes.at(-1) ?? '', /Active run: demo: .*\nRuns: demo$/);
+    writeFileSync(join(repo.root, '.omp/factory.json'), '{not json');
+    await repo.command('pause');
+    assert.equal(readRun(ws, 'demo').status, 'paused');
   });
 
   it('does not record a scout another subagent spawned, as only children of the run main session are recorded', async () => {
