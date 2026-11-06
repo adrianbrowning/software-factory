@@ -9,7 +9,7 @@ import softwareFactory, { MAX_IDLE_STOP_ATTEMPTS, stopDecision } from '../src/in
 import { readRun, type Run, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, pauseRun, planSlices, resolveStall } from '../src/workflow.ts';
-import { commit, finding, green, review, sh, slice, tempRepo } from './helpers.ts';
+import { commit, finding, green, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
 
 type Registered = {
   execute: (...args: unknown[]) => Promise<unknown>;
@@ -594,7 +594,8 @@ describe('model routing', () => {
       ui: { confirm: async () => true, notify() {} },
     };
     const call = async (name: string, params: unknown) => JSON.stringify(await tools.get(name)?.execute('id', params, undefined, undefined, main));
-    const spawn = (agent: string) => handlers.get('before_subagent_spawn')?.({ agent, invocationKind: 'task', patterns: ['@task'], type: 'before_subagent_spawn' }, main);
+    const spawn = (agent: string, cwd = repo.root) =>
+      handlers.get('before_subagent_spawn')?.({ agent, invocationKind: 'task', patterns: ['@task'], type: 'before_subagent_spawn' }, { ...main, cwd });
     const command = (args: string) => commands.get('factory')?.handler(args, main);
     const statusModels = async () => {
       const status: { details: { models: unknown } } = JSON.parse(await call('factory_status', {}));
@@ -706,6 +707,24 @@ describe('model routing', () => {
   it('does not route scout spawns outside an active run', async () => {
     using repo = routedRepo({ explorer: { model: 'x/e' } });
     repo.available.add('x/e');
+    assert.equal(await repo.spawn('scout'), undefined);
+  });
+
+  it('returns no model, without throwing, for a scout spawn from a cwd outside any git repo', async () => {
+    using repo = routedRepo({ explorer: { model: 'x/e' } });
+    repo.available.add('x/e');
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    using outside = tempDir('factory-nogit-');
+    assert.equal(await repo.spawn('scout', outside.root), undefined);
+  });
+
+  it('returns no model, without throwing, for a scout spawn in a repo whose factory.json is invalid', async () => {
+    using repo = routedRepo({ explorer: { model: 'x/e' } });
+    repo.available.add('x/e');
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    const invalid = { baseRef: 'main', checks: ['test -f ok'], models: { reviewer: { model: 'x/r', reasoningEffort: 'high' } } };
+    writeFileSync(join(repo.root, '.omp/factory.json'), JSON.stringify(invalid));
+    assert.throws(() => loadConfig(repo.root));
     assert.equal(await repo.spawn('scout'), undefined);
   });
 

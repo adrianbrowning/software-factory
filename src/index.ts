@@ -915,7 +915,13 @@ export default function softwareFactory(pi: ExtensionAPI) {
   pi.on('before_subagent_spawn', async (event, ctx) => {
     const role = ctx.agent.kind === 'main' ? SPAWN_ROLES[event.agent] : undefined;
     if (role === undefined) return;
-    const ws = await workspace(ctx.cwd);
+    if (activeRuns.size === 0) return;
+    let ws: Workspace;
+    try {
+      ws = await workspace(ctx.cwd);
+    } catch {
+      return;
+    }
     const feature = activeRuns.get(ws.root);
     if (feature === undefined) return;
     return withRun(ws, feature, run => {
