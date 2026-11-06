@@ -22,7 +22,7 @@ type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 type Command = { handler: (args: string, ctx: unknown) => Promise<void> };
 
 /** Registers the extension against a recording `pi` and returns its tools by name; `activated` collects what setActiveTools gets, `handlers` records its event hooks, `commands` its slash commands, `thinking` gives pi.getThinkingLevel. */
-function load(activated: string[] = [], handlers = new Map<string, Handler>(), commands = new Map<string, Command>(), thinking = () => 'off') {
+function load(activated: string[] = [], handlers = new Map<string, Handler>(), commands = new Map<string, Command>(), thinking: () => string | undefined = () => 'off') {
   const tools = new Map<string, Registered>();
   const pi = {
     getActiveTools: () => [],
@@ -585,7 +585,7 @@ describe('model routing', () => {
     const repo = tempRepo('factory-models-', { '.omp/factory.json': JSON.stringify(config) });
     const handlers = new Map<string, Handler>();
     const commands = new Map<string, Command>();
-    const live: { model: string | undefined; thinking: string } = { model: undefined, thinking: 'off' };
+    const live: { model: string | undefined; thinking: string | undefined } = { model: undefined, thinking: 'off' };
     const tools = load([], handlers, commands, () => live.thinking);
     const available = new Set<string>();
     const asModel = (spec: string) => ({ id: spec.slice(spec.indexOf('/') + 1), provider: spec.slice(0, spec.indexOf('/')) });
@@ -634,6 +634,20 @@ describe('model routing', () => {
     await assert.rejects(repo.call('factory_start', { feature: 'demo', source: SOURCE }), /models\.orchestrator: .*effort high.*anthropic\/claude-opus-4-5 effort low/);
     repo.live.thinking = 'high';
     assert.match(await repo.call('factory_start', { feature: 'demo', source: SOURCE }), /Run \\"demo\\" is/);
+  });
+
+  it('explains that omp clamps the thinking level when the model matches but the effort differs, and names an unset effort', async () => {
+    using repo = routedRepo({ orchestrator: { model: 'anthropic/claude-opus-4-5', reasoningEffort: 'max' } });
+    repo.available.add('anthropic/claude-opus-4-5');
+    repo.live.model = 'anthropic/claude-opus-4-5';
+    repo.live.thinking = 'xhigh';
+    await assert.rejects(repo.call('factory_start', { feature: 'demo', source: SOURCE }), (error: Error) => {
+      assert.match(error.message, /configured effort max; omp's effective \(clamped\) level is xhigh/);
+      assert.match(error.message, /omp clamps --thinking to what the model supports.*set models\.orchestrator\.reasoningEffort to a level this model supports/);
+      return true;
+    });
+    repo.live.thinking = undefined;
+    await assert.rejects(repo.call('factory_start', { feature: 'demo', source: SOURCE }), /anthropic\/claude-opus-4-5 effort unset.*omp's effective \(clamped\) level is unset.*omp clamps/);
   });
 
   it('ignores the effort when the orchestrator entry sets none, and checks nothing without an orchestrator entry', async () => {
