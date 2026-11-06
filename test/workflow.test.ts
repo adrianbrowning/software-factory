@@ -65,6 +65,7 @@ describe('base resolution', () => {
     sh(ws.root, 'branch', 'ext-953');
     assert.equal((await resolveBase(ws, { landOn: 'ext-953' })).trunk, 'ext-953');
     assert.equal((await resolveBase(ws, { baseRef: 'main', landOn: 'ext-953' })).trunk, 'ext-953');
+    assert.equal((await resolveBase(ws, { baseRef: 'main', landOn: 'ext-953', trunk: 'release' })).trunk, 'ext-953');
   });
 
   it('defaults the base to the remote default branch from origin/HEAD, else origin/main', async () => {

@@ -129,7 +129,7 @@ const planToolSchema = planSchema.extend({
     .min(1)
     .optional()
     .describe(
-      'Only when the user asked for the work on an existing branch: a local branch, also on origin, that the stack PRs target instead of the trunk; /factory submit opens one draft PR per slice onto it. It is the base when baseRef is omitted',
+      'Only when the user asked for the work on an existing branch: a local branch that the stack PRs target instead of the trunk; /factory submit opens one draft PR per slice onto it once the user has pushed it to origin. It is the base when baseRef is omitted',
     ),
   trunk: z.string().min(1).optional().describe('Branch the stack PRs target; defaults to baseRef without its remote. Ignored with landOn, which is the trunk'),
 });
