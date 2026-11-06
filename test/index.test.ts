@@ -655,7 +655,12 @@ describe('model routing', () => {
     await repo.call('factory_start', { feature: 'demo', source: SOURCE });
     writeFileSync(join(repo.root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }));
     repo.live.thinking = 'medium';
-    await assert.rejects(repo.call('factory_start', { resume: 'demo' }), /models\.orchestrator: .*effort high.*effort medium.*--thinking high/);
+    await assert.rejects(repo.call('factory_start', { resume: 'demo' }), (error: Error) => {
+      assert.match(error.message, /models\.orchestrator: .*effort high.*effort medium.*--thinking high/);
+      assert.match(error.message, /start a new run with another models\.orchestrator.*run snapshot/);
+      assert.doesNotMatch(error.message, /change models\.orchestrator/);
+      return true;
+    });
     repo.live.thinking = 'high';
     assert.match(await repo.call('factory_start', { resume: 'demo' }), /Run \\"demo\\" is/);
   });
