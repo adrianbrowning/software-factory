@@ -2,7 +2,7 @@ import type { ExtensionAPI, ExtensionContext } from '@oh-my-pi/pi-coding-agent';
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { CONFIG_PATH, checksPrompt, describeModels, loadConfig, type ModelRole, parseChecks, requireAvailableModels, suggestChecks } from './config.ts';
+import { CONFIG_PATH, checksPrompt, describeModels, loadConfig, type ModelRole, parseChecks, requireAvailableModels, type RoleModels, suggestChecks } from './config.ts';
 import { evidence, evidenceHead } from './evidence.ts';
 import {
   activeSlice,
@@ -351,6 +351,27 @@ export default function softwareFactory(pi: ExtensionAPI) {
     });
   }
 
+  /**
+   * Throws, naming both selections and the launch flags, when the live session model (or, with a configured effort,
+   * the thinking level) differs from `models.orchestrator`. The factory never switches the session model.
+   */
+  function requireOrchestratorSession(models: RoleModels, ctx: ExtensionContext) {
+    const entry = models.orchestrator;
+    if (entry === undefined) return;
+    const wanted = ctx.models.resolve(entry.model);
+    const live = ctx.models.current() ?? ctx.model;
+    const thinking = pi.getThinkingLevel();
+    const sameModel = wanted !== undefined && live !== undefined && wanted.provider === live.provider && wanted.id === live.id;
+    if (sameModel && (entry.reasoningEffort === undefined || entry.reasoningEffort === thinking)) return;
+    const effort = (level: string | undefined) => (level === undefined ? '' : ` effort ${level}`);
+    const configured = `${entry.model}${wanted === undefined || entry.model === `${wanted.provider}/${wanted.id}` ? '' : ` (${wanted.provider}/${wanted.id})`}${effort(entry.reasoningEffort)}`;
+    const running = `${live === undefined ? 'no model' : `${live.provider}/${live.id}`}${effort(entry.reasoningEffort === undefined ? undefined : thinking)}`;
+    const flags = `--model ${entry.model}${entry.reasoningEffort === undefined ? '' : ` --thinking ${entry.reasoningEffort}`}`;
+    throw new Error(
+      `Software factory: models.orchestrator: configured ${configured}, but this omp session runs ${running}. The factory does not switch the session model: relaunch omp with ${flags}, or change models.orchestrator.`,
+    );
+  }
+
   const STALL_DESCRIPTION =
     'A used-up fix budget asks the user to continue or pause; a paused run stalls until /factory resume, which asks whether to raise the budget.';
 
@@ -370,6 +391,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         if (!existsSync(statePath(ws, feature))) throw new Error(`No run named "${feature}".`);
         forgetRun(ws, feature);
         const current = readRun(ws, feature);
+        requireOrchestratorSession(current.models, ctx);
         const slice = activeSlice(current);
         if (slice?.stalled) {
           const body = `In "${feature}", slice ${slice.id} "${slice.title}" used up its fix budget of ${slice.roundLimit} rounds. Raise the fix budget by ${ws.config.maxRounds} rounds and resume?`;
@@ -394,6 +416,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
           throw new Error(`Run "${current}" is still running in this repository. Finish or /factory pause it first.`);
         }
         requireAvailableModels(ws.config.models, spec => ctx.models.resolve(spec));
+        requireOrchestratorSession(ws.config.models, ctx);
         const source = await loadSource(ctx, ws, params.source);
         await ensureChecks(ctx, ws);
         run = await startRun(ws, { feature: params.feature, sessionId, source });
