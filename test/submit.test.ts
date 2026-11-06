@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { readRun, type Workspace } from '../src/run.ts';
+import { forgetRun, readRun, statePath, type Workspace } from '../src/run.ts';
 import { completeSlice } from '../src/review.ts';
 import { planSubmit, submitStack } from '../src/submit.ts';
 import { approvePlan, nextSlice, parseRetro, planSlices, recordRetro, resolveBase } from '../src/workflow.ts';
@@ -138,6 +138,20 @@ describe('submit', () => {
     assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, `stack init --base ext-953 ${branches.join(' ')}`, 'stack submit --auto', 'stack view --json', ...titleCalls(2)]);
     assert.ok(steps.includes('adopting 2 branches into a gh stack onto ext-953'), steps.join('\n'));
     assert.equal(sh(ws.root, 'rev-parse', 'ext-953'), landOn, 'submit does not move the landOn branch');
+  });
+
+  it('submits a landOn run whose state stored a different trunk onto the landOn branch', async () => {
+    using ws = workspace();
+    sh(ws.root, 'branch', 'ext-953');
+    const branches = await doneLandOnRun(ws, 'ext-953');
+    // A state written before trunk followed landOn stored the old trunk.
+    const state = JSON.parse(readFileSync(statePath(ws, 'demo'), 'utf8'));
+    writeFileSync(statePath(ws, 'demo'), JSON.stringify({ ...state, trunk: 'main' }));
+    forgetRun(ws, 'demo');
+    sh(ws.root, 'remote', 'add', 'origin', ws.root);
+    using gh = fakeGh({ stack: undefined, submitted: withPrs(branches) });
+    await step(ws, run => submitStack(ws, run));
+    assert.ok(gh.calls().includes(`stack init --base ext-953 ${branches.join(' ')}`), gh.calls().join('\n'));
   });
 
   it('refuses a landOn run whose branch is not on origin, before any gh call', async () => {

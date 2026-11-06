@@ -242,7 +242,13 @@ const runSchema = z.object({
    */
   waiting: z.array(text).default([]),
   version: z.literal(1),
-}).transform(({ slices, ...run }) => ({ ...run, slices: slices.map(slice => legacySlice(slice, run.checks)) }));
+}).transform(({ slices, ...run }) => ({
+  ...run,
+  slices: slices.map(slice => legacySlice(slice, run.checks)),
+  // LEGACY-STATE(landon-trunk): runs planned before trunk followed landOn stored the old trunk (baseRef or an explicit
+  // trunk); a landOn run always stacks onto landOn. Remove once no run planned before the release that ties them is left.
+  trunk: run.landOn ?? run.trunk,
+}));
 export type Run = z.infer<typeof runSchema>;
 
 export type Workspace = { config: FactoryConfig; root: string };
