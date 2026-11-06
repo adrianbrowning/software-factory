@@ -17,7 +17,6 @@ describe('renderHandoff', () => {
   });
   after(() => ws[Symbol.dispose]());
   const fresh = () => structuredClone(done);
-  /** Each slice's PR, numbered from 101 with an example URL. */
   const prsOf = (run: Run) => run.slices.map((slice, index) => ({ number: 101 + index, slice, url: `https://example.test/pull/${101 + index}` }));
 
   it('refuses a slice with no recorded review', () => {
