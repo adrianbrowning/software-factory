@@ -468,6 +468,15 @@ describe('submit', () => {
     assert.ok(!existsSync(join(runDir(ws, 'demo'), 'pr.md')));
   });
 
+  it('still sets every title for a stacked run without landOn when gh stack view gives a slice PR no URL', async () => {
+    using ws = workspace();
+    const branches = await doneRun(ws, 2);
+    sh(ws.root, 'remote', 'add', 'origin', ws.root);
+    using gh = fakeGh({ stack: undefined, submitted: withPrs(branches).map((item, index) => ({ ...item, noUrl: index === 1 })) });
+    await step(ws, run => submitStack(ws, run));
+    assert.deepEqual(gh.calls().filter(call => call.startsWith('api')), titleCalls(2));
+  });
+
   it('names the configured trunk, not main, as the target of the one PR in the landOn handoff', async () => {
     using ws = workspace({ trunk: 'release' });
     sh(ws.root, 'branch', 'ext-953');

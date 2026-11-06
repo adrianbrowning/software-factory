@@ -168,22 +168,29 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
 
 /**
  * Sets every slice PR's title to `<feature>: NN <slice title>`, overwriting any other title, and returns each slice's
- * PR in run order. Uses the REST API, not `gh pr edit`, which fails on repositories with Projects (classic). Fails,
- * setting no title, when a slice has no PR or its PR has no URL.
+ * PR in run order for the landOn handoff (empty for a run without landOn). Uses the REST API, not `gh pr edit`, which
+ * fails on repositories with Projects (classic). Fails, setting no title, when a slice has no PR, or, on a landOn run,
+ * when its PR has no URL.
  */
 async function setTitles(root: string, run: Run, progress: (step: string) => void) {
   progress('setting the slice PR titles');
   const view = stackView.parse(JSON.parse(await gh(root, 'stack', 'view', '--json')));
   const byBranch = new Map(view.branches.map(item => [item.name, item.pr]));
+  const titled: { number: number; slice: Run['slices'][number] }[] = [];
   const prs: SlicePr[] = [];
   const missing: string[] = [];
   for (const slice of run.slices) {
     const pr = byBranch.get(slice.branch);
-    if (pr === undefined || pr.url === undefined) missing.push(slice.branch);
-    else prs.push({ number: pr.number, slice, url: pr.url });
+    if (pr === undefined) missing.push(slice.branch);
+    else if (run.landOn === undefined) titled.push({ number: pr.number, slice });
+    else if (pr.url === undefined) missing.push(slice.branch);
+    else {
+      titled.push({ number: pr.number, slice });
+      prs.push({ number: pr.number, slice, url: pr.url });
+    }
   }
   if (missing.length > 0) throw new Error(`gh stack submit left these slice branches with no PR or no PR URL: ${missing.join(', ')}.`);
-  for (const { number, slice } of prs) {
+  for (const { number, slice } of titled) {
     await gh(root, 'api', '-X', 'PATCH', `repos/{owner}/{repo}/pulls/${number}`, '-f', `title=${run.feature}: ${slice.id} ${slice.title}`);
   }
   return prs;
