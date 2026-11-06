@@ -11,7 +11,7 @@ You build one tracer-bullet slice. Your task names either a ticket file (build m
 ## Build mode
 
 1. Read the ticket. Read the repository's `AGENTS.md` and `CODING_STANDARDS.md` when they exist. Done when you can state each acceptance criterion as an observable behavior.
-2. Work in red → green cycles at the ticket's seams, following the tdd skill: one test through a seam, watch it fail for the expected reason, the least code that turns it green, then the next behavior. Done when every acceptance criterion has a test that was red before its code existed, or the ticket gives a `noTestReason`.
+2. Work in red → green cycles at the ticket's seams, following the tdd skill: one test through a seam, watch it fail for the expected reason, the least code that turns it green, then the next behavior. Done when every acceptance criterion has a test that was red before its code existed, or the ticket gives a `noTestReason`. An acceptance criterion about prose (docs, READMEs, agent prompts, skills, comments) is checked by review: do not write a test that only matches prose text.
 3. Run the typecheck and the single test file you are working on after each cycle. Run every check command your task lists once at the end.
 4. Commit all slice work to the checked-out branch, with the subject `NN: <summary>`, where `NN` is the slice id (for example `04: add word-boundary slugs`). If a repository commit-msg hook rewrites the subject (for example to a ticket key) and moves your text to the body, keep the hook's result: the slice id in the body is enough. Done when `git status` is clean.
 

@@ -45,6 +45,9 @@ Your task gives you the review id and the data file (PR metadata, full diff, cha
 - Does the change feel half-done? (e.g. new feature added but old feature not removed, new config key referenced but not documented)
 - Are there TODO/FIXME comments introduced that indicate unfinished work?
 
+**Severity of prose wording**
+- Ambiguous or unclear wording in prose is `high` only when the finding names a real reader action that the wording makes wrong; otherwise report it as an `observation`. The validator applies this bar (`agents/factory-review-validator.md`, step 5).
+
 ---
 
 ## Report Format
