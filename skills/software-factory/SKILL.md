@@ -100,4 +100,4 @@ Present the candidates to the user in one `ask` call, most severe first, with th
 
 ## 6. Hand over
 
-Tell the user the branches in stack order and what `/factory submit` does: it opens one draft PR per slice through `gh stack`, onto the trunk, or, for a run with `landOn`, onto that branch once the user has pushed it to origin. For a `landOn` run it then writes `pr.md` in the run directory, a single-PR title and body, and tells the user to merge the stack into `landOn`, then push it and open one PR from it to the configured trunk. Opening and merging PRs is the user's decision.
+Tell the user the branches in stack order and what `/factory submit` does: it opens one draft PR per slice through `gh stack`, onto the trunk, or, for a run with `landOn`, onto that branch once the user has pushed it to origin. For a `landOn` run it then writes `pr.md` in the run directory, a single-PR title and body, and tells the user to merge the stack into `landOn`, then open one PR from it to the configured trunk. Opening and merging PRs is the user's decision.

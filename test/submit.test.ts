@@ -201,9 +201,10 @@ describe('submit', () => {
       assert.match(handoff, expected);
     }
     assert.match(output, /^gh stack submitted\n/);
-    for (const expected of ['merge the stack into ext-953', 'push ext-953', 'open one PR from ext-953 to main', path, 'Land the work on ext-953']) {
+    for (const expected of ['merge the stack into ext-953', 'open one PR from ext-953 to main', path, 'Land the work on ext-953']) {
       assert.ok(output.includes(expected), `${expected}\n---\n${output}`);
     }
+    assert.ok(!/push/i.test(output.replace(/^gh stack submitted\n/, '')), output);
   });
 
   it('submits a landOn run whose state stored a different trunk onto the landOn branch', async () => {

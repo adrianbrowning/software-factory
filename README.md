@@ -162,7 +162,7 @@ source issue title as its heading, then a body with the issue, a summary, each s
 results, review rounds and reviewed domains, decisions, outstanding concerns (kept observations of each slice's final
 green review, retro findings not applied, stalls and budget overruns, or `None`), retro findings applied, and the
 feature name. Issue and finding text is redacted. The submit output tells you to merge the stack into your branch,
-then push it and open one PR from it to the configured trunk (`trunk`, else the configured base without its remote),
+then open one PR from it to the configured trunk (`trunk`, else the configured base without its remote),
 and names `pr.md` and the PR title. The factory never opens that PR and never merges. A run without `landOn` writes
 no `pr.md`.
 

@@ -84,7 +84,7 @@ function finalObservations(ws: Workspace, run: Run) {
 
 /**
  * Writes the landOn run's single-PR handoff to `<run dir>/pr.md` (the title as its heading, then the body) and returns
- * what the user does next: merge the stack into landOn, then push it and open one PR from it to the configured trunk.
+ * what the user does next: merge the stack into landOn, then open one PR from it to the configured trunk.
  * Fails, writing nothing, when renderHandoff does. Opens no PR and merges nothing.
  */
 export async function writeHandoff(ws: Workspace, run: Run, landOn: string, prs: Map<string, SlicePr>) {
@@ -92,5 +92,5 @@ export async function writeHandoff(ws: Workspace, run: Run, landOn: string, prs:
   const trunk = await configuredTrunk(ws);
   const path = join(runDir(ws, run.feature), 'pr.md');
   writeAtomic(path, `# ${title}\n\n${body}`);
-  return `Next: merge the stack into ${landOn}, then push ${landOn} and open one PR from ${landOn} to ${trunk}.\nPR title: ${title}\nPR body: ${path}`;
+  return `Next: merge the stack into ${landOn}, then open one PR from ${landOn} to ${trunk}.\nPR title: ${title}\nPR body: ${path}`;
 }
