@@ -250,7 +250,25 @@ describe('submit', () => {
     sh(ws.root, 'switch', '-q', 'main');
     const branches = await doneRun(ws, 2, { landOn: 'ext-953' });
     using gh = fakeGh({ stack: undefined, submitted: withPrs(branches) });
-    await assert.rejects(step(ws, run => submitStack(ws, run)), /ext-953 on origin is not the local ext-953.*[Pp]ush it first \(git push origin ext-953\)/s);
+    await assert.rejects(step(ws, run => submitStack(ws, run)), /ext-953 on origin \([0-9a-f]{12}\) is not the local ext-953.*Push your local commits \(git push origin ext-953\)/s);
+    assert.deepEqual(gh.calls(), []);
+  });
+
+  it('refuses a landOn run whose branch on origin is ahead of the local one, telling the user to update the local branch, before any gh call', async () => {
+    using ws = workspace();
+    sh(ws.root, 'branch', 'ext-953');
+    using remote = tempDir('factory-origin-');
+    sh(remote.root, 'init', '-q', '--bare');
+    sh(ws.root, 'remote', 'add', 'origin', remote.root);
+    // A teammate's commit on origin's ext-953 that the local branch lacks.
+    sh(ws.root, 'switch', '-q', 'ext-953');
+    commit(ws, 'teammate.txt');
+    sh(ws.root, 'push', '-q', 'origin', 'ext-953');
+    sh(ws.root, 'reset', '-q', '--hard', 'HEAD~1');
+    sh(ws.root, 'switch', '-q', 'main');
+    const branches = await doneRun(ws, 2, { landOn: 'ext-953' });
+    using gh = fakeGh({ stack: undefined, submitted: withPrs(branches) });
+    await assert.rejects(step(ws, run => submitStack(ws, run)), /ext-953 on origin \([0-9a-f]{12}\) is not the local ext-953.*if origin is ahead, update the local ext-953 first \(switch to ext-953 and run git pull --ff-only origin ext-953\)/s);
     assert.deepEqual(gh.calls(), []);
   });
 
@@ -354,7 +372,8 @@ describe('submit', () => {
     using gh = fakeGh({ stack: branches.slice(0, 1), submitted: [{ name: branches[0] ?? '', pr: 101 }, { name: branches[1] ?? '' }, { name: branches[2] ?? '', pr: 103 }] });
     const error = await step(ws, run => submitStack(ws, run)).then(() => assert.fail('submit should fail'), (caught: unknown) => caught);
     assert.ok(error instanceof Error);
-    assert.match(error.message, new RegExp(`submitted.*titles were not set.*${branches[1]}`, 's'));
+    assert.match(error.message, new RegExp(`submitted.*titles were not set: gh stack submit left these slice branches with no PR: ${branches[1]}\\.`, 's'));
+    assert.doesNotMatch(error.message, /URL/, 'a run without landOn needs no PR URL');
     assert.match(error.message, /\/factory submit again sets them/);
     assert.doesNotMatch(error.message, /Already added/);
     assert.deepEqual(gh.calls().filter(call => call.startsWith('api')), [], 'no title is set when a slice has no PR');
@@ -463,7 +482,7 @@ describe('submit', () => {
     const branches = await doneRun(ws, 2, { landOn: 'ext-953' });
     sh(ws.root, 'remote', 'add', 'origin', ws.root);
     using gh = fakeGh({ stack: undefined, submitted: withPrs(branches).map((item, index) => ({ ...item, noUrl: index === 1 })) });
-    await assert.rejects(step(ws, run => submitStack(ws, run)), new RegExp(`titles were not set: .*no PR or no PR URL: ${branches[1]}\\.`, 's'));
+    await assert.rejects(step(ws, run => submitStack(ws, run)), new RegExp(`titles were not set: gh stack view gave no PR URL for these slice branches, so the handoff cannot link them: ${branches[1]}\\.`, 's'));
     assert.deepEqual(gh.calls().filter(call => call.startsWith('api')), [], 'no title is set when a slice PR has no URL');
     assert.ok(!existsSync(join(runDir(ws, 'demo'), 'pr.md')));
   });

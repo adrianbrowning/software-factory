@@ -82,11 +82,13 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
       throw new Error(`${run.landOn} is not on origin, so its slice PRs have no branch to target. Push it first (git push origin ${run.landOn}), then run /factory submit again. Nothing was submitted.`);
     }
     // ls-remote prints `<sha>\trefs/heads/<landOn>`. The slices build on the local branch, so an origin tip that is not
-    // the local one would put the local commits origin lacks into slice 01's PR.
+    // the local one would put the local commits origin lacks into slice 01's PR. Origin may instead be ahead (a teammate
+    // pushed to it), where a push is rejected, so the message names both remedies.
     const local = (await git(ws.root, 'rev-parse', `refs/heads/${run.landOn}`)).trim();
-    if (heads.split('\t')[0] !== local) {
+    const remote = heads.split('\t')[0] ?? '';
+    if (remote !== local) {
       throw new Error(
-        `${run.landOn} on origin is not the local ${run.landOn} (${local.slice(0, 12)}) that the slices build on. Push it first (git push origin ${run.landOn}), then run /factory submit again. Nothing was submitted.`,
+        `${run.landOn} on origin (${remote.slice(0, 12)}) is not the local ${run.landOn} (${local.slice(0, 12)}) that the slices build on. Push your local commits (git push origin ${run.landOn}), or, if origin is ahead, update the local ${run.landOn} first (switch to ${run.landOn} and run git pull --ff-only origin ${run.landOn}); then run /factory submit again. Nothing was submitted.`,
       );
     }
   }
@@ -176,20 +178,15 @@ async function setTitles(root: string, run: Run, progress: (step: string) => voi
   progress('setting the slice PR titles');
   const view = stackView.parse(JSON.parse(await gh(root, 'stack', 'view', '--json')));
   const byBranch = new Map(view.branches.map(item => [item.name, item.pr]));
-  const titled: { number: number; slice: Run['slices'][number] }[] = [];
-  const prs: SlicePr[] = [];
-  const missing: string[] = [];
-  for (const slice of run.slices) {
-    const pr = byBranch.get(slice.branch);
-    if (pr === undefined) missing.push(slice.branch);
-    else if (run.landOn === undefined) titled.push({ number: pr.number, slice });
-    else if (pr.url === undefined) missing.push(slice.branch);
-    else {
-      titled.push({ number: pr.number, slice });
-      prs.push({ number: pr.number, slice, url: pr.url });
-    }
+  const pairs = run.slices.map(slice => ({ pr: byBranch.get(slice.branch), slice }));
+  const noPr = pairs.filter(pair => pair.pr === undefined).map(pair => pair.slice.branch);
+  if (noPr.length > 0) throw new Error(`gh stack submit left these slice branches with no PR: ${noPr.join(', ')}.`);
+  const titled = pairs.flatMap(({ pr, slice }) => (pr === undefined ? [] : [{ number: pr.number, slice, url: pr.url }]));
+  const prs: SlicePr[] = run.landOn === undefined ? [] : titled.flatMap(({ number, slice, url }) => (url === undefined ? [] : [{ number, slice, url }]));
+  if (run.landOn !== undefined && prs.length < titled.length) {
+    const noUrl = titled.filter(pr => pr.url === undefined).map(pr => pr.slice.branch);
+    throw new Error(`gh stack view gave no PR URL for these slice branches, so the handoff cannot link them: ${noUrl.join(', ')}.`);
   }
-  if (missing.length > 0) throw new Error(`gh stack submit left these slice branches with no PR or no PR URL: ${missing.join(', ')}.`);
   for (const { number, slice } of titled) {
     await gh(root, 'api', '-X', 'PATCH', `repos/{owner}/{repo}/pulls/${number}`, '-f', `title=${run.feature}: ${slice.id} ${slice.title}`);
   }

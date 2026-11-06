@@ -157,7 +157,8 @@ orchestrator, for example: "Put this on my branch `EXT2-953-closeOrReload`." It 
 When the run is done, push your branch so origin has every commit the slices build on, then run `/factory submit`
 and confirm `Open draft PRs?`. As for any run, gh stack opens or updates one draft PR per slice, here onto your
 branch. The factory never pushes or moves your branch. It refuses, before any gh call, while origin does not have the
-branch or origin's tip of it is not your local tip.
+branch or origin's tip of it is not your local tip: push your local commits, or, if origin is ahead (a teammate
+pushed to it), update your local branch first.
 
 Once the slice PRs are open and titled, submit writes a single-PR handoff to `<scratchDir>/<feature>/pr.md`: the
 source issue title as its heading, then a body with the issue, a summary, each slice's change and PR link, check
