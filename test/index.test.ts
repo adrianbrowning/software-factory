@@ -595,7 +595,7 @@ describe('model routing', () => {
       hasUI: true,
       models: {
         current: () => (live.model === undefined ? undefined : asModel(live.model)),
-        resolve: (spec: string) => (available.has(spec) ? asModel(spec.startsWith('@') ? `test/${spec}` : spec) : undefined),
+        resolve: (spec: string) => (available.has(spec) ? asModel(spec === '@slow' ? 'anthropic/claude-sonnet-4-5' : spec) : undefined),
       },
       sessionManager: { getSessionId: () => 'session' },
       ui: { confirm: async () => true, notify() {} },
@@ -639,7 +639,7 @@ describe('model routing', () => {
   it('ignores the effort when the orchestrator entry sets none, and checks nothing without an orchestrator entry', async () => {
     using repo = routedRepo({ orchestrator: { model: '@slow' } });
     repo.available.add('@slow');
-    repo.live.model = 'test/@slow';
+    repo.live.model = 'anthropic/claude-sonnet-4-5';
     repo.live.thinking = 'minimal';
     assert.match(await repo.call('factory_start', { feature: 'demo', source: SOURCE }), /Run \\"demo\\" is/);
     using bare = routedRepo(undefined);
