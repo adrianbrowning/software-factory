@@ -26,7 +26,7 @@ import {
   resumeRun,
 
 } from '../src/workflow.ts';
-import { checkRuns, commit, countedCheck, finding, green, newRun, review, sh, slice, start, step, workspace } from './helpers.ts';
+import { checkRuns, commit, countedCheck, green, newRun, review, sh, slice, start, step, workspace } from './helpers.ts';
 
 describe('test isolation', () => {
   it("runs the factory's git calls without the developer's global git config", async () => {
@@ -557,32 +557,6 @@ describe('pause and resume', () => {
     await step(ws, run => resumeRun(ws, run, 'session-2'));
     const resumed = readRun(ws, 'demo').slices[0];
     assert.deepEqual([resumed?.phase, resumed?.checked?.sha, resumed?.green], ['review', sh(ws.root, 'rev-parse', 'HEAD'), undefined]);
-  });
-
-  it('lists the blocking findings of the last recorded review as fix items when a slice paused after its fix round predates fix items', async () => {
-    using ws = workspace({ maxRounds: 2 });
-    await newRun(ws, [slice('Feature')]);
-    await step(ws, run => nextSlice(ws, run));
-    commit(ws, 'ok');
-    await step(ws, run => runChecks(ws, run));
-    const opened = await step(ws, run => startReview(ws, run));
-    await review(ws, opened.reviewId, [finding('bug', 'high', 'null-crash'), finding('thermo', 'observation', 'naming')]);
-    await step(ws, run => recordReview(ws, run));
-    commit(ws, 'ok', 'fixed\n');
-    await step(ws, run => runChecks(ws, run));
-    await step(ws, run => pauseRun(run, 'test'));
-    const path = join(ws.root, '.scratch', 'demo', 'state.json');
-    const state = JSON.parse(readFileSync(path, 'utf8'));
-    assert.equal(state.slices[0].phase, 'review');
-    delete state.slices[0].fixItems;
-    delete state.slices[0].fixPath;
-    writeFileSync(path, JSON.stringify(state));
-    forgetRun(ws, 'demo');
-
-    await step(ws, run => resumeRun(ws, run, 'session-2'));
-    const data = readFileSync((await step(ws, run => startReview(ws, run))).dataFile, 'utf8');
-    assert.match(data, /- `bug-null-crash` \([^\n]*fixes\/01-f1\.md, round 1\): \[high\] ok:1: null-crash\n/);
-    assert.doesNotMatch(data, /`thermo-naming`/);
   });
 
   it('sends a slice of a run saved before runs kept their checks back to checks on resume on the same commit, and runs the filled checks', async () => {

@@ -1,8 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import type { FactoryConfig } from './config.ts';
-import { evidenceLine } from './evidence.ts';
 
 /** The cc-pr-review domains. Each has a vendored reference under skills/software-factory/references/review/. */
 export const REVIEW_DOMAINS = [
@@ -57,15 +56,24 @@ export const findingListSchema = z.array(findingSchema);
 
 export const FIX_STATUSES = ['fixed', 'not-a-defect', 'waived', 'open'] as const;
 
-/** The scope reviewer's verdict on one fix item the review data file lists. */
-export const fixVerdictSchema = z.object({
-  decision: z.number().int().positive().optional().describe('Only for waived: number of the recorded user decision that waives the item'),
-  id: text.describe('Fix item id, exactly as the FIX ITEMS section lists it'),
-  reason: text.describe(
-    'Why: for fixed, where the diff fixes it; for not-a-defect, the evidence from the diff or code (a claim such as unreachable needs it); for waived, how the decision covers it; for open, what still fails',
-  ),
-  status: z.enum(FIX_STATUSES),
-});
+const verdictReason = text.describe(
+  'Why: for fixed, where the diff fixes it; for not-a-defect, the evidence from the diff or code (a claim such as unreachable needs it); for waived, how the decision covers it; for open, what still fails',
+);
+const verdictId = text.describe('Fix item id, exactly as the FIX ITEMS section lists it');
+
+/**
+ * The scope reviewer's verdict on one fix item the review data file lists. A waived item names the recorded decision
+ * that waives it; no other status names one.
+ */
+export const fixVerdictSchema = z.discriminatedUnion('status', [
+  z.object({
+    decision: z.number().int().positive().describe('Number of the recorded user decision that waives the item'),
+    id: verdictId,
+    reason: verdictReason,
+    status: z.literal('waived'),
+  }),
+  z.strictObject({ id: verdictId, reason: verdictReason, status: z.enum(FIX_STATUSES).exclude(['waived']) }),
+]);
 export type FixVerdict = z.infer<typeof fixVerdictSchema>;
 
 export const sourceSchema = z.object({
@@ -267,45 +275,9 @@ export function readRun(ws: Workspace, feature: string): Run {
   if (expected !== undefined && expected !== content) {
     throw new Error(`${path} changed outside the factory tools. Restore it, or pause and resume the run to re-verify it.`);
   }
-  const raw = JSON.parse(content);
-  legacyFixItems(ws, raw);
-  const parsed = runSchema.safeParse(raw);
+  const parsed = runSchema.safeParse(JSON.parse(content));
   if (!parsed.success) throw new Error(`Corrupt factory state ${path}: ${z.prettifyError(parsed.error)}`);
   return parsed.data;
-}
-
-/**
- * LEGACY-STATE(fix-items): a state file from before fix items holds a slice after a blocking review with no `fixItems`;
- * its next review would list none. Fills them once from the last recorded review.json's blocking findings,
- * on the raw state before parsing. Remove once no run paused before the release that ships issue #68 is left to resume.
- */
-function legacyFixItems(ws: Workspace, raw: unknown) {
-  const { feature, slices } = (raw ?? {}) as { feature?: unknown; slices?: unknown };
-  if (!Array.isArray(slices) || typeof feature !== 'string') return;
-  for (const slice of slices as Record<string, unknown>[]) {
-    const { fixRounds, id, phase, reviews } = slice;
-    if (slice.fixItems !== undefined || phase === 'ready' || phase === 'done' || typeof id !== 'string') continue;
-    if (typeof reviews !== 'number' || typeof fixRounds !== 'number' || fixRounds < 1) continue;
-    const fixPath = typeof slice.fixPath === 'string' ? slice.fixPath : join(runDir(ws, feature), 'fixes', `${id}-f${fixRounds}.md`);
-    let n = reviews;
-    const recorded = (k: number) => join(reviewDir(ws, feature, `${id}-r${k}`), 'review.json');
-    while (n > 0 && !existsSync(recorded(n))) n--;
-    if (n === 0) continue;
-    let findings: Finding[];
-    try {
-      findings = z.object({ findings: findingListSchema }).parse(JSON.parse(readFileSync(recorded(n), 'utf8'))).findings;
-    } catch {
-      continue;
-    }
-    slice.fixItems = findings
-      .filter(finding => finding.severity !== 'observation')
-      .map(finding => ({
-        id: finding.id,
-        path: fixPath,
-        round: fixRounds,
-        summary: `[${finding.severity}] ${finding.path}${finding.line === undefined ? '' : `:${finding.line}`}: ${evidenceLine(finding.title, 500)}`,
-      }));
-  }
 }
 
 /** Forgets the in-process copy so the next read trusts disk again. Only resume calls this, then re-verifies. */

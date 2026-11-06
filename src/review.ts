@@ -38,7 +38,7 @@ import {
 import { storedReport } from './report.ts';
 import { head, porcelain, requireClean, requireOnBranch, snapshot } from './repo.ts';
 import {
-  type FixItemInput,
+  type FixRecord,
   pauseRun,
   renderTicket,
   requestFix,
@@ -183,14 +183,16 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   const summary = results.map(({ command, result }) => describeCheck(command, result));
   if (failed.length === 0 && dirty === '') return { commits, report, unchanged, ...(await passChecks(ws, run, slice, sha, summary, false)) };
 
-  const sections = failed.map(
-    ({ command, result }) =>
-      `## ${describeCheck(command, result)}\n\n### stdout\n\n\`\`\`\n${evidence(result.stdout)}\n\`\`\`\n\n### stderr\n\n\`\`\`\n${evidence(result.stderr)}\n\`\`\``,
-  );
-  const items: FixItemInput[] = failed.map(({ command, result }) => ({ kind: 'check', summary: describeCheck(command, result) }));
+  const records: FixRecord[] = failed.map(({ command, result }) => {
+    const described = describeCheck(command, result);
+    const section = `## ${described}\n\n### stdout\n\n\`\`\`\n${evidence(result.stdout)}\n\`\`\`\n\n### stderr\n\n\`\`\`\n${evidence(result.stderr)}\n\`\`\``;
+    return { item: { kind: 'check', summary: described }, section };
+  });
   if (dirty !== '') {
-    sections.push(`## Checks changed the working tree\n\nCommit or revert these files:\n\n\`\`\`\n${evidence(dirty, 2_000)}\n\`\`\``);
-    items.push({ kind: 'tree', summary: 'Checks changed the working tree' });
+    records.push({
+      item: { kind: 'tree', summary: 'Checks changed the working tree' },
+      section: `## Checks changed the working tree\n\nCommit or revert these files:\n\n\`\`\`\n${evidence(dirty, 2_000)}\n\`\`\``,
+    });
   }
   addEvent(
     run,
@@ -198,7 +200,7 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
     [...failed.map(({ command }) => command), ...(dirty === '' ? [] : ['working tree changed'])].join('; '),
     slice,
   );
-  return { commits, passed: false as const, report, summary, unchanged, ...requestFix(ws, run, slice, sections.join('\n\n'), sha, items) };
+  return { commits, passed: false as const, report, summary, unchanged, ...requestFix(ws, run, slice, sha, records) };
 }
 
 /** Moves the slice to review with check `results` passed on `sha`. `reused` marks stored results that stand, when no check ran. */
@@ -462,8 +464,8 @@ export function submitDomain(
 }
 
 /**
- * Throws unless `verdicts` give exactly one verdict for each listed fix item, and a waived item, and only a waived
- * item, names one of the review's `decisionCount` decisions.
+ * Throws unless `verdicts` give exactly one verdict for each listed fix item, and each waived item names one of the
+ * review's `decisionCount` decisions. fixVerdictSchema already holds that a waived item, and only a waived item, names one.
  */
 function checkFixVerdicts(items: FixItem[], verdicts: FixVerdict[], decisionCount: number) {
   const listed = new Set(items.map(item => item.id));
@@ -476,12 +478,8 @@ function checkFixVerdicts(items: FixItem[], verdicts: FixVerdict[], decisionCoun
   if (unknown.length > 0) throw new Error(`Unknown fix item ids: ${unknown.join(', ')}. Give verdicts only for the ids the FIX ITEMS section lists.`);
   const missing = [...listed].filter(id => !seen.has(id));
   if (missing.length > 0) throw new Error(`Give a verdict for every fix item. Missing: ${missing.join(', ')}`);
-  const misplaced = verdicts.filter(verdict => verdict.status !== 'waived' && verdict.decision !== undefined).map(verdict => verdict.id);
-  if (misplaced.length > 0) throw new Error(`Only a waived fix item names a decision: ${misplaced.join(', ')}`);
   for (const verdict of verdicts) {
-    if (verdict.status !== 'waived') continue;
-    if (verdict.decision === undefined) throw new Error(`Fix item "${verdict.id}" is waived, so it must name the recorded decision that waives it.`);
-    if (verdict.decision > decisionCount) {
+    if (verdict.status === 'waived' && verdict.decision > decisionCount) {
       throw new Error(`Fix item "${verdict.id}" names decision ${verdict.decision}, but the review data lists ${decisionCount} decisions.`);
     }
   }
@@ -667,10 +665,9 @@ export async function recordReview(ws: Workspace, run: Run) {
   const blocking = kept.filter(finding => finding.severity !== 'observation');
   const observations = kept.filter(finding => finding.severity === 'observation');
   const verdicts = review.fixVerdicts ?? [];
-  // An item without a closing verdict stays open; a blocking finding under its id already carries it.
-  const open = slice.fixItems.filter(
-    item => !blocking.some(finding => finding.id === item.id) && (verdicts.find(entry => entry.id === item.id)?.status ?? 'open') === 'open',
-  );
+  const verdictOf = new Map(verdicts.map(entry => [entry.id, entry]));
+  // An item without a closing verdict stays open, so no item passes unchecked; a blocking finding under its id already carries it.
+  const open = slice.fixItems.filter(item => !blocking.some(finding => finding.id === item.id) && (verdictOf.get(item.id)?.status ?? 'open') === 'open');
   // critical and high findings and open fix items all block the slice, so the recorded verdict follows the gate.
   const verdict = blocking.length > 0 || open.length > 0 ? 'CHANGES_REQUESTED' : 'APPROVED';
   writeAtomic(
@@ -689,26 +686,22 @@ export async function recordReview(ws: Workspace, run: Run) {
   }
   const blockingIds = [...blocking.map(finding => finding.id), ...open.map(item => `${item.id} (open fix item)`)];
   addEvent(run, 'review-blocking', `${detail}; blocking ${blockingIds.join(', ')}`, slice);
-  const sections = [
-    ...(blocking.length === 0 ? [] : [`## Blocking review findings from ${review.id}\n\n${blocking.map(finding => renderFinding(finding, run.decisions, '###')).join('\n\n')}`]),
-    ...(open.length === 0 ? [] : [`## Open fix items from ${review.id}\n\n${open.map(item => renderOpenItem(item, verdicts)).join('\n\n')}`]),
+  const records: FixRecord[] = [
+    ...blocking.map(finding => findingRecord(finding, `## Blocking review findings from ${review.id}`, run.decisions)),
+    ...open.map(item => ({ group: `## Open fix items from ${review.id}`, item: { id: item.id, summary: item.summary }, section: renderOpenItem(item, verdictOf.get(item.id)) })),
   ];
-  return {
-    blocking: blocking.length,
-    green: false as const,
-    open: open.length,
-    ...requestFix(ws, run, slice, sections.join('\n\n'), review.sha, [...blocking.map(findingItem), ...open.map(({ id, summary }) => ({ id, summary }))]),
-  };
+  return { blocking: blocking.length, green: false as const, open: open.length, ...requestFix(ws, run, slice, review.sha, records) };
 }
 
 /** A fix item the scope reviewer left open, with where it was asked for and the reviewer's reason. */
-function renderOpenItem(item: FixItem, verdicts: FixVerdict[]) {
-  const reason = verdicts.find(entry => entry.id === item.id)?.reason;
-  return `### \`${item.id}\`\n\n- Asked in: ${item.path} (round ${item.round})\n- Item: ${item.summary}\n- Scope reviewer: ${reason === undefined ? 'no verdict' : evidence(reason, 2_000)}`;
+function renderOpenItem(item: FixItem, verdict: FixVerdict | undefined) {
+  return `### \`${item.id}\`\n\n- Asked in: ${item.path} (round ${item.round})\n- Item: ${item.summary}\n- Scope reviewer: ${verdict === undefined ? 'no verdict' : evidence(verdict.reason, 2_000)}`;
 }
 
-function findingItem(finding: Finding) {
-  return { id: finding.id, summary: `[${finding.severity}] ${finding.path}${finding.line === undefined ? '' : `:${finding.line}`}: ${evidenceLine(finding.title, 500)}` };
+/** A finding as a fix record in `group`: its id and summary `[severity] path:line: title` as the fix item. */
+function findingRecord(finding: Finding, group: string, decisions: string[]): FixRecord {
+  const summary = `[${finding.severity}] ${finding.path}${finding.line === undefined ? '' : `:${finding.line}`}: ${evidenceLine(finding.title, 500)}`;
+  return { group, item: { id: finding.id, summary }, section: renderFinding(finding, decisions, '###') };
 }
 
 /** What the user chose to fix in the active slice after its green review: observation ids, a free-text bug, or both. */
@@ -759,17 +752,18 @@ export function fixObservations(ws: Workspace, run: Run, request: FixRequest, re
   const ids = observations.map(finding => finding.id);
   addEvent(run, 'fix-observations', `${review.id}: ${[...(bug === undefined ? [] : ['bug']), ...ids].join(', ')}`, slice);
   const why = evidence(reason, 4_000);
-  const sections = [
-    ...(bug === undefined ? [] : [`## Bug found after green review ${review.id}\n\n${why}\n\n${redact(bug)}`]),
-    ...(ids.length === 0
+  const records: FixRecord[] = [
+    ...(bug === undefined
       ? []
-      : [`## Observations from green review ${review.id} the user chose to fix\n\n${why}\n\n${observations.map(finding => renderFinding(finding, run.decisions)).join('\n\n')}`]),
+      : [
+          {
+            item: { kind: 'bug' as const, summary: evidenceLine(`Bug found after green review ${review.id}: ${bug}`) },
+            section: `## Bug found after green review ${review.id}\n\n${why}\n\n${redact(bug)}`,
+          },
+        ]),
+    ...observations.map(finding => findingRecord(finding, `## Observations from green review ${review.id} the user chose to fix\n\n${why}`, run.decisions)),
   ];
-  const items = [
-    ...(bug === undefined ? [] : [{ kind: 'bug' as const, summary: evidenceLine(`Bug found after green review ${review.id}: ${bug}`) }]),
-    ...observations.map(findingItem),
-  ];
-  return requestFix(ws, run, slice, sections.join('\n\n'), review.sha, items);
+  return requestFix(ws, run, slice, review.sha, records);
 }
 
 /**
