@@ -6,7 +6,7 @@ import { describe, it } from 'node:test';
 import type { ExtensionAPI } from '@oh-my-pi/pi-coding-agent';
 import { loadConfig } from '../src/config.ts';
 import softwareFactory, { MAX_IDLE_STOP_ATTEMPTS, stopDecision } from '../src/index.ts';
-import { readRun, type Run, ticketPath, withRun, type Workspace } from '../src/run.ts';
+import { readRun, type Run, statePath, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, pauseRun, planSlices, resolveStall } from '../src/workflow.ts';
 import { commit, finding, green, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
@@ -718,32 +718,43 @@ describe('model routing', () => {
     assert.equal(await repo.spawn('scout', outside.root), undefined);
   });
 
-  it('returns no model, without throwing, for a scout spawn in a repo whose factory.json is invalid', async () => {
-    using repo = routedRepo({ explorer: { model: 'x/e' } });
-    repo.available.add('x/e');
+  it('keeps routing every factory role and scout to the snapshot after factory.json is edited mid-run', async () => {
+    const models = { explorer: { model: 'x/e' }, implementer: { model: 'x/i' }, reviewer: { model: 'x/r' }, validator: { model: 'x/v' } };
+    using repo = routedRepo(models);
+    for (const spec of ['x/e', 'x/i', 'x/r', 'x/v', 'y/other']) repo.available.add(spec);
     await repo.call('factory_start', { feature: 'demo', source: SOURCE });
-    const invalid = { baseRef: 'main', checks: ['test -f ok'], models: { reviewer: { model: 'x/r', reasoningEffort: 'high' } } };
-    writeFileSync(join(repo.root, '.omp/factory.json'), JSON.stringify(invalid));
+    const routes = async () => {
+      for (const [agent, role, model] of [
+        ['factory-reviewer', 'reviewer', 'x/r'],
+        ['factory-review-validator', 'validator', 'x/v'],
+        ['factory-implementer', 'implementer', 'x/i'],
+        ['scout', 'explorer', 'x/e'],
+      ] as const) {
+        assert.deepEqual(await repo.spawn(agent), { model: [model], note: `Software factory: models.${role} from the run snapshot.` });
+      }
+    };
+    const config = join(repo.root, '.omp/factory.json');
+    const other = { model: 'y/other' };
+    writeFileSync(config, JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], models: { reviewer: { model: 'x/r', reasoningEffort: 'high' } } }));
     assert.throws(() => loadConfig(repo.root));
-    assert.equal(await repo.spawn('scout'), undefined);
+    await routes();
+    writeFileSync(config, JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], models: { explorer: other, implementer: other, reviewer: other, validator: other } }));
+    await routes();
+    writeFileSync(config, JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], models, scratchDir: 'elsewhere' }));
+    await routes();
   });
 
-  it('blocks a reviewer, validator or implementer spawn, naming the role and the error, when factory.json is invalid', async () => {
-    using repo = routedRepo({ reviewer: { model: 'x/r' } });
+  it('returns no model for a scout spawn, and blocks a factory-role spawn, when the run state cannot be read', async () => {
+    using repo = routedRepo({ explorer: { model: 'x/e' }, reviewer: { model: 'x/r' } });
+    repo.available.add('x/e');
     repo.available.add('x/r');
     await repo.call('factory_start', { feature: 'demo', source: SOURCE });
-    const invalid = { baseRef: 'main', checks: ['test -f ok'], models: { reviewer: { model: 'x/r', reasoningEffort: 'high' } } };
-    writeFileSync(join(repo.root, '.omp/factory.json'), JSON.stringify(invalid));
-    for (const [agent, role] of [
-      ['factory-reviewer', 'reviewer'],
-      ['factory-review-validator', 'validator'],
-      ['factory-implementer', 'implementer'],
-    ] as const) {
-      const result = (await repo.spawn(agent)) as { block: boolean; reason: string };
-      assert.equal(result.block, true);
-      assert.match(result.reason, new RegExp(`models\\.${role}: .*factory\\.json`));
-      assert.match(result.reason, /reasoningEffort/);
-    }
+    const ws: Workspace = { config: loadConfig(repo.root), root: repo.root };
+    writeFileSync(statePath(ws, 'demo'), '{not json');
+    assert.equal(await repo.spawn('scout'), undefined);
+    const result = (await repo.spawn('factory-reviewer')) as { block: boolean; reason: string };
+    assert.equal(result.block, true);
+    assert.match(result.reason, /models\.reviewer: .*run state/);
   });
 
   it('does not route or block scout spawns once the run is paused', async () => {

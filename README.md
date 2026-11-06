@@ -292,10 +292,13 @@ user or plugin agent named `scout`, which replaces omp's bundled `scout`, is rou
 - `factory_start` resolves every configured model and fallback in the omp session. One that does not resolve stops
   the start with an error that names the role, for example `models.implementer`.
 - The run keeps the mapping it started with, as it keeps its checks. `factory_start` and `factory_status` show it per
-  role (`inherit` for a role with no entry). Editing `.omp/factory.json` or resuming does not change a running run.
+  role (`inherit` for a role with no entry). Editing `.omp/factory.json` or resuming does not change a running run:
+  spawn routing never rereads `.omp/factory.json`, so an invalid edit, new models or a new `scratchDir` leave the
+  run's routing and state location as they were when it started or resumed.
 - Every routed spawn of the run (for the implementer: build, fix, reopened, and follow-up slices) gets its role's
-  model and fallbacks. When the model no longer resolves, the spawn is refused with a reason that names the role. The
-  factory does not switch to another model.
+  model and fallbacks. When the model no longer resolves, the spawn is refused with a reason that names the role.
+  When the run state cannot be read, a factory-role spawn is refused the same way and a `scout` spawn goes
+  unrouted. The factory does not switch to another model.
 - `reasoningEffort` (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`) is accepted only for `orchestrator`, whose
   model and effort you choose at omp launch (`--model`, `--thinking`). omp gives the factory no way to set a
   subagent's reasoning effort: a real omp spawn ignored an effort suffix on the model. A `reasoningEffort` on

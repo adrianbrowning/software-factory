@@ -198,10 +198,22 @@ export function callerOf(ctx: Pick<ExtensionContext, 'agent'>) {
   return ctx.agent.kind === 'main' ? 'main' : ctx.agent.name;
 }
 
-/** Active run per repository root. Module scope is shared by the main session and its subagents in one process. */
-const activeRuns = new Map<string, string>();
+/**
+ * Active run per repository root, with the workspace it started or resumed with, so routing keeps that run's state
+ * location after a mid-run factory.json edit. Module scope is shared by the main session and its subagents in one process.
+ */
+const activeRuns = new Map<string, { feature: string; ws: Workspace }>();
 const stopAttempts = new Map<string, { count: number; events: number }>();
 const roots = new Map<string, string>();
+
+async function cachedRoot(cwd: string) {
+  let root = roots.get(cwd);
+  if (root === undefined) {
+    root = await repoRoot(cwd);
+    roots.set(cwd, root);
+  }
+  return root;
+}
 
 async function workspace(cwd: string): Promise<Workspace> {
   let root = roots.get(cwd);
@@ -213,7 +225,7 @@ async function workspace(cwd: string): Promise<Workspace> {
 }
 
 function activeFeature(ws: Workspace) {
-  const feature = activeRuns.get(ws.root);
+  const feature = activeRuns.get(ws.root)?.feature;
   if (feature === undefined) throw new Error('No active factory run. Start one with /factory <issue>, or /factory resume <feature>.');
   return feature;
 }
@@ -377,7 +389,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         });
       } else {
         if (params.feature === undefined || params.source === undefined) throw new Error('A new run needs feature and source.');
-        const current = activeRuns.get(ws.root);
+        const current = activeRuns.get(ws.root)?.feature;
         if (current !== undefined && readRun(ws, current).status === 'running') {
           throw new Error(`Run "${current}" is still running in this repository. Finish or /factory pause it first.`);
         }
@@ -386,7 +398,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         await ensureChecks(ctx, ws);
         run = await startRun(ws, { feature: params.feature, sessionId, source });
       }
-      activeRuns.set(ws.root, run.feature);
+      activeRuns.set(ws.root, { feature: run.feature, ws });
       await pi.setActiveTools([...new Set([...pi.getActiveTools(), ...ORCHESTRATION_TOOLS])]);
       return reply(
         `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${ws.config.maxRounds}.\nNext: ${nextAction(run)}`,
@@ -802,7 +814,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
       const argument = rest.join(' ');
       const ws = await workspace(ctx.cwd);
       if (verb === '' || verb === 'status') {
-        const feature = activeRuns.get(ws.root);
+        const feature = activeRuns.get(ws.root)?.feature;
         const runsDir = join(ws.root, ws.config.scratchDir);
         const known = existsSync(runsDir) ? readdirSync(runsDir).filter(name => existsSync(statePath(ws, name))) : [];
         const active = feature === undefined ? 'none' : `${feature}: ${nextAction(readRun(ws, feature))}`;
@@ -869,7 +881,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
     } catch {
       return;
     }
-    const feature = activeRuns.get(ws.root);
+    const feature = activeRuns.get(ws.root)?.feature;
     if (feature === undefined) return;
     const run = readRun(ws, feature);
     const decision = stopDecision(run, event.session_id, stopAttempts.get(feature));
@@ -888,7 +900,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
   async function trackImplementer(ctx: ExtensionContext, compacted: boolean) {
     if (ctx.agent.kind !== 'sub' || ctx.agent.name !== IMPLEMENTER) return;
     const ws = await workspace(ctx.cwd);
-    const feature = activeRuns.get(ws.root);
+    const feature = activeRuns.get(ws.root)?.feature;
     if (feature === undefined) return;
     const tokens = ctx.getContextUsage()?.tokens ?? 0;
     const peak = activeSlice(readRun(ws, feature))?.peakContextTokens;
@@ -911,37 +923,45 @@ export default function softwareFactory(pi: ExtensionAPI) {
   // main-session spawns of any agent named `scout` (the explorer role; the event does not say whether it is omp's
   // bundled one) only while the run is in intake or running; a role without an entry inherits. The spawn event does not
   // carry a review domain, so one reviewer model covers every domain. The hook sets the model only: a `:<effort>` suffix
-  // on the returned pattern does not reach the child's thinking level. When the workspace fails to load (no git repo,
-  // invalid factory.json), a scout spawn goes unrouted, but a factory-role spawn is blocked with the error.
+  // on the returned pattern does not reach the child's thinking level. Routing never reloads factory.json: it finds the
+  // run through the workspace remembered when the run started or resumed. A cwd outside any git repo has no run, so it
+  // goes unrouted. When the run state cannot be read, a scout spawn goes unrouted and a factory-role spawn is blocked.
   pi.on('before_subagent_spawn', async (event, ctx) => {
     const role = ctx.agent.kind === 'main' ? SPAWN_ROLES[event.agent] : undefined;
     if (role === undefined) return;
     if (activeRuns.size === 0) return;
-    let ws: Workspace;
+    let root: string;
     try {
-      ws = await workspace(ctx.cwd);
+      root = await cachedRoot(ctx.cwd);
+    } catch {
+      return;
+    }
+    const active = activeRuns.get(root);
+    if (active === undefined) return;
+    let read = false;
+    try {
+      return await withRun(active.ws, active.feature, run => {
+        read = true;
+        if (role === 'explorer' && run.status !== 'intake' && run.status !== 'running') return;
+        const entry = run.models[role];
+        if (entry !== undefined && ctx.models.resolve(entry.model) === undefined) {
+          return {
+            block: true,
+            reason: `Software factory: models.${role}: model "${entry.model}" from the run snapshot no longer resolves in this omp session, so the spawn is refused rather than switched to another model. Make the model available, or start a new run with another models.${role}.`,
+          };
+        }
+        if (role === 'implementer') startImplementerSession(active.ws, run);
+        if (entry === undefined) return;
+        return { model: [entry.model, ...(entry.fallbacks ?? [])], note: `Software factory: models.${role} from the run snapshot.` };
+      });
     } catch (error) {
+      if (read) throw error;
       if (role === 'explorer') return;
       const message = error instanceof Error ? error.message : String(error);
       return {
         block: true,
-        reason: `Software factory: models.${role}: cannot route this spawn because .omp/factory.json failed to load (${message}), so the spawn is refused rather than run on another model. Fix .omp/factory.json and spawn again.`,
+        reason: `Software factory: models.${role}: cannot route this spawn because the run state of "${active.feature}" cannot be read (${message}), so the spawn is refused rather than run on another model.`,
       };
     }
-    const feature = activeRuns.get(ws.root);
-    if (feature === undefined) return;
-    return withRun(ws, feature, run => {
-      if (role === 'explorer' && run.status !== 'intake' && run.status !== 'running') return;
-      const entry = run.models[role];
-      if (entry !== undefined && ctx.models.resolve(entry.model) === undefined) {
-        return {
-          block: true,
-          reason: `Software factory: models.${role}: model "${entry.model}" from the run snapshot no longer resolves in this omp session, so the spawn is refused rather than switched to another model. Make the model available, or start a new run with another models.${role}.`,
-        };
-      }
-      if (role === 'implementer') startImplementerSession(ws, run);
-      if (entry === undefined) return;
-      return { model: [entry.model, ...(entry.fallbacks ?? [])], note: `Software factory: models.${role} from the run snapshot.` };
-    });
   });
 }
