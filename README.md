@@ -158,7 +158,8 @@ When the run is done, push your branch so origin has every commit the slices bui
 and confirm `Open draft PRs?`. As for any run, gh stack opens or updates one draft PR per slice, here onto your
 branch. The factory never pushes or moves your branch. It refuses, before any gh call, while origin does not have the
 branch or origin's tip of it is not your local tip: push your local commits, or, if origin is ahead (a teammate
-pushed to it), update your local branch first.
+pushed to it), update your local branch first, or, if both have new commits, merge origin's branch into your local
+one (do not rebase it: the slices build on its current commits) and push it.
 
 Once the slice PRs are open and titled, submit writes a single-PR handoff to `<scratchDir>/<feature>/pr.md`: the
 source issue title as its heading, then a body with the issue, a summary, each slice's change and PR link, check

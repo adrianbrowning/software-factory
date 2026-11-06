@@ -88,7 +88,7 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
     const remote = heads.split('\t')[0] ?? '';
     if (remote !== local) {
       throw new Error(
-        `${run.landOn} on origin (${remote.slice(0, 12)}) is not the local ${run.landOn} (${local.slice(0, 12)}) that the slices build on. Push your local commits (git push origin ${run.landOn}), or, if origin is ahead, update the local ${run.landOn} first (switch to ${run.landOn} and run git pull --ff-only origin ${run.landOn}), or, if both have new commits, merge or rebase origin's ${run.landOn} into the local ${run.landOn} and push it; then run /factory submit again. Nothing was submitted.`,
+        `${run.landOn} on origin (${remote.slice(0, 12)}) is not the local ${run.landOn} (${local.slice(0, 12)}) that the slices build on. Push your local commits (git push origin ${run.landOn}), or, if origin is ahead, update the local ${run.landOn} first (switch to ${run.landOn} and run git pull --ff-only origin ${run.landOn}), or, if both have new commits, merge origin's ${run.landOn} into the local ${run.landOn} (do not rebase: the slices build on its current commits) and push it; then run /factory submit again. Nothing was submitted.`,
       );
     }
   }

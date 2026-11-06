@@ -272,7 +272,7 @@ describe('submit', () => {
     assert.deepEqual(gh.calls(), []);
   });
 
-  it('refuses a landOn run whose branch has diverged from origin, telling the user to merge or rebase then push, before any gh call', async () => {
+  it('refuses a landOn run whose branch has diverged from origin, telling the user to merge (not rebase) then push, before any gh call', async () => {
     using ws = workspace();
     sh(ws.root, 'branch', 'ext-953');
     using remote = tempDir('factory-origin-');
@@ -287,7 +287,7 @@ describe('submit', () => {
     sh(ws.root, 'switch', '-q', 'main');
     const branches = await doneRun(ws, 2, { landOn: 'ext-953' });
     using gh = fakeGh({ stack: undefined, submitted: withPrs(branches) });
-    await assert.rejects(step(ws, run => submitStack(ws, run)), /if both have new commits, merge or rebase origin's ext-953 into the local ext-953 and push it.*Nothing was submitted\./s);
+    await assert.rejects(step(ws, run => submitStack(ws, run)), /if both have new commits, merge origin's ext-953 into the local ext-953 \(do not rebase: the slices build on its current commits\) and push it.*Nothing was submitted\./s);
     assert.deepEqual(gh.calls(), []);
   });
 
