@@ -269,7 +269,8 @@ const runSchema = z.object({
   ...run,
   slices: slices.map(slice => legacySlice(slice, run.checks)),
   // LEGACY-STATE(landon-trunk): runs planned before trunk followed landOn stored the old trunk (baseRef or an explicit
-  // trunk); a landOn run always stacks onto landOn. Remove once no run planned before the release that ties them is left.
+  // trunk); a landOn run always stacks onto landOn. Remove once no run planned before the release that made landOn the
+  // trunk (issue #149) is left.
   trunk: run.landOn ?? run.trunk,
 }));
 export type Run = z.infer<typeof runSchema>;

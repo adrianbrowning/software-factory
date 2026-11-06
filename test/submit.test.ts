@@ -1,70 +1,40 @@
 import assert from 'node:assert/strict';
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, it } from 'node:test';
-import { forgetRun, readRun, REVIEW_DOMAINS, type Run, runDir, statePath, type Workspace } from '../src/run.ts';
+import { after, before, describe, it } from 'node:test';
+import { type Finding, forgetRun, readRun, REVIEW_DOMAINS, type Run, runDir, type Source, statePath, type Workspace } from '../src/run.ts';
 import { renderHandoff } from '../src/handoff.ts';
 import { completeSlice, recordDecisions, recordReview, runChecks, startReview } from '../src/review.ts';
 import { planSubmit, submitStack } from '../src/submit.ts';
 import { approvePlan, nextSlice, parseRetro, planSlices, recordRetro, resolveBase, startRun } from '../src/workflow.ts';
-import { commit, finding, green, newRun, review, sh, slice, start, step, tempDir, workspace } from './helpers.ts';
+import { commit, finding, green, newRun, review, sh, slice, step, tempDir, workspace } from './helpers.ts';
 
-/** A done run of `count` chained slices, each with a reviewed commit, checked out on `main` (off the top slice). */
-async function doneRun(ws: Workspace, count: number) {
-  const titles = Array.from({ length: count }, (_, index) => `S${index + 1}`);
-  await newRun(ws, titles.map((title, index) => slice(title, index === 0 ? [] : [titles[index - 1] ?? ''])));
-  for (const [index] of titles.entries()) {
-    await step(ws, run => nextSlice(ws, run));
-    commit(ws, index === 0 ? 'ok' : `s${index + 1}.txt`);
-    await green(ws);
-    await step(ws, run => completeSlice(ws, run));
-  }
-  await step(ws, run => recordRetro(ws, run, parseRetro(ws, run, [])));
-  sh(ws.root, 'switch', '-q', 'main');
-  return readRun(ws, 'demo').slices.map(item => item.branch);
-}
-
-/** A done run of two chained slices planned with `landOn`, each with a reviewed commit, checked out on `main`. */
-async function doneLandOnRun(ws: Workspace, landOn: string) {
-  await start(ws);
-  const base = await resolveBase(ws, { landOn });
-  await step(ws, run => approvePlan(ws, run, planSlices(ws, run, [slice('S1'), slice('S2', ['S1'])], base), base));
-  for (const file of ['ok', 's2.txt']) {
-    await step(ws, run => nextSlice(ws, run));
-    commit(ws, file);
-    await green(ws);
-    await step(ws, run => completeSlice(ws, run));
-  }
-  await step(ws, run => recordRetro(ws, run, parseRetro(ws, run, [])));
-  sh(ws.root, 'switch', '-q', 'main');
-  return readRun(ws, 'demo').slices.map(item => item.branch);
+interface DoneRunOptions {
+  /** Plans the run onto this landOn branch; by default on the configured base. */
+  landOn?: string;
+  source?: Source;
+  decisions?: string[];
+  /** Takes the active slice (0-based `index`) from its committed work to a green review; by default one clean round. */
+  toGreen?: (index: number) => Promise<unknown>;
 }
 
 /**
- * A done landOn run of two slices from a GitHub issue, with one recorded decision; slice 01's green review skipped
- * security, kept every other domain, and kept one thermo observation. Checked out on `main`.
+ * A done run of `count` chained slices `S1`…, each with a reviewed commit (`ok` for slice 01, `s<N>.txt` after it),
+ * checked out on `main` (off the top slice). Returns the slice branches.
  */
-async function handoffRun(ws: Workspace) {
-  await startRun(ws, {
-    feature: 'demo',
-    sessionId: 's',
-    source: { body: 'Land it', kind: 'github', ref: '#149', title: 'Land the work on ext-953', url: 'https://github.com/acme/app/issues/149' },
-  });
-  const base = await resolveBase(ws, { landOn: 'ext-953' });
-  await step(ws, run => approvePlan(ws, run, planSlices(ws, run, [slice('S1'), slice('S2', ['S1'])], base), base));
-  await step(ws, run => recordDecisions(ws, run, ['Keep the old flag working']));
-  await step(ws, run => nextSlice(ws, run));
-  commit(ws, 'ok');
-  await step(ws, run => runChecks(ws, run));
-  const kept = REVIEW_DOMAINS.filter(domain => domain !== 'security');
-  const opened = await step(ws, run => startReview(ws, run, [{ domain: 'security', reason: 'no inputs' }], kept));
-  await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming')]);
-  await step(ws, run => recordReview(ws, run));
-  await step(ws, run => completeSlice(ws, run));
-  await step(ws, run => nextSlice(ws, run));
-  commit(ws, 's2.txt');
-  await green(ws);
-  await step(ws, run => completeSlice(ws, run));
+async function doneRun(ws: Workspace, count: number, { decisions = [], landOn, source = { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' }, toGreen = () => green(ws) }: DoneRunOptions = {}) {
+  const titles = Array.from({ length: count }, (_, index) => `S${index + 1}`);
+  await startRun(ws, { feature: 'demo', sessionId: 's', source });
+  const base = landOn === undefined ? undefined : await resolveBase(ws, { landOn });
+  const inputs = titles.map((title, index) => slice(title, index === 0 ? [] : [titles[index - 1] ?? '']));
+  await step(ws, run => approvePlan(ws, run, planSlices(ws, run, inputs, base), base));
+  if (decisions.length > 0) await step(ws, run => recordDecisions(ws, run, decisions));
+  for (const [index] of titles.entries()) {
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, index === 0 ? 'ok' : `s${index + 1}.txt`);
+    await toGreen(index);
+    await step(ws, run => completeSlice(ws, run));
+  }
   await step(ws, run => recordRetro(ws, run, parseRetro(ws, run, [])));
   sh(ws.root, 'switch', '-q', 'main');
   return readRun(ws, 'demo').slices.map(item => item.branch);
@@ -161,8 +131,8 @@ describe('submit', () => {
     commit(ws, 'ext.txt');
     sh(ws.root, 'switch', '-q', 'main');
     await assert.rejects(resolveBase(ws, { baseRef: 'main', landOn: 'ext-953' }), /"ext-953" is not at or below main/);
-    const branches = await doneLandOnRun(ws, 'ext-953');
-    assert.match(readRun(ws, 'demo').events.find(event => event.kind === 'plan')?.detail ?? '', /PRs target landOn branch ext-953/);
+    const branches = await doneRun(ws, 2, { landOn: 'ext-953' });
+    assert.match(readRun(ws, 'demo').events.find(event => event.kind === 'plan')?.detail ?? '', /, PRs target ext-953: /);
     const landOn = sh(ws.root, 'rev-parse', 'ext-953');
     // origin is this repository, so it holds ext-953.
     sh(ws.root, 'remote', 'add', 'origin', ws.root);
@@ -177,7 +147,33 @@ describe('submit', () => {
   it('writes a single-PR handoff to pr.md after a landOn submit and says how to land it', async () => {
     using ws = workspace();
     sh(ws.root, 'branch', 'ext-953');
-    const branches = await handoffRun(ws);
+    // Two decisions. Slice 01's one green review skipped security and kept a thermo observation. Slice 02 took two
+    // rounds: the first kept a blocking bug and a thermo observation, the fix's green review a testing observation.
+    const branches = await doneRun(ws, 2, {
+      decisions: ['Keep the old flag working', 'Ship without a migration'],
+      landOn: 'ext-953',
+      source: { body: 'Land it', kind: 'github', ref: '#149', title: 'Land the work on ext-953', url: 'https://github.com/acme/app/issues/149' },
+      toGreen: async index => {
+        await step(ws, run => runChecks(ws, run));
+        if (index === 0) {
+          const kept = REVIEW_DOMAINS.filter(domain => domain !== 'security');
+          const opened = await step(ws, run => startReview(ws, run, [{ domain: 'security', reason: 'no inputs' }], kept));
+          await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming')]);
+          return step(ws, run => recordReview(ws, run));
+        }
+        const at = (item: Finding) => ({ ...item, path: 's2.txt' });
+        const first = await step(ws, run => startReview(ws, run));
+        await review(ws, first.reviewId, [at(finding('bug', 'high', 'null-crash')), at(finding('thermo', 'observation', 'first-round'))]);
+        assert.ok(!(await step(ws, run => recordReview(ws, run))).green);
+        commit(ws, 's2.txt', 'fixed\n');
+        await step(ws, run => runChecks(ws, run));
+        const second = await step(ws, run => startReview(ws, run));
+        await review(ws, second.reviewId, [at(finding('testing', 'observation', 'late'))]);
+        const recorded = await step(ws, run => recordReview(ws, run));
+        assert.ok(recorded.green);
+        return recorded;
+      },
+    });
     sh(ws.root, 'remote', 'add', 'origin', ws.root);
     using gh = fakeGh({ stack: undefined, submitted: withPrs(branches) });
     const output = await step(ws, run => submitStack(ws, run));
@@ -185,16 +181,19 @@ describe('submit', () => {
     assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, `stack init --base ext-953 ${branches.join(' ')}`, 'stack submit --auto', 'stack view --json', ...titleCalls(2)], 'nothing is merged and no PR to the trunk is opened');
     const handoff = readFileSync(path, 'utf8');
     assert.match(handoff, /^# Land the work on ext-953\n/);
+    assert.doesNotMatch(handoff, /first-round|null-crash/, "the first round's findings are not outstanding concerns");
     for (const expected of [
       /## Issue\n\n- Ref: #149\n- Title: Land the work on ext-953\n- URL: https:\/\/github\.com\/acme\/app\/issues\/149\n/,
-      /## Summary\n\n\S/,
+      /## Summary\n\nLands software-factory run demo: 2 slices, each built test-first, checked and reviewed, stacked onto ext-953: 01 S1; 02 S2\.\n/,
       /### 01 S1 \(https:\/\/example\.test\/pull\/101\)\n\nS1\n\n- S1 works/,
       /### 02 S2 \(https:\/\/example\.test\/pull\/102\)\n\nS2\n\n- S2 works/,
       /## Checks\n\n- 01 S1: test -f ok: passed in \d+ms\n- 02 S2: test -f ok: passed in \d+ms\n/,
-      /- 01 S1: 1 review round; domains: performance, react-ts, testing, test-validity, devops, holistic, thermo, bug, scope, comments\n/,
-      /- 02 S2: 1 review round; domains: /,
-      /## Decisions\n\n1\. Keep the old flag working\n/,
-      /## Outstanding concerns\n\n- Slice 01 observation thermo-naming: naming \(ok:1\)\n/,
+      /## Reviews\n\n- 01 S1: 1 review round; domains: performance, react-ts, testing, test-validity, devops, holistic, thermo, bug, scope, comments\n/,
+      // Slice 02 changed only s2.txt, so its review skipped react-ts, test-validity and devops.
+      /- 02 S2: 2 review rounds; domains: security, performance, testing, holistic, thermo, bug, scope, comments\n/,
+      /## Decisions\n\n1\. Keep the old flag working\n2\. Ship without a migration\n\n/,
+      // Only each slice's final green review counts: slice 02's first-round observation is gone.
+      /## Outstanding concerns\n\n- Slice 01 observation thermo-naming: naming \(ok:1\)\n- Slice 02 observation testing-late: late \(s2\.txt:1\)\n\n/,
       /## Retro findings applied\n\nNone\n/,
       /## Factory\n\nFeature: demo\n/,
     ]) {
@@ -210,7 +209,7 @@ describe('submit', () => {
   it('submits a landOn run whose state stored a different trunk onto the landOn branch', async () => {
     using ws = workspace();
     sh(ws.root, 'branch', 'ext-953');
-    const branches = await doneLandOnRun(ws, 'ext-953');
+    const branches = await doneRun(ws, 2, { landOn: 'ext-953' });
     // A state written before trunk followed landOn stored the old trunk.
     const state = JSON.parse(readFileSync(statePath(ws, 'demo'), 'utf8'));
     writeFileSync(statePath(ws, 'demo'), JSON.stringify({ ...state, trunk: 'main' }));
@@ -224,7 +223,7 @@ describe('submit', () => {
   it('refuses a landOn run whose branch is not on origin, before any gh call', async () => {
     using ws = workspace();
     sh(ws.root, 'branch', 'ext-953');
-    const branches = await doneLandOnRun(ws, 'ext-953');
+    const branches = await doneRun(ws, 2, { landOn: 'ext-953' });
     using remote = tempDir('factory-origin-');
     sh(remote.root, 'init', '-q', '--bare');
     sh(ws.root, 'remote', 'add', 'origin', remote.root);
@@ -238,10 +237,27 @@ describe('submit', () => {
     assert.equal(sh(ws.root, 'branch', '--show-current'), checkedOut);
   });
 
+  it('refuses a landOn run whose branch on origin is behind the local one, before any gh call', async () => {
+    using ws = workspace();
+    sh(ws.root, 'branch', 'ext-953');
+    using remote = tempDir('factory-origin-');
+    sh(remote.root, 'init', '-q', '--bare');
+    sh(ws.root, 'remote', 'add', 'origin', remote.root);
+    sh(ws.root, 'push', '-q', 'origin', 'ext-953');
+    // A local commit on ext-953 that origin lacks; the slices build on it.
+    sh(ws.root, 'switch', '-q', 'ext-953');
+    commit(ws, 'ext.txt');
+    sh(ws.root, 'switch', '-q', 'main');
+    const branches = await doneRun(ws, 2, { landOn: 'ext-953' });
+    using gh = fakeGh({ stack: undefined, submitted: withPrs(branches) });
+    await assert.rejects(step(ws, run => submitStack(ws, run)), /ext-953 on origin is not the local ext-953.*[Pp]ush it first \(git push origin ext-953\)/s);
+    assert.deepEqual(gh.calls(), []);
+  });
+
   it('refuses a landOn run with no origin remote with the push-first message, before any gh call', async () => {
     using ws = workspace();
     sh(ws.root, 'branch', 'ext-953');
-    const branches = await doneLandOnRun(ws, 'ext-953');
+    const branches = await doneRun(ws, 2, { landOn: 'ext-953' });
     using gh = fakeGh({ stack: undefined, submitted: withPrs(branches) });
     await assert.rejects(step(ws, run => submitStack(ws, run)), (error: Error) => {
       assert.match(error.message, /could not read origin to check for ext-953.*git push origin ext-953/s);
@@ -434,55 +450,72 @@ describe('submit', () => {
   it('writes no pr.md for a landOn run when a PR title fails to set', async () => {
     using ws = workspace();
     sh(ws.root, 'branch', 'ext-953');
-    const branches = await doneLandOnRun(ws, 'ext-953');
+    const branches = await doneRun(ws, 2, { landOn: 'ext-953' });
     sh(ws.root, 'remote', 'add', 'origin', ws.root);
     using _gh = fakeGh({ fail: 'api -X', stack: undefined, submitted: withPrs(branches) });
     await assert.rejects(step(ws, run => submitStack(ws, run)), /titles were not set/);
     assert.ok(!existsSync(join(runDir(ws, 'demo'), 'pr.md')));
   });
 
-  it('writes no pr.md for a landOn run when gh stack view gives a slice PR no URL', async () => {
+  it('sets no title and writes no pr.md for a landOn run when gh stack view gives a slice PR no URL', async () => {
     using ws = workspace();
     sh(ws.root, 'branch', 'ext-953');
-    const branches = await doneLandOnRun(ws, 'ext-953');
+    const branches = await doneRun(ws, 2, { landOn: 'ext-953' });
     sh(ws.root, 'remote', 'add', 'origin', ws.root);
     using gh = fakeGh({ stack: undefined, submitted: withPrs(branches).map((item, index) => ({ ...item, noUrl: index === 1 })) });
-    await assert.rejects(step(ws, run => submitStack(ws, run)), new RegExp(`titled, but the handoff \\(pr\\.md\\) was not written: .*no PR URL for ${branches[1]}`, 's'));
-    assert.deepEqual(gh.calls().filter(call => call.startsWith('api')), titleCalls(2), 'the titles are set before the handoff');
+    await assert.rejects(step(ws, run => submitStack(ws, run)), new RegExp(`titles were not set: .*no PR or no PR URL: ${branches[1]}\\.`, 's'));
+    assert.deepEqual(gh.calls().filter(call => call.startsWith('api')), [], 'no title is set when a slice PR has no URL');
     assert.ok(!existsSync(join(runDir(ws, 'demo'), 'pr.md')));
   });
 
   it('names the configured trunk, not main, as the target of the one PR in the landOn handoff', async () => {
     using ws = workspace({ trunk: 'release' });
     sh(ws.root, 'branch', 'ext-953');
-    const branches = await doneLandOnRun(ws, 'ext-953');
+    const branches = await doneRun(ws, 2, { landOn: 'ext-953' });
     sh(ws.root, 'remote', 'add', 'origin', ws.root);
     using _gh = fakeGh({ stack: undefined, submitted: withPrs(branches) });
     const output = await step(ws, run => submitStack(ws, run));
     assert.ok(output.includes('open one PR from ext-953 to release.'), output);
   });
+
+  it('names the configured base without its remote as the target of the one PR when no trunk is configured', async () => {
+    using ws = workspace({ baseRef: 'origin/develop', trunk: undefined });
+    // origin is this repository; develop and its remote-tracking ref are the configured base.
+    sh(ws.root, 'remote', 'add', 'origin', ws.root);
+    sh(ws.root, 'branch', 'develop');
+    sh(ws.root, 'update-ref', 'refs/remotes/origin/develop', 'develop');
+    sh(ws.root, 'branch', 'ext-953');
+    const branches = await doneRun(ws, 2, { landOn: 'ext-953' });
+    using _gh = fakeGh({ stack: undefined, submitted: withPrs(branches) });
+    const output = await step(ws, run => submitStack(ws, run));
+    assert.ok(output.includes('open one PR from ext-953 to develop.'), output);
+  });
 });
 
 describe('renderHandoff', () => {
-  /** Each slice's PR, numbered from 101 with an example URL. */
-  const prsOf = (run: Run) => new Map(run.slices.map((item, index) => [item.branch, { number: 101 + index, url: `https://example.test/pull/${101 + index}` }]));
-
-  it('refuses a slice with no recorded review or whose PR has no URL', async () => {
-    using ws = workspace();
+  // renderHandoff is pure, so its tests share one done landOn run and each changes its own copy.
+  let ws: Workspace & Disposable;
+  let done: Run;
+  before(async () => {
+    ws = workspace();
     sh(ws.root, 'branch', 'ext-953');
-    await doneLandOnRun(ws, 'ext-953');
-    const run = readRun(ws, 'demo');
-    const [one, two] = run.slices;
-    assert.throws(() => renderHandoff(run, new Map(), new Map([...prsOf(run)].map(([branch, pr]) => [branch, branch === two?.branch ? { number: pr.number } : pr]))), new RegExp(`no PR URL for ${two?.branch}`));
+    await doneRun(ws, 2, { landOn: 'ext-953' });
+    done = readRun(ws, 'demo');
+  });
+  after(() => ws[Symbol.dispose]());
+  const fresh = () => structuredClone(done);
+  /** Each slice's PR, numbered from 101 with an example URL. */
+  const prsOf = (run: Run) => run.slices.map((slice, index) => ({ number: 101 + index, slice, url: `https://example.test/pull/${101 + index}` }));
+
+  it('refuses a slice with no recorded review', () => {
+    const run = fresh();
+    const [one] = run.slices;
     if (one !== undefined) one.review = undefined;
     assert.throws(() => renderHandoff(run, new Map(), prsOf(run)), /Slice 01 has no recorded review/);
   });
 
-  it('lists stalls, budget overruns and retro findings not applied as concerns, and applied repo findings apart', async () => {
-    using ws = workspace();
-    sh(ws.root, 'branch', 'ext-953');
-    await doneLandOnRun(ws, 'ext-953');
-    const run = readRun(ws, 'demo');
+  it('lists stalls, budget overruns and retro findings not applied as concerns, and applied repo findings apart', () => {
+    const run = fresh();
     run.events.push(
       { at: 'now', detail: 'fix budget of 1 rounds used', kind: 'stall', slice: '01' },
       { at: 'now', detail: 'peak 2000 tokens, 0 compactions', kind: 'budget-exceeded', slice: '02' },
@@ -499,11 +532,8 @@ describe('renderHandoff', () => {
     );
   });
 
-  it('says None when there are no concerns, keeps a long title exactly, and redacts issue and finding text', async () => {
-    using ws = workspace();
-    sh(ws.root, 'branch', 'ext-953');
-    await doneLandOnRun(ws, 'ext-953');
-    const run = readRun(ws, 'demo');
+  it('says None when there are no concerns, keeps a long title exactly, and redacts issue and finding text', () => {
+    const run = fresh();
     const long = `Make ${'the long title '.repeat(25)}work`;
     run.source.title = long;
     const calm = renderHandoff(run, new Map([['01', []]]), prsOf(run));
@@ -517,11 +547,8 @@ describe('renderHandoff', () => {
     assert.doesNotMatch(body, /ghp_|hunter2/);
   });
 
-  it('collapses a multi-line source title to one line so it adds no sections', async () => {
-    using ws = workspace();
-    sh(ws.root, 'branch', 'ext-953');
-    await doneLandOnRun(ws, 'ext-953');
-    const run = readRun(ws, 'demo');
+  it('collapses a multi-line source title to one line so it adds no sections', () => {
+    const run = fresh();
     run.source.title = 'Fix it\n## Outstanding concerns\nNone';
     const { body, title } = renderHandoff(run, new Map([['01', []]]), prsOf(run));
     assert.equal(title, 'Fix it ## Outstanding concerns None');

@@ -148,14 +148,16 @@ orchestrator, for example: "Put this on my branch `EXT2-953-closeOrReload`." It 
 
 - Give the branch name as `git branch` lists it. The plan refuses `origin/…`, `refs/heads/…`, revision expressions
   such as `main^{commit}`, and branches that do not exist.
-- The branch is the trunk of the stack: the slice PRs target it. It is also the base, unless you pick a different
-  base. Then the branch must be at or below that base.
-- The plan dialog shows `/factory submit opens one draft PR per slice onto <branch>`.
+- The branch is the trunk of the stack: the slice PRs target it, so `factory_plan` refuses a `trunk` beside it. It is
+  also the base, unless you pick a different base. Then the branch must be at or below that base. When the base is
+  above the branch, slice 01's draft PR onto it also shows the base's commits that the branch does not have yet.
+- The plan dialog shows `PRs target <branch>`.
 - The factory still builds and reviews each slice on its own `<prefix>/<feature>/<NN>-<slug>` branch.
 
-When the run is done, push your branch if origin does not have it yet, then run `/factory submit` and confirm
-`Open draft PRs?`. As for any run, gh stack opens or updates one draft PR per slice, here onto your branch. The
-factory never pushes or moves your branch, and it refuses, before any gh call, while origin does not have it.
+When the run is done, push your branch so origin has every commit the slices build on, then run `/factory submit`
+and confirm `Open draft PRs?`. As for any run, gh stack opens or updates one draft PR per slice, here onto your
+branch. The factory never pushes or moves your branch. It refuses, before any gh call, while origin does not have the
+branch or origin's tip of it is not your local tip.
 
 Once the slice PRs are open and titled, submit writes a single-PR handoff to `<scratchDir>/<feature>/pr.md`: the
 source issue title as its heading, then a body with the issue, a summary, each slice's change and PR link, check
@@ -288,7 +290,7 @@ finding whose `path` the diff does not change, or whose `line` is outside that f
 The review gate snapshots `HEAD` plus `git status` when a review opens and rejects the review if either changes.
 A slice completes only when `HEAD` is still the commit that passed checks and review, and `/factory submit`
 refuses any branch whose tip is not its reviewed commit. With `landOn`, it also refuses while origin does not have
-that branch.
+that branch at its local tip.
 
 Checks refuse a slice that holds commits another branch or remote outside the run also holds (a merge, rebase,
 or fast-forward onto other work), so the review diff is only the slice's own commits. A backup branch that copies a
