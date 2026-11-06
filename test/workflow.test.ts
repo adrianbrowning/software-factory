@@ -22,7 +22,7 @@ import {
   reopenSlice,
   resolveBase,
   resumeRun,
-
+  summarize,
 } from '../src/workflow.ts';
 import { checkRuns, commit, countedCheck, green, newRun, review, sh, slice, start, step, workspace } from './helpers.ts';
 
@@ -839,6 +839,20 @@ describe('run state', () => {
     for (const item of state.slices) delete item.ownsDecisions;
     writeFileSync(path, JSON.stringify(state));
     assert.deepEqual(readRun(ws, 'demo').slices.map(item => item.ownsDecisions), [[]]);
+  });
+
+  it('loads a state file from before models and agents with every role inherit and no agent records', async () => {
+    const ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    const path = join(ws.root, '.scratch', 'demo', 'state.json');
+    const state = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    delete state.models;
+    delete state.agents;
+    writeFileSync(path, JSON.stringify(state));
+    forgetRun(ws, 'demo');
+    const summary = summarize(ws, readRun(ws, 'demo'));
+    assert.deepEqual(summary.models, { explorer: 'inherit', implementer: 'inherit', orchestrator: 'inherit', reviewer: 'inherit', validator: 'inherit' });
+    assert.deepEqual(summary.agentsOutsideSlices, []);
   });
 
   it('keeps run state out of git', async () => {

@@ -89,7 +89,7 @@ const configSchema = z
     factoryRepo: text.default('adrianbrowning/software-factory'),
     /** Fix rounds a slice gets before it stalls for a user decision; each "continue" grants this many more. */
     maxRounds: positiveInt.default(3),
-    /** Model and reasoning effort per factory role, snapshotted into each run at start. Unset roles inherit. */
+    /** Model per factory role (plus reasoning effort for the orchestrator only), snapshotted into each run at start. Unset roles inherit. */
     models: modelsSchema.default({}),
     /** Run state directory, relative to the repository root. Kept out of git via info/exclude. */
     scratchDir: text.default('.scratch'),
