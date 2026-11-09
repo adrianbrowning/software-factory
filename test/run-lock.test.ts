@@ -3,7 +3,7 @@ import { existsSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSyn
 import { describe, it } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Worker } from 'node:worker_threads';
-import { lockPath, readRun, removeLock, runDir, type Workspace, withRun } from '../src/run.ts';
+import { evictLock, lockPath, readRun, removeLock, runDir, type Workspace, withRun } from '../src/run.ts';
 import { start, workspace } from './helpers.ts';
 
 const COUNT = 25;
@@ -57,6 +57,37 @@ describe('withRun lock', () => {
     assert.deepEqual(readdirSync(runDir(ws, 'demo')).toSorted(), [...before, 'state.json.lock'].toSorted());
     removeLock(lockPath(ws, 'demo'), 'new holder');
     assert.deepEqual(readdirSync(runDir(ws, 'demo')).toSorted(), before);
+  });
+
+  it('lets a second waiter with the same stale judgement leave the holder that took the path after the first eviction', async () => {
+    using ws = workspace();
+    await start(ws);
+    const before = readdirSync(runDir(ws, 'demo')).toSorted();
+    writeFileSync(lockPath(ws, 'demo'), 'dead holder');
+    utimesSync(lockPath(ws, 'demo'), 0, 0);
+    // Waiters A and B both read 'dead holder' as stale. A evicts, then a new holder takes the path.
+    evictLock(lockPath(ws, 'demo'), 'dead holder');
+    assert.equal(existsSync(lockPath(ws, 'demo')), false);
+    writeFileSync(lockPath(ws, 'demo'), 'new holder', { flag: 'wx' });
+    evictLock(lockPath(ws, 'demo'), 'dead holder');
+    assert.equal(readFileSync(lockPath(ws, 'demo'), 'utf8'), 'new holder');
+    removeLock(lockPath(ws, 'demo'), 'new holder');
+    assert.deepEqual(readdirSync(runDir(ws, 'demo')).toSorted(), before);
+  });
+
+  it('names the eviction guard to delete when a dead evictor left it past the stale timeout', async () => {
+    using ws = workspace();
+    await start(ws);
+    const guard = `${lockPath(ws, 'demo')}.evict`;
+    writeFileSync(lockPath(ws, 'demo'), 'dead holder');
+    utimesSync(lockPath(ws, 'demo'), 0, 0);
+    writeFileSync(guard, '');
+    utimesSync(guard, 0, 0);
+    await assert.rejects(
+      withRun(ws, 'demo', () => {}),
+      error => error instanceof Error && error.message.includes(`${guard} `) && /delete/i.test(error.message),
+    );
+    assert.equal(existsSync(guard), true);
   });
 
   it('waits for a live holder and leaves its lock alone', async () => {
