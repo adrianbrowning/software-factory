@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
-import { type FactoryConfig, MODEL_ROLES, modelsSchema } from './config.ts';
+import { type FactoryConfig, modelsSchema, SPAWN_MODEL_ROLES } from './config.ts';
 
 /** The cc-pr-review domains. Each has a vendored reference under skills/software-factory/references/review/. */
 export const REVIEW_DOMAINS = [
@@ -226,7 +226,7 @@ const agentRecordSchema = z.object({
   agentId: text,
   model: text,
   name: text,
-  role: z.enum(MODEL_ROLES),
+  role: z.enum(SPAWN_MODEL_ROLES),
   sessionId: text,
   slice: z.string().optional(),
   thinking: text,
@@ -248,7 +248,10 @@ const runSchema = z.object({
   feature: text,
   /** Existing local branch that `/factory submit` fast-forwards to the top slice, instead of opening PRs. */
   landOn: text.optional(),
-  /** Role to model policy from `models` in factory.json, fixed when the run starts. Empty in runs from before it was kept. */
+  /**
+   * Role to model policy from `models` in factory.json, fixed when the run starts. Empty in runs from before it was kept.
+   * It shares the factory.json input schema, so any change to modelsSchema must still accept every stored run.
+   */
   models: modelsSchema.default({}),
   ownerSessionId: text,
   retroRecorded: z.boolean(),

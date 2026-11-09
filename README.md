@@ -293,8 +293,9 @@ user or plugin agent named `scout`, which replaces omp's bundled `scout`, is rou
   the start with an error that names the role, for example `models.implementer`.
 - The run keeps the mapping it started with, as it keeps its checks. `factory_start` and `factory_status` show it per
   role (`inherit` for a role with no entry). Editing `.omp/factory.json` or resuming does not change a running run:
-  spawn routing never rereads `.omp/factory.json`, so an invalid edit, new models or a new `scratchDir` leave the
-  run's routing and state location as they were when it started or resumed.
+  spawn routing, the agent audit, implementer context tracking, the stop gate, and `/factory status` and `pause` find
+  the run through the workspace it started or resumed with and never reread `.omp/factory.json`, so an invalid edit,
+  new models or a new `scratchDir` leave them as they were when the run started or resumed.
 - Every routed spawn of the run (for the implementer: build, fix, reopened, and follow-up slices) gets its role's
   model and fallbacks. When the model no longer resolves, the spawn is refused with a reason that names the role.
   When the run state cannot be read, a factory-role spawn is refused the same way and a `scout` spawn goes

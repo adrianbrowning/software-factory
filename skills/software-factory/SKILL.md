@@ -89,7 +89,7 @@ Never commit on a done slice's branch: no check or review sees that commit, and 
 
 ## 5. Retro
 
-Read `skill://retro` and apply it to this run. Primary sources: this session, `history://<id>` for the factory subagents, `factory_status` (fix rounds, check failures, findings by domain, peak implementer context, compactions, re-slices), and the run directory (`fixes/`, `reviews/`).
+Read `skill://retro` and apply it to this run. Primary sources: this session, `history://<id>` for the factory subagents, `factory_status` (fix rounds, check failures, findings by domain, peak implementer context, compactions, re-slices, and the actual model and thinking level of each spawned agent in each slice's `agents` and in `agentsOutsideSlices`: compare them with the run's snapshot `models` to spot a fallback or a mismatch), and the run directory (`fixes/`, `reviews/`).
 
 Give each candidate a `target`:
 

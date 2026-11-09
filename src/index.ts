@@ -3,7 +3,7 @@ import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
 import { auditChild, IMPLEMENTER, REVIEWER, SPAWN_ROLES, VALIDATOR } from './agents.ts';
-import { CONFIG_PATH, checksPrompt, describeModels, loadConfig, parseChecks, requireAvailableModels, type RoleModels, suggestChecks } from './config.ts';
+import { CONFIG_PATH, checksPrompt, describeModels, loadConfig, parseChecks, requireAvailableModels, requireOrchestrator, type RoleModels, routeSpawn, suggestChecks } from './config.ts';
 import { evidence, evidenceHead } from './evidence.ts';
 import {
   activeSlice,
@@ -211,24 +211,25 @@ async function cachedRoot(cwd: string) {
 const rootOf = (cwd: string) => cachedRoot(cwd).catch(() => undefined);
 
 async function workspace(cwd: string): Promise<Workspace> {
-  let root = roots.get(cwd);
-  if (root === undefined) {
-    root = await repoRoot(cwd);
-    roots.set(cwd, root);
-  }
+  const root = await cachedRoot(cwd);
   return { config: loadConfig(root), root };
 }
 
+const NO_ACTIVE_RUN = 'No active factory run. Start one with /factory <issue>, or /factory resume <feature>.';
+
 function activeFeature(ws: Workspace) {
   const feature = activeRuns.get(ws.root)?.feature;
-  if (feature === undefined) throw new Error('No active factory run. Start one with /factory <issue>, or /factory resume <feature>.');
+  if (feature === undefined) throw new Error(NO_ACTIVE_RUN);
   return feature;
 }
 
-/** The active run of a child session's repository, found from the child's own cwd; it never reloads factory.json. */
-async function childRun(ctx: ExtensionContext) {
+/**
+ * The active run of the repository holding `cwd`, with the workspace it started or resumed with, so it never reloads
+ * factory.json. Undefined when no run is active there, or outside any git repo.
+ */
+async function runForCwd(cwd: string) {
   if (activeRuns.size === 0) return undefined;
-  const root = await rootOf(ctx.cwd);
+  const root = await rootOf(cwd);
   return root === undefined ? undefined : activeRuns.get(root);
 }
 
@@ -353,28 +354,10 @@ export default function softwareFactory(pi: ExtensionAPI) {
     });
   }
 
-  /**
-   * Throws, naming both selections and the launch flags, when the live session model (or, with a configured effort,
-   * the thinking level) differs from `models.orchestrator`. The factory never switches the session model.
-   */
-  function requireOrchestratorSession(models: RoleModels, ctx: ExtensionContext, remedy: string) {
-    const entry = models.orchestrator;
-    if (entry === undefined) return;
-    const wanted = ctx.models.resolve(entry.model);
-    const live = ctx.models.current() ?? ctx.model;
-    const thinking = pi.getThinkingLevel();
-    const sameModel = wanted !== undefined && live !== undefined && wanted.provider === live.provider && wanted.id === live.id;
-    if (sameModel && (entry.reasoningEffort === undefined || entry.reasoningEffort === thinking)) return;
-    const effort = (level: string | undefined) => ` effort ${level ?? 'unset'}`;
-    const configured = `${entry.model}${wanted === undefined || entry.model === `${wanted.provider}/${wanted.id}` ? '' : ` (${wanted.provider}/${wanted.id})`}${entry.reasoningEffort === undefined ? '' : effort(entry.reasoningEffort)}`;
-    const running = `${live === undefined ? 'no model' : `${live.provider}/${live.id}`}${entry.reasoningEffort === undefined ? '' : effort(thinking)}`;
-    const flags = `--model ${entry.model}${entry.reasoningEffort === undefined ? '' : ` --thinking ${entry.reasoningEffort}`}`;
-    const clamp = sameModel
-      ? ` The model matches but the effort does not: configured effort ${entry.reasoningEffort}; omp's effective (clamped) level is ${thinking ?? 'unset'}. omp clamps --thinking to what the model supports, so if relaunching with --thinking ${entry.reasoningEffort} does not help, set models.orchestrator.reasoningEffort to a level this model supports.`
-      : '';
-    throw new Error(
-      `Software factory: models.orchestrator: configured ${configured}, but this omp session runs ${running}. The factory does not switch the session model: relaunch omp with ${flags}, ${remedy}${clamp}`,
-    );
+  /** The orchestrator check on this session's live model (omp's current one, else ctx.model) and thinking level. */
+  function requireOrchestratorSession(models: RoleModels, ctx: ExtensionContext, when: 'resume' | 'start') {
+    if (models.orchestrator === undefined) return;
+    requireOrchestrator(models, { model: ctx.models.current() ?? ctx.model, thinking: pi.getThinkingLevel() }, spec => ctx.models.resolve(spec), when);
   }
 
   const STALL_DESCRIPTION =
@@ -396,7 +379,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         if (!existsSync(statePath(ws, feature))) throw new Error(`No run named "${feature}".`);
         forgetRun(ws, feature);
         const current = readRun(ws, feature);
-        requireOrchestratorSession(current.models, ctx, 'or start a new run with another models.orchestrator: this run keeps the models.orchestrator from its run snapshot.');
+        requireOrchestratorSession(current.models, ctx, 'resume');
         const slice = activeSlice(current);
         if (slice?.stalled) {
           const body = `In "${feature}", slice ${slice.id} "${slice.title}" used up its fix budget of ${slice.roundLimit} rounds. Raise the fix budget by ${ws.config.maxRounds} rounds and resume?`;
@@ -421,7 +404,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
           throw new Error(`Run "${current}" is still running in this repository. Finish or /factory pause it first.`);
         }
         requireAvailableModels(ws.config.models, spec => ctx.models.resolve(spec));
-        requireOrchestratorSession(ws.config.models, ctx, 'or change models.orchestrator.');
+        requireOrchestratorSession(ws.config.models, ctx, 'start');
         const source = await loadSource(ctx, ws, params.source);
         await ensureChecks(ctx, ws);
         run = await startRun(ws, { feature: params.feature, sessionId, source });
@@ -840,15 +823,24 @@ export default function softwareFactory(pi: ExtensionAPI) {
     async handler(args, ctx) {
       const [verb = '', ...rest] = args.trim().split(/\s+/);
       const argument = rest.join(' ');
-      const ws = await workspace(ctx.cwd);
+      // status and pause act on the active run through the workspace it started or resumed with; without one, status
+      // lists the runs of the current factory.json.
+      const active = await runForCwd(ctx.cwd);
       if (verb === '' || verb === 'status') {
-        const feature = activeRuns.get(ws.root)?.feature;
+        const ws = active?.ws ?? (await workspace(ctx.cwd));
         const runsDir = join(ws.root, ws.config.scratchDir);
         const known = existsSync(runsDir) ? readdirSync(runsDir).filter(name => existsSync(statePath(ws, name))) : [];
-        const active = feature === undefined ? 'none' : `${feature}: ${nextAction(readRun(ws, feature))}`;
-        ctx.ui.notify(`Active run: ${active}\nRuns: ${known.join(', ') || 'none'}`, 'info');
+        const current = active === undefined ? 'none' : `${active.feature}: ${nextAction(readRun(ws, active.feature))}`;
+        ctx.ui.notify(`Active run: ${current}\nRuns: ${known.join(', ') || 'none'}`, 'info');
         return;
       }
+      if (verb === 'pause') {
+        if (active === undefined) throw new Error(NO_ACTIVE_RUN);
+        await withRun(active.ws, active.feature, run => pauseRun(run, 'user paused the run'));
+        ctx.ui.notify(`Paused "${active.feature}".`, 'info');
+        return;
+      }
+      const ws = await workspace(ctx.cwd);
       if (verb === 'checks') {
         if (ws.config.checks !== undefined) {
           ctx.ui.notify(`Checks come from "checks" in ${CONFIG_PATH}: ${ws.config.checks.join('; ')}. Edit that file to change them.`, 'info');
@@ -861,12 +853,6 @@ export default function softwareFactory(pi: ExtensionAPI) {
         }
         await saveChecks(ws, checks);
         ctx.ui.notify(`Saved checks: ${checks.join('; ')}. New runs use them; a run that already started keeps its checks.`, 'info');
-        return;
-      }
-      if (verb === 'pause') {
-        const feature = activeFeature(ws);
-        await withRun(ws, feature, run => pauseRun(run, 'user paused the run'));
-        ctx.ui.notify(`Paused "${feature}".`, 'info');
         return;
       }
       if (verb === 'resume') {
@@ -903,14 +889,9 @@ export default function softwareFactory(pi: ExtensionAPI) {
 
   pi.on('session_stop', async (event, ctx) => {
     if (ctx.agent.kind !== 'main') return;
-    let ws: Workspace;
-    try {
-      ws = await workspace(ctx.cwd);
-    } catch {
-      return;
-    }
-    const feature = activeRuns.get(ws.root)?.feature;
-    if (feature === undefined) return;
+    const active = await runForCwd(ctx.cwd);
+    if (active === undefined) return;
+    const { feature, ws } = active;
     const run = readRun(ws, feature);
     const decision = stopDecision(run, event.session_id, stopAttempts.get(feature));
     if (decision.action === 'allow') return;
@@ -924,11 +905,9 @@ export default function softwareFactory(pi: ExtensionAPI) {
     return { decision: 'block', reason: `Software factory run "${feature}" is not finished. Next: ${nextAction(run)}` };
   });
 
-  /** Measures each implementer's context so the retro can see slices that outgrew the budget. */
-  async function trackImplementer(ctx: ExtensionContext, compacted: boolean) {
-    if (ctx.agent.kind !== 'sub' || ctx.agent.name !== IMPLEMENTER) return;
-    const found = await childRun(ctx);
-    if (found === undefined) return;
+  /** Measures each implementer's context so the retro can see slices that outgrew the budget. `found` is its active run. */
+  async function trackImplementer(ctx: ExtensionContext, found: { feature: string; ws: Workspace } | undefined, compacted: boolean) {
+    if (ctx.agent.kind !== 'sub' || ctx.agent.name !== IMPLEMENTER || found === undefined) return;
     const { feature, ws } = found;
     const tokens = ctx.getContextUsage()?.tokens ?? 0;
     const peak = activeSlice(readRun(ws, feature))?.peakContextTokens;
@@ -945,43 +924,32 @@ export default function softwareFactory(pi: ExtensionAPI) {
   }
 
   pi.on('turn_end', async (_event, ctx) => {
-    await auditChild(ctx, pi.getThinkingLevel(), await childRun(ctx));
-    await trackImplementer(ctx, false);
+    const found = await runForCwd(ctx.cwd);
+    try {
+      await auditChild(ctx, pi.getThinkingLevel(), found);
+    } finally {
+      await trackImplementer(ctx, found, false);
+    }
   });
-  pi.on('auto_compaction_start', async (_event, ctx) => trackImplementer(ctx, true));
+  pi.on('auto_compaction_start', async (_event, ctx) => trackImplementer(ctx, await runForCwd(ctx.cwd), true));
   // A new implementer the orchestrator spawns starts a new report round; reviving or messaging one is not a spawn, so
   // a follow-up turn keeps its report. The run's model snapshot routes factory agent spawns from the main session, and
   // main-session spawns of any agent named `scout` (the explorer role; the event does not say whether it is omp's
   // bundled one) only while the run is in intake or running; a role without an entry inherits. The spawn event does not
   // carry a review domain, so one reviewer model covers every domain. The hook sets the model only: a `:<effort>` suffix
   // on the returned pattern does not reach the child's thinking level. Routing never reloads factory.json: it finds the
-  // run through the workspace remembered when the run started or resumed. A cwd outside any git repo has no run, so it
-  // goes unrouted. When the run state cannot be read, a scout spawn goes unrouted and a factory-role spawn is blocked.
+  // run through the workspace remembered when the run started or resumed, and only reads it; an implementer spawn alone
+  // saves the run, to start a report round. A cwd outside any git repo has no run, so it goes unrouted. When the run
+  // state cannot be read, a scout spawn goes unrouted and a factory-role spawn is blocked.
   pi.on('before_subagent_spawn', async (event, ctx) => {
-    const role = ctx.agent.kind === 'main' ? SPAWN_ROLES[event.agent] : undefined;
+    const role = ctx.agent.kind === 'main' ? SPAWN_ROLES.get(event.agent) : undefined;
     if (role === undefined) return;
-    if (activeRuns.size === 0) return;
-    const root = await rootOf(ctx.cwd);
-    const active = root === undefined ? undefined : activeRuns.get(root);
+    const active = await runForCwd(ctx.cwd);
     if (active === undefined) return;
-    let read = false;
+    let run: Run;
     try {
-      return await withRun(active.ws, active.feature, run => {
-        read = true;
-        if (role === 'explorer' && run.status !== 'intake' && run.status !== 'running') return;
-        const entry = run.models[role];
-        if (entry !== undefined && ctx.models.resolve(entry.model) === undefined) {
-          return {
-            block: true,
-            reason: `Software factory: models.${role}: model "${entry.model}" from the run snapshot no longer resolves in this omp session, so the spawn is refused rather than switched to another model. Make the model available, or start a new run with another models.${role}.`,
-          };
-        }
-        if (role === 'implementer') startImplementerSession(active.ws, run);
-        if (entry === undefined) return;
-        return { model: [entry.model, ...(entry.fallbacks ?? [])], note: `Software factory: models.${role} from the run snapshot.` };
-      });
+      run = readRun(active.ws, active.feature);
     } catch (error) {
-      if (read) throw error;
       if (role === 'explorer') return;
       const message = error instanceof Error ? error.message : String(error);
       return {
@@ -989,5 +957,9 @@ export default function softwareFactory(pi: ExtensionAPI) {
         reason: `Software factory: models.${role}: cannot route this spawn because the run state of "${active.feature}" cannot be read (${message}), so the spawn is refused rather than run on another model.`,
       };
     }
+    if (role === 'explorer' && run.status !== 'intake' && run.status !== 'running') return;
+    const route = routeSpawn(role, run.models[role], spec => ctx.models.resolve(spec));
+    if (role === 'implementer' && route?.block !== true) await withRun(active.ws, active.feature, latest => startImplementerSession(active.ws, latest));
+    return route;
   });
 }
