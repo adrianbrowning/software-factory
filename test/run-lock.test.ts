@@ -37,6 +37,15 @@ describe('withRun lock', () => {
     assert.equal(existsSync(lockPath(ws, 'demo')), false);
   });
 
+  it('keeps every update when writers in separate threads both find a stale lock', async () => {
+    using ws = workspace();
+    await start(ws);
+    writeFileSync(lockPath(ws, 'demo'), '');
+    utimesSync(lockPath(ws, 'demo'), 0, 0);
+    await Promise.all([writer(ws, 'a'), writer(ws, 'b')]);
+    assert.equal(readRun(ws, 'demo').waiting.length, 2 * COUNT);
+  });
+
   it('waits for a live holder and leaves its lock alone', async () => {
     using ws = workspace();
     await start(ws);
