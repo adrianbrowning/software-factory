@@ -296,7 +296,8 @@ export function writeAtomic(path: string, content: string) {
  * The hashes of the last two states the tools saved, newest first, in a file beside state.json. Every copy of the
  * extension (other worker threads, other processes) reads it, so a save by one is not mistaken by another for an edit
  * outside the tools. The newest hash is written before state.json is replaced, so a reader that races a save finds
- * the state it read in the file. No file means no tool has saved yet: the state is trusted as it is.
+ * the state it read in the file. The price: restoring the state of the save just before the newest passes too.
+ * No file means no tool has saved yet: the state is trusted as it is.
  */
 const savedPath = (path: string) => `${path}.saved`;
 const hash = (content: string) => createHash('sha256').update(content).digest('hex');
