@@ -1,5 +1,7 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { setTimeout as sleep } from 'node:timers/promises';
 import { z } from 'zod';
 import { type FactoryConfig, modelsSchema, SPAWN_MODEL_ROLES } from './config.ts';
 
@@ -275,6 +277,8 @@ export function runDir(ws: Workspace, feature: string) {
 }
 
 export const statePath = (ws: Workspace, feature: string) => join(runDir(ws, feature), 'state.json');
+/** Held while one tool call, in any thread or process, does a read-modify-write of this run's state. */
+export const lockPath = (ws: Workspace, feature: string) => `${statePath(ws, feature)}.lock`;
 export const ticketPath = (ws: Workspace, feature: string, slice: Pick<Slice, 'branch' | 'id'>) =>
   join(runDir(ws, feature), 'issues', `${slice.branch.split('/').pop()}.md`);
 export const reviewDir = (ws: Workspace, feature: string, reviewId: string) => join(runDir(ws, feature), 'reviews', reviewId);
@@ -288,14 +292,29 @@ export function writeAtomic(path: string, content: string) {
   renameSync(temporary, path);
 }
 
-/** Last state each tool call saved in this process, by path. A different file on disk was edited outside the tools. */
-const lastSaved = new Map<string, string>();
+/**
+ * The hashes of the last two states the tools saved, newest first, in a file beside state.json. Every copy of the
+ * extension (other worker threads, other processes) reads it, so a save by one is not mistaken by another for an edit
+ * outside the tools. The newest hash is written before state.json is replaced, so a reader that races a save finds
+ * the state it read in the file. No file means no tool has saved yet: the state is trusted as it is.
+ */
+const savedPath = (path: string) => `${path}.saved`;
+const hash = (content: string) => createHash('sha256').update(content).digest('hex');
+
+function savedHashes(path: string): string[] {
+  try {
+    return readFileSync(savedPath(path), 'utf8').split('\n').filter(Boolean);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+    throw error;
+  }
+}
 
 export function readRun(ws: Workspace, feature: string): Run {
   const path = statePath(ws, feature);
   const content = readFileSync(path, 'utf8');
-  const expected = lastSaved.get(path);
-  if (expected !== undefined && expected !== content) {
+  const saved = savedHashes(path);
+  if (saved.length > 0 && !saved.includes(hash(content))) {
     throw new Error(`${path} changed outside the factory tools. Restore it, or pause and resume the run to re-verify it.`);
   }
   const parsed = runSchema.safeParse(JSON.parse(content));
@@ -303,15 +322,17 @@ export function readRun(ws: Workspace, feature: string): Run {
   return parsed.data;
 }
 
-/** Forgets the in-process copy so the next read trusts disk again. Only resume calls this, then re-verifies. */
+/** Forgets the saved hashes so the next read trusts disk again. Only resume calls this, then re-verifies. */
 export function forgetRun(ws: Workspace, feature: string) {
-  lastSaved.delete(statePath(ws, feature));
+  rmSync(savedPath(statePath(ws, feature)), { force: true });
 }
 
 export function saveRun(ws: Workspace, run: Run) {
+  const path = statePath(ws, run.feature);
   const content = `${JSON.stringify(run, null, 2)}\n`;
-  writeAtomic(statePath(ws, run.feature), content);
-  lastSaved.set(statePath(ws, run.feature), content);
+  const current = hash(content);
+  writeAtomic(savedPath(path), `${current}\n${savedHashes(path).find(previous => previous !== current) ?? ''}\n`);
+  writeAtomic(path, content);
 }
 
 /**
@@ -322,21 +343,103 @@ export class Invalidated extends Error {}
 
 const queues = new Map<string, Promise<unknown>>();
 
+/** A lock whose file has not been touched for this long was left by a holder that died. */
+const LOCK_STALE_MS = 30_000;
+const LOCK_POLL_MS = 5;
+
+/** Milliseconds since the file was last touched, or undefined when it does not exist. */
+function ageMs(path: string) {
+  try {
+    return Date.now() - statSync(path).mtimeMs;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
+    throw error;
+  }
+}
+
 /**
- * Serializes read-modify-write of one run's state across concurrent tool calls in this process.
+ * Removes a lock a dead holder left. Waiters that see it stale take turns through a second exclusive file and
+ * check the age again while holding it, so one cannot remove the fresh lock another created after the stale one
+ * was removed. A stale claim file, from a waiter that died mid-break, is removed on the next attempt.
+ */
+function breakStaleLock(path: string) {
+  const claim = `${path}.break`;
+  try {
+    writeFileSync(claim, '', { flag: 'wx' });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    if ((ageMs(claim) ?? 0) > LOCK_STALE_MS) rmSync(claim, { force: true });
+    return;
+  }
+  try {
+    if ((ageMs(path) ?? 0) > LOCK_STALE_MS) rmSync(path, { force: true });
+  } finally {
+    rmSync(claim, { force: true });
+  }
+}
+
+/**
+ * Takes the run's lock file: created exclusively with a token unique to this acquisition, so one holder at a time
+ * across threads and processes. While held, a timer keeps touching the file; a file untouched for LOCK_STALE_MS is
+ * taken to belong to a dead holder and is removed. That is a lease: a live holder whose thread is blocked for longer
+ * than the timeout can lose it, and no file primitive can make that handoff atomic. Release removes the file only if
+ * it still holds this acquisition's token.
+ */
+async function acquireLock(path: string) {
+  const token = randomUUID();
+  for (;;) {
+    try {
+      writeFileSync(path, token, { flag: 'wx' });
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    }
+    const age = ageMs(path);
+    // Released since the failed create: try again at once.
+    if (age === undefined) continue;
+    if (age > LOCK_STALE_MS) breakStaleLock(path);
+    await sleep(LOCK_POLL_MS);
+  }
+  const heartbeat = setInterval(() => {
+    const now = new Date();
+    try {
+      utimesSync(path, now, now);
+    } catch {
+      // The file is gone; release has nothing left to remove.
+    }
+  }, LOCK_STALE_MS / 3);
+  heartbeat.unref();
+  return () => {
+    clearInterval(heartbeat);
+    try {
+      if (readFileSync(path, 'utf8') === token) rmSync(path, { force: true });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+    }
+  };
+}
+
+/**
+ * Serializes read-modify-write of one run's state across concurrent tool calls: the queue orders them in this
+ * process, and the lock file orders them against other copies of the extension in worker threads or processes.
  * The mutation is saved when it returns or throws `Invalidated`; any other error leaves the state unchanged.
  */
 export function withRun<T>(ws: Workspace, feature: string, mutate: (run: Run) => Promise<T> | T): Promise<T> {
   const key = statePath(ws, feature);
   const next = (queues.get(key) ?? Promise.resolve()).catch(() => {}).then(async () => {
-    const run = readRun(ws, feature);
+    const release = await acquireLock(lockPath(ws, feature));
     try {
-      const result = await mutate(run);
-      saveRun(ws, run);
-      return result;
-    } catch (error) {
-      if (error instanceof Invalidated) saveRun(ws, run);
-      throw error;
+      const run = readRun(ws, feature);
+      try {
+        const result = await mutate(run);
+        saveRun(ws, run);
+        return result;
+      } catch (error) {
+        if (error instanceof Invalidated) saveRun(ws, run);
+        throw error;
+      }
+    } finally {
+      release();
     }
   });
   queues.set(key, next);
