@@ -412,9 +412,8 @@ export function evictLock(path: string, staleToken: string) {
   try {
     const lock = inspectLock(path);
     if (lock === undefined || lock.token !== staleToken || lock.age <= LOCK_STALE_MS) return;
-    const moved = `${path}.${randomUUID()}`;
-    renameSync(path, moved);
-    rmSync(moved, { force: true });
+    // Rename, check the renamed file's token, delete it only if it is still the stale one.
+    removeLock(path, staleToken);
   } finally {
     rmSync(guard, { force: true });
   }
