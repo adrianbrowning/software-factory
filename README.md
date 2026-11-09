@@ -263,7 +263,7 @@ agent frontmatter, then the parent model) stands, and the factory returns no mod
 
 | Role | Routes |
 | --- | --- |
-| `orchestrator` | Nothing; you choose its model at omp launch |
+| `orchestrator` | Nothing; you choose its model at omp launch, and `factory_start` checks it |
 | `implementer` | `factory-implementer` spawns |
 | `reviewer` | `factory-reviewer` spawns, for every review domain |
 | `validator` | `factory-review-validator` spawns |
@@ -303,6 +303,12 @@ user or plugin agent named `scout`, which replaces omp's bundled `scout`, is rou
   model and effort you choose at omp launch (`--model`, `--thinking`). omp gives the factory no way to set a
   subagent's reasoning effort: a real omp spawn ignored an effort suffix on the model. A `reasoningEffort` on
   `implementer`, `reviewer`, `validator` or `explorer` fails validation with an error that names the role.
+- The orchestrator is the omp session you run `/factory` in, so choose its model when you launch omp, for example
+  `omp --model anthropic/claude-opus-4-5 --thinking high`. With a `models.orchestrator` entry, `factory_start` and
+  `factory_start` resume (against the run's snapshot) compare the live session model with it, and the thinking level
+  too when `reasoningEffort` is set. On a mismatch they stop with an error that names `models.orchestrator`, the
+  configured and the live selection, and the `--model`/`--thinking` flags to relaunch with. The factory never switches
+  the session model. Without an `orchestrator` entry nothing is checked.
 
 ## Run state
 
