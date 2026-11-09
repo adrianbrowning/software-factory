@@ -72,6 +72,7 @@ describe('withRun lock', () => {
     evictLock(path, 'dead holder');
     assert.equal(existsSync(path), false);
     writeFileSync(path, 'new holder', { flag: 'wx' });
+    utimesSync(path, 0, 0);
     // A third acquirer creates the lock the moment anything is renamed off the path.
     let competitorGotLock = false;
     const original = fs.renameSync;
