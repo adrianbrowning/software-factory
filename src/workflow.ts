@@ -244,6 +244,7 @@ export async function startRun(ws: Workspace, input: { feature: string; sessionI
   const trunk = ws.config.trunk ?? (await branchName(ws.root, baseRef));
   await excludeScratch(ws);
   const run: Run = {
+    agents: [],
     baseRef,
     checks,
     createdAt: new Date().toISOString(),
@@ -963,6 +964,8 @@ export function nextAction(run: Run): string {
 
 export function summarize(ws: Workspace, run: Run) {
   return {
+    /** Agent records from when no slice was active, such as a scout during intake. */
+    agentsOutsideSlices: run.agents.filter(agent => agent.slice === undefined),
     events: run.events.slice(-30),
     feature: run.feature,
     /** Each role's model from the run snapshot, or `inherit`. */
@@ -970,6 +973,8 @@ export function summarize(ws: Workspace, run: Run) {
     nextAction: nextAction(run),
     runDir: runDir(ws, run.feature),
     slices: run.slices.map(slice => ({
+      /** The actual model and thinking level of each factory agent and scout that ran for the slice, routed or not. */
+      agents: run.agents.filter(agent => agent.slice === slice.id),
       branch: slice.branch,
       compactions: slice.compactions,
       fixRounds: slice.fixRounds,

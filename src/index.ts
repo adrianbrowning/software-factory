@@ -2,7 +2,8 @@ import type { ExtensionAPI, ExtensionContext } from '@oh-my-pi/pi-coding-agent';
 import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { CONFIG_PATH, checksPrompt, describeModels, loadConfig, type ModelRole, parseChecks, requireAvailableModels, type RoleModels, suggestChecks } from './config.ts';
+import { auditChild, IMPLEMENTER, REVIEWER, SPAWN_ROLES, VALIDATOR } from './agents.ts';
+import { CONFIG_PATH, checksPrompt, describeModels, loadConfig, parseChecks, requireAvailableModels, type RoleModels, suggestChecks } from './config.ts';
 import { evidence, evidenceHead } from './evidence.ts';
 import {
   activeSlice,
@@ -79,16 +80,6 @@ import {
   summarize,
 } from './workflow.ts';
 
-const IMPLEMENTER = 'factory-implementer';
-const REVIEWER = 'factory-reviewer';
-const VALIDATOR = 'factory-review-validator';
-/** Spawned agent to the role whose snapshotted model routes it. Any agent named `scout` (omp's bundled explorer, or one that replaces it) is the explorer. */
-const SPAWN_ROLES: Partial<Record<string, Exclude<ModelRole, 'orchestrator'>>> = {
-  [IMPLEMENTER]: 'implementer',
-  [REVIEWER]: 'reviewer',
-  [VALIDATOR]: 'validator',
-  scout: 'explorer',
-};
 const DEFAULT_FACTORY_REPO = 'adrianbrowning/software-factory';
 /** Tools `factory_start` activates; they stay out of every other session's tool list. */
 const ORCHESTRATION_TOOLS = [
@@ -200,9 +191,10 @@ export function callerOf(ctx: Pick<ExtensionContext, 'agent'>) {
 
 /**
  * Active run per repository root, with the workspace it started or resumed with, so routing keeps that run's state
- * location after a mid-run factory.json edit. Module scope is shared by the main session and its subagents in one process.
+ * location after a mid-run factory.json edit, and the agent id of the main session that started or resumed it.
+ * Module scope is shared by the main session and its subagents in one process.
  */
-const activeRuns = new Map<string, { feature: string; ws: Workspace }>();
+const activeRuns = new Map<string, { feature: string; mainId: string; ws: Workspace }>();
 const stopAttempts = new Map<string, { count: number; events: number }>();
 const roots = new Map<string, string>();
 
@@ -214,6 +206,9 @@ async function cachedRoot(cwd: string) {
   }
   return root;
 }
+
+/** The repository root of `cwd`, or undefined outside any git repo, which has no run. */
+const rootOf = (cwd: string) => cachedRoot(cwd).catch(() => undefined);
 
 async function workspace(cwd: string): Promise<Workspace> {
   let root = roots.get(cwd);
@@ -228,6 +223,13 @@ function activeFeature(ws: Workspace) {
   const feature = activeRuns.get(ws.root)?.feature;
   if (feature === undefined) throw new Error('No active factory run. Start one with /factory <issue>, or /factory resume <feature>.');
   return feature;
+}
+
+/** The active run of a child session's repository, found from the child's own cwd; it never reloads factory.json. */
+async function childRun(ctx: ExtensionContext) {
+  if (activeRuns.size === 0) return undefined;
+  const root = await rootOf(ctx.cwd);
+  return root === undefined ? undefined : activeRuns.get(root);
 }
 
 type Reply = { content: { text: string; type: 'text' }[]; details: unknown };
@@ -424,7 +426,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         await ensureChecks(ctx, ws);
         run = await startRun(ws, { feature: params.feature, sessionId, source });
       }
-      activeRuns.set(ws.root, { feature: run.feature, ws });
+      activeRuns.set(ws.root, { feature: run.feature, mainId: ctx.agent.id, ws });
       await pi.setActiveTools([...new Set([...pi.getActiveTools(), ...ORCHESTRATION_TOOLS])]);
       return reply(
         `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${ws.config.maxRounds}.\nNext: ${nextAction(run)}`,
@@ -784,7 +786,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
 
   tool({
     caller: 'main',
-    description: 'Show the run: slices, phases, fix rounds, peak implementer context, recent events, next action.',
+    description: 'Show the run: slices, phases, fix rounds, peak implementer context, the actual model and thinking level of each spawned agent, recent events, next action.',
     label: 'Factory: status',
     name: 'factory_status',
     schema: emptySchema,
@@ -925,9 +927,9 @@ export default function softwareFactory(pi: ExtensionAPI) {
   /** Measures each implementer's context so the retro can see slices that outgrew the budget. */
   async function trackImplementer(ctx: ExtensionContext, compacted: boolean) {
     if (ctx.agent.kind !== 'sub' || ctx.agent.name !== IMPLEMENTER) return;
-    const ws = await workspace(ctx.cwd);
-    const feature = activeRuns.get(ws.root)?.feature;
-    if (feature === undefined) return;
+    const found = await childRun(ctx);
+    if (found === undefined) return;
+    const { feature, ws } = found;
     const tokens = ctx.getContextUsage()?.tokens ?? 0;
     const peak = activeSlice(readRun(ws, feature))?.peakContextTokens;
     if (peak === undefined || (!compacted && tokens <= peak)) return;
@@ -942,7 +944,10 @@ export default function softwareFactory(pi: ExtensionAPI) {
     });
   }
 
-  pi.on('turn_end', async (_event, ctx) => trackImplementer(ctx, false));
+  pi.on('turn_end', async (_event, ctx) => {
+    await auditChild(ctx, pi.getThinkingLevel(), await childRun(ctx));
+    await trackImplementer(ctx, false);
+  });
   pi.on('auto_compaction_start', async (_event, ctx) => trackImplementer(ctx, true));
   // A new implementer the orchestrator spawns starts a new report round; reviving or messaging one is not a spawn, so
   // a follow-up turn keeps its report. The run's model snapshot routes factory agent spawns from the main session, and
@@ -956,13 +961,8 @@ export default function softwareFactory(pi: ExtensionAPI) {
     const role = ctx.agent.kind === 'main' ? SPAWN_ROLES[event.agent] : undefined;
     if (role === undefined) return;
     if (activeRuns.size === 0) return;
-    let root: string;
-    try {
-      root = await cachedRoot(ctx.cwd);
-    } catch {
-      return;
-    }
-    const active = activeRuns.get(root);
+    const root = await rootOf(ctx.cwd);
+    const active = root === undefined ? undefined : activeRuns.get(root);
     if (active === undefined) return;
     let read = false;
     try {
