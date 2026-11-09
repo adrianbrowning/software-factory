@@ -564,3 +564,103 @@ describe('used-up fix budget', () => {
     assert.doesNotMatch(text, /Run the retro now/);
   });
 });
+
+describe('model routing', () => {
+  const IMPLEMENTER_MODEL = { fallbacks: ['openai/gpt-5.2', '@slow'], model: 'anthropic/claude-sonnet-4-5' };
+  const SOURCE = { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' };
+
+  /**
+   * A repo whose factory.json holds `models` (omitted when undefined), with the extension loaded. `available` is the set
+   * of specs ctx.models.resolve finds; tests may change it. `call` runs a tool as main; `spawn` fires
+   * before_subagent_spawn for `agent` from main. The repo goes when `using` ends.
+   */
+  function routedRepo(models: unknown) {
+    const config = { baseRef: 'main', checks: ['test -f ok'], ...(models === undefined ? {} : { models }) };
+    const repo = tempRepo('factory-models-', { '.omp/factory.json': JSON.stringify(config) });
+    const handlers = new Map<string, Handler>();
+    const tools = load([], handlers);
+    const available = new Set<string>();
+    const main = {
+      ...ctx('main', 'main'),
+      cwd: repo.root,
+      hasUI: true,
+      models: { resolve: (spec: string) => (available.has(spec) ? { id: spec, provider: 'test' } : undefined) },
+      sessionManager: { getSessionId: () => 'session' },
+      ui: { confirm: async () => true, notify() {} },
+    };
+    const call = async (name: string, params: unknown) => JSON.stringify(await tools.get(name)?.execute('id', params, undefined, undefined, main));
+    const spawn = (agent: string) => handlers.get('before_subagent_spawn')?.({ agent, invocationKind: 'task', patterns: ['@task'], type: 'before_subagent_spawn' }, main);
+    const statusModels = async () => {
+      const status: { details: { models: unknown } } = JSON.parse(await call('factory_status', {}));
+      return status.details.models;
+    };
+    return { ...repo, available, call, spawn, statusModels };
+  }
+
+  it('refuses to start when a configured model does not resolve, naming the role', async () => {
+    using repo = routedRepo({ implementer: IMPLEMENTER_MODEL, reviewer: { model: 'anthropic/claude-opus-4-5' } });
+    for (const spec of [IMPLEMENTER_MODEL.model, ...IMPLEMENTER_MODEL.fallbacks]) repo.available.add(spec);
+    await assert.rejects(repo.call('factory_start', { feature: 'demo', source: SOURCE }), /models\.reviewer: model "anthropic\/claude-opus-4-5" is not available/);
+    repo.available.add('anthropic/claude-opus-4-5');
+    repo.available.delete('@slow');
+    await assert.rejects(repo.call('factory_start', { feature: 'demo', source: SOURCE }), /models\.implementer: fallback "@slow" is not available/);
+  });
+
+  it('snapshots the role mapping into the run: factory_start and factory_status show it, and a later factory.json edit or a resume does not change it', async () => {
+    const orchestrator = { model: 'anthropic/claude-opus-4-5', reasoningEffort: 'xhigh' };
+    using repo = routedRepo({ implementer: IMPLEMENTER_MODEL, orchestrator });
+    for (const spec of [IMPLEMENTER_MODEL.model, ...IMPLEMENTER_MODEL.fallbacks, orchestrator.model]) repo.available.add(spec);
+    const started = await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    assert.match(
+      started,
+      /Models: orchestrator anthropic\/claude-opus-4-5 effort xhigh; implementer anthropic\/claude-sonnet-4-5 \(fallbacks: openai\/gpt-5\.2, @slow\); reviewer inherit; validator inherit; explorer inherit\./,
+    );
+    const expected = { explorer: 'inherit', implementer: IMPLEMENTER_MODEL, orchestrator, reviewer: 'inherit', validator: 'inherit' };
+    writeFileSync(join(repo.root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], models: { implementer: { model: 'openai/gpt-5.2' } } }));
+    assert.deepEqual(await repo.statusModels(), expected);
+    const resumed = await repo.call('factory_start', { resume: 'demo' });
+    assert.match(resumed, /Models: orchestrator anthropic\/claude-opus-4-5 effort xhigh; implementer anthropic\/claude-sonnet-4-5 /);
+    assert.deepEqual(await repo.statusModels(), expected);
+  });
+
+  it('shows every role as inherit without a models key', async () => {
+    using repo = routedRepo(undefined);
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    assert.deepEqual(await repo.statusModels(), { explorer: 'inherit', implementer: 'inherit', orchestrator: 'inherit', reviewer: 'inherit', validator: 'inherit' });
+  });
+
+  it('routes every factory-implementer spawn, fix mode included, to the snapshotted model with only the configured fallbacks', async () => {
+    using repo = routedRepo({ implementer: IMPLEMENTER_MODEL });
+    for (const spec of [IMPLEMENTER_MODEL.model, ...IMPLEMENTER_MODEL.fallbacks]) repo.available.add(spec);
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    const routed = { model: ['anthropic/claude-sonnet-4-5', 'openai/gpt-5.2', '@slow'], note: 'Software factory: models.implementer from the run snapshot.' };
+    assert.deepEqual(await repo.spawn('factory-implementer'), routed);
+    assert.equal(await repo.spawn('factory-reviewer'), undefined);
+
+    const ws: Workspace = { config: loadConfig(repo.root), root: repo.root };
+    await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')])));
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    commit(ws, 'work.txt');
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'fix');
+    assert.deepEqual(await repo.spawn('factory-implementer'), routed);
+  });
+
+  it('blocks the implementer spawn, naming the role, when the snapshotted model no longer resolves', async () => {
+    using repo = routedRepo({ implementer: { model: 'anthropic/claude-sonnet-4-5' } });
+    repo.available.add('anthropic/claude-sonnet-4-5');
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    repo.available.delete('anthropic/claude-sonnet-4-5');
+    assert.deepEqual(await repo.spawn('factory-implementer'), {
+      block: true,
+      reason:
+        'Software factory: models.implementer: model "anthropic/claude-sonnet-4-5" from the run snapshot no longer resolves in this omp session, so the spawn is refused rather than switched to another model. Make the model available, or start a new run with another models.implementer.',
+    });
+  });
+
+  it('returns no model without a models key', async () => {
+    using repo = routedRepo(undefined);
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    assert.equal(await repo.spawn('factory-implementer'), undefined);
+  });
+});

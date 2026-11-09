@@ -120,6 +120,33 @@ describe('loadConfig', () => {
     using temp = dir({ '.omp/factory.json': JSON.stringify({ scratchDir: './runs/' }), 'package.json': scripts(['test']) });
     assert.equal(loadConfig(temp.root).scratchDir, 'runs');
   });
+
+  it('reads a models block and rejects a bad effort, an empty model or an unknown key, naming the role', () => {
+    const load = (value: unknown) => {
+      using temp = dir({ '.omp/factory.json': JSON.stringify(value), 'package.json': scripts(['test']) });
+      return loadConfig(temp.root);
+    };
+    const models = { implementer: { fallbacks: ['openai/gpt-5.2'], model: 'anthropic/claude-sonnet-4-5' }, orchestrator: { model: 'anthropic/claude-opus-4-5', reasoningEffort: 'xhigh' } };
+    assert.deepEqual(load({ models }).models, models);
+    assert.deepEqual(load({}).models, {});
+    assert.throws(() => load({ models: { orchestrator: { model: 'x', reasoningEffort: 'huge' } } }), /factory\.json[\s\S]*models\.orchestrator\.reasoningEffort/);
+    assert.throws(() => load({ models: { reviewer: { model: '' } } }), /factory\.json[\s\S]*models\.reviewer\.model/);
+    assert.throws(() => load({ models: { implementer: { model: 'x', effort: 'high' } } }), /factory\.json[\s\S]*"effort"[\s\S]*models\.implementer/);
+    assert.throws(() => load({ models: { coder: { model: 'x' } } }), /factory\.json[\s\S]*coder/);
+  });
+
+  it('rejects reasoningEffort on a subagent role, naming the role and that omp cannot set subagent effort', () => {
+    const load = (value: unknown) => {
+      using temp = dir({ '.omp/factory.json': JSON.stringify(value), 'package.json': scripts(['test']) });
+      return loadConfig(temp.root);
+    };
+    for (const role of ['implementer', 'reviewer', 'validator', 'explorer']) {
+      assert.throws(
+        () => load({ models: { [role]: { model: 'x', reasoningEffort: 'high' } } }),
+        new RegExp(`factory\\.json[\\s\\S]*omp cannot set a subagent's reasoning effort from the factory[\\s\\S]*models\\.${role}\\.reasoningEffort`),
+      );
+    }
+  });
 });
 
 describe('check setup suggestions', () => {

@@ -59,6 +59,7 @@ export function workspace(overrides: Partial<FactoryConfig> = {}): Workspace & D
       checkTimeoutMs: 10_000,
       factoryRepo: 'acme/factory',
       maxRounds: 1,
+      models: {},
       scratchDir: '.scratch',
       sliceTokenBudget: 1_000,
       trunk: 'main',

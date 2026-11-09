@@ -243,6 +243,7 @@ working tree, and unknown keys are rejected.
 | `branchPrefix` | `factory` | Branches are `<prefix>/<feature>/<NN>-<slug>` |
 | `scratchDir` | `.scratch` | Run state; added to `.git/info/exclude` |
 | `factoryRepo` | `adrianbrowning/software-factory` | Where retro findings about the factory are filed |
+| `models` | `{}` | Model per factory role, see [Role models](#role-models) |
 
 The budget is enforced at planning time (every slice estimate must fit) and measured at run time (peak
 implementer context and compactions are recorded per slice for the retro). To keep implementers inside the
@@ -254,6 +255,38 @@ task:
   agentCompactionThresholdOverrides:
     factory-implementer: 400000
 ```
+
+### Role models
+
+`models` sets the model per factory role. A role without an entry inherits: omp's own choice (agent model overrides,
+agent frontmatter, then the parent model) stands, and the factory returns no model for it. Only `implementer` spawns
+are routed so far. Entries for `orchestrator`, `reviewer`, `validator` and `explorer` are validated, kept in the run
+and shown, but do not yet change a model.
+
+```json
+{
+  "models": {
+    "implementer": {
+      "model": "anthropic/claude-sonnet-4-5",
+      "fallbacks": ["openai/gpt-5.2"]
+    }
+  }
+}
+```
+
+- `model` is an exact `provider/id` or an `@role` alias, resolved like omp's `--model`. `fallbacks` is an optional
+  list of more patterns omp tries in order. It is the only fallback the factory allows.
+- `factory_start` resolves every configured model and fallback in the omp session. One that does not resolve stops
+  the start with an error that names the role, for example `models.implementer`.
+- The run keeps the mapping it started with, as it keeps its checks. `factory_start` and `factory_status` show it per
+  role (`inherit` for a role with no entry). Editing `.omp/factory.json` or resuming does not change a running run.
+- Every `factory-implementer` spawn of the run (build, fix, reopened, and follow-up slices) gets the model and its
+  fallbacks. When the model no longer resolves, the spawn is refused with a reason that names the role. The factory
+  does not switch to another model.
+- `reasoningEffort` (`minimal`, `low`, `medium`, `high`, `xhigh`, `max`) is accepted only for `orchestrator`, whose
+  model and effort you choose at omp launch (`--model`, `--thinking`). omp gives the factory no way to set a
+  subagent's reasoning effort: a real omp spawn ignored an effort suffix on the model. A `reasoningEffort` on
+  `implementer`, `reviewer`, `validator` or `explorer` fails validation with an error that names the role.
 
 ## Run state
 
