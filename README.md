@@ -368,7 +368,7 @@ The gates stop model mistakes and limit what a misled agent can do. They are not
 - The implementer has `read`, `write`, `edit`, `grep`, `glob`, `bash`, and `lsp`, plus `factory_implementer_report` for
   its final report, and runs on your machine with your credentials. The tools reject a `state.json` changed outside
   them: a `state.json.saved` file beside it records the hashes of the last saves, so every thread and process that
-  loads the extension sees it. A `state.json.lock` file serializes their updates. After a restart, `/factory resume` trusts the file on disk: the active slice keeps
+  loads the extension sees it. The file sits in the run directory, so the implementer's tools can edit or delete it: the check catches accidental edits to `state.json`, not a deliberate bypass. A `state.json.lock` file serializes their updates. After a restart, `/factory resume` trusts the file on disk: the active slice keeps
   its passed checks and green review only while HEAD is still the commit they recorded and the run's check commands
   are the ones that passed, and an open review starts over. `/factory checks` on that same commit reuses the stored
   results instead of running the checks again.

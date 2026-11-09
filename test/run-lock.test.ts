@@ -9,9 +9,10 @@ import { start, workspace } from './helpers.ts';
 
 const COUNT = 25;
 
-function writer(ws: Workspace, id: string) {
+function writer(ws: Workspace, id: string, count = COUNT, onAttempt?: () => void) {
   const { promise, resolve, reject } = Promise.withResolvers<void>();
-  const worker = new Worker(new URL('./lock-worker.ts', import.meta.url), { workerData: { count: COUNT, id, ws } });
+  const worker = new Worker(new URL('./lock-worker.ts', import.meta.url), { workerData: { count, id, ws } });
+  worker.on('message', message => message === 'attempting' && onAttempt?.());
   worker.once('error', reject);
   worker.once('exit', code => (code === 0 ? resolve() : reject(new Error(`worker ${id} exited with ${code}`))));
   return promise;
@@ -94,6 +95,76 @@ describe('withRun lock', () => {
     assert.equal(readFileSync(path, 'utf8'), 'new holder');
     removeLock(path, 'new holder');
     assert.deepEqual(readdirSync(runDir(ws, 'demo')).toSorted(), before);
+  });
+
+  it('keeps a lock whose holder is alive past the stale timeout, because the heartbeat refreshes it', async () => {
+    using ws = workspace();
+    await start(ws);
+    const path = lockPath(ws, 'demo');
+    mock.timers.enable({ apis: ['setInterval', 'Date'], now: Date.now() });
+    try {
+      const { promise: started, resolve: markStarted } = Promise.withResolvers<void>();
+      const { promise: finish, resolve: finishFirst } = Promise.withResolvers<void>();
+      const first = withRun(ws, 'demo', async run => {
+        markStarted();
+        await finish;
+        run.waiting.push('first');
+      });
+      await started;
+      mock.timers.tick(31_000);
+      evictLock(path, readFileSync(path, 'utf8'));
+      assert.equal(existsSync(path), true);
+      // A worker thread has its own withRun queue, so it is a real competing acquirer.
+      const { promise: attempting, resolve: markAttempting } = Promise.withResolvers<void>();
+      let competitorDone = false;
+      const competitor = writer(ws, 'w', 1, markAttempting).then(() => {
+        competitorDone = true;
+      });
+      await attempting;
+      await sleep(100);
+      assert.equal(competitorDone, false);
+      finishFirst();
+      await first;
+      await competitor;
+      assert.deepEqual(readRun(ws, 'demo').waiting, ['first', 'w-0']);
+    } finally {
+      mock.timers.reset();
+    }
+  });
+
+  it('does not evict a lock with the stale token whose heartbeat refreshed it after the waiter judged it stale', async () => {
+    using ws = workspace();
+    await start(ws);
+    const path = lockPath(ws, 'demo');
+    writeFileSync(path, 'holder');
+    evictLock(path, 'holder');
+    assert.equal(readFileSync(path, 'utf8'), 'holder');
+    assert.equal(existsSync(`${path}.evict`), false);
+  });
+
+  it('readRun accepts valid state when two saves land between its state read and its saved-hash read', async () => {
+    using ws = workspace();
+    await start(ws);
+    await withRun(ws, 'demo', run => {
+      run.waiting.push('one');
+    });
+    const original = fs.readFileSync;
+    let staleServed = false;
+    mock.method(fs, 'readFileSync', (...args: Parameters<typeof fs.readFileSync>) => {
+      if (!staleServed && String(args[0]).endsWith('state.json.saved')) {
+        staleServed = true;
+        return 'newer-hash-1\nnewer-hash-2\n';
+      }
+      return original(...args);
+    });
+    syncBuiltinESMExports();
+    try {
+      assert.deepEqual(readRun(ws, 'demo').waiting, ['one']);
+    } finally {
+      mock.restoreAll();
+      syncBuiltinESMExports();
+    }
+    assert.equal(staleServed, true);
   });
 
   it('names the eviction guard to delete when a dead evictor left it past the stale timeout', async () => {

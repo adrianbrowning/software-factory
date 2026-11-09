@@ -5,6 +5,7 @@ import { withRun, type Workspace } from '../src/run.ts';
 
 const { count, id, ws } = workerData as { count: number; id: string; ws: Workspace };
 
+parentPort?.postMessage('attempting');
 await Promise.all(
   Array.from({ length: count }, (_, index) =>
     withRun(ws, 'demo', async run => {

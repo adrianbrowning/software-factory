@@ -297,7 +297,8 @@ export function writeAtomic(path: string, content: string) {
  * extension (other worker threads, other processes) reads it, so a save by one is not mistaken by another for an edit
  * outside the tools. The newest hash is written before state.json is replaced, so a reader that races a save finds
  * the state it read in the file. The price: restoring the state of the save just before the newest passes too.
- * No file means no tool has saved yet: the state is trusted as it is.
+ * A reader whose hash is missing reads both files once more before it rejects, which covers two saves landing
+ * between its reads. No file means no tool has saved yet: the state is trusted as it is.
  */
 const savedPath = (path: string) => `${path}.saved`;
 const hash = (content: string) => createHash('sha256').update(content).digest('hex');
@@ -313,10 +314,15 @@ function savedHashes(path: string): string[] {
 
 export function readRun(ws: Workspace, feature: string): Run {
   const path = statePath(ws, feature);
-  const content = readFileSync(path, 'utf8');
-  const saved = savedHashes(path);
+  let content = readFileSync(path, 'utf8');
+  let saved = savedHashes(path);
   if (saved.length > 0 && !saved.includes(hash(content))) {
-    throw new Error(`${path} changed outside the factory tools. Restore it, or pause and resume the run to re-verify it.`);
+    // Two saves can land between the two reads above, pushing this state out of the list; look once more.
+    content = readFileSync(path, 'utf8');
+    saved = savedHashes(path);
+    if (saved.length > 0 && !saved.includes(hash(content))) {
+      throw new Error(`${path} changed outside the factory tools. Restore it, or pause and resume the run to re-verify it.`);
+    }
   }
   const parsed = runSchema.safeParse(JSON.parse(content));
   if (!parsed.success) throw new Error(`Corrupt factory state ${path}: ${z.prettifyError(parsed.error)}`);
@@ -412,7 +418,6 @@ export function evictLock(path: string, staleToken: string) {
   try {
     const lock = inspectLock(path);
     if (lock === undefined || lock.token !== staleToken || lock.age <= LOCK_STALE_MS) return;
-    // Rename, check the renamed file's token, delete it only if it is still the stale one.
     removeLock(path, staleToken);
   } finally {
     rmSync(guard, { force: true });
