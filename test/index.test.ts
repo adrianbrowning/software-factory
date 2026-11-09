@@ -6,10 +6,10 @@ import { describe, it } from 'node:test';
 import type { ExtensionAPI } from '@oh-my-pi/pi-coding-agent';
 import { loadConfig } from '../src/config.ts';
 import softwareFactory, { MAX_IDLE_STOP_ATTEMPTS, stopDecision } from '../src/index.ts';
-import { readRun, type Run, ticketPath, withRun, type Workspace } from '../src/run.ts';
+import { readRun, type Run, statePath, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, pauseRun, planSlices, resolveStall } from '../src/workflow.ts';
-import { commit, finding, green, review, sh, slice, tempRepo } from './helpers.ts';
+import { commit, finding, green, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
 
 type Registered = {
   execute: (...args: unknown[]) => Promise<unknown>;
@@ -19,15 +19,19 @@ type Registered = {
 
 type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 
-/** Registers the extension against a recording `pi` and returns its tools by name; `activated` collects what setActiveTools gets, `handlers` records its event hooks. */
-function load(activated: string[] = [], handlers = new Map<string, Handler>()) {
+type Command = { handler: (args: string, ctx: unknown) => Promise<void> };
+
+/** Registers the extension against a recording `pi` and returns its tools by name; `activated` collects what setActiveTools gets, `handlers` records its event hooks, `commands` its slash commands. */
+function load(activated: string[] = [], handlers = new Map<string, Handler>(), commands = new Map<string, Command>()) {
   const tools = new Map<string, Registered>();
   const pi = {
     getActiveTools: () => [],
     on(event: string, handler: Handler) {
       handlers.set(event, handler);
     },
-    registerCommand() {},
+    registerCommand(name: string, command: Command) {
+      commands.set(name, command);
+    },
     registerTool(tool: Registered) {
       tools.set(tool.name, tool);
     },
@@ -578,7 +582,8 @@ describe('model routing', () => {
     const config = { baseRef: 'main', checks: ['test -f ok'], ...(models === undefined ? {} : { models }) };
     const repo = tempRepo('factory-models-', { '.omp/factory.json': JSON.stringify(config) });
     const handlers = new Map<string, Handler>();
-    const tools = load([], handlers);
+    const commands = new Map<string, Command>();
+    const tools = load([], handlers, commands);
     const available = new Set<string>();
     const main = {
       ...ctx('main', 'main'),
@@ -589,12 +594,14 @@ describe('model routing', () => {
       ui: { confirm: async () => true, notify() {} },
     };
     const call = async (name: string, params: unknown) => JSON.stringify(await tools.get(name)?.execute('id', params, undefined, undefined, main));
-    const spawn = (agent: string) => handlers.get('before_subagent_spawn')?.({ agent, invocationKind: 'task', patterns: ['@task'], type: 'before_subagent_spawn' }, main);
+    const spawn = (agent: string, cwd = repo.root) =>
+      handlers.get('before_subagent_spawn')?.({ agent, invocationKind: 'task', patterns: ['@task'], type: 'before_subagent_spawn' }, { ...main, cwd });
+    const command = (args: string) => commands.get('factory')?.handler(args, main);
     const statusModels = async () => {
       const status: { details: { models: unknown } } = JSON.parse(await call('factory_status', {}));
       return status.details.models;
     };
-    return { ...repo, available, call, spawn, statusModels };
+    return { ...repo, available, call, command, spawn, statusModels };
   }
 
   it('refuses to start when a configured model does not resolve, naming the role', async () => {
@@ -662,5 +669,106 @@ describe('model routing', () => {
     using repo = routedRepo(undefined);
     await repo.call('factory_start', { feature: 'demo', source: SOURCE });
     assert.equal(await repo.spawn('factory-implementer'), undefined);
+  });
+
+  it('routes reviewer, validator and scout spawns to their own snapshotted models, independently of the implementer', async () => {
+    const models = {
+      explorer: { model: 'google/gemini-flash' },
+      implementer: { model: 'anthropic/claude-sonnet-4-5' },
+      reviewer: { fallbacks: ['openai/gpt-5.2'], model: 'anthropic/claude-opus-4-5' },
+      validator: { model: 'openai/o3' },
+    };
+    using repo = routedRepo(models);
+    for (const spec of ['google/gemini-flash', 'anthropic/claude-sonnet-4-5', 'anthropic/claude-opus-4-5', 'openai/gpt-5.2', 'openai/o3']) repo.available.add(spec);
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    assert.deepEqual(await repo.spawn('factory-reviewer'), { model: ['anthropic/claude-opus-4-5', 'openai/gpt-5.2'], note: 'Software factory: models.reviewer from the run snapshot.' });
+    assert.deepEqual(await repo.spawn('factory-review-validator'), { model: ['openai/o3'], note: 'Software factory: models.validator from the run snapshot.' });
+    assert.deepEqual(await repo.spawn('scout'), { model: ['google/gemini-flash'], note: 'Software factory: models.explorer from the run snapshot.' });
+    assert.deepEqual(await repo.spawn('factory-implementer'), { model: ['anthropic/claude-sonnet-4-5'], note: 'Software factory: models.implementer from the run snapshot.' });
+    assert.equal(await repo.spawn('task'), undefined);
+  });
+
+  it('blocks a reviewer, validator or scout spawn, naming the role, when its snapshotted model no longer resolves', async () => {
+    using repo = routedRepo({ explorer: { model: 'x/e' }, reviewer: { model: 'x/r' }, validator: { model: 'x/v' } });
+    for (const spec of ['x/e', 'x/r', 'x/v']) repo.available.add(spec);
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    repo.available.clear();
+    for (const [agent, role, model] of [
+      ['factory-reviewer', 'reviewer', 'x/r'],
+      ['factory-review-validator', 'validator', 'x/v'],
+      ['scout', 'explorer', 'x/e'],
+    ] as const) {
+      const result = (await repo.spawn(agent)) as { block: boolean; reason: string };
+      assert.equal(result.block, true);
+      assert.match(result.reason, new RegExp(`models\\.${role}: model "${model}" from the run snapshot no longer resolves`));
+    }
+  });
+
+  it('does not route scout spawns outside an active run', async () => {
+    using repo = routedRepo({ explorer: { model: 'x/e' } });
+    repo.available.add('x/e');
+    assert.equal(await repo.spawn('scout'), undefined);
+  });
+
+  it('returns no model, without throwing, for a scout spawn from a cwd outside any git repo', async () => {
+    using repo = routedRepo({ explorer: { model: 'x/e' } });
+    repo.available.add('x/e');
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    using outside = tempDir('factory-nogit-');
+    assert.equal(await repo.spawn('scout', outside.root), undefined);
+  });
+
+  it('keeps routing every factory role and scout to the snapshot after factory.json is edited mid-run', async () => {
+    const models = { explorer: { model: 'x/e' }, implementer: { model: 'x/i' }, reviewer: { model: 'x/r' }, validator: { model: 'x/v' } };
+    using repo = routedRepo(models);
+    for (const spec of ['x/e', 'x/i', 'x/r', 'x/v', 'y/other']) repo.available.add(spec);
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    const routes = async () => {
+      for (const [agent, role, model] of [
+        ['factory-reviewer', 'reviewer', 'x/r'],
+        ['factory-review-validator', 'validator', 'x/v'],
+        ['factory-implementer', 'implementer', 'x/i'],
+        ['scout', 'explorer', 'x/e'],
+      ] as const) {
+        assert.deepEqual(await repo.spawn(agent), { model: [model], note: `Software factory: models.${role} from the run snapshot.` });
+      }
+    };
+    const config = join(repo.root, '.omp/factory.json');
+    const other = { model: 'y/other' };
+    writeFileSync(config, JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], models: { reviewer: { model: 'x/r', reasoningEffort: 'high' } } }));
+    assert.throws(() => loadConfig(repo.root));
+    await routes();
+    writeFileSync(config, JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], models: { explorer: other, implementer: other, reviewer: other, validator: other } }));
+    await routes();
+    writeFileSync(config, JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], models, scratchDir: 'elsewhere' }));
+    await routes();
+  });
+
+  it('returns no model for a scout spawn, and blocks a factory-role spawn, when the run state cannot be read', async () => {
+    using repo = routedRepo({ explorer: { model: 'x/e' }, reviewer: { model: 'x/r' } });
+    repo.available.add('x/e');
+    repo.available.add('x/r');
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    const ws: Workspace = { config: loadConfig(repo.root), root: repo.root };
+    writeFileSync(statePath(ws, 'demo'), '{not json');
+    assert.equal(await repo.spawn('scout'), undefined);
+    const result = (await repo.spawn('factory-reviewer')) as { block: boolean; reason: string };
+    assert.equal(result.block, true);
+    assert.match(result.reason, /models\.reviewer: .*run state/);
+  });
+
+  it('does not route or block scout spawns once the run is paused', async () => {
+    using repo = routedRepo({ explorer: { model: 'x/e' } });
+    repo.available.add('x/e');
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    const ws: Workspace = { config: loadConfig(repo.root), root: repo.root };
+    await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')])));
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    assert.equal(readRun(ws, 'demo').status, 'running');
+    assert.deepEqual(await repo.spawn('scout'), { model: ['x/e'], note: 'Software factory: models.explorer from the run snapshot.' });
+    await repo.command('pause');
+    assert.equal(readRun(ws, 'demo').status, 'paused');
+    repo.available.clear();
+    assert.equal(await repo.spawn('scout'), undefined);
   });
 });
