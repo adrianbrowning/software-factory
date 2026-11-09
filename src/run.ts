@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { closeSync, fstatSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { z } from 'zod';
@@ -348,43 +348,50 @@ const queues = new Map<string, Promise<unknown>>();
 const LOCK_STALE_MS = 30_000;
 const LOCK_POLL_MS = 5;
 
-/** Milliseconds since the file was last touched, or undefined when it does not exist. */
-function ageMs(path: string) {
+/** The lock file's age in milliseconds and token, read from one open file, or undefined when it does not exist. */
+function inspectLock(path: string) {
+  let fd: number;
   try {
-    return Date.now() - statSync(path).mtimeMs;
+    fd = openSync(path, 'r');
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
     throw error;
   }
+  try {
+    return { age: Date.now() - fstatSync(fd).mtimeMs, token: readFileSync(fd, 'utf8') };
+  } finally {
+    closeSync(fd);
+  }
 }
 
 /**
- * Removes a lock a dead holder left. Waiters that see it stale take turns through a second exclusive file and
- * check the age again while holding it, so one cannot remove the fresh lock another created after the stale one
- * was removed. A stale claim file, from a waiter that died mid-break, is removed on the next attempt.
+ * Removes the lock file only if it holds `token`: the holder's release, or a waiter that judged the lock stale
+ * after reading that token. The file is renamed to a private name first, so it is checked and deleted as one
+ * instance. If it holds another token (a new holder took the path after the caller looked), it is linked back,
+ * which never overwrites; if the path was taken again meanwhile, the path is left alone.
  */
-function breakStaleLock(path: string) {
-  const claim = `${path}.break`;
+export function removeLock(path: string, token: string) {
+  const moved = `${path}.${randomUUID()}`;
   try {
-    writeFileSync(claim, '', { flag: 'wx' });
+    renameSync(path, moved);
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    if ((ageMs(claim) ?? 0) > LOCK_STALE_MS) rmSync(claim, { force: true });
-    return;
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
+    throw error;
   }
   try {
-    if ((ageMs(path) ?? 0) > LOCK_STALE_MS) rmSync(path, { force: true });
+    if (readFileSync(moved, 'utf8') !== token) linkSync(moved, path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
   } finally {
-    rmSync(claim, { force: true });
+    rmSync(moved, { force: true });
   }
 }
 
 /**
  * Takes the run's lock file: created exclusively with a token unique to this acquisition, so one holder at a time
  * across threads and processes. While held, a timer keeps touching the file; a file untouched for LOCK_STALE_MS is
- * taken to belong to a dead holder and is removed. That is a lease: a live holder whose thread is blocked for longer
- * than the timeout can lose it, and no file primitive can make that handoff atomic. Release removes the file only if
- * it still holds this acquisition's token.
+ * taken to belong to a dead holder and removed with `removeLock`, which never removes a lock other than the one judged
+ * stale. The one remaining limit is the lease: a live holder blocked for longer than LOCK_STALE_MS can lose its lock.
  */
 async function acquireLock(path: string) {
   const token = randomUUID();
@@ -395,10 +402,10 @@ async function acquireLock(path: string) {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
     }
-    const age = ageMs(path);
+    const lock = inspectLock(path);
     // Released since the failed create: try again at once.
-    if (age === undefined) continue;
-    if (age > LOCK_STALE_MS) breakStaleLock(path);
+    if (lock === undefined) continue;
+    if (lock.age > LOCK_STALE_MS) removeLock(path, lock.token);
     await sleep(LOCK_POLL_MS);
   }
   const heartbeat = setInterval(() => {
@@ -412,11 +419,7 @@ async function acquireLock(path: string) {
   heartbeat.unref();
   return () => {
     clearInterval(heartbeat);
-    try {
-      if (readFileSync(path, 'utf8') === token) rmSync(path, { force: true });
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-    }
+    removeLock(path, token);
   };
 }
 

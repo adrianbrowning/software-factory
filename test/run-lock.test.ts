@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Worker } from 'node:worker_threads';
-import { lockPath, readRun, type Workspace, withRun } from '../src/run.ts';
+import { lockPath, readRun, removeLock, runDir, type Workspace, withRun } from '../src/run.ts';
 import { start, workspace } from './helpers.ts';
 
 const COUNT = 25;
@@ -44,6 +44,19 @@ describe('withRun lock', () => {
     utimesSync(lockPath(ws, 'demo'), 0, 0);
     await Promise.all([writer(ws, 'a'), writer(ws, 'b')]);
     assert.equal(readRun(ws, 'demo').waiting.length, 2 * COUNT);
+  });
+
+  it('does not remove a lock that replaced the one judged stale, and leaves no moved file behind', async () => {
+    using ws = workspace();
+    await start(ws);
+    const before = readdirSync(runDir(ws, 'demo')).toSorted();
+    // The breaker read token 'dead holder' from a stale lock; a new holder has since taken the path.
+    writeFileSync(lockPath(ws, 'demo'), 'new holder');
+    removeLock(lockPath(ws, 'demo'), 'dead holder');
+    assert.equal(readFileSync(lockPath(ws, 'demo'), 'utf8'), 'new holder');
+    assert.deepEqual(readdirSync(runDir(ws, 'demo')).toSorted(), [...before, 'state.json.lock'].toSorted());
+    removeLock(lockPath(ws, 'demo'), 'new holder');
+    assert.deepEqual(readdirSync(runDir(ws, 'demo')).toSorted(), before);
   });
 
   it('waits for a live holder and leaves its lock alone', async () => {
