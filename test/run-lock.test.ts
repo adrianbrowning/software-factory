@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { existsSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
-import { describe, it } from 'node:test';
+import fs, { existsSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+import { describe, it, mock } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Worker } from 'node:worker_threads';
 import { evictLock, lockPath, readRun, removeLock, runDir, type Workspace, withRun } from '../src/run.ts';
@@ -59,19 +60,39 @@ describe('withRun lock', () => {
     assert.deepEqual(readdirSync(runDir(ws, 'demo')).toSorted(), before);
   });
 
-  it('lets a second waiter with the same stale judgement leave the holder that took the path after the first eviction', async () => {
+  it('never vacates the path of a holder that took it after the first eviction, so no competitor can slip in', async () => {
     using ws = workspace();
     await start(ws);
+    const path = lockPath(ws, 'demo');
     const before = readdirSync(runDir(ws, 'demo')).toSorted();
-    writeFileSync(lockPath(ws, 'demo'), 'dead holder');
-    utimesSync(lockPath(ws, 'demo'), 0, 0);
+    writeFileSync(path, 'dead holder');
+    utimesSync(path, 0, 0);
     // Waiters A and B both read 'dead holder' as stale. A evicts, then a new holder takes the path.
-    evictLock(lockPath(ws, 'demo'), 'dead holder');
-    assert.equal(existsSync(lockPath(ws, 'demo')), false);
-    writeFileSync(lockPath(ws, 'demo'), 'new holder', { flag: 'wx' });
-    evictLock(lockPath(ws, 'demo'), 'dead holder');
-    assert.equal(readFileSync(lockPath(ws, 'demo'), 'utf8'), 'new holder');
-    removeLock(lockPath(ws, 'demo'), 'new holder');
+    evictLock(path, 'dead holder');
+    assert.equal(existsSync(path), false);
+    writeFileSync(path, 'new holder', { flag: 'wx' });
+    // A third acquirer creates the lock the moment anything is renamed off the path.
+    let competitorGotLock = false;
+    const original = fs.renameSync;
+    mock.method(fs, 'renameSync', (...args: Parameters<typeof fs.renameSync>) => {
+      original(...args);
+      try {
+        writeFileSync(path, 'competitor', { flag: 'wx' });
+        competitorGotLock = true;
+      } catch {
+        // The path is still taken.
+      }
+    });
+    syncBuiltinESMExports();
+    try {
+      evictLock(path, 'dead holder');
+    } finally {
+      mock.restoreAll();
+      syncBuiltinESMExports();
+    }
+    assert.equal(competitorGotLock, false);
+    assert.equal(readFileSync(path, 'utf8'), 'new holder');
+    removeLock(path, 'new holder');
     assert.deepEqual(readdirSync(runDir(ws, 'demo')).toSorted(), before);
   });
 
@@ -88,6 +109,7 @@ describe('withRun lock', () => {
       error => error instanceof Error && error.message.includes(`${guard} `) && /delete/i.test(error.message),
     );
     assert.equal(existsSync(guard), true);
+    assert.throws(() => evictLock(lockPath(ws, 'demo'), 'dead holder'), error => error instanceof Error && error.message.includes(`${guard} `));
   });
 
   it('waits for a live holder and leaves its lock alone', async () => {
