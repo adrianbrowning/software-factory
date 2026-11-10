@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import fs, { existsSync, readdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
 import { describe, it, mock } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -129,6 +129,34 @@ describe('withRun lock', () => {
       await first;
       await competitor;
       assert.deepEqual(readRun(ws, 'demo').waiting, ['first', 'w-0']);
+    } finally {
+      mock.timers.reset();
+    }
+  });
+
+  it('stops refreshing a lock that another holder replaced, so that holder can be recovered once stale', async () => {
+    using ws = workspace();
+    await start(ws);
+    const path = lockPath(ws, 'demo');
+    mock.timers.enable({ apis: ['setInterval', 'Date'], now: Date.now() });
+    try {
+      const { promise: started, resolve: markStarted } = Promise.withResolvers<void>();
+      const { promise: finish, resolve: finishFirst } = Promise.withResolvers<void>();
+      const first = withRun(ws, 'demo', async () => {
+        markStarted();
+        await finish;
+      });
+      await started;
+      // The first holder was evicted and a replacement took the path, then died.
+      rmSync(path);
+      writeFileSync(path, 'replacement');
+      utimesSync(path, 0, 0);
+      mock.timers.tick(31_000);
+      assert.equal(statSync(path).mtimeMs, 0);
+      evictLock(path, 'replacement');
+      assert.equal(existsSync(path), false);
+      finishFirst();
+      await first;
     } finally {
       mock.timers.reset();
     }

@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { closeSync, fstatSync, linkSync, openSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { closeSync, fstatSync, futimesSync, linkSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 
-/** A lock whose file has not been touched for this long was left by a holder that died. */
+/** Lease length: a lock file not touched by its holder's heartbeat for this long is treated as abandoned and may be evicted. A live holder blocked for longer than this loses the lock. */
 const LOCK_STALE_MS = 30_000;
 const LOCK_POLL_MS = 5;
 
@@ -99,11 +99,24 @@ async function acquireLock(path: string) {
     await sleep(LOCK_POLL_MS);
   }
   const heartbeat = setInterval(() => {
-    const now = new Date();
+    // Touch the file only while it still holds this acquisition's token; after an eviction it belongs to another holder.
+    let fd: number;
     try {
-      utimesSync(path, now, now);
-    } catch {
-      // The file is gone; release has nothing left to remove.
+      fd = openSync(path, 'r');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      clearInterval(heartbeat);
+      return;
+    }
+    try {
+      if (readFileSync(fd, 'utf8') === token) {
+        const now = new Date();
+        futimesSync(fd, now, now);
+      } else {
+        clearInterval(heartbeat);
+      }
+    } finally {
+      closeSync(fd);
     }
   }, LOCK_STALE_MS / 3);
   heartbeat.unref();
