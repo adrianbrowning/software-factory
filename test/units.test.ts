@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { setTimeout } from 'node:timers/promises';
 import { describe, it } from 'node:test';
 import { checksPrompt, detectChecks, loadConfig, parseChecks, runCommands, suggestChecks } from '../src/config.ts';
 import { evidence, evidenceLine } from '../src/evidence.ts';
@@ -56,7 +57,11 @@ describe('runShell', () => {
     const { root } = temp;
     const result = await runShell(`sleep 30 & echo $! > ${join(root, 'pid')}; wait`, root, 200);
     assert.equal(result.timedOut, true);
-    assert.equal(alive(Number(readFileSync(join(root, 'pid'), 'utf8'))), false);
+    const pid = Number(readFileSync(join(root, 'pid'), 'utf8'));
+    // Under load the killed process can stay visible for a moment: poll until it is gone or the deadline passes.
+    const deadline = Date.now() + 2_000;
+    while (alive(pid) && Date.now() < deadline) await setTimeout(20); // real clock on purpose: the OS reaps the killed process on its own schedule
+    assert.equal(alive(pid), false);
   });
 
   it('stops a running command when the signal aborts', async () => {
