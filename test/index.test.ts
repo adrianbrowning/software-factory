@@ -687,12 +687,8 @@ describe('active run in a fresh extension copy', () => {
     assert.match(notices.join('\n'), /Active run: demo: state unreadable \(.*ENOENT/);
   });
 
-  it('reads the pointer file once per tool call', async () => {
-    using repo = tempRepo('factory-fresh-pointer-once-', CHECKS_OK);
-    await startIn(repo.root, { feature: 'demo', source: SOURCE }, 'main-start');
-    resetModuleState();
-    const status = load().get('factory_status');
-    const main = { ...ctx('main', 'main'), cwd: repo.root };
+  /** How many times the pointer file is read while `call` runs. */
+  async function pointerReads(call: () => Promise<unknown>) {
     const original = fs.readFileSync;
     let reads = 0;
     mock.method(fs, 'readFileSync', (...args: Parameters<typeof fs.readFileSync>) => {
@@ -701,12 +697,24 @@ describe('active run in a fresh extension copy', () => {
     });
     syncBuiltinESMExports();
     try {
-      await status?.execute('id', {}, undefined, undefined, main);
+      await call();
     } finally {
       mock.restoreAll();
       syncBuiltinESMExports();
     }
-    assert.equal(reads, 1);
+    return reads;
+  }
+
+  it('reads the pointer file once per tool call, for a bound tool and for factory_start', async () => {
+    using repo = tempRepo('factory-fresh-pointer-once-', CHECKS_OK);
+    await startThenDeleteState(repo.root);
+    const main = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, notify() {} } };
+    const start = load().get('factory_start');
+
+    assert.equal(await pointerReads(async () => start?.execute('id', { feature: 'next', source: SOURCE }, undefined, undefined, main)), 1);
+    resetModuleState();
+    const status = load().get('factory_status');
+    assert.equal(await pointerReads(async () => status?.execute('id', {}, undefined, undefined, main)), 1);
   });
 
   it('returns without throwing from turn_end and auto_compaction_start for an implementer whose bound run state is gone', async () => {
