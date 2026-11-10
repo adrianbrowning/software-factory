@@ -888,7 +888,9 @@ export default function softwareFactory(pi: ExtensionAPI) {
       }
       if (verb === 'submit') {
         const feature = requireFeatureName(argument || activeFeature(ws));
-        const run = readRun(ws, feature);
+        // Without a feature argument it submits the active run, on the workspace that run started with.
+        const target = argument === '' ? (active?.ws ?? ws) : ws;
+        const run = readRun(target, feature);
         const ok = await ctx.ui.confirm(
           run.landOn === undefined ? 'Open draft PRs?' : `Fast-forward ${run.landOn}?`,
           run.landOn === undefined
@@ -902,7 +904,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
           ctx.ui.notify(`Factory submit: ${step}…`, 'info');
         };
         try {
-          const output = await withRun(ws, feature, current => submitStack(ws, current, progress));
+          const output = await withRun(target, feature, current => submitStack(target, current, progress));
           ctx.ui.notify(output.trim() || 'Stack submitted.', 'info');
         } finally {
           ctx.ui.setStatus('factory-submit', undefined);

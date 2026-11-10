@@ -148,7 +148,7 @@ export function requireOrchestrator(
   );
 }
 
-export const configSchema = z
+const configSchema = z
   .object({
     /** Ref the first slice branches from. Unset: the remote default branch from `origin/HEAD`, else `origin/main`. */
     baseRef: text.optional(),
@@ -326,9 +326,14 @@ function resolveCheckPath(entries: string[]) {
   });
 }
 
-export function loadConfig(cwd: string): FactoryConfig {
-  const path = join(cwd, CONFIG_PATH);
-  const parsed = configSchema.safeParse(existsSync(path) ? readJson(path) : {});
+/** Validates raw config JSON and normalizes it: the shape the factory uses, whether read from factory.json or from a run's pointer file. */
+export function parseConfig(raw: unknown): FactoryConfig {
+  const parsed = configSchema.safeParse(raw);
   if (!parsed.success) throw new Error(`${CONFIG_PATH}: ${z.prettifyError(parsed.error)}`);
   return { ...parsed.data, checkPath: resolveCheckPath(parsed.data.checkPath), scratchDir: normalizeScratchDir(parsed.data.scratchDir) };
+}
+
+export function loadConfig(cwd: string): FactoryConfig {
+  const path = join(cwd, CONFIG_PATH);
+  return parseConfig(existsSync(path) ? readJson(path) : {});
 }
