@@ -134,6 +134,35 @@ describe('withRun lock', () => {
     }
   });
 
+  it('survives a heartbeat that throws, releases the lock, and rethrows the error after the mutation finishes', async () => {
+    using ws = workspace();
+    await start(ws);
+    const path = lockPath(ws, 'demo');
+    mock.timers.enable({ apis: ['setInterval', 'Date'], now: Date.now() });
+    mock.method(fs, 'futimesSync', () => {
+      throw Object.assign(new Error('heartbeat EIO'), { code: 'EIO' });
+    });
+    syncBuiltinESMExports();
+    try {
+      const { promise: started, resolve: markStarted } = Promise.withResolvers<void>();
+      const { promise: finish, resolve: finishFirst } = Promise.withResolvers<void>();
+      const first = withRun(ws, 'demo', async () => {
+        markStarted();
+        await finish;
+      });
+      const outcome = assert.rejects(first, /heartbeat EIO/);
+      await started;
+      assert.doesNotThrow(() => mock.timers.tick(10_000));
+      finishFirst();
+      await outcome;
+      assert.equal(existsSync(path), false);
+    } finally {
+      mock.restoreAll();
+      syncBuiltinESMExports();
+      mock.timers.reset();
+    }
+  });
+
   it('stops refreshing a lock that another holder replaced, so that holder can be recovered once stale', async () => {
     using ws = workspace();
     await start(ws);

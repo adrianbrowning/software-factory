@@ -962,7 +962,12 @@ export default function softwareFactory(pi: ExtensionAPI) {
     if (ctx.agent.kind !== 'sub' || ctx.agent.name !== IMPLEMENTER || found === undefined) return;
     const { feature, ws } = found;
     const tokens = ctx.getContextUsage()?.tokens ?? 0;
-    const peak = activeSlice(readRun(ws, feature))?.peakContextTokens;
+    let peak: number | undefined;
+    try {
+      peak = activeSlice(readRun(ws, feature))?.peakContextTokens;
+    } catch {
+      return;
+    }
     if (peak === undefined || (!compacted && tokens <= peak)) return;
     await withRun(ws, feature, run => {
       const slice = activeSlice(run);

@@ -98,40 +98,53 @@ async function acquireLock(path: string) {
     if (lock.age > LOCK_STALE_MS) evictLock(path, lock.token);
     await sleep(LOCK_POLL_MS);
   }
+  let heartbeatError: unknown;
   const heartbeat = setInterval(() => {
     // Touch the file only while it still holds this acquisition's token; after an eviction it belongs to another holder.
-    let fd: number;
+    // No error may escape the timer: it is kept for `release` to throw once the lock is dropped.
     try {
-      fd = openSync(path, 'r');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      clearInterval(heartbeat);
-      return;
-    }
-    try {
-      if (readFileSync(fd, 'utf8') === token) {
-        const now = new Date();
-        futimesSync(fd, now, now);
-      } else {
+      let fd: number;
+      try {
+        fd = openSync(path, 'r');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
         clearInterval(heartbeat);
+        return;
       }
-    } finally {
-      closeSync(fd);
+      try {
+        if (readFileSync(fd, 'utf8') === token) {
+          const now = new Date();
+          futimesSync(fd, now, now);
+        } else {
+          clearInterval(heartbeat);
+        }
+      } finally {
+        closeSync(fd);
+      }
+    } catch (error) {
+      clearInterval(heartbeat);
+      heartbeatError ??= error;
     }
   }, LOCK_STALE_MS / 3);
   heartbeat.unref();
   return () => {
     clearInterval(heartbeat);
     removeLock(path, token);
+    return heartbeatError;
   };
 }
 
-/** Runs `fn` while holding the lock file at `path`, and releases it when `fn` returns or throws. */
+/** Runs `fn` while holding the lock file at `path`, and releases it when `fn` returns or throws. A heartbeat failure is thrown after the release, unless `fn` threw. */
 export async function withFileLock<T>(path: string, fn: () => Promise<T> | T): Promise<T> {
   const release = await acquireLock(path);
+  let result: T;
   try {
-    return await fn();
-  } finally {
+    result = await fn();
+  } catch (error) {
     release();
+    throw error;
   }
+  const heartbeatError = release();
+  if (heartbeatError !== undefined) throw heartbeatError;
+  return result;
 }

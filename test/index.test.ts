@@ -685,4 +685,29 @@ describe('active run in a fresh extension copy', () => {
 
     assert.match(notices.join('\n'), /Active run: demo: state unreadable \(.*ENOENT/);
   });
+
+  it('returns without throwing from turn_end and auto_compaction_start for an implementer whose bound run state is gone', async () => {
+    using repo = tempRepo('factory-fresh-stale-track-', CHECKS_OK);
+    await startThenDeleteState(repo.root);
+    const handlers = new Map<string, Handler>();
+    load([], handlers);
+    const implementer = { ...ctx('sub', 'factory-implementer'), cwd: repo.root, getContextUsage: () => ({ tokens: 1234 }), sessionManager: { getSessionId: () => 'child' } };
+
+    await handlers.get('auto_compaction_start')?.({}, implementer);
+    await handlers.get('turn_end')?.({}, implementer);
+  });
+
+  it('uses the bound workspace for /factory submit with no argument after scratchDir moved', async () => {
+    using repo = tempRepo('factory-fresh-submit-cmd-', CHECKS_OK);
+    await startIn(repo.root, { feature: 'demo', source: SOURCE }, 'main-start');
+    resetModuleState();
+    writeFileSync(join(repo.root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], scratchDir: '.moved' }));
+    const commands = new Map<string, Command>();
+    load([], new Map(), commands);
+    const main = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, ui: { confirm: async () => false, notify() {}, setStatus() {} } };
+
+    await commands.get('factory')?.handler('submit', main);
+
+    assert.equal(existsSync(join(repo.root, '.moved')), false);
+  });
 });
