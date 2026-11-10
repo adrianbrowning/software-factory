@@ -727,10 +727,21 @@ describe('active run in a fresh extension copy', () => {
     writeFileSync(join(repo.root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], scratchDir: '.moved' }));
     const commands = new Map<string, Command>();
     load([], new Map(), commands);
-    const main = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, ui: { confirm: async () => false, notify() {}, setStatus() {} } };
+    const asked: string[] = [];
+    const ui = {
+      confirm: async (title: string) => {
+        asked.push(title);
+        return false;
+      },
+      notify() {},
+      setStatus() {},
+    };
+    const main = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, ui };
 
     await commands.get('factory')?.handler('submit', main);
 
+    // It read the run from the original scratchDir to build the dialog, and created nothing under the moved one.
+    assert.deepEqual(asked, ['Open draft PRs?']);
     assert.equal(existsSync(join(repo.root, '.moved')), false);
   });
 });
