@@ -625,7 +625,11 @@ describe('active run in a fresh extension copy', () => {
     await turnEnd(worktree, 'main-two');
 
     assert.deepEqual(auditedSessions(worktree, 'two'), ['child-of-main-two']);
-    assert.deepEqual(auditedSessions(repo.root, 'one'), []);
+    resetModuleState();
+    await turnEnd(repo.root, 'main-one');
+
+    assert.deepEqual(auditedSessions(repo.root, 'one'), ['child-of-main-one']);
+    assert.deepEqual(auditedSessions(worktree, 'two'), ['child-of-main-two']);
   });
 
   it('binds a resumed run, so a copy with no binding audits into it', async () => {
