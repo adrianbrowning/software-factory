@@ -10,8 +10,8 @@ trap 'rm -rf "$repo"' EXIT
 
 echo "omp $(omp --version)"
 node "$plugin/scripts/smoke-worker-submissions-setup.ts" "$repo" "$model"
-# The run is bound by the setup (pointer in the git dir). The omp main session resumes it (which activates the factory
-# tools and discards the stale review), opens the review itself, then drives the batch, the validator and the record.
+# The run is bound by the setup (pointer in the git dir), with the slice in the review phase and no review open. The omp
+# main session resumes it (which activates the factory tools), opens the review itself, then drives the batch, the validator and the record.
 prompt='Follow these steps exactly, in order, using only the tools named. Do nothing else: no retro, no plan, no checks, no completion, no reading of files.
 1. Call factory_start with {"resume":"demo"}.
 2. Call factory_review_start with {"skip":[{"domain":"comments","reason":"smoke: the diff has no comments"}],"keep":["react-ts","test-validity","devops"]}. Its reply gives the review id, data file, reference dir, findings dir and the domains list.

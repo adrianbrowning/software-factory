@@ -1,6 +1,7 @@
 // Setup helper for scripts/smoke-worker-submissions.sh (not part of `pnpm run test`).
-// Builds a throwaway git repo with a run that has an open 10-domain review, through the real extension tools
-// (factory_start writes the active-run pointer), and prints the repo root as JSON.
+// Builds a throwaway git repo with a started run whose one slice has committed work and passing checks (no review open
+// yet; the omp prompt opens it), through the real extension tools (factory_start writes the active-run pointer), and
+// prints the repo root as JSON.
 // Usage: node scripts/smoke-worker-submissions-setup.ts <empty repo dir> <model>
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
