@@ -347,19 +347,12 @@ export function stopDecision(run: Run, sessionId: string, previous: { count: num
 export default function softwareFactory(pi: ExtensionAPI) {
   pi.setLabel('Software Factory');
 
-  /** Registers a tool whose parameters are the JSON Schema of `schema`; `schema` is also the only runtime parse. */
-  function tool<S extends z.ZodType>(definition: {
-    caller: Caller;
-    description: string;
-    essential?: boolean;
-    label: string;
-    name: string;
-    schema: S;
-    /** `scope.feature` is the bound run's feature, read with `scope.ws` from the pointer once per call; it is empty for a `startsRun` tool, which binds the run itself. */
-    run: (input: z.infer<S>, scope: { feature: string; ws: Workspace }, ctx: ExtensionContext, signal: AbortSignal | undefined) => Promise<Reply>;
-    /** Binds the run, so it loads the current factory.json instead of the workspace the bound run started with. */
-    startsRun?: true;
-  }) {
+  /** Registers a tool whose parameters are the JSON Schema of `schema`; `schema` is also the only runtime parse. `scopeOf` builds what `run` receives from the checkout's cache entry. */
+  function register<S extends z.ZodType, Scope>(
+    definition: { caller: Caller; description: string; essential?: boolean; label: string; name: string; schema: S },
+    scopeOf: (entry: { pointer: string; root: string }) => Scope,
+    run: (input: z.infer<S>, scope: Scope, ctx: ExtensionContext, signal: AbortSignal | undefined) => Promise<Reply>,
+  ) {
     pi.registerTool({
       defaultInactive: definition.essential !== true,
       description: definition.description,
@@ -372,14 +365,43 @@ export default function softwareFactory(pi: ExtensionAPI) {
         if (caller !== definition.caller) throw new Error(`Only the ${definition.caller} agent may call this tool (caller: ${caller}).`);
         const parsed = definition.schema.safeParse(raw);
         if (!parsed.success) throw new Error(z.prettifyError(parsed.error));
-        const entry = await cachedRoot(ctx.cwd);
-        const bound = definition.startsRun === true ? undefined : boundAt(entry);
-        if (bound === undefined && definition.startsRun !== true) throw new Error(NO_ACTIVE_RUN);
-        // A bound run keeps the workspace it started with, so a mid-run factory.json edit does not move its state.
-        const ws = bound?.ws ?? { config: loadConfig(entry.root), root: entry.root };
-        return definition.run(parsed.data, { feature: bound?.feature ?? '', ws }, ctx, signal);
+        return run(parsed.data, scopeOf(await cachedRoot(ctx.cwd)), ctx, signal);
       },
     });
+  }
+
+  /** A tool that works on the bound run. `scope.feature` and `scope.ws` are read from the pointer once per call; the run keeps the workspace it started with, so a mid-run factory.json edit does not move its state. */
+  function tool<S extends z.ZodType>(definition: {
+    caller: Caller;
+    description: string;
+    essential?: boolean;
+    label: string;
+    name: string;
+    schema: S;
+    run: (input: z.infer<S>, scope: { feature: string; ws: Workspace }, ctx: ExtensionContext, signal: AbortSignal | undefined) => Promise<Reply>;
+  }) {
+    register(
+      definition,
+      entry => {
+        const bound = boundAt(entry);
+        if (bound === undefined) throw new Error(NO_ACTIVE_RUN);
+        return bound;
+      },
+      definition.run,
+    );
+  }
+
+  /** A tool that binds the run itself: it gets the cache entry and the current factory.json instead of the workspace a bound run started with. */
+  function startTool<S extends z.ZodType>(definition: {
+    caller: Caller;
+    description: string;
+    essential?: boolean;
+    label: string;
+    name: string;
+    schema: S;
+    run: (input: z.infer<S>, scope: { entry: { pointer: string; root: string }; ws: Workspace }, ctx: ExtensionContext, signal: AbortSignal | undefined) => Promise<Reply>;
+  }) {
+    register(definition, entry => ({ entry, ws: { config: loadConfig(entry.root), root: entry.root } }), definition.run);
   }
 
   /** The orchestrator check on this session's live model (omp's current one, else ctx.model) and thinking level. */
@@ -391,17 +413,15 @@ export default function softwareFactory(pi: ExtensionAPI) {
   const STALL_DESCRIPTION =
     'A used-up fix budget asks the user to continue or pause; a paused run stalls until /factory resume, which asks whether to raise the budget.';
 
-  tool({
+  startTool({
     caller: 'main',
     description:
       'Start a software-factory run for a loaded issue (feature + source), or resume one (resume). Resuming a stalled run asks the user whether to raise the used-up fix budget by maxRounds. Read skill://software-factory first.',
     essential: true,
-    startsRun: true,
     label: 'Factory: start',
     name: 'factory_start',
     schema: startSchema,
-    async run(params, { ws }, ctx) {
-      const entry = await cachedRoot(ctx.cwd);
+    async run(params, { entry, ws }, ctx) {
       const sessionId = ctx.sessionManager.getSessionId();
       let run: Run;
       if (params.resume !== undefined) {
