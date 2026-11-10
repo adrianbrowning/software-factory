@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, it } from 'node:test';
-import { ctx, type Handler, load, type TestContext } from './extension.ts';
+import { type Command, ctx, type Handler, load, type TestContext } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
 import { MAX_IDLE_STOP_ATTEMPTS, resetModuleState, stopDecision } from '../src/index.ts';
 import { readRun, type Run, ticketPath, withRun, type Workspace } from '../src/run.ts';
@@ -639,5 +639,46 @@ describe('active run in a fresh extension copy', () => {
 
     assert.deepEqual(auditedSessions(repo.root, 'demo'), ['child-of-main-resume']);
     assert.deepEqual(auditedSessions(repo.root, 'other'), []);
+  });
+
+  /** A run bound in `root` whose state directory was then deleted, in a copy with no binding. */
+  const startThenDeleteState = async (root: string) => {
+    await startIn(root, { feature: 'demo', source: SOURCE }, 'main-start');
+    rmSync(join(root, loadConfig(root).scratchDir, 'demo'), { force: true, recursive: true });
+    resetModuleState();
+  };
+
+  it('starts a new run when the pointer names a run whose state is gone, and rebinds the pointer', async () => {
+    using repo = tempRepo('factory-fresh-stale-start-', CHECKS_OK);
+    await startThenDeleteState(repo.root);
+
+    await startIn(repo.root, { feature: 'next', source: SOURCE }, 'main-next');
+    resetModuleState();
+    await turnEnd(repo.root, 'main-next');
+
+    assert.deepEqual(auditedSessions(repo.root, 'next'), ['child-of-main-next']);
+  });
+
+  it('allows a stop when the pointer names a run whose state is gone', async () => {
+    using repo = tempRepo('factory-fresh-stale-stop-', CHECKS_OK);
+    await startThenDeleteState(repo.root);
+    const handlers = new Map<string, Handler>();
+    load([], handlers);
+    const main = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, ui: { notify() {} } };
+
+    assert.equal(await handlers.get('session_stop')?.({ session_id: 'session' }, main), undefined);
+  });
+
+  it('shows the bound feature and the read error in /factory status when its state is gone', async () => {
+    using repo = tempRepo('factory-fresh-stale-status-', CHECKS_OK);
+    await startThenDeleteState(repo.root);
+    const commands = new Map<string, Command>();
+    load([], new Map(), commands);
+    const notices: string[] = [];
+    const main = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, ui: { notify: (message: string) => notices.push(message) } };
+
+    await commands.get('factory')?.handler('status', main);
+
+    assert.match(notices.join('\n'), /Active run: demo: state unreadable \(.*ENOENT/);
   });
 });

@@ -241,6 +241,25 @@ const NO_ACTIVE_RUN = 'No active factory run. Start one with /factory <issue>, o
 /** The run the checkout at `root` is bound to, with the workspace it started or resumed with, so it never reloads factory.json. */
 const boundAt = (root: string) => boundRun(pointerOf(root), root);
 
+/** The next action of the bound run, or why its state cannot be read: the pointer can outlive the run's state. */
+function describeBound(ws: Workspace, feature: string) {
+  try {
+    return nextAction(readRun(ws, feature));
+  } catch (error) {
+    return `state unreadable (${error instanceof Error ? error.message : String(error)})`;
+  }
+}
+
+/** Whether the bound run is running. A pointer outlives the process, so a run whose state is gone or unreadable is not running. */
+function isRunning(bound: { feature: string; ws: Workspace } | undefined) {
+  if (bound === undefined) return false;
+  try {
+    return readRun(bound.ws, bound.feature).status === 'running';
+  } catch {
+    return false;
+  }
+}
+
 function activeFeature(ws: Workspace) {
   const feature = boundAt(ws.root)?.feature;
   if (feature === undefined) throw new Error(NO_ACTIVE_RUN);
@@ -426,7 +445,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
       } else {
         if (params.feature === undefined || params.source === undefined) throw new Error('A new run needs feature and source.');
         const bound = boundAt(ws.root);
-        if (bound !== undefined && readRun(bound.ws, bound.feature).status === 'running') {
+        if (bound !== undefined && isRunning(bound)) {
           throw new Error(`Run "${bound.feature}" is still running in this repository. Finish or /factory pause it first.`);
         }
         requireAvailableModels(ws.config.models, spec => ctx.models.resolve(spec));
@@ -856,7 +875,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         const ws = active?.ws ?? (await workspace(ctx.cwd));
         const runsDir = join(ws.root, ws.config.scratchDir);
         const known = existsSync(runsDir) ? readdirSync(runsDir).filter(name => existsSync(statePath(ws, name))) : [];
-        const current = active === undefined ? 'none' : `${active.feature}: ${nextAction(readRun(ws, active.feature))}`;
+        const current = active === undefined ? 'none' : `${active.feature}: ${describeBound(ws, active.feature)}`;
         ctx.ui.notify(`Active run: ${current}\nRuns: ${known.join(', ') || 'none'}`, 'info');
         return;
       }
@@ -920,7 +939,12 @@ export default function softwareFactory(pi: ExtensionAPI) {
     const active = await runForCwd(ctx.cwd);
     if (active === undefined) return;
     const { feature, ws } = active;
-    const run = readRun(ws, feature);
+    let run: Run;
+    try {
+      run = readRun(ws, feature);
+    } catch {
+      return;
+    }
     const decision = stopDecision(run, event.session_id, stopAttempts.get(feature));
     if (decision.action === 'allow') return;
     if (decision.action === 'pause') {
