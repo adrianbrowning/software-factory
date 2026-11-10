@@ -1,9 +1,9 @@
-import { createHash, randomUUID } from 'node:crypto';
-import { closeSync, fstatSync, linkSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { setTimeout as sleep } from 'node:timers/promises';
 import { z } from 'zod';
 import { type FactoryConfig, modelsSchema, SPAWN_MODEL_ROLES } from './config.ts';
+import { withFileLock } from './state-lock.ts';
 
 /** The cc-pr-review domains. Each has a vendored reference under skills/software-factory/references/review/. */
 export const REVIEW_DOMAINS = [
@@ -350,117 +350,6 @@ export class Invalidated extends Error {}
 
 const queues = new Map<string, Promise<unknown>>();
 
-/** A lock whose file has not been touched for this long was left by a holder that died. */
-const LOCK_STALE_MS = 30_000;
-const LOCK_POLL_MS = 5;
-
-/** The lock file's age in milliseconds and token, read from one open file, or undefined when it does not exist. */
-function inspectLock(path: string) {
-  let fd: number;
-  try {
-    fd = openSync(path, 'r');
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-    throw error;
-  }
-  try {
-    return { age: Date.now() - fstatSync(fd).mtimeMs, token: readFileSync(fd, 'utf8') };
-  } finally {
-    closeSync(fd);
-  }
-}
-
-/**
- * The holder's release: removes the lock file only if it holds `token`. The file is renamed to a private name
- * first, so it is checked and deleted as one instance. If it holds another token (the holder's lock was evicted
- * and a new holder took the path), it is linked back, which never overwrites; if the path was taken again
- * meanwhile, the path is left alone.
- */
-export function removeLock(path: string, token: string) {
-  const moved = `${path}.${randomUUID()}`;
-  try {
-    renameSync(path, moved);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return;
-    throw error;
-  }
-  try {
-    if (readFileSync(moved, 'utf8') !== token) linkSync(moved, path);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-  } finally {
-    rmSync(moved, { force: true });
-  }
-}
-
-/**
- * Removes a lock a waiter judged stale after reading `staleToken`. Evictors take an exclusive guard file
- * (`<lock>.evict`) first, so one runs at a time; under the guard the lock's token and age are read again, and the
- * lock is renamed away and removed only if it still holds `staleToken` and is still stale. A waiter holding an
- * old judgement therefore cannot displace a holder that took the path after another eviction. Returns without
- * evicting when another evictor holds the guard. The guard has no automatic recovery: one left by a dead evictor
- * and older than LOCK_STALE_MS makes the waiter throw, naming the file to delete.
- */
-export function evictLock(path: string, staleToken: string) {
-  const guard = `${path}.evict`;
-  try {
-    writeFileSync(guard, '', { flag: 'wx' });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    const held = inspectLock(guard);
-    if (held !== undefined && held.age > LOCK_STALE_MS) {
-      throw new Error(
-        `The eviction guard ${guard} has been held for more than ${LOCK_STALE_MS / 1000} s, so an omp session died while evicting a stale state lock. Delete ${guard} once no omp session is writing this run.`,
-      );
-    }
-    return;
-  }
-  try {
-    const lock = inspectLock(path);
-    if (lock === undefined || lock.token !== staleToken || lock.age <= LOCK_STALE_MS) return;
-    removeLock(path, staleToken);
-  } finally {
-    rmSync(guard, { force: true });
-  }
-}
-
-/**
- * Takes the run's lock file: created exclusively with a token unique to this acquisition, so one holder at a time
- * across threads and processes. While held, a timer keeps touching the file; a file untouched for LOCK_STALE_MS is
- * taken to belong to a dead holder and removed with `evictLock`, which serializes evictors and never removes a lock
- * other than the one judged stale. The only accepted exclusion failure is a live holder blocked for longer than the
- * LOCK_STALE_MS lease.
- */
-async function acquireLock(path: string) {
-  const token = randomUUID();
-  for (;;) {
-    try {
-      writeFileSync(path, token, { flag: 'wx' });
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-    }
-    const lock = inspectLock(path);
-    // Released since the failed create: try again at once.
-    if (lock === undefined) continue;
-    if (lock.age > LOCK_STALE_MS) evictLock(path, lock.token);
-    await sleep(LOCK_POLL_MS);
-  }
-  const heartbeat = setInterval(() => {
-    const now = new Date();
-    try {
-      utimesSync(path, now, now);
-    } catch {
-      // The file is gone; release has nothing left to remove.
-    }
-  }, LOCK_STALE_MS / 3);
-  heartbeat.unref();
-  return () => {
-    clearInterval(heartbeat);
-    removeLock(path, token);
-  };
-}
-
 /**
  * Serializes read-modify-write of one run's state across concurrent tool calls: the queue orders them in this
  * process, and the lock file orders them against other copies of the extension in worker threads or processes.
@@ -468,9 +357,8 @@ async function acquireLock(path: string) {
  */
 export function withRun<T>(ws: Workspace, feature: string, mutate: (run: Run) => Promise<T> | T): Promise<T> {
   const key = statePath(ws, feature);
-  const next = (queues.get(key) ?? Promise.resolve()).catch(() => {}).then(async () => {
-    const release = await acquireLock(lockPath(ws, feature));
-    try {
+  const next = (queues.get(key) ?? Promise.resolve()).catch(() => {}).then(() =>
+    withFileLock(lockPath(ws, feature), async () => {
       const run = readRun(ws, feature);
       try {
         const result = await mutate(run);
@@ -480,10 +368,8 @@ export function withRun<T>(ws: Workspace, feature: string, mutate: (run: Run) =>
         if (error instanceof Invalidated) saveRun(ws, run);
         throw error;
       }
-    } finally {
-      release();
-    }
-  });
+    }),
+  );
   queues.set(key, next);
   return next;
 }

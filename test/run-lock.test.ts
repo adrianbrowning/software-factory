@@ -4,7 +4,8 @@ import { syncBuiltinESMExports } from 'node:module';
 import { describe, it, mock } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Worker } from 'node:worker_threads';
-import { evictLock, lockPath, readRun, removeLock, runDir, type Workspace, withRun } from '../src/run.ts';
+import { lockPath, readRun, runDir, type Workspace, withRun } from '../src/run.ts';
+import { evictLock, removeLock } from '../src/state-lock.ts';
 import { start, workspace } from './helpers.ts';
 
 const COUNT = 25;
