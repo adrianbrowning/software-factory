@@ -103,7 +103,6 @@ const ORCHESTRATION_TOOLS = [
 ];
 /** Stop attempts in a row without new run events; the last one pauses the run instead of blocking. */
 export const MAX_IDLE_STOP_ATTEMPTS = 3;
-/** The pointer file's name in the git dir. */
 const POINTER_FILE = 'software-factory-active-run.json';
 
 type Caller = 'main' | typeof IMPLEMENTER | typeof REVIEWER | typeof VALIDATOR;
@@ -199,47 +198,35 @@ export function callerOf(ctx: Pick<ExtensionContext, 'agent'>) {
  * in the checkout's git dir (see ./active-run.ts), the one place every copy resolves it from.
  */
 const stopAttempts = new Map<string, { count: number; events: number }>();
-const roots = new Map<string, string>();
-const pointers = new Map<string, string>();
+/** Per cwd: the repository root and its checkout's pointer file, which lives in its own git dir so each worktree binds its own run. */
+const roots = new Map<string, { pointer: string; root: string }>();
 
-/** The repository root of `cwd`. It also records the root's pointer file, so `pointerOf` works for every root this returns. */
 async function cachedRoot(cwd: string) {
-  let root = roots.get(cwd);
-  if (root === undefined) {
-    root = await repoRoot(cwd);
-    pointers.set(root, resolve(root, (await git(root, 'rev-parse', '--git-dir')).trim(), POINTER_FILE));
-    roots.set(cwd, root);
+  let entry = roots.get(cwd);
+  if (entry === undefined) {
+    const root = await repoRoot(cwd);
+    entry = { pointer: resolve(root, (await git(root, 'rev-parse', '--git-dir')).trim(), POINTER_FILE), root };
+    roots.set(cwd, entry);
   }
-  return root;
-}
-
-/** The pointer file of the checkout at `root`: in its own git dir, so each worktree binds its own run. */
-function pointerOf(root: string) {
-  const pointer = pointers.get(root);
-  if (pointer === undefined) throw new Error(`Internal error: no pointer file recorded for ${root}.`);
-  return pointer;
+  return entry;
 }
 
 /** Test-only: clears the module-level run state (stop attempts, cached roots and pointer paths, audited sessions), so tests do not share it. */
 export function resetModuleState() {
   stopAttempts.clear();
   roots.clear();
-  pointers.clear();
   resetAudit();
 }
 
-/** The repository root of `cwd`, or undefined outside any git repo, which has no run. */
-const rootOf = (cwd: string) => cachedRoot(cwd).catch(() => undefined);
-
 async function workspace(cwd: string): Promise<Workspace> {
-  const root = await cachedRoot(cwd);
+  const { root } = await cachedRoot(cwd);
   return { config: loadConfig(root), root };
 }
 
 const NO_ACTIVE_RUN = 'No active factory run. Start one with /factory <issue>, or /factory resume <feature>.';
 
 /** The run the checkout at `root` is bound to, with the workspace it started or resumed with, so it never reloads factory.json. */
-const boundAt = (root: string) => boundRun(pointerOf(root), root);
+const boundAt = ({ pointer, root }: { pointer: string; root: string }) => boundRun(pointer, root);
 
 /** The next action of the bound run, or why its state cannot be read: the pointer can outlive the run's state. */
 function describeBound(ws: Workspace, feature: string) {
@@ -260,10 +247,10 @@ function isRunning(bound: { feature: string; ws: Workspace } | undefined) {
   }
 }
 
-/** The active run of the repository holding `cwd`. Undefined when no run is active there, or outside any git repo. */
+/** The active run of the repository holding `cwd`. Undefined when no run is active there, or outside any git repo, which has no run. */
 async function runForCwd(cwd: string) {
-  const root = await rootOf(cwd);
-  return root === undefined ? undefined : boundAt(root);
+  const entry = await cachedRoot(cwd).catch(() => undefined);
+  return entry === undefined ? undefined : boundAt(entry);
 }
 
 type Reply = { content: { text: string; type: 'text' }[]; details: unknown };
@@ -385,11 +372,11 @@ export default function softwareFactory(pi: ExtensionAPI) {
         if (caller !== definition.caller) throw new Error(`Only the ${definition.caller} agent may call this tool (caller: ${caller}).`);
         const parsed = definition.schema.safeParse(raw);
         if (!parsed.success) throw new Error(z.prettifyError(parsed.error));
-        const root = await cachedRoot(ctx.cwd);
-        const bound = definition.startsRun === true ? undefined : boundAt(root);
+        const entry = await cachedRoot(ctx.cwd);
+        const bound = definition.startsRun === true ? undefined : boundAt(entry);
         if (bound === undefined && definition.startsRun !== true) throw new Error(NO_ACTIVE_RUN);
         // A bound run keeps the workspace it started with, so a mid-run factory.json edit does not move its state.
-        const ws = bound?.ws ?? { config: loadConfig(root), root };
+        const ws = bound?.ws ?? { config: loadConfig(entry.root), root: entry.root };
         return definition.run(parsed.data, { feature: bound?.feature ?? '', ws }, ctx, signal);
       },
     });
@@ -414,6 +401,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
     name: 'factory_start',
     schema: startSchema,
     async run(params, { ws }, ctx) {
+      const entry = await cachedRoot(ctx.cwd);
       const sessionId = ctx.sessionManager.getSessionId();
       let run: Run;
       if (params.resume !== undefined) {
@@ -441,7 +429,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         });
       } else {
         if (params.feature === undefined || params.source === undefined) throw new Error('A new run needs feature and source.');
-        const bound = boundAt(ws.root);
+        const bound = boundAt(entry);
         if (bound !== undefined && isRunning(bound)) {
           throw new Error(`Run "${bound.feature}" is still running in this repository. Finish or /factory pause it first.`);
         }
@@ -451,7 +439,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         await ensureChecks(ctx, ws);
         run = await startRun(ws, { feature: params.feature, sessionId, source });
       }
-      bindRun(pointerOf(ws.root), { feature: run.feature, mainId: ctx.agent.id, ws });
+      bindRun(entry.pointer, { feature: run.feature, mainId: ctx.agent.id, ws });
       await pi.setActiveTools([...new Set([...pi.getActiveTools(), ...ORCHESTRATION_TOOLS])]);
       return reply(
         `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${ws.config.maxRounds}.\nNext: ${nextAction(run)}`,
