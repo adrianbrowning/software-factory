@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
-import { beforeEach, describe, it } from 'node:test';
+import { beforeEach, describe, it, mock } from 'node:test';
 import { type Command, ctx, type Handler, load, type TestContext } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
 import { MAX_IDLE_STOP_ATTEMPTS, resetModuleState, stopDecision } from '../src/index.ts';
@@ -684,6 +685,28 @@ describe('active run in a fresh extension copy', () => {
     await commands.get('factory')?.handler('status', main);
 
     assert.match(notices.join('\n'), /Active run: demo: state unreadable \(.*ENOENT/);
+  });
+
+  it('reads the pointer file once per tool call', async () => {
+    using repo = tempRepo('factory-fresh-pointer-once-', CHECKS_OK);
+    await startIn(repo.root, { feature: 'demo', source: SOURCE }, 'main-start');
+    resetModuleState();
+    const status = load().get('factory_status');
+    const main = { ...ctx('main', 'main'), cwd: repo.root };
+    const original = fs.readFileSync;
+    let reads = 0;
+    mock.method(fs, 'readFileSync', (...args: Parameters<typeof fs.readFileSync>) => {
+      if (String(args[0]).endsWith('software-factory-active-run.json')) reads += 1;
+      return original(...args);
+    });
+    syncBuiltinESMExports();
+    try {
+      await status?.execute('id', {}, undefined, undefined, main);
+    } finally {
+      mock.restoreAll();
+      syncBuiltinESMExports();
+    }
+    assert.equal(reads, 1);
   });
 
   it('returns without throwing from turn_end and auto_compaction_start for an implementer whose bound run state is gone', async () => {
