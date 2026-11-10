@@ -148,7 +148,7 @@ export function requireOrchestrator(
   );
 }
 
-const configSchema = z
+export const configSchema = z
   .object({
     /** Ref the first slice branches from. Unset: the remote default branch from `origin/HEAD`, else `origin/main`. */
     baseRef: text.optional(),
