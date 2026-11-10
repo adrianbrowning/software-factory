@@ -75,7 +75,7 @@ Repeat until `factory_next` reports no slices left:
        errs = errors(spawn(domains))
        missing = absent(domains)
        if missing:
-           errs.update(errors(spawn(missing, "-2")))
+           errs = errors(spawn(missing, "-2"))
            missing = absent(domains)
        if missing:
            return {"failed": [(d, errs.get(d, "no findings submitted")) for d in missing]}
