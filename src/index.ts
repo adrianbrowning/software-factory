@@ -1,12 +1,11 @@
 import type { ExtensionAPI, ExtensionContext } from '@oh-my-pi/pi-coding-agent';
 import { existsSync, readdirSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { z } from 'zod';
-import { bindRun, boundRun } from './active-run.ts';
+import { bindRun } from './active-run.ts';
 import { auditChild, IMPLEMENTER, REVIEWER, resetAudit, SPAWN_ROLES, VALIDATOR } from './agents.ts';
 import { CONFIG_PATH, checksPrompt, describeModels, loadConfig, parseChecks, requireAvailableModels, requireOrchestrator, type RoleModels, routeSpawn, suggestChecks } from './config.ts';
 import { evidence, evidenceHead } from './evidence.ts';
-import { git } from './exec.ts';
 import {
   activeSlice,
   addEvent,
@@ -29,6 +28,7 @@ import {
   type Workspace,
 } from './run.ts';
 import { implementerReportSchema, startImplementerSession, submitImplementerReport } from './report.ts';
+import { boundAt, cachedRoot, NO_ACTIVE_RUN, type Reply, resetRoots, toolRegistrar } from './tool-scope.ts';
 import { submitStack } from './submit.ts';
 import {
   completeSlice,
@@ -66,7 +66,6 @@ import {
   recordRetro,
   reopenSlice,
   repoChecks,
-  repoRoot,
   requireFeatureName,
   resolveBase,
   resolveStall,
@@ -103,10 +102,6 @@ const ORCHESTRATION_TOOLS = [
 ];
 /** Stop attempts in a row without new run events; the last one pauses the run instead of blocking. */
 export const MAX_IDLE_STOP_ATTEMPTS = 3;
-const POINTER_FILE = 'software-factory-active-run.json';
-
-type Caller = 'main' | typeof IMPLEMENTER | typeof REVIEWER | typeof VALIDATOR;
-
 const startSchema = z.object({
   feature: z.string().optional().describe('kebab-case run name for a new run'),
   resume: z.string().optional().describe('Feature name of an existing run to resume instead of starting one'),
@@ -188,34 +183,16 @@ const carrySchema = z.object({
 });
 const emptySchema = z.object({});
 
-export function callerOf(ctx: Pick<ExtensionContext, 'agent'>) {
-  return ctx.agent.kind === 'main' ? 'main' : ctx.agent.name;
-}
-
 /**
  * Per-process caches, shared by the main session and its subagents in one process. The active run itself is not kept
  * here: omp loads a separate copy of this extension on each worker thread, so the run binding lives in a pointer file
  * in the checkout's git dir (see ./active-run.ts), the one place every copy resolves it from.
  */
 const stopAttempts = new Map<string, { count: number; events: number }>();
-/** Per cwd: the repository root and its checkout's pointer file, which lives in its own git dir so each worktree binds its own run. */
-type RootEntry = { pointer: string; root: string };
-const roots = new Map<string, RootEntry>();
-
-async function cachedRoot(cwd: string) {
-  let entry = roots.get(cwd);
-  if (entry === undefined) {
-    const root = await repoRoot(cwd);
-    entry = { pointer: resolve(root, (await git(root, 'rev-parse', '--git-dir')).trim(), POINTER_FILE), root };
-    roots.set(cwd, entry);
-  }
-  return entry;
-}
-
 /** Test-only: clears the module-level run state (stop attempts, cached roots and pointer paths, audited sessions), so tests do not share it. */
 export function resetModuleState() {
   stopAttempts.clear();
-  roots.clear();
+  resetRoots();
   resetAudit();
 }
 
@@ -223,11 +200,6 @@ async function workspace(cwd: string): Promise<Workspace> {
   const { root } = await cachedRoot(cwd);
   return { config: loadConfig(root), root };
 }
-
-const NO_ACTIVE_RUN = 'No active factory run. Start one with /factory <issue>, or /factory resume <feature>.';
-
-/** The run the checkout at `root` is bound to, with the workspace it started or resumed with, so it never reloads factory.json. */
-const boundAt = ({ pointer, root }: RootEntry) => boundRun(pointer, root);
 
 /** The next action of the bound run, or why its state cannot be read: the pointer can outlive the run's state. */
 function describeBound(ws: Workspace, feature: string) {
@@ -253,19 +225,6 @@ async function runForCwd(cwd: string) {
   const entry = await cachedRoot(cwd).catch(() => undefined);
   return entry === undefined ? undefined : boundAt(entry);
 }
-
-/** The fields every tool shares; `run` and the schema vary per tool. */
-type ToolDefinition<S extends z.ZodType, Scope> = {
-  caller: Caller;
-  description: string;
-  essential?: boolean;
-  label: string;
-  name: string;
-  run: (input: z.infer<S>, scope: Scope, ctx: ExtensionContext, signal: AbortSignal | undefined) => Promise<Reply>;
-  schema: S;
-};
-
-type Reply = { content: { text: string; type: 'text' }[]; details: unknown };
 
 function reply(text: string, details?: unknown): Reply {
   return { content: [{ text, type: 'text' }], details };
@@ -358,47 +317,7 @@ export function stopDecision(run: Run, sessionId: string, previous: { count: num
 
 export default function softwareFactory(pi: ExtensionAPI) {
   pi.setLabel('Software Factory');
-
-  /** Registers a tool whose parameters are the JSON Schema of `schema`; `schema` is also the only runtime parse. `scopeOf` builds what `run` receives from the checkout's cache entry. */
-  function register<S extends z.ZodType, Scope>(
-    definition: Omit<ToolDefinition<S, Scope>, 'run'>,
-    scopeOf: (entry: RootEntry) => Scope,
-    run: ToolDefinition<S, Scope>['run'],
-  ) {
-    pi.registerTool({
-      defaultInactive: definition.essential !== true,
-      description: definition.description,
-      label: definition.label,
-      loadMode: 'essential',
-      name: definition.name,
-      parameters: z.toJSONSchema(definition.schema) as Record<string, unknown>,
-      async execute(_id, raw, signal, _onUpdate, ctx) {
-        const caller = callerOf(ctx);
-        if (caller !== definition.caller) throw new Error(`Only the ${definition.caller} agent may call this tool (caller: ${caller}).`);
-        const parsed = definition.schema.safeParse(raw);
-        if (!parsed.success) throw new Error(z.prettifyError(parsed.error));
-        return run(parsed.data, scopeOf(await cachedRoot(ctx.cwd)), ctx, signal);
-      },
-    });
-  }
-
-  /** A tool that works on the bound run. `scope.feature` and `scope.ws` are read from the pointer once per call; the run keeps the workspace it started with, so a mid-run factory.json edit does not move its state. */
-  function tool<S extends z.ZodType>(definition: ToolDefinition<S, { feature: string; ws: Workspace }>) {
-    register(
-      definition,
-      entry => {
-        const bound = boundAt(entry);
-        if (bound === undefined) throw new Error(NO_ACTIVE_RUN);
-        return bound;
-      },
-      definition.run,
-    );
-  }
-
-  /** A tool that binds the run itself: it gets the cache entry and the current factory.json instead of the workspace a bound run started with. */
-  function startTool<S extends z.ZodType>(definition: ToolDefinition<S, { entry: RootEntry; ws: Workspace }>) {
-    register(definition, entry => ({ entry, ws: { config: loadConfig(entry.root), root: entry.root } }), definition.run);
-  }
+  const { startTool, tool } = toolRegistrar(pi);
 
   /** The orchestrator check on this session's live model (omp's current one, else ctx.model) and thinking level. */
   function requireOrchestratorSession(models: RoleModels, ctx: ExtensionContext, when: 'resume' | 'start') {
