@@ -199,7 +199,8 @@ export function callerOf(ctx: Pick<ExtensionContext, 'agent'>) {
  */
 const stopAttempts = new Map<string, { count: number; events: number }>();
 /** Per cwd: the repository root and its checkout's pointer file, which lives in its own git dir so each worktree binds its own run. */
-const roots = new Map<string, { pointer: string; root: string }>();
+type RootEntry = { pointer: string; root: string };
+const roots = new Map<string, RootEntry>();
 
 async function cachedRoot(cwd: string) {
   let entry = roots.get(cwd);
@@ -226,7 +227,7 @@ async function workspace(cwd: string): Promise<Workspace> {
 const NO_ACTIVE_RUN = 'No active factory run. Start one with /factory <issue>, or /factory resume <feature>.';
 
 /** The run the checkout at `root` is bound to, with the workspace it started or resumed with, so it never reloads factory.json. */
-const boundAt = ({ pointer, root }: { pointer: string; root: string }) => boundRun(pointer, root);
+const boundAt = ({ pointer, root }: RootEntry) => boundRun(pointer, root);
 
 /** The next action of the bound run, or why its state cannot be read: the pointer can outlive the run's state. */
 function describeBound(ws: Workspace, feature: string) {
@@ -252,6 +253,17 @@ async function runForCwd(cwd: string) {
   const entry = await cachedRoot(cwd).catch(() => undefined);
   return entry === undefined ? undefined : boundAt(entry);
 }
+
+/** The fields every tool shares; `run` and the schema vary per tool. */
+type ToolDefinition<S extends z.ZodType, Scope> = {
+  caller: Caller;
+  description: string;
+  essential?: boolean;
+  label: string;
+  name: string;
+  run: (input: z.infer<S>, scope: Scope, ctx: ExtensionContext, signal: AbortSignal | undefined) => Promise<Reply>;
+  schema: S;
+};
 
 type Reply = { content: { text: string; type: 'text' }[]; details: unknown };
 
@@ -349,9 +361,9 @@ export default function softwareFactory(pi: ExtensionAPI) {
 
   /** Registers a tool whose parameters are the JSON Schema of `schema`; `schema` is also the only runtime parse. `scopeOf` builds what `run` receives from the checkout's cache entry. */
   function register<S extends z.ZodType, Scope>(
-    definition: { caller: Caller; description: string; essential?: boolean; label: string; name: string; schema: S },
-    scopeOf: (entry: { pointer: string; root: string }) => Scope,
-    run: (input: z.infer<S>, scope: Scope, ctx: ExtensionContext, signal: AbortSignal | undefined) => Promise<Reply>,
+    definition: Omit<ToolDefinition<S, Scope>, 'run'>,
+    scopeOf: (entry: RootEntry) => Scope,
+    run: ToolDefinition<S, Scope>['run'],
   ) {
     pi.registerTool({
       defaultInactive: definition.essential !== true,
@@ -371,15 +383,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
   }
 
   /** A tool that works on the bound run. `scope.feature` and `scope.ws` are read from the pointer once per call; the run keeps the workspace it started with, so a mid-run factory.json edit does not move its state. */
-  function tool<S extends z.ZodType>(definition: {
-    caller: Caller;
-    description: string;
-    essential?: boolean;
-    label: string;
-    name: string;
-    schema: S;
-    run: (input: z.infer<S>, scope: { feature: string; ws: Workspace }, ctx: ExtensionContext, signal: AbortSignal | undefined) => Promise<Reply>;
-  }) {
+  function tool<S extends z.ZodType>(definition: ToolDefinition<S, { feature: string; ws: Workspace }>) {
     register(
       definition,
       entry => {
@@ -392,15 +396,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
   }
 
   /** A tool that binds the run itself: it gets the cache entry and the current factory.json instead of the workspace a bound run started with. */
-  function startTool<S extends z.ZodType>(definition: {
-    caller: Caller;
-    description: string;
-    essential?: boolean;
-    label: string;
-    name: string;
-    schema: S;
-    run: (input: z.infer<S>, scope: { entry: { pointer: string; root: string }; ws: Workspace }, ctx: ExtensionContext, signal: AbortSignal | undefined) => Promise<Reply>;
-  }) {
+  function startTool<S extends z.ZodType>(definition: ToolDefinition<S, { entry: RootEntry; ws: Workspace }>) {
     register(definition, entry => ({ entry, ws: { config: loadConfig(entry.root), root: entry.root } }), definition.run);
   }
 
