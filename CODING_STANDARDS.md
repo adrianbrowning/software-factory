@@ -16,5 +16,4 @@ The handlers for `before_subagent_spawn`, `turn_end` and `session_stop` run in e
 
 ## Refusal messages
 
-- A refusal or error message that names a next step must name a step that works in the state that produced the refusal (for example, not a tool that needs an active slice when the refusal happened with none).
-- A test runs that named step once after the refusal and expects it to succeed.
+A refusal or error message that names a next step must name a step that works in the state that produced the refusal, and a test runs that step once after the refusal. Example: the ambiguity refusal in `resolveObservations` told the orchestrator to carry the items as a free-text note, but a note-only `factory_carry` needs an active slice with a green review, and the refusal happened with no active slice.
