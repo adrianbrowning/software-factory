@@ -42,7 +42,6 @@ export const boundAt = ({ pointer, root }: RootEntry) => boundRun(pointer, root)
 
 export type Reply = { content: { text: string; type: 'text' }[]; details: unknown };
 
-/** The fields every tool shares; `run` and the schema vary per tool. */
 type ToolDefinition<S extends z.ZodType, Scope> = {
   caller: Caller;
   description: string;
