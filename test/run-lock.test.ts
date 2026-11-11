@@ -134,6 +134,73 @@ describe('withRun lock', () => {
     }
   });
 
+  it('survives a heartbeat that throws, releases the lock, and rethrows the error after the mutation finishes', async () => {
+    using ws = workspace();
+    await start(ws);
+    const path = lockPath(ws, 'demo');
+    mock.timers.enable({ apis: ['setInterval', 'Date'], now: Date.now() });
+    mock.method(fs, 'futimesSync', () => {
+      throw Object.assign(new Error('heartbeat EIO'), { code: 'EIO' });
+    });
+    syncBuiltinESMExports();
+    try {
+      const { promise: started, resolve: markStarted } = Promise.withResolvers<void>();
+      const { promise: finish, resolve: finishFirst } = Promise.withResolvers<void>();
+      const first = withRun(ws, 'demo', async () => {
+        markStarted();
+        await finish;
+      });
+      const outcome = assert.rejects(first, /heartbeat EIO/);
+      await started;
+      assert.doesNotThrow(() => mock.timers.tick(10_000));
+      finishFirst();
+      await outcome;
+      assert.equal(existsSync(path), false);
+    } finally {
+      mock.restoreAll();
+      syncBuiltinESMExports();
+      mock.timers.reset();
+    }
+  });
+
+  it('keeps refreshing after one heartbeat fails, so the lock stays fresh and is not evicted, and reports no error once a later tick succeeded', async () => {
+    using ws = workspace();
+    await start(ws);
+    const path = lockPath(ws, 'demo');
+    const touch = fs.futimesSync;
+    let calls = 0;
+    mock.timers.enable({ apis: ['setInterval', 'Date'], now: Date.now() });
+    mock.method(fs, 'futimesSync', (...args: Parameters<typeof touch>) => {
+      calls += 1;
+      if (calls === 1) throw Object.assign(new Error('heartbeat EIO'), { code: 'EIO' });
+      touch(...args);
+    });
+    syncBuiltinESMExports();
+    try {
+      const { promise: started, resolve: markStarted } = Promise.withResolvers<void>();
+      const { promise: finish, resolve: finishFirst } = Promise.withResolvers<void>();
+      const first = withRun(ws, 'demo', async run => {
+        markStarted();
+        await finish;
+        run.waiting.push('first');
+      });
+      await started;
+      // The first tick fails; the ticks after it succeed, past the 30 s stale timeout.
+      for (let elapsed = 0; elapsed < 41_000; elapsed += 1_000) assert.doesNotThrow(() => mock.timers.tick(1_000));
+      assert.ok(calls > 1);
+      evictLock(path, readFileSync(path, 'utf8'));
+      assert.equal(existsSync(path), true);
+      finishFirst();
+      await first;
+      assert.equal(existsSync(path), false);
+      assert.deepEqual(readRun(ws, 'demo').waiting, ['first']);
+    } finally {
+      mock.restoreAll();
+      syncBuiltinESMExports();
+      mock.timers.reset();
+    }
+  });
+
   it('stops refreshing a lock that another holder replaced, so that holder can be recovered once stale', async () => {
     using ws = workspace();
     await start(ws);

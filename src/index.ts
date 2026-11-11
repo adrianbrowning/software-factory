@@ -103,7 +103,6 @@ const ORCHESTRATION_TOOLS = [
 ];
 /** Stop attempts in a row without new run events; the last one pauses the run instead of blocking. */
 export const MAX_IDLE_STOP_ATTEMPTS = 3;
-/** The pointer file's name in the git dir. */
 const POINTER_FILE = 'software-factory-active-run.json';
 
 type Caller = 'main' | typeof IMPLEMENTER | typeof REVIEWER | typeof VALIDATOR;
@@ -199,47 +198,35 @@ export function callerOf(ctx: Pick<ExtensionContext, 'agent'>) {
  * in the checkout's git dir (see ./active-run.ts), the one place every copy resolves it from.
  */
 const stopAttempts = new Map<string, { count: number; events: number }>();
-const roots = new Map<string, string>();
-const pointers = new Map<string, string>();
+/** Per cwd: the repository root and its checkout's pointer file, which lives in its own git dir so each worktree binds its own run. */
+const roots = new Map<string, { pointer: string; root: string }>();
 
-/** The repository root of `cwd`. It also records the root's pointer file, so `pointerOf` works for every root this returns. */
 async function cachedRoot(cwd: string) {
-  let root = roots.get(cwd);
-  if (root === undefined) {
-    root = await repoRoot(cwd);
-    pointers.set(root, resolve(root, (await git(root, 'rev-parse', '--git-dir')).trim(), POINTER_FILE));
-    roots.set(cwd, root);
+  let entry = roots.get(cwd);
+  if (entry === undefined) {
+    const root = await repoRoot(cwd);
+    entry = { pointer: resolve(root, (await git(root, 'rev-parse', '--git-dir')).trim(), POINTER_FILE), root };
+    roots.set(cwd, entry);
   }
-  return root;
-}
-
-/** The pointer file of the checkout at `root`: in its own git dir, so each worktree binds its own run. */
-function pointerOf(root: string) {
-  const pointer = pointers.get(root);
-  if (pointer === undefined) throw new Error(`Internal error: no pointer file recorded for ${root}.`);
-  return pointer;
+  return entry;
 }
 
 /** Test-only: clears the module-level run state (stop attempts, cached roots and pointer paths, audited sessions), so tests do not share it. */
 export function resetModuleState() {
   stopAttempts.clear();
   roots.clear();
-  pointers.clear();
   resetAudit();
 }
 
-/** The repository root of `cwd`, or undefined outside any git repo, which has no run. */
-const rootOf = (cwd: string) => cachedRoot(cwd).catch(() => undefined);
-
 async function workspace(cwd: string): Promise<Workspace> {
-  const root = await cachedRoot(cwd);
+  const { root } = await cachedRoot(cwd);
   return { config: loadConfig(root), root };
 }
 
 const NO_ACTIVE_RUN = 'No active factory run. Start one with /factory <issue>, or /factory resume <feature>.';
 
 /** The run the checkout at `root` is bound to, with the workspace it started or resumed with, so it never reloads factory.json. */
-const boundAt = (root: string) => boundRun(pointerOf(root), root);
+const boundAt = ({ pointer, root }: { pointer: string; root: string }) => boundRun(pointer, root);
 
 /** The next action of the bound run, or why its state cannot be read: the pointer can outlive the run's state. */
 function describeBound(ws: Workspace, feature: string) {
@@ -260,16 +247,10 @@ function isRunning(bound: { feature: string; ws: Workspace } | undefined) {
   }
 }
 
-function activeFeature(ws: Workspace) {
-  const feature = boundAt(ws.root)?.feature;
-  if (feature === undefined) throw new Error(NO_ACTIVE_RUN);
-  return feature;
-}
-
-/** The active run of the repository holding `cwd`. Undefined when no run is active there, or outside any git repo. */
+/** The active run of the repository holding `cwd`. Undefined when no run is active there, or outside any git repo, which has no run. */
 async function runForCwd(cwd: string) {
-  const root = await rootOf(cwd);
-  return root === undefined ? undefined : boundAt(root);
+  const entry = await cachedRoot(cwd).catch(() => undefined);
+  return entry === undefined ? undefined : boundAt(entry);
 }
 
 type Reply = { content: { text: string; type: 'text' }[]; details: unknown };
@@ -374,7 +355,8 @@ export default function softwareFactory(pi: ExtensionAPI) {
     label: string;
     name: string;
     schema: S;
-    run: (input: z.infer<S>, ws: Workspace, ctx: ExtensionContext, signal: AbortSignal | undefined) => Promise<Reply>;
+    /** `scope.feature` is the bound run's feature, read with `scope.ws` from the pointer once per call; it is empty for a `startsRun` tool, which binds the run itself. */
+    run: (input: z.infer<S>, scope: { feature: string; ws: Workspace }, ctx: ExtensionContext, signal: AbortSignal | undefined) => Promise<Reply>;
     /** Binds the run, so it loads the current factory.json instead of the workspace the bound run started with. */
     startsRun?: true;
   }) {
@@ -390,10 +372,12 @@ export default function softwareFactory(pi: ExtensionAPI) {
         if (caller !== definition.caller) throw new Error(`Only the ${definition.caller} agent may call this tool (caller: ${caller}).`);
         const parsed = definition.schema.safeParse(raw);
         if (!parsed.success) throw new Error(z.prettifyError(parsed.error));
-        const root = await cachedRoot(ctx.cwd);
+        const entry = await cachedRoot(ctx.cwd);
+        const bound = definition.startsRun === true ? undefined : boundAt(entry);
+        if (bound === undefined && definition.startsRun !== true) throw new Error(NO_ACTIVE_RUN);
         // A bound run keeps the workspace it started with, so a mid-run factory.json edit does not move its state.
-        const ws = (definition.startsRun === true ? undefined : boundAt(root)?.ws) ?? { config: loadConfig(root), root };
-        return definition.run(parsed.data, ws, ctx, signal);
+        const ws = bound?.ws ?? { config: loadConfig(entry.root), root: entry.root };
+        return definition.run(parsed.data, { feature: bound?.feature ?? '', ws }, ctx, signal);
       },
     });
   }
@@ -416,7 +400,8 @@ export default function softwareFactory(pi: ExtensionAPI) {
     label: 'Factory: start',
     name: 'factory_start',
     schema: startSchema,
-    async run(params, ws, ctx) {
+    async run(params, { ws }, ctx) {
+      const entry = await cachedRoot(ctx.cwd);
       const sessionId = ctx.sessionManager.getSessionId();
       let run: Run;
       if (params.resume !== undefined) {
@@ -444,7 +429,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         });
       } else {
         if (params.feature === undefined || params.source === undefined) throw new Error('A new run needs feature and source.');
-        const bound = boundAt(ws.root);
+        const bound = boundAt(entry);
         if (bound !== undefined && isRunning(bound)) {
           throw new Error(`Run "${bound.feature}" is still running in this repository. Finish or /factory pause it first.`);
         }
@@ -454,7 +439,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         await ensureChecks(ctx, ws);
         run = await startRun(ws, { feature: params.feature, sessionId, source });
       }
-      bindRun(pointerOf(ws.root), { feature: run.feature, mainId: ctx.agent.id, ws });
+      bindRun(entry.pointer, { feature: run.feature, mainId: ctx.agent.id, ws });
       await pi.setActiveTools([...new Set([...pi.getActiveTools(), ...ORCHESTRATION_TOOLS])]);
       return reply(
         `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${ws.config.maxRounds}.\nNext: ${nextAction(run)}`,
@@ -470,8 +455,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
     label: 'Factory: plan',
     name: 'factory_plan',
     schema: planToolSchema,
-    async run(params, ws, ctx) {
-      const feature = activeFeature(ws);
+    async run(params, { feature, ws }, ctx) {
       const base = await resolveBase(ws, { baseRef: params.baseRef, landOn: params.landOn, trunk: params.trunk });
       const slices = planSlices(ws, readRun(ws, feature), params.slices, base);
       const target = base.landOn === undefined ? `PRs target ${base.trunk}` : `/factory submit fast-forwards ${base.landOn} to the top slice; no PRs`;
@@ -493,8 +477,8 @@ export default function softwareFactory(pi: ExtensionAPI) {
     label: 'Factory: next slice',
     name: 'factory_next',
     schema: emptySchema,
-    async run(_params, ws) {
-      return withRun(ws, activeFeature(ws), async run => {
+    async run(_params, { feature, ws }) {
+      return withRun(ws, feature, async run => {
         const slice = await nextSlice(ws, run);
         if (slice === undefined) return reply(`No slices left.\nNext: ${nextAction(run)}`);
         return reply(
@@ -511,8 +495,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
     label: 'Factory: re-slice',
     name: 'factory_reslice',
     schema: resliceSchema,
-    async run(params, ws, ctx) {
-      const feature = activeFeature(ws);
+    async run(params, { feature, ws }, ctx) {
       const run = readRun(ws, feature);
       const { children, slices } = planReslice(ws, run, params.slices);
       const active = activeSlice(run);
@@ -534,8 +517,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
     label: 'Factory: record decisions',
     name: 'factory_decide',
     schema: decisionsSchema,
-    async run(params, ws, ctx) {
-      const feature = activeFeature(ws);
+    async run(params, { feature, ws }, ctx) {
       // An unknown or done slice is refused by planDecisions, without a dialog.
       const planned = planDecisions(readRun(ws, feature), params.decisions);
       const body = planned.map(({ owner, text }) => `- ${text}${owner === undefined ? '' : ` (${builtBy(owner)})`}`).join('\n');
@@ -556,8 +538,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
     label: 'Factory: amend seams',
     name: 'factory_amend_seams',
     schema: seamsSchema,
-    async run(params, ws, ctx) {
-      const feature = activeFeature(ws);
+    async run(params, { feature, ws }, ctx) {
       const slice = activeSlice(readRun(ws, feature));
       if (slice === undefined) throw new Error('No active slice. Call factory_next.');
       if (!(await confirm(ctx, `Add test seams to slice ${slice.id}?`, params.seams.map(seam => `- ${seam}`).join('\n')))) {
@@ -577,8 +558,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
     label: 'Factory: checks',
     name: 'factory_checks',
     schema: emptySchema,
-    async run(_params, ws, ctx, signal) {
-      const feature = activeFeature(ws);
+    async run(_params, { feature, ws }, ctx, signal) {
       const result = await withRun(ws, feature, run => runChecks(ws, run, signal));
       const summary = result.summary.join('\n');
       const run = readRun(ws, feature);
@@ -603,8 +583,8 @@ export default function softwareFactory(pi: ExtensionAPI) {
     label: 'Factory: implementer report',
     name: 'factory_implementer_report',
     schema: implementerReportSchema,
-    async run(params, ws) {
-      const result = await withRun(ws, activeFeature(ws), run => submitImplementerReport(ws, run, params));
+    async run(params, { feature, ws }) {
+      const result = await withRun(ws, feature, run => submitImplementerReport(ws, run, params));
       return reply(`${result.replaced ? 'Replaced the stored report' : 'Stored the report'}: ${result.path}`);
     },
   });
@@ -615,8 +595,8 @@ export default function softwareFactory(pi: ExtensionAPI) {
     label: 'Factory: start review',
     name: 'factory_review_start',
     schema: reviewStartSchema,
-    async run(params, ws) {
-      return withRun(ws, activeFeature(ws), async run => {
+    async run(params, { feature, ws }) {
+      return withRun(ws, feature, async run => {
         const review = await startReview(ws, run, params.skip, params.keep);
         const byPath = review.pathSkipped.length === 0 ? '' : `\nSkipped by path: ${review.pathSkipped.map(entry => `${entry.domain} (${entry.reason})`).join('; ')}.`;
         return reply(
@@ -634,8 +614,8 @@ export default function softwareFactory(pi: ExtensionAPI) {
     label: 'Factory: submit review findings',
     name: 'factory_review_submit',
     schema: submitSchema,
-    async run(params, ws, ctx) {
-      const count = await withRun(ws, activeFeature(ws), run => submitDomain(ws, run, { ...params, agentId: ctx.agent.id }));
+    async run(params, { feature, ws }, ctx) {
+      const count = await withRun(ws, feature, run => submitDomain(ws, run, { ...params, agentId: ctx.agent.id }));
       return reply(`Recorded ${count} ${params.domain} findings for ${params.reviewId}.`);
     },
   });
@@ -647,8 +627,8 @@ export default function softwareFactory(pi: ExtensionAPI) {
     label: 'Factory: submit validation',
     name: 'factory_review_validate',
     schema: validateSchema,
-    async run(params, ws, ctx) {
-      const result = await withRun(ws, activeFeature(ws), run => submitValidation(ws, run, { ...params, agentId: ctx.agent.id }));
+    async run(params, { feature, ws }, ctx) {
+      const result = await withRun(ws, feature, run => submitValidation(ws, run, { ...params, agentId: ctx.agent.id }));
       const action = result.replaced ? 'Replaced the validation' : 'Recorded the validation';
       return reply(
         `${action}: kept ${result.kept}, downgraded ${result.downgraded} to observations, escalated ${result.escalated} to high, dropped ${result.dropped}.`,
@@ -663,8 +643,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
     label: 'Factory: record review',
     name: 'factory_review_record',
     schema: emptySchema,
-    async run(_params, ws, ctx) {
-      const feature = activeFeature(ws);
+    async run(_params, { feature, ws }, ctx) {
       const result = await withRun(ws, feature, run => recordReview(ws, run));
       if (result.green) {
         const notes =
@@ -685,8 +664,8 @@ export default function softwareFactory(pi: ExtensionAPI) {
     label: 'Factory: complete slice',
     name: 'factory_complete_slice',
     schema: emptySchema,
-    async run(_params, ws) {
-      return withRun(ws, activeFeature(ws), async run => {
+    async run(_params, { feature, ws }) {
+      return withRun(ws, feature, async run => {
         const reopened = activeSlice(run)?.doneSha !== undefined;
         const slice = await completeSlice(ws, run);
         const restacked = reopened ? ' Every later slice branch is rebased onto it and earns its checks and review again.' : '';
@@ -702,8 +681,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
     label: 'Factory: fix observations or a bug',
     name: 'factory_fix',
     schema: fixSchema,
-    async run(params, ws, ctx) {
-      const feature = activeFeature(ws);
+    async run(params, { feature, ws }, ctx) {
       // Refuses a call with neither a bug nor observations, a slice without a green review, or an id that is not one
       // of its observations, without a dialog.
       const planned = planFix(ws, readRun(ws, feature), params);
@@ -730,8 +708,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
     label: 'Factory: carry work into a pending slice',
     name: 'factory_carry',
     schema: carrySchema,
-    async run(params, ws, ctx) {
-      const feature = activeFeature(ws);
+    async run(params, { feature, ws }, ctx) {
       // Refuses empty input, a slice without a green review, an unknown observation id, or a target that is neither
       // "end" nor a pending slice, without a dialog.
       const planned = planCarry(ws, readRun(ws, feature), params);
@@ -768,8 +745,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
     label: 'Factory: reopen slice',
     name: 'factory_reopen',
     schema: reopenSchema,
-    async run(params, ws, ctx) {
-      const feature = activeFeature(ws);
+    async run(params, { feature, ws }, ctx) {
       const current = readRun(ws, feature);
       requireNotStalled(current);
       const target = current.slices.find(slice => slice.id === params.slice);
@@ -795,8 +771,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
     label: 'Factory: follow-up slice',
     name: 'factory_follow_up',
     schema: followUpSchema,
-    async run(params, ws, ctx) {
-      const feature = activeFeature(ws);
+    async run(params, { feature, ws }, ctx) {
       const current = readRun(ws, feature);
       const planned = planFollowUp(ws, current, params);
       const carried = current.waiting.length === 0 ? '' : `\n\nThe slice also takes the carried items waiting on the run (${current.waiting.length}).`;
@@ -818,8 +793,8 @@ export default function softwareFactory(pi: ExtensionAPI) {
     label: 'Factory: status',
     name: 'factory_status',
     schema: emptySchema,
-    async run(_params, ws) {
-      const summary = summarize(ws, readRun(ws, activeFeature(ws)));
+    async run(_params, { feature, ws }) {
+      const summary = summarize(ws, readRun(ws, feature));
       return reply(JSON.stringify(summary, null, 2), summary);
     },
   });
@@ -831,8 +806,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
     label: 'Factory: retro',
     name: 'factory_retro',
     schema: retroSchema,
-    async run(params, ws, ctx) {
-      const feature = activeFeature(ws);
+    async run(params, { feature, ws }, ctx) {
       const retro = parseRetro(ws, readRun(ws, feature), params.findings);
       let filed: FiledIssues = { urls: {} };
       if (retro.apply.length > 0 || retro.file.length > 0) {
@@ -906,7 +880,9 @@ export default function softwareFactory(pi: ExtensionAPI) {
         return;
       }
       if (verb === 'submit') {
-        const feature = requireFeatureName(argument || activeFeature(ws));
+        const named = argument || active?.feature;
+        if (named === undefined) throw new Error(NO_ACTIVE_RUN);
+        const feature = requireFeatureName(named);
         // Without a feature argument it submits the active run, on the workspace that run started with.
         const target = argument === '' ? (active?.ws ?? ws) : ws;
         const run = readRun(target, feature);
@@ -962,7 +938,12 @@ export default function softwareFactory(pi: ExtensionAPI) {
     if (ctx.agent.kind !== 'sub' || ctx.agent.name !== IMPLEMENTER || found === undefined) return;
     const { feature, ws } = found;
     const tokens = ctx.getContextUsage()?.tokens ?? 0;
-    const peak = activeSlice(readRun(ws, feature))?.peakContextTokens;
+    let peak: number | undefined;
+    try {
+      peak = activeSlice(readRun(ws, feature))?.peakContextTokens;
+    } catch {
+      return;
+    }
     if (peak === undefined || (!compacted && tokens <= peak)) return;
     await withRun(ws, feature, run => {
       const slice = activeSlice(run);

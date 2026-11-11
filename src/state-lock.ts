@@ -98,40 +98,55 @@ async function acquireLock(path: string) {
     if (lock.age > LOCK_STALE_MS) evictLock(path, lock.token);
     await sleep(LOCK_POLL_MS);
   }
+  // The failure of the most recent tick, if it failed: a later tick that touches the file clears it.
+  let heartbeatError: unknown;
   const heartbeat = setInterval(() => {
     // Touch the file only while it still holds this acquisition's token; after an eviction it belongs to another holder.
-    let fd: number;
+    // No error may escape the timer, and a failed tick must not end the refresh while the holder still works, or the
+    // lease would lapse and a waiter could evict a live holder: the next tick retries and the error is kept for `release`.
     try {
-      fd = openSync(path, 'r');
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      clearInterval(heartbeat);
-      return;
-    }
-    try {
-      if (readFileSync(fd, 'utf8') === token) {
-        const now = new Date();
-        futimesSync(fd, now, now);
-      } else {
+      let fd: number;
+      try {
+        fd = openSync(path, 'r');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
         clearInterval(heartbeat);
+        return;
       }
-    } finally {
-      closeSync(fd);
+      try {
+        if (readFileSync(fd, 'utf8') === token) {
+          const now = new Date();
+          futimesSync(fd, now, now);
+          heartbeatError = undefined;
+        } else {
+          clearInterval(heartbeat);
+        }
+      } finally {
+        closeSync(fd);
+      }
+    } catch (error) {
+      heartbeatError = error;
     }
   }, LOCK_STALE_MS / 3);
   heartbeat.unref();
   return () => {
     clearInterval(heartbeat);
     removeLock(path, token);
+    return heartbeatError;
   };
 }
 
-/** Runs `fn` while holding the lock file at `path`, and releases it when `fn` returns or throws. */
+/** Runs `fn` while holding the lock file at `path`, and releases it when `fn` returns or throws. A heartbeat failure that no later tick recovered from is thrown after the release, unless `fn` threw. */
 export async function withFileLock<T>(path: string, fn: () => Promise<T> | T): Promise<T> {
   const release = await acquireLock(path);
+  let result: T;
   try {
-    return await fn();
-  } finally {
+    result = await fn();
+  } catch (error) {
     release();
+    throw error;
   }
+  const heartbeatError = release();
+  if (heartbeatError !== undefined) throw heartbeatError;
+  return result;
 }

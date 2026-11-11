@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
 import { join } from 'node:path';
-import { beforeEach, describe, it } from 'node:test';
+import { beforeEach, describe, it, mock } from 'node:test';
 import { type Command, ctx, type Handler, load, type TestContext } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
 import { MAX_IDLE_STOP_ATTEMPTS, resetModuleState, stopDecision } from '../src/index.ts';
@@ -684,5 +685,71 @@ describe('active run in a fresh extension copy', () => {
     await commands.get('factory')?.handler('status', main);
 
     assert.match(notices.join('\n'), /Active run: demo: state unreadable \(.*ENOENT/);
+  });
+
+  /** How many times the pointer file is read while `call` runs. */
+  async function pointerReads(call: () => Promise<unknown>) {
+    const original = fs.readFileSync;
+    let reads = 0;
+    mock.method(fs, 'readFileSync', (...args: Parameters<typeof fs.readFileSync>) => {
+      if (String(args[0]).endsWith('software-factory-active-run.json')) reads += 1;
+      return original(...args);
+    });
+    syncBuiltinESMExports();
+    try {
+      await call();
+    } finally {
+      mock.restoreAll();
+      syncBuiltinESMExports();
+    }
+    return reads;
+  }
+
+  it('reads the pointer file once per tool call, for a bound tool and for factory_start', async () => {
+    using repo = tempRepo('factory-fresh-pointer-once-', CHECKS_OK);
+    await startThenDeleteState(repo.root);
+    const main = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, notify() {} } };
+    const start = load().get('factory_start');
+
+    assert.equal(await pointerReads(async () => start?.execute('id', { feature: 'next', source: SOURCE }, undefined, undefined, main)), 1);
+    resetModuleState();
+    const status = load().get('factory_status');
+    assert.equal(await pointerReads(async () => status?.execute('id', {}, undefined, undefined, main)), 1);
+  });
+
+  it('returns without throwing from turn_end and auto_compaction_start for an implementer whose bound run state is gone', async () => {
+    using repo = tempRepo('factory-fresh-stale-track-', CHECKS_OK);
+    await startThenDeleteState(repo.root);
+    const handlers = new Map<string, Handler>();
+    load([], handlers);
+    const implementer = { ...ctx('sub', 'factory-implementer'), cwd: repo.root, getContextUsage: () => ({ tokens: 1234 }), sessionManager: { getSessionId: () => 'child' } };
+
+    await handlers.get('auto_compaction_start')?.({}, implementer);
+    await handlers.get('turn_end')?.({}, implementer);
+  });
+
+  it('uses the bound workspace for /factory submit with no argument after scratchDir moved', async () => {
+    using repo = tempRepo('factory-fresh-submit-cmd-', CHECKS_OK);
+    await startIn(repo.root, { feature: 'demo', source: SOURCE }, 'main-start');
+    resetModuleState();
+    writeFileSync(join(repo.root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], scratchDir: '.moved' }));
+    const commands = new Map<string, Command>();
+    load([], new Map(), commands);
+    const asked: string[] = [];
+    const ui = {
+      confirm: async (title: string) => {
+        asked.push(title);
+        return false;
+      },
+      notify() {},
+      setStatus() {},
+    };
+    const main = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, ui };
+
+    await commands.get('factory')?.handler('submit', main);
+
+    // It read the run from the original scratchDir to build the dialog, and created nothing under the moved one.
+    assert.deepEqual(asked, ['Open draft PRs?']);
+    assert.equal(existsSync(join(repo.root, '.moved')), false);
   });
 });
