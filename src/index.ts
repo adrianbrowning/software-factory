@@ -176,7 +176,7 @@ const carrySchema = z.object({
   observations: z
     .array(z.string().min(1))
     .optional()
-    .describe('Ids of observations from the active slice\'s green review, else from the one done slice whose last green review lists them, that the user chose to carry, for example "thermo-naming". Refused when several done slices list them: build them in a factory_follow_up slice (a note-only carry works only while the active slice has a green review)'),
+    .describe('Ids of observations from the active slice\'s green review, else from the one done slice whose last green review lists them, that the user chose to carry, for example "thermo-naming". Refused when several done slices list them: build them in a factory_follow_up slice'),
   to: z
     .union([z.string().regex(/^\d{2}$/), z.literal('end')])
     .describe('Id of the pending slice whose ticket takes the work, for example "03"; or "end": the work waits on the run for the next factory_follow_up slice'),
@@ -639,7 +639,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
   tool({
     caller: 'main',
     description:
-      'After a green review, carry review observations the user chose (observations), a free-text note (note), or both into the ticket of a pending slice (to), or with to "end" onto the run\'s queue for the next factory_follow_up slice, after the user agreed. Observation ids come from the active slice\'s green review; when it does not list them, from the one done slice whose last green review does (refused when several do: build them in a factory_follow_up slice; a note-only carry needs the active slice to have a green review). That slice builds them and its reviewers check them; the slice they come from keeps its green review. The retro waits until the queue is empty.',
+      'After a green review, carry review observations the user chose (observations), a free-text note (note), or both into the ticket of a pending slice (to), or with to "end" onto the run\'s queue for the next factory_follow_up slice, after the user agreed. Observation ids come from the active slice\'s green review; when it does not list them, from the one done slice whose last green review does. That slice builds them and its reviewers check them; the slice they come from keeps its green review. The retro waits until the queue is empty.',
     label: 'Factory: carry work into a pending slice',
     name: 'factory_carry',
     schema: carrySchema,

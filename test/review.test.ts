@@ -1013,6 +1013,20 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     assert.equal(readRun(ws, 'demo').slices.at(-1)?.title, 'Naming');
   });
 
+  it('suggests a free-text note when the active slice is green without the ids and two done slices list them, and a note-only carry then works', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    await twoGreenSlices(ws, true);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'third.txt');
+    await green(ws);
+    await assert.rejects(
+      step(ws, run => carryObservations(ws, run, { observations: ['thermo-naming'], to: 'end' })),
+      /Slices 01, 02 all have green reviews that list these observations.*factory_follow_up slice, or carry the items as a free-text note/,
+    );
+    await step(ws, run => carryObservations(ws, run, { note: 'Rename things', to: 'end' }));
+    assert.equal(readRun(ws, 'demo').waiting.length, 1);
+  });
+
   it('refuses a fix of a done slice\'s observations while a later slice is green, naming the done slice', async () => {
     using ws = workspace({ maxRounds: 2 });
     await newRun(ws, [slice('Feature'), slice('Second', ['Feature'])]);
