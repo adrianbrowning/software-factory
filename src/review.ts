@@ -766,7 +766,8 @@ export function resolveObservations(ws: Workspace, run: Run, chosen: Set<string>
   }
   const found = doneSlicesListing(ws, run, chosen, purpose);
   if (found.length > 1) {
-    throw new Error(`Slices ${found.map(entry => entry.slice.id).join(', ')} all have green reviews that list these observations (${[...chosen].join(', ')}), and the active slice's review does not. Carry the items as a free-text note, or build them in a factory_follow_up slice.`);
+    const next = own === undefined ? 'Build them in a factory_follow_up slice.' : 'Build them in a factory_follow_up slice, or carry the items as a free-text note.';
+    throw new Error(`Slices ${found.map(entry => entry.slice.id).join(', ')} all have green reviews that list these observations (${[...chosen].join(', ')}), and the active slice's review does not. ${next}`);
   }
   const only = found[0];
   if (only !== undefined) return { observations: only.observations.filter(finding => chosen.has(finding.id)), review: only.review, slice: only.slice };

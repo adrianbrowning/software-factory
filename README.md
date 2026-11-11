@@ -200,8 +200,9 @@ confirm:
 - Precedence for observation ids: the active slice's green review wins when it lists them. Only when it does not,
   the one done slice whose last green review lists them is used, found by the review, never by recency.
 - It refuses a call with neither observation ids nor a note, an id that is not an observation of that green review,
-  an id that no green review lists, an id that several done slices list (the message names the slices; carry the
-  items as a free-text `note`, or build them in a `factory_follow_up` slice), a slice without a green review, and a
+  an id that no green review lists, an id that several done slices list (the message names the slices; build the
+  items in a `factory_follow_up` slice, which always works; a free-text `note` works only while the active slice has a
+  green review), a slice without a green review, and a
   target that is neither `"end"` nor a pending slice.
 
 ### Reopen a done slice
