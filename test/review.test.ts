@@ -958,8 +958,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     assert.equal(readRun(ws, 'demo').slices[0]?.status, 'done');
   });
 
-  it('refuses a carry when the active slice and a done slice both have green reviews that list the observation ids', async () => {
-    using ws = workspace({ maxRounds: 2 });
+  async function twoGreenSlices(ws: Workspace, completeSecond: boolean) {
     await newRun(ws, [slice('Feature'), slice('Second', ['Feature']), slice('Third', ['Second'])]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -974,8 +973,31 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     const second = await step(ws, run => startReview(ws, run));
     await review(ws, second.reviewId, [{ ...finding('thermo', 'observation', 'naming'), path: 'second.txt' }]);
     await step(ws, run => recordReview(ws, run));
-    await assert.rejects(step(ws, run => carryObservations(ws, run, { observations: ['thermo-naming'], to: '03' })), /Slices 01, 02 all have green reviews that list these observations/);
-    assert.deepEqual(readRun(ws, 'demo').slices[2]?.carried, []);
+    if (completeSecond) await step(ws, run => completeSlice(ws, run));
+  }
+
+  it('carries the active slice\'s observations when a done slice\'s review lists the same ids', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    await twoGreenSlices(ws, false);
+    await step(ws, run => carryObservations(ws, run, { observations: ['thermo-naming'], to: '03' }));
+    const run = readRun(ws, 'demo');
+    assert.equal(run.slices[2]?.carried.length, 1);
+    assert.equal(run.events.some(event => event.kind === 'carry' && event.slice === '02'), true);
+    assert.equal(run.events.some(event => event.kind === 'carry' && event.slice === '01'), false);
+  });
+
+  it('fixes the active slice\'s observations when a done slice\'s review lists the same ids', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    await twoGreenSlices(ws, false);
+    await step(ws, run => fixObservations(ws, run, { observations: ['thermo-naming'] }, 'tidy'));
+    assert.notEqual(readRun(ws, 'demo').slices[1]?.phase, 'ready');
+  });
+
+  it('refuses a carry when two done slices list the observation ids, naming both', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    await twoGreenSlices(ws, true);
+    await assert.rejects(step(ws, run => carryObservations(ws, run, { observations: ['thermo-naming'], to: 'end' })), /Slices 01, 02 all have green reviews that list these observations/);
+    assert.deepEqual(readRun(ws, 'demo').waiting, []);
   });
 
   it('refuses a fix of a done slice\'s observations while a later slice is green, naming the done slice', async () => {
