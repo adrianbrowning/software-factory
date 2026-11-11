@@ -1000,7 +1000,10 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   it('refuses a carry when two done slices list the observation ids, naming both', async () => {
     using ws = workspace({ maxRounds: 2 });
     await twoGreenSlices(ws, true);
-    await assert.rejects(step(ws, run => carryObservations(ws, run, { observations: ['thermo-naming'], to: 'end' })), /Slices 01, 02 all have green reviews that list these observations/);
+    await assert.rejects(
+      step(ws, run => carryObservations(ws, run, { observations: ['thermo-naming'], to: 'end' })),
+      /Slices 01, 02 all have green reviews that list these observations.*Carry the items as a free-text note, or build them in a factory_follow_up slice\./,
+    );
     assert.deepEqual(readRun(ws, 'demo').waiting, []);
   });
 
