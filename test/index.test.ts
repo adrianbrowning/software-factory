@@ -724,8 +724,11 @@ describe('active run in a fresh extension copy', () => {
     load([], handlers);
     const implementer = { ...ctx('sub', 'factory-implementer'), cwd: repo.root, getContextUsage: () => ({ tokens: 1234 }), sessionManager: { getSessionId: () => 'child' } };
 
-    await handlers.get('auto_compaction_start')?.({}, implementer);
-    await handlers.get('turn_end')?.({}, implementer);
+    for (const name of ['auto_compaction_start', 'turn_end']) {
+      const handler = handlers.get(name);
+      assert.ok(handler, `${name} handler is registered`);
+      await assert.doesNotReject(async () => handler({}, implementer));
+    }
   });
 
   it('uses the bound workspace for /factory submit with no argument after scratchDir moved', async () => {

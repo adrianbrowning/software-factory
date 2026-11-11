@@ -22,6 +22,25 @@ function inspectLock(path: string) {
   }
 }
 
+/** Refreshes the lock file's mtime while it still holds `token`. 'gone' when the file is missing or holds another token: after an eviction it belongs to another holder, so it is left alone. */
+function touchLock(path: string, token: string): 'gone' | 'touched' {
+  let fd: number;
+  try {
+    fd = openSync(path, 'r');
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'gone';
+    throw error;
+  }
+  try {
+    if (readFileSync(fd, 'utf8') !== token) return 'gone';
+    const now = new Date();
+    futimesSync(fd, now, now);
+    return 'touched';
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /**
  * The holder's release: removes the lock file only if it holds `token`. The file is renamed to a private name
  * first, so it is checked and deleted as one instance. If it holds another token (the holder's lock was evicted
@@ -100,30 +119,12 @@ async function acquireLock(path: string) {
   }
   // The failure of the most recent tick, if it failed: a later tick that touches the file clears it.
   let heartbeatError: unknown;
+  // No error may escape the timer, and a failed tick must not end the refresh while the holder still works, or the
+  // lease would lapse and a waiter could evict a live holder: the next tick retries and the error is kept for `release`.
   const heartbeat = setInterval(() => {
-    // Touch the file only while it still holds this acquisition's token; after an eviction it belongs to another holder.
-    // No error may escape the timer, and a failed tick must not end the refresh while the holder still works, or the
-    // lease would lapse and a waiter could evict a live holder: the next tick retries and the error is kept for `release`.
     try {
-      let fd: number;
-      try {
-        fd = openSync(path, 'r');
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-        clearInterval(heartbeat);
-        return;
-      }
-      try {
-        if (readFileSync(fd, 'utf8') === token) {
-          const now = new Date();
-          futimesSync(fd, now, now);
-          heartbeatError = undefined;
-        } else {
-          clearInterval(heartbeat);
-        }
-      } finally {
-        closeSync(fd);
-      }
+      if (touchLock(path, token) === 'gone') clearInterval(heartbeat);
+      else heartbeatError = undefined;
     } catch (error) {
       heartbeatError = error;
     }
