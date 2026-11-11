@@ -1024,7 +1024,10 @@ describe('slice loop gates', { concurrency: 4 }, () => {
       /Slices 01, 02 all have green reviews that list these observations.*factory_follow_up slice, or carry the items as a free-text note/,
     );
     await step(ws, run => carryObservations(ws, run, { note: 'Rename things', to: 'end' }));
-    assert.equal(readRun(ws, 'demo').waiting.length, 1);
+    const waiting = readRun(ws, 'demo').waiting;
+    assert.equal(waiting.length, 1);
+    assert.match(waiting[0] ?? '', /Rename things/);
+    assert.doesNotMatch(waiting[0] ?? '', /thermo-naming/);
   });
 
   it('refuses a fix of a done slice\'s observations while a later slice is green, naming the done slice', async () => {
