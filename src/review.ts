@@ -712,13 +712,8 @@ function findingRecord(finding: Finding, group: string, decisions: string[]): Fi
 /** What the user chose to fix in the active slice after its green review: observation ids, a free-text bug, or both. */
 export type FixRequest = { bug?: string | undefined; observations?: string[] | undefined };
 
-/**
- * The active slice's green review and the observations from it whose ids are in `chosen`. Throws for a slice without a
- * green review (naming what `purpose` needed it for) and for an id that is not one of its observations. Does not change
- * the run.
- */
-export function greenObservations(ws: Workspace, run: Run, chosen: Set<string>, purpose: string) {
-  const slice = requireActive(run);
+/** The kept observations of `slice`'s last green review, with the review. Throws when the slice has none. */
+function reviewObservations(ws: Workspace, run: Run, slice: Slice, purpose: string) {
   const review = slice.review;
   if (slice.phase !== 'ready' || greenCommit(slice) === undefined || review === undefined) {
     throw new Error(`Slice ${slice.id} has no green review to ${purpose} from.`);
@@ -727,12 +722,54 @@ export function greenObservations(ws: Workspace, run: Run, chosen: Set<string>, 
   if (raw === undefined) throw new Error(`Review ${review.id} has no validation.`);
   const { findings } = recordedFindings(ws, run, review);
   const observations = keptFindings(findings, validationSchema.parse(raw)).filter(finding => finding.severity === 'observation');
+  return { observations, review, slice };
+}
+
+/** The done slices, with the observations of their last green review, whose review lists every id in `chosen`. */
+function doneSlicesListing(ws: Workspace, run: Run, chosen: Set<string>, purpose: string) {
+  if (chosen.size === 0) return [];
+  return run.slices
+    .filter(slice => slice.status === 'done' && slice.phase === 'ready' && greenCommit(slice) !== undefined && slice.review !== undefined)
+    .map(slice => reviewObservations(ws, run, slice, purpose))
+    .filter(found => [...chosen].every(id => found.observations.some(finding => finding.id === id)));
+}
+
+function unknownObservations(review: Review, observations: Finding[], unknown: string[]) {
+  const listed = observations.map(finding => finding.id).join(', ') || 'none';
+  return new Error(`Not observations of green review ${review.id}: ${unknown.join(', ')}. Its observations: ${listed}.`);
+}
+
+/**
+ * The active slice's green review and the observations from it whose ids are in `chosen`. Throws for a slice without a
+ * green review (naming what `purpose` needed it for) and for an id that is not one of its observations. Does not change
+ * the run.
+ */
+export function greenObservations(ws: Workspace, run: Run, chosen: Set<string>, purpose: string) {
+  const { observations, review, slice } = reviewObservations(ws, run, requireActive(run), purpose);
   const unknown = [...chosen].filter(id => !observations.some(finding => finding.id === id));
-  if (unknown.length > 0) {
-    const listed = observations.map(finding => finding.id).join(', ') || 'none';
-    throw new Error(`Not observations of green review ${review.id}: ${unknown.join(', ')}. Its observations: ${listed}.`);
-  }
+  if (unknown.length > 0) throw unknownObservations(review, observations, unknown);
   return { observations: observations.filter(finding => chosen.has(finding.id)), review, slice };
+}
+
+/**
+ * The slice whose last green review lists the observations in `chosen`, for factory_carry: found by the review that
+ * lists the ids among the active slice and the done slices, never by recency. Throws when no slice's review lists them,
+ * and when more than one does. Does not change the run.
+ */
+export function carriableObservations(ws: Workspace, run: Run, chosen: Set<string>, purpose: string) {
+  if (chosen.size === 0) return greenObservations(ws, run, chosen, purpose);
+  const active = activeSlice(run);
+  const own = active !== undefined && active.phase === 'ready' && greenCommit(active) !== undefined ? reviewObservations(ws, run, active, purpose) : undefined;
+  const ownLists = own !== undefined && [...chosen].every(id => own.observations.some(finding => finding.id === id));
+  const found = [...doneSlicesListing(ws, run, chosen, purpose), ...(own !== undefined && ownLists ? [own] : [])];
+  if (found.length > 1) {
+    throw new Error(`Slices ${found.map(entry => entry.slice.id).join(', ')} all have green reviews that list these observations (${[...chosen].join(', ')}). Carry them while only one slice's review lists them, or ask the user which one they mean.`);
+  }
+  const only = found[0];
+  if (only !== undefined) return { observations: only.observations.filter(finding => chosen.has(finding.id)), review: only.review, slice: only.slice };
+  if (own !== undefined) return greenObservations(ws, run, chosen, purpose);
+  const done = run.slices.filter(slice => slice.status === 'done' && slice.review !== undefined);
+  throw new Error(`No green review lists these observations: ${[...chosen].join(', ')}. Done slices checked: ${done.map(slice => `${slice.id} (${slice.review?.id})`).join(', ') || 'none'}.`);
 }
 
 /**
@@ -744,6 +781,20 @@ export function planFix(ws: Workspace, run: Run, request: FixRequest) {
   const bug = request.bug?.trim() ? request.bug : undefined;
   const chosen = new Set(z.array(z.string().min(1)).parse(request.observations ?? []));
   if (bug === undefined && chosen.size === 0) throw new Error('factory_fix needs a bug, observation ids, or both.');
+  const active = activeSlice(run);
+  if (chosen.size > 0) {
+    const activeLists =
+      active !== undefined &&
+      active.phase === 'ready' &&
+      greenCommit(active) !== undefined &&
+      [...chosen].every(id => reviewObservations(ws, run, active, 'fix observations or a bug').observations.some(finding => finding.id === id));
+    const done = activeLists ? undefined : doneSlicesListing(ws, run, chosen, 'fix observations or a bug')[0];
+    if (done !== undefined) {
+      throw new Error(
+        `Slice ${done.slice.id} is done (green review ${done.review.id}); factory_complete_slice already ran. Ask the user: factory_reopen fixes these in slice ${done.slice.id}, factory_follow_up builds them in a new slice on top of the stack.`,
+      );
+    }
+  }
   return { bug, ...greenObservations(ws, run, chosen, 'fix observations or a bug') };
 }
 

@@ -490,6 +490,27 @@ describe('used-up fix budget', () => {
     assert.equal(dialogs, 0);
   });
 
+  it('factory_carry queues a done slice\'s observations after factory_complete_slice and after factory_next, and factory_fix refuses them', async () => {
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature', 'Second', 'Third']);
+    await greenWithObservation(ws, 1);
+    const yes = { confirm: async () => true };
+    await call('factory_complete_slice', {});
+
+    const toEnd = await call('factory_carry', { observations: ['thermo-naming'], to: 'end' }, yes);
+    assert.match(toEnd.content[0]?.text ?? '', /^Queued thermo-naming for the next factory_follow_up slice \(1 waiting\)/);
+    assert.equal(readRun(ws, 'demo').events.at(-1)?.slice, '01');
+    await assert.rejects(call('factory_fix', { observations: ['thermo-naming'], reason: 'tidy' }, yes), /Slice 01 is done \(green review 01-r1\); factory_complete_slice already ran\..*factory_reopen.*factory_follow_up/);
+
+    await call('factory_next', {});
+    const toPending = await call('factory_carry', { observations: ['thermo-naming'], to: '03' }, yes);
+    assert.match(toPending.content[0]?.text ?? '', /^Carried thermo-naming into slice 03 "Third"/);
+    assert.equal(readRun(ws, 'demo').slices[2]?.carried.length, 1);
+    await assert.rejects(call('factory_fix', { observations: ['thermo-naming'], reason: 'tidy' }, yes), /Slice 01 is done/);
+    await assert.rejects(call('factory_carry', { observations: ['thermo-naming'], to: '01' }, yes), /Slice 01 is done; factory_carry takes a pending slice/);
+    await assert.rejects(call('factory_carry', { observations: ['bug-made-up'], to: 'end' }, yes), /No green review lists these observations: bug-made-up/);
+  });
+
   it('queues work for the end with factory_carry, lists it in factory_status, refuses factory_retro, and factory_follow_up takes it', async () => {
     using repo = budgetRepo();
     const { call, ws } = await budgetRun(repo.root, ['Feature']);

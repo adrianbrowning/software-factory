@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { effectiveModels } from './config.ts';
 import { evidence, evidenceLine, redact } from './evidence.ts';
 import { gh, git } from './exec.ts';
-import { greenObservations, renderFinding } from './review.ts';
+import { carriableObservations, renderFinding } from './review.ts';
 import {
   activeSlice,
   addEvent,
@@ -376,7 +376,7 @@ export function planCarry(ws: Workspace, run: Run, request: CarryRequest) {
   const note = request.note?.trim() ? request.note : undefined;
   const chosen = new Set(z.array(z.string().min(1)).parse(request.observations ?? []));
   if (note === undefined && chosen.size === 0) throw new Error('factory_carry needs observation ids, a note, or both.');
-  const green = greenObservations(ws, run, chosen, 'carry observations or a note');
+  const green = carriableObservations(ws, run, chosen, 'carry observations or a note');
   if (request.to === 'end') return { note, ...green, target: undefined };
   const target = run.slices.find(candidate => candidate.id === request.to);
   if (target === undefined) throw new Error(`No slice ${request.to}. Slices: ${run.slices.map(candidate => candidate.id).join(', ')}.`);
