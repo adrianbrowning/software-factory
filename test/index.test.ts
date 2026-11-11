@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, it } from 'node:test';
-import { ctx, type Handler, load, type TestContext } from './extension.ts';
+import { type Command, ctx, type Handler, load, type TestContext } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
 import { MAX_IDLE_STOP_ATTEMPTS, resetModuleState, stopDecision } from '../src/index.ts';
 import { readRun, type Run, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, pauseRun, planSlices, resolveStall } from '../src/workflow.ts';
-import { commit, finding, green, review, sh, slice, tempRepo } from './helpers.ts';
+import { commit, finding, green, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
 
 beforeEach(() => resetModuleState());
 
@@ -531,5 +531,158 @@ describe('used-up fix budget', () => {
     assert.match(text, /The user paused the run\. The fix budget of slice 02 "Second" is used up/);
     assert.match(text, /Carried items wait on the run \(1\), so the retro waits: after \/factory resume, a factory_follow_up slice takes them \(Next: asks for it once every existing slice is done\)\. Stop now\./);
     assert.doesNotMatch(text, /Run the retro now/);
+  });
+});
+
+describe('active run in a fresh extension copy', () => {
+  const SOURCE = { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' };
+  const reviewer = (root: string) => ({ ...ctx('sub', 'factory-reviewer'), cwd: root });
+  const submit = (root: string, reviewId: string) =>
+    load().get('factory_review_submit')?.execute('id', { domain: 'bug', findings: [], reviewId }, undefined, undefined, reviewer(root)) ?? Promise.reject(new Error('no tool'));
+  /** Calls factory_start in a new extension copy as the main session `mainId` in the checkout at `root`. */
+  const startIn = async (root: string, params: unknown, mainId: string) => {
+    const main = { ...ctx('main', 'main'), agent: { ...ctx('main', 'main').agent, id: mainId }, cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, notify() {} } };
+    await load().get('factory_start')?.execute('id', params, undefined, undefined, main);
+  };
+  /** A reviewer child of `parentId` at turn_end in a new extension copy; the audit records it in the run bound to `root`. */
+  const turnEnd = async (root: string, parentId: string) => {
+    const handlers = new Map<string, Handler>();
+    load([], handlers);
+    const child = {
+      ...ctx('sub', 'factory-reviewer'),
+      agent: { ...ctx('sub', 'factory-reviewer').agent, parentId },
+      cwd: root,
+      sessionManager: { getSessionId: () => `child-of-${parentId}` },
+    };
+    await handlers.get('turn_end')?.({}, child);
+  };
+  const auditedSessions = (root: string, feature: string) => readRun({ config: loadConfig(root), root }, feature).agents.map(agent => agent.sessionId);
+
+  /** Runs one slice to an open review through the tools of one extension copy, then resets the module state: the next `load()` is a copy with no binding, like a worker thread's. */
+  async function openReview(root: string) {
+    const { ws } = await sliceAtCommit(root);
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+    resetModuleState();
+    return { reviewId, ws };
+  }
+
+  it('records factory_review_submit for the open review of the run another copy bound, and refuses another review id', async () => {
+    using repo = tempRepo('factory-fresh-submit-', CHECKS_OK);
+    const { reviewId, ws } = await openReview(repo.root);
+
+    await assert.rejects(submit(repo.root, 'not-the-review'), /Review not-the-review is not the active review\./);
+    assert.match(JSON.stringify(await submit(repo.root, reviewId)), /Recorded 0 bug findings for /);
+    assert.equal(readRun(ws, 'demo').slices[0]?.review?.submissions.bug?.agentId, 'factory-reviewer-1');
+  });
+
+  it('keeps the workspace the run started with when factory.json moves scratchDir', async () => {
+    using repo = tempRepo('factory-fresh-scratch-', CHECKS_OK);
+    const { reviewId, ws } = await openReview(repo.root);
+    writeFileSync(join(repo.root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], scratchDir: '.moved' }));
+
+    assert.match(JSON.stringify(await submit(repo.root, reviewId)), /Recorded 0 bug findings for /);
+    // The submission landed in the run state the run started with, and nothing was created under the moved scratchDir.
+    assert.equal(readRun(ws, 'demo').slices[0]?.review?.submissions.bug?.agentId, 'factory-reviewer-1');
+    assert.equal(existsSync(join(repo.root, '.moved')), false);
+  });
+
+  it('treats a pointer whose config or feature would leave the repository as no active run', async () => {
+    using repo = tempRepo('factory-fresh-tamper-', CHECKS_OK);
+    const { reviewId, ws } = await openReview(repo.root);
+    const pointer = join(repo.root, '.git', 'software-factory-active-run.json');
+    const bound = JSON.parse(readFileSync(pointer, 'utf8')) as { config: { scratchDir: string }; feature: string };
+
+    writeFileSync(pointer, JSON.stringify({ ...bound, config: { ...bound.config, scratchDir: '../elsewhere' } }));
+    await assert.rejects(submit(repo.root, reviewId), /No active factory run/);
+    writeFileSync(pointer, JSON.stringify({ ...bound, feature: '../demo' }));
+    await assert.rejects(submit(repo.root, reviewId), /No active factory run/);
+    assert.equal(readRun(ws, 'demo').slices[0]?.review?.submissions.bug, undefined);
+  });
+
+  it('tracks implementer compaction in a copy with no binding', async () => {
+    using repo = tempRepo('factory-fresh-compaction-', CHECKS_OK);
+    const { ws } = await sliceAtCommit(repo.root);
+    resetModuleState();
+    const handlers = new Map<string, Handler>();
+    load([], handlers);
+
+    await handlers.get('auto_compaction_start')?.({}, { ...ctx('sub', 'factory-implementer'), cwd: repo.root, getContextUsage: () => ({ tokens: 1234 }) });
+
+    const slice = readRun(ws, 'demo').slices[0];
+    assert.deepEqual([slice?.compactions, slice?.peakContextTokens], [1, 1234]);
+  });
+
+  it('audits a child at turn_end in a copy with no binding, and gives each worktree its own run', async () => {
+    using repo = tempRepo('factory-fresh-hook-', CHECKS_OK);
+    using other = tempDir('factory-fresh-hook-wt-');
+    const worktree = join(other.root, 'wt');
+    await startIn(repo.root, { feature: 'one', source: SOURCE }, 'main-one');
+    sh(repo.root, 'worktree', 'add', '-q', '-b', 'wt', worktree);
+    await startIn(worktree, { feature: 'two', source: SOURCE }, 'main-two');
+    resetModuleState();
+
+    await turnEnd(worktree, 'main-two');
+
+    assert.deepEqual(auditedSessions(worktree, 'two'), ['child-of-main-two']);
+    resetModuleState();
+    await turnEnd(repo.root, 'main-one');
+
+    assert.deepEqual(auditedSessions(repo.root, 'one'), ['child-of-main-one']);
+    assert.deepEqual(auditedSessions(worktree, 'two'), ['child-of-main-two']);
+  });
+
+  it('binds a resumed run, so a copy with no binding audits into it', async () => {
+    using repo = tempRepo('factory-fresh-resume-', CHECKS_OK);
+    await startIn(repo.root, { feature: 'demo', source: SOURCE }, 'main-start');
+    await startIn(repo.root, { feature: 'other', source: SOURCE }, 'main-other');
+    await startIn(repo.root, { resume: 'demo' }, 'main-resume');
+    resetModuleState();
+
+    await turnEnd(repo.root, 'main-resume');
+
+    assert.deepEqual(auditedSessions(repo.root, 'demo'), ['child-of-main-resume']);
+    assert.deepEqual(auditedSessions(repo.root, 'other'), []);
+  });
+
+  /** A run bound in `root` whose state directory was then deleted, in a copy with no binding. */
+  const startThenDeleteState = async (root: string) => {
+    await startIn(root, { feature: 'demo', source: SOURCE }, 'main-start');
+    rmSync(join(root, loadConfig(root).scratchDir, 'demo'), { force: true, recursive: true });
+    resetModuleState();
+  };
+
+  it('starts a new run when the pointer names a run whose state is gone, and rebinds the pointer', async () => {
+    using repo = tempRepo('factory-fresh-stale-start-', CHECKS_OK);
+    await startThenDeleteState(repo.root);
+
+    await startIn(repo.root, { feature: 'next', source: SOURCE }, 'main-next');
+    resetModuleState();
+    await turnEnd(repo.root, 'main-next');
+
+    assert.deepEqual(auditedSessions(repo.root, 'next'), ['child-of-main-next']);
+  });
+
+  it('allows a stop when the pointer names a run whose state is gone', async () => {
+    using repo = tempRepo('factory-fresh-stale-stop-', CHECKS_OK);
+    await startThenDeleteState(repo.root);
+    const handlers = new Map<string, Handler>();
+    load([], handlers);
+    const main = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, ui: { notify() {} } };
+
+    assert.equal(await handlers.get('session_stop')?.({ session_id: 'session' }, main), undefined);
+  });
+
+  it('shows the bound feature and the read error in /factory status when its state is gone', async () => {
+    using repo = tempRepo('factory-fresh-stale-status-', CHECKS_OK);
+    await startThenDeleteState(repo.root);
+    const commands = new Map<string, Command>();
+    load([], new Map(), commands);
+    const notices: string[] = [];
+    const main = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, ui: { notify: (message: string) => notices.push(message) } };
+
+    await commands.get('factory')?.handler('status', main);
+
+    assert.match(notices.join('\n'), /Active run: demo: state unreadable \(.*ENOENT/);
   });
 });

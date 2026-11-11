@@ -1,10 +1,12 @@
 import type { ExtensionAPI, ExtensionContext } from '@oh-my-pi/pi-coding-agent';
 import { existsSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { z } from 'zod';
+import { bindRun, boundRun } from './active-run.ts';
 import { auditChild, IMPLEMENTER, REVIEWER, resetAudit, SPAWN_ROLES, VALIDATOR } from './agents.ts';
 import { CONFIG_PATH, checksPrompt, describeModels, loadConfig, parseChecks, requireAvailableModels, requireOrchestrator, type RoleModels, routeSpawn, suggestChecks } from './config.ts';
 import { evidence, evidenceHead } from './evidence.ts';
+import { git } from './exec.ts';
 import {
   activeSlice,
   addEvent,
@@ -101,6 +103,8 @@ const ORCHESTRATION_TOOLS = [
 ];
 /** Stop attempts in a row without new run events; the last one pauses the run instead of blocking. */
 export const MAX_IDLE_STOP_ATTEMPTS = 3;
+/** The pointer file's name in the git dir. */
+const POINTER_FILE = 'software-factory-active-run.json';
 
 type Caller = 'main' | typeof IMPLEMENTER | typeof REVIEWER | typeof VALIDATOR;
 
@@ -190,28 +194,37 @@ export function callerOf(ctx: Pick<ExtensionContext, 'agent'>) {
 }
 
 /**
- * Active run per repository root, with the workspace it started or resumed with, so routing keeps that run's state
- * location after a mid-run factory.json edit, and the agent id of the main session that started or resumed it.
- * Module scope is shared by the main session and its subagents in one process.
+ * Per-process caches, shared by the main session and its subagents in one process. The active run itself is not kept
+ * here: omp loads a separate copy of this extension on each worker thread, so the run binding lives in a pointer file
+ * in the checkout's git dir (see ./active-run.ts), the one place every copy resolves it from.
  */
-const activeRuns = new Map<string, { feature: string; mainId: string; ws: Workspace }>();
 const stopAttempts = new Map<string, { count: number; events: number }>();
 const roots = new Map<string, string>();
+const pointers = new Map<string, string>();
 
+/** The repository root of `cwd`. It also records the root's pointer file, so `pointerOf` works for every root this returns. */
 async function cachedRoot(cwd: string) {
   let root = roots.get(cwd);
   if (root === undefined) {
     root = await repoRoot(cwd);
+    pointers.set(root, resolve(root, (await git(root, 'rev-parse', '--git-dir')).trim(), POINTER_FILE));
     roots.set(cwd, root);
   }
   return root;
 }
 
-/** Test-only: clears the module-level run state (active runs, stop attempts, cached roots, audited sessions), so tests do not share it. */
+/** The pointer file of the checkout at `root`: in its own git dir, so each worktree binds its own run. */
+function pointerOf(root: string) {
+  const pointer = pointers.get(root);
+  if (pointer === undefined) throw new Error(`Internal error: no pointer file recorded for ${root}.`);
+  return pointer;
+}
+
+/** Test-only: clears the module-level run state (stop attempts, cached roots and pointer paths, audited sessions), so tests do not share it. */
 export function resetModuleState() {
-  activeRuns.clear();
   stopAttempts.clear();
   roots.clear();
+  pointers.clear();
   resetAudit();
 }
 
@@ -225,20 +238,38 @@ async function workspace(cwd: string): Promise<Workspace> {
 
 const NO_ACTIVE_RUN = 'No active factory run. Start one with /factory <issue>, or /factory resume <feature>.';
 
+/** The run the checkout at `root` is bound to, with the workspace it started or resumed with, so it never reloads factory.json. */
+const boundAt = (root: string) => boundRun(pointerOf(root), root);
+
+/** The next action of the bound run, or why its state cannot be read: the pointer can outlive the run's state. */
+function describeBound(ws: Workspace, feature: string) {
+  try {
+    return nextAction(readRun(ws, feature));
+  } catch (error) {
+    return `state unreadable (${error instanceof Error ? error.message : String(error)})`;
+  }
+}
+
+/** Whether the bound run is running. A pointer outlives the process, so a run whose state is gone or unreadable is not running. */
+function isRunning(bound: { feature: string; ws: Workspace } | undefined) {
+  if (bound === undefined) return false;
+  try {
+    return readRun(bound.ws, bound.feature).status === 'running';
+  } catch {
+    return false;
+  }
+}
+
 function activeFeature(ws: Workspace) {
-  const feature = activeRuns.get(ws.root)?.feature;
+  const feature = boundAt(ws.root)?.feature;
   if (feature === undefined) throw new Error(NO_ACTIVE_RUN);
   return feature;
 }
 
-/**
- * The active run of the repository holding `cwd`, with the workspace it started or resumed with, so it never reloads
- * factory.json. Undefined when no run is active there, or outside any git repo.
- */
+/** The active run of the repository holding `cwd`. Undefined when no run is active there, or outside any git repo. */
 async function runForCwd(cwd: string) {
-  if (activeRuns.size === 0) return undefined;
   const root = await rootOf(cwd);
-  return root === undefined ? undefined : activeRuns.get(root);
+  return root === undefined ? undefined : boundAt(root);
 }
 
 type Reply = { content: { text: string; type: 'text' }[]; details: unknown };
@@ -344,6 +375,8 @@ export default function softwareFactory(pi: ExtensionAPI) {
     name: string;
     schema: S;
     run: (input: z.infer<S>, ws: Workspace, ctx: ExtensionContext, signal: AbortSignal | undefined) => Promise<Reply>;
+    /** Binds the run, so it loads the current factory.json instead of the workspace the bound run started with. */
+    startsRun?: true;
   }) {
     pi.registerTool({
       defaultInactive: definition.essential !== true,
@@ -357,7 +390,10 @@ export default function softwareFactory(pi: ExtensionAPI) {
         if (caller !== definition.caller) throw new Error(`Only the ${definition.caller} agent may call this tool (caller: ${caller}).`);
         const parsed = definition.schema.safeParse(raw);
         if (!parsed.success) throw new Error(z.prettifyError(parsed.error));
-        return definition.run(parsed.data, await workspace(ctx.cwd), ctx, signal);
+        const root = await cachedRoot(ctx.cwd);
+        // A bound run keeps the workspace it started with, so a mid-run factory.json edit does not move its state.
+        const ws = (definition.startsRun === true ? undefined : boundAt(root)?.ws) ?? { config: loadConfig(root), root };
+        return definition.run(parsed.data, ws, ctx, signal);
       },
     });
   }
@@ -376,6 +412,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
     description:
       'Start a software-factory run for a loaded issue (feature + source), or resume one (resume). Resuming a stalled run asks the user whether to raise the used-up fix budget by maxRounds. Read skill://software-factory first.',
     essential: true,
+    startsRun: true,
     label: 'Factory: start',
     name: 'factory_start',
     schema: startSchema,
@@ -407,9 +444,9 @@ export default function softwareFactory(pi: ExtensionAPI) {
         });
       } else {
         if (params.feature === undefined || params.source === undefined) throw new Error('A new run needs feature and source.');
-        const current = activeRuns.get(ws.root)?.feature;
-        if (current !== undefined && readRun(ws, current).status === 'running') {
-          throw new Error(`Run "${current}" is still running in this repository. Finish or /factory pause it first.`);
+        const bound = boundAt(ws.root);
+        if (bound !== undefined && isRunning(bound)) {
+          throw new Error(`Run "${bound.feature}" is still running in this repository. Finish or /factory pause it first.`);
         }
         requireAvailableModels(ws.config.models, spec => ctx.models.resolve(spec));
         requireOrchestratorSession(ws.config.models, ctx, 'start');
@@ -417,7 +454,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         await ensureChecks(ctx, ws);
         run = await startRun(ws, { feature: params.feature, sessionId, source });
       }
-      activeRuns.set(ws.root, { feature: run.feature, mainId: ctx.agent.id, ws });
+      bindRun(pointerOf(ws.root), { feature: run.feature, mainId: ctx.agent.id, ws });
       await pi.setActiveTools([...new Set([...pi.getActiveTools(), ...ORCHESTRATION_TOOLS])]);
       return reply(
         `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${ws.config.maxRounds}.\nNext: ${nextAction(run)}`,
@@ -838,7 +875,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         const ws = active?.ws ?? (await workspace(ctx.cwd));
         const runsDir = join(ws.root, ws.config.scratchDir);
         const known = existsSync(runsDir) ? readdirSync(runsDir).filter(name => existsSync(statePath(ws, name))) : [];
-        const current = active === undefined ? 'none' : `${active.feature}: ${nextAction(readRun(ws, active.feature))}`;
+        const current = active === undefined ? 'none' : `${active.feature}: ${describeBound(ws, active.feature)}`;
         ctx.ui.notify(`Active run: ${current}\nRuns: ${known.join(', ') || 'none'}`, 'info');
         return;
       }
@@ -870,7 +907,9 @@ export default function softwareFactory(pi: ExtensionAPI) {
       }
       if (verb === 'submit') {
         const feature = requireFeatureName(argument || activeFeature(ws));
-        const run = readRun(ws, feature);
+        // Without a feature argument it submits the active run, on the workspace that run started with.
+        const target = argument === '' ? (active?.ws ?? ws) : ws;
+        const run = readRun(target, feature);
         const ok = await ctx.ui.confirm(
           run.landOn === undefined ? 'Open draft PRs?' : `Fast-forward ${run.landOn}?`,
           run.landOn === undefined
@@ -884,7 +923,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
           ctx.ui.notify(`Factory submit: ${step}…`, 'info');
         };
         try {
-          const output = await withRun(ws, feature, current => submitStack(ws, current, progress));
+          const output = await withRun(target, feature, current => submitStack(target, current, progress));
           ctx.ui.notify(output.trim() || 'Stack submitted.', 'info');
         } finally {
           ctx.ui.setStatus('factory-submit', undefined);
@@ -900,7 +939,12 @@ export default function softwareFactory(pi: ExtensionAPI) {
     const active = await runForCwd(ctx.cwd);
     if (active === undefined) return;
     const { feature, ws } = active;
-    const run = readRun(ws, feature);
+    let run: Run;
+    try {
+      run = readRun(ws, feature);
+    } catch {
+      return;
+    }
     const decision = stopDecision(run, event.session_id, stopAttempts.get(feature));
     if (decision.action === 'allow') return;
     if (decision.action === 'pause') {
