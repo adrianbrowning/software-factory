@@ -165,7 +165,7 @@ const fixSchema = z.object({
   observations: z
     .array(z.string().min(1))
     .optional()
-    .describe('Ids of observations from the green review of the active slice that the user chose to fix in this slice, for example "thermo-naming"'),
+    .describe('Ids of observations from the green review of the active slice that the user chose to fix in this slice, for example "thermo-naming". Ids only a done slice\'s green review lists are refused: use factory_reopen for that slice, or factory_follow_up'),
   reason: z.string().min(1).describe('Why the user wants them fixed before the slice is done, for the fix file'),
 });
 const carrySchema = z.object({
@@ -176,7 +176,7 @@ const carrySchema = z.object({
   observations: z
     .array(z.string().min(1))
     .optional()
-    .describe('Ids of observations from the active slice\'s green review, else from the one done slice whose last green review lists them, that the user chose to carry, for example "thermo-naming"'),
+    .describe('Ids of observations from the active slice\'s green review, else from the one done slice whose last green review lists them, that the user chose to carry, for example "thermo-naming". Refused when several done slices list them: carry the items as a note, or build them in a factory_follow_up slice'),
   to: z
     .union([z.string().regex(/^\d{2}$/), z.literal('end')])
     .describe('Id of the pending slice whose ticket takes the work, for example "03"; or "end": the work waits on the run for the next factory_follow_up slice'),
