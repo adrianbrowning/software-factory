@@ -176,7 +176,7 @@ const carrySchema = z.object({
   observations: z
     .array(z.string().min(1))
     .optional()
-    .describe('Ids of observations from the green review of the active slice that the user chose to carry, for example "thermo-naming"'),
+    .describe('Ids of observations from the active slice\'s green review, else from the one done slice whose last green review lists them, that the user chose to carry, for example "thermo-naming"'),
   to: z
     .union([z.string().regex(/^\d{2}$/), z.literal('end')])
     .describe('Id of the pending slice whose ticket takes the work, for example "03"; or "end": the work waits on the run for the next factory_follow_up slice'),
@@ -612,13 +612,13 @@ export default function softwareFactory(pi: ExtensionAPI) {
   tool({
     caller: 'main',
     description:
-      `After a green review, send the active slice back to the fix loop for a bug the user found in it (bug), review observations the user chose to fix in this slice (observations), or both, after the user agreed. Writes a tracked fix file; the round counts toward the fix budget, and the slice earns checks and a new review before factory_complete_slice. ${STALL_DESCRIPTION}`,
+      `After a green review, send the active slice back to the fix loop for a bug the user found in it (bug), review observations the user chose to fix in this slice (observations), or both, after the user agreed. Observation ids must be in the active slice's green review; ids only a done slice's review lists are refused (use factory_reopen or factory_follow_up). Writes a tracked fix file; the round counts toward the fix budget, and the slice earns checks and a new review before factory_complete_slice. ${STALL_DESCRIPTION}`,
     label: 'Factory: fix observations or a bug',
     name: 'factory_fix',
     schema: fixSchema,
     async run(params, { feature, ws }, ctx) {
-      // Refuses a call with neither a bug nor observations, a slice without a green review, or an id that is not one
-      // of its observations, without a dialog.
+      // Refuses a call with neither a bug nor observations, a slice without a green review, an id that is not one of
+      // its observations, or ids only a done slice's review lists (use factory_reopen or factory_follow_up), without a dialog.
       const planned = planFix(ws, readRun(ws, feature), params);
       const items = [
         ...(planned.bug === undefined ? [] : [`- Bug: ${evidenceHead(planned.bug, 1_000)}`]),
@@ -639,13 +639,13 @@ export default function softwareFactory(pi: ExtensionAPI) {
   tool({
     caller: 'main',
     description:
-      'After a green review, carry review observations the user chose (observations), a free-text note (note), or both into the ticket of a pending slice (to), or with to "end" onto the run\'s queue for the next factory_follow_up slice, after the user agreed. That slice builds them and its reviewers check them; the active slice keeps its green review. The retro waits until the queue is empty.',
+      'After a green review, carry review observations the user chose (observations), a free-text note (note), or both into the ticket of a pending slice (to), or with to "end" onto the run\'s queue for the next factory_follow_up slice, after the user agreed. Observation ids come from the active slice\'s green review; when it does not list them, from the one done slice whose last green review does (refused when several do: carry the items as a note, or build them in a factory_follow_up slice). That slice builds them and its reviewers check them; the slice they come from keeps its green review. The retro waits until the queue is empty.',
     label: 'Factory: carry work into a pending slice',
     name: 'factory_carry',
     schema: carrySchema,
     async run(params, { feature, ws }, ctx) {
-      // Refuses empty input, a slice without a green review, an unknown observation id, or a target that is neither
-      // "end" nor a pending slice, without a dialog.
+      // Refuses empty input, a slice without a green review, an id no green review lists or several done slices list,
+      // or a target that is neither "end" nor a pending slice, without a dialog.
       const planned = planCarry(ws, readRun(ws, feature), params);
       const items = [
         ...(planned.note === undefined ? [] : [`- Note: ${evidenceHead(planned.note, 1_000)}`]),

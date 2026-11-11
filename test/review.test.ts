@@ -990,7 +990,11 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     using ws = workspace({ maxRounds: 2 });
     await twoGreenSlices(ws, false);
     await step(ws, run => fixObservations(ws, run, { observations: ['thermo-naming'] }, 'tidy'));
-    assert.notEqual(readRun(ws, 'demo').slices[1]?.phase, 'ready');
+    const run = readRun(ws, 'demo');
+    assert.equal(run.events.some(event => event.kind === 'fix-observations' && event.slice === '02'), true);
+    assert.equal(run.events.some(event => event.kind === 'fix-observations' && event.slice === '01'), false);
+    assert.equal(run.slices[0]?.status, 'done');
+    assert.equal(run.slices[1]?.fixItems.some(item => item.id === 'thermo-naming'), true);
   });
 
   it('refuses a carry when two done slices list the observation ids, naming both', async () => {

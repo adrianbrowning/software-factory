@@ -174,12 +174,16 @@ shows them. After you confirm:
 - The round counts in the slice's fix rounds (`factory_status`) and against its round limit; a used-up budget stalls
   like any other fix round.
 - It refuses a call with neither a bug nor observation ids, an id that is not an observation of that green review,
-  and a slice without a green review. A bug in a slice that is already done goes through `factory_reopen` instead.
+  and a slice without a green review. Observation ids that only a done slice's green review lists are refused too:
+  the message names the slice and its review, and says to use `factory_reopen` for that slice or `factory_follow_up`.
+  When the active slice's green review lists the ids, they are fixed there. A bug in a slice that is already done
+  goes through `factory_reopen` instead.
 
 ### Carry observations into a later slice
 
 When a green review lists observations that belong in a later slice, or you want extra work built there, the
-orchestrator asks you where they go. `factory_carry` (observation ids from the active slice's green review, a
+orchestrator asks you where they go. `factory_carry` (observation ids from the active slice's green review or, when
+it does not list them, from a done slice's, a
 free-text `note`, or both, and `to`: the id of a pending slice, or `"end"`) opens a dialog that shows them. After you
 confirm:
 
@@ -190,9 +194,15 @@ confirm:
   ticket under "Carried-in work", and the queue empties. `factory_retro` refuses while items wait, and a run with
   waiting items is not ready to submit.
 - The active slice keeps its green review, and `factory_complete_slice` completes it without new checks or review.
+  When the ids are in a done slice's green review instead, the carry is recorded on that slice as if it had been sent
+  before `factory_complete_slice`.
 - A re-slice keeps the items: the first child takes those of the split slice.
+- Precedence for observation ids: the active slice's green review wins when it lists them. Only when it does not,
+  the one done slice whose last green review lists them is used, found by the review, never by recency.
 - It refuses a call with neither observation ids nor a note, an id that is not an observation of that green review,
-  a slice without a green review, and a target that is neither `"end"` nor a pending slice.
+  an id that no green review lists, an id that several done slices list (the message names the slices; carry the
+  items as a free-text `note`, or build them in a `factory_follow_up` slice), a slice without a green review, and a
+  target that is neither `"end"` nor a pending slice.
 
 ### Reopen a done slice
 
