@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { FactoryConfig } from '../src/config.ts';
+import { type FactoryConfig, parseConfig } from '../src/config.ts';
 import { type Finding, type FixVerdict, readRun, REVIEW_DOMAINS, type SliceInput, type Workspace, withRun } from '../src/run.ts';
 import { recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
 import { approvePlan, nextSlice, planSlices, startRun } from '../src/workflow.ts';
@@ -58,6 +58,7 @@ export function workspace(overrides: Partial<FactoryConfig> = {}): Workspace & D
       checkPath: [],
       checkTimeoutMs: 10_000,
       factoryRepo: 'acme/factory',
+      headless: parseConfig({}).headless,
       maxRounds: 1,
       models: {},
       scratchDir: '.scratch',

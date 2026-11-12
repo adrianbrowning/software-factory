@@ -363,11 +363,16 @@ describe('re-slice', () => {
 });
 
 describe('pause and resume', () => {
-  it('pauses only a running run and resumes it to running', async () => {
+  it('pauses an intake run back to intake on resume, and a running run back to running', async () => {
     using ws = workspace();
     await start(ws);
-    await assert.rejects(step(ws, run => pauseRun(run, 'test')), /intake; only a running run pauses/);
+    await step(ws, run => pauseRun(run, 'test'));
+    assert.equal(readRun(ws, 'demo').status, 'paused');
+    await step(ws, run => resumeRun(ws, run, 'session-2'));
+    assert.equal(readRun(ws, 'demo').status, 'intake');
+    await assert.rejects(step(ws, run => pauseRun(run, 'test')).then(() => step(ws, run => pauseRun(run, 'again'))), /paused; only a running or intake run pauses/);
 
+    await step(ws, run => resumeRun(ws, run, 'session-2'));
     await step(ws, run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')])));
     await step(ws, run => pauseRun(run, 'test'));
     await step(ws, run => resumeRun(ws, run, 'session-2'));

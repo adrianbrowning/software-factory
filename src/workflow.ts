@@ -770,9 +770,9 @@ export function requireNotStalled(run: Run) {
   if (slice?.stalled) throw new Error(stallNotice(run, slice));
 }
 
-/** Only a running run pauses; intake, stalled, and done runs keep their status. */
+/** A running or intake run pauses; stalled, paused, and done runs keep their status. A paused run with no approved plan resumes to intake. */
 export function pauseRun(run: Run, reason: string) {
-  if (run.status !== 'running') throw new Error(`Run "${run.feature}" is ${run.status}; only a running run pauses.`);
+  if (run.status !== 'running' && run.status !== 'intake') throw new Error(`Run "${run.feature}" is ${run.status}; only a running or intake run pauses.`);
   run.status = 'paused';
   addEvent(run, 'pause', reason);
 }
@@ -787,7 +787,7 @@ export async function resumeRun(ws: Workspace, run: Run, sessionId: string) {
   const filled = run.checks.length === 0;
   if (filled) run.checks = checksSchema.parse(repoChecks(ws));
   if (activeSlice(run)?.stalled) resolveStall(ws, run, 'continue');
-  if (run.status === 'paused' || run.status === 'stalled') run.status = 'running';
+  if (run.status === 'paused' || run.status === 'stalled') run.status = run.slices.length === 0 ? 'intake' : 'running';
   const slice = activeSlice(run);
   if (slice !== undefined && hasPass(slice)) {
     if (filled || standingChecks(slice, await head(ws.root)) === undefined) dropPass(slice, 'checks');
