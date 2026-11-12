@@ -49,6 +49,10 @@ import {
   writeTicket,
 } from './workflow.ts';
 
+function noGreenReview(sliceId: string, purpose: string): Error {
+  return new Error(`Slice ${sliceId} has no green review to ${purpose} from.`);
+}
+
 export const REVIEW_REFERENCE_DIR = fileURLToPath(new URL('../skills/software-factory/references/review/', import.meta.url));
 
 /** One decision for factory_decide: its text, or its text and the id of the pending or active slice that builds it. */
@@ -716,7 +720,7 @@ export type FixRequest = { bug?: string | undefined; observations?: string[] | u
 function reviewObservations(ws: Workspace, run: Run, slice: Slice, purpose: string) {
   const review = slice.review;
   if (slice.phase !== 'ready' || greenCommit(slice) === undefined || review === undefined) {
-    throw new Error(`Slice ${slice.id} has no green review to ${purpose} from.`);
+    throw noGreenReview(slice.id, purpose);
   }
   const raw = readRecorded(validationFile(ws, run, review.id), review.validation);
   if (raw === undefined) throw new Error(`Review ${review.id} has no validation.`);
@@ -775,7 +779,7 @@ export function resolveObservations(ws: Workspace, run: Run, chosen: Set<string>
     throw unknownObservations(own.review, own.observations, [...chosen].filter(id => !own.observations.some(finding => finding.id === id)));
   }
   const done = run.slices.filter(slice => slice.status === 'done' && slice.review !== undefined);
-  if (done.length === 0) throw new Error(`Slice ${requireActive(run).id} has no green review to ${purpose} from.`);
+  if (done.length === 0) throw noGreenReview(requireActive(run).id, purpose);
   throw new Error(`No green review lists these observations: ${[...chosen].join(', ')}. Done slices checked: ${done.map(slice => `${slice.id} (${slice.review?.id})`).join(', ')}.`);
 }
 
