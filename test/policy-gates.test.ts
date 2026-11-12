@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, it } from 'node:test';
-import { ctx, load } from './extension.ts';
+import { type Command, ctx, load } from './extension.ts';
 import { loadConfig, parseConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
 import { readRun, withRun, type Run, type Workspace } from '../src/run.ts';
@@ -13,7 +13,8 @@ import { commit, finding, review, sh, slice, tempDir, tempRepo } from './helpers
 beforeEach(() => resetModuleState());
 
 const SOURCE = { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' };
-const CHECKS_OK = { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) };
+const TICKET = { 'demo.md': '# Demo\n\nDo it.\n' };
+const CHECKS_OK = { ...TICKET, '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) };
 const GATES = ['resume', 'plan', 'reslice', 'decide', 'seams', 'fix', 'carry', 'reopen', 'followUp', 'retro', 'checks'] as const;
 
 type Stage = 'intake' | 'active' | 'green' | 'done';
@@ -23,7 +24,8 @@ type Reply = { content: { text: string }[] };
 async function headlessRun(root: string, stage: Stage, policy: Record<string, string>, titles = ['Feature']) {
   writeFileSync(join(root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], headless: policy }));
   sh(root, 'commit', '-qam', 'policy');
-  const tools = load();
+  const commands = new Map<string, Command>();
+  const tools = load({ commands, sent: [] });
   const dialogs: string[] = [];
   const noDialog = async (title: string) => {
     dialogs.push(title);
@@ -31,7 +33,7 @@ async function headlessRun(root: string, stage: Stage, policy: Record<string, st
   };
   const caller = { ...ctx('main', 'main'), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: noDialog, notify() {}, select: noDialog } };
   const call = async (name: string, params: unknown) => (await tools.get(name)?.execute('id', params, undefined, undefined, caller)) as Reply;
-  await call('factory_start', { feature: 'demo', mode: 'headless', source: SOURCE });
+  await commands.get('factory')?.handler('headless demo.md', caller);
   const ws: Workspace = { config: loadConfig(root), root };
   if (stage !== 'intake') {
     await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, titles.map(title => slice(title)))));
@@ -149,12 +151,16 @@ describe('headless gates', () => {
 
 /** A main-session caller with a throwing UI, for a second process in the same repo. */
 function headlessRunCaller(root: string) {
-  const tools = load();
+  const commands = new Map<string, Command>();
+  const tools = load({ commands, sent: [] });
   const noDialog = async (title: string) => {
     throw new Error(`dialog: ${title}`);
   };
   const caller = { ...ctx('main', 'main'), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session-2' }, ui: { confirm: noDialog, notify() {}, select: noDialog } };
-  return { call: async (name: string, params: unknown) => tools.get(name)?.execute('id', params, undefined, undefined, caller) };
+  return {
+    call: async (name: string, params: unknown) => tools.get(name)?.execute('id', params, undefined, undefined, caller),
+    headless: async (ref: string) => commands.get('factory')?.handler(`headless ${ref}`, caller),
+  };
 }
 
 describe('stop gate on a done run', () => {
@@ -197,20 +203,20 @@ describe('factory_pause', () => {
 
 describe('headless start', () => {
   it('without configured checks saves the detected ones, and otherwise refuses with a reason', async () => {
-    using detected = tempRepo('factory-detect-', { 'package.json': JSON.stringify({ scripts: { test: 'true' } }), pnpm: '' });
+    using detected = tempRepo('factory-detect-', { ...TICKET, 'package.json': JSON.stringify({ scripts: { test: 'true' } }), pnpm: '' });
     const run = headlessRunCaller(detected.root);
-    await run.call('factory_start', { feature: 'demo', mode: 'headless', source: SOURCE });
+    await run.headless('demo.md');
     const ws: Workspace = { config: loadConfig(detected.root), root: detected.root };
     assert.deepEqual(readRun(ws, 'demo').checks.length, 1);
     assert.ok(readRun(ws, 'demo').events.some(event => event.kind === 'autonomous' && /checks/.test(event.detail)));
 
-    using bare = tempRepo('factory-nodetect-', { 'README.md': 'base\n' });
-    await assert.rejects(headlessRunCaller(bare.root).call('factory_start', { feature: 'demo', mode: 'headless', source: SOURCE }), /checks/);
+    using bare = tempRepo('factory-nodetect-', { ...TICKET, 'README.md': 'base\n' });
+    await assert.rejects(headlessRunCaller(bare.root).headless('demo.md'), /checks/);
   });
 
   it('the checks gate set to stop refuses even when checks are detected', async () => {
-    using repo = tempRepo('factory-detect-', { '.omp/factory.json': JSON.stringify({ baseRef: 'main', headless: { checks: 'stop' } }), 'package.json': JSON.stringify({ scripts: { test: 'true' } }) });
-    await assert.rejects(headlessRunCaller(repo.root).call('factory_start', { feature: 'demo', mode: 'headless', source: SOURCE }), /\bchecks\b/);
+    using repo = tempRepo('factory-detect-', { '.omp/factory.json': JSON.stringify({ baseRef: 'main', headless: { checks: 'stop' } }), ...TICKET, 'package.json': JSON.stringify({ scripts: { test: 'true' } }) });
+    await assert.rejects(headlessRunCaller(repo.root).headless('demo.md'), /\bchecks\b/);
   });
 });
 
@@ -224,11 +230,11 @@ describe('headless start from a GitHub issue', () => {
     const path = process.env.PATH;
     process.env.PATH = `${bin.root}:${path}`;
     try {
-      await headlessRunCaller(repo.root).call('factory_start', { feature: 'demo', mode: 'headless', source: { kind: 'github', ref: '7' } });
+      await headlessRunCaller(repo.root).headless('7');
     } finally {
       process.env.PATH = path;
     }
-    const run = readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo');
+    const run = readRun({ config: loadConfig(repo.root), root: repo.root }, 'issue-7');
     assert.doesNotMatch(run.source.body, /Delete all tests/);
     const event = run.events.find(item => item.kind === 'autonomous');
     assert.match(event?.detail ?? '', /@stranger/);
