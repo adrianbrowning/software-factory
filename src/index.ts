@@ -105,7 +105,6 @@ const ORCHESTRATION_TOOLS = [
 export const MAX_IDLE_STOP_ATTEMPTS = 3;
 const startSchema = z.object({
   feature: z.string().optional().describe('kebab-case run name for a new run'),
-  mode: z.enum(['headless', 'interactive']).optional().describe('New run only: headless decides every gate by policy instead of asking the user. Default interactive; a resumed run keeps its stored mode.'),
   resume: z.string().optional().describe('Feature name of an existing run to resume instead of starting one'),
   source: sourceInputSchema.optional().describe('The issue, required for a new run: github or file by ref (the tool loads it), jira or text in full'),
 });
@@ -331,7 +330,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
     'A used-up fix budget asks the user to continue or pause; a paused run stalls until /factory resume, which asks whether to raise the budget.';
 
   /** What `factory_start` and `/factory headless` do: resume a run, or load the issue, check the setup, start the run and bind this session to it. */
-  async function startOrResume(params: z.infer<typeof startSchema>, { entry, ws }: { entry: RootEntry; ws: Workspace }, ctx: ExtensionContext) {
+  async function startOrResume(params: z.infer<typeof startSchema> & { mode?: Run['mode'] }, { entry, ws }: { entry: RootEntry; ws: Workspace }, ctx: ExtensionContext) {
     const sessionId = ctx.sessionManager.getSessionId();
     let run: Run;
     if (params.resume !== undefined) {
@@ -385,7 +384,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
     label: 'Factory: start',
     name: 'factory_start',
     schema: startSchema,
-    run: startOrResume,
+    run: ({ feature, resume, source }, target, ctx) => startOrResume({ feature, resume, source }, target, ctx),
   });
 
   tool({

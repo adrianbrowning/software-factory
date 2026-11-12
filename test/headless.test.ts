@@ -24,18 +24,22 @@ function session(root: string) {
 }
 
 describe('run mode', () => {
-  it('stores mode headless when factory_start gets it, shows it in factory_status, and keeps it on resume', async () => {
+  it('factory_start cannot create a headless run, and resume keeps the mode the /factory headless command stored', async () => {
     using repo = tempRepo('factory-headless-', CHECKS_OK);
     const { call } = session(repo.root);
     await call('factory_start', { feature: 'demo', mode: 'headless', source: SOURCE });
     const ws = { config: loadConfig(repo.root), root: repo.root };
-    assert.equal(readRun(ws, 'demo').mode, 'headless');
-    assert.match(await call('factory_status', {}), /\\"mode\\": \\"headless\\"/);
+    assert.equal(readRun(ws, 'demo').mode, 'interactive');
+
+    resetModuleState();
+    const cmd = session(repo.root);
+    await cmd.command('headless ticket.md');
+    assert.equal(readRun(ws, 'ticket').mode, 'headless');
 
     resetModuleState();
     const again = session(repo.root);
-    const resumed = await again.call('factory_start', { resume: 'demo' });
-    assert.match(resumed, /Run \\"demo\\" is/);
+    const resumed = await again.call('factory_start', { resume: 'ticket' });
+    assert.match(resumed, /Run \\"ticket\\" is/);
     assert.match(await again.call('factory_status', {}), /\\"mode\\": \\"headless\\"/);
   });
 
