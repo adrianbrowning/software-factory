@@ -255,6 +255,8 @@ const runSchema = z.object({
    * It shares the factory.json input schema, so any change to modelsSchema must still accept every stored run.
    */
   models: modelsSchema.default({}),
+  /** Whether the run asks the user at its gates or decides alone. Runs from before it was kept are interactive. */
+  mode: z.enum(['headless', 'interactive']).default('interactive'),
   ownerSessionId: text,
   retroRecorded: z.boolean(),
   slices: z.array(legacySliceSchema),

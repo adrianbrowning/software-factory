@@ -12,11 +12,14 @@ export type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 export type Command = { handler: (args: string, ctx: unknown) => Promise<void> };
 
 /** Registers the extension against a recording `pi` and returns its tools by name; `activated` collects what setActiveTools gets, `handlers` records its event hooks, `commands` its slash commands, `thinking` gives pi.getThinkingLevel. */
-export function load(activated: string[] = [], handlers = new Map<string, Handler>(), commands = new Map<string, Command>(), thinking: () => string | undefined = () => 'off') {
+export function load(activated: string[] = [], handlers = new Map<string, Handler>(), commands = new Map<string, Command>(), thinking: () => string | undefined = () => 'off', sent: string[] = []) {
   const tools = new Map<string, Registered>();
   const pi = {
     getActiveTools: () => [],
     getThinkingLevel: thinking,
+    sendUserMessage(message: string) {
+      sent.push(message);
+    },
     on(event: string, handler: Handler) {
       handlers.set(event, handler);
     },

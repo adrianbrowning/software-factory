@@ -104,6 +104,7 @@ const ORCHESTRATION_TOOLS = [
 export const MAX_IDLE_STOP_ATTEMPTS = 3;
 const startSchema = z.object({
   feature: z.string().optional().describe('kebab-case run name for a new run'),
+  mode: z.enum(['headless', 'interactive']).optional().describe('New run only: headless decides every gate by policy instead of asking the user. Default interactive; a resumed run keeps its stored mode.'),
   resume: z.string().optional().describe('Feature name of an existing run to resume instead of starting one'),
   source: sourceInputSchema.optional().describe('The issue, required for a new run: github or file by ref (the tool loads it), jira or text in full'),
 });
@@ -372,7 +373,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         requireOrchestratorSession(ws.config.models, ctx, 'start');
         const source = await loadSource(ctx, ws, params.source);
         await ensureChecks(ctx, ws);
-        run = await startRun(ws, { feature: params.feature, sessionId, source });
+        run = await startRun(ws, { feature: params.feature, mode: params.mode, sessionId, source });
       }
       bindRun(entry.pointer, { feature: run.feature, mainId: ctx.agent.id, ws });
       await pi.setActiveTools([...new Set([...pi.getActiveTools(), ...ORCHESTRATION_TOOLS])]);
@@ -773,7 +774,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
   });
 
   pi.registerCommand('factory', {
-    description: 'Software factory: /factory <issue> | resume <feature> | pause | status | checks | submit [feature]',
+    description: 'Software factory: /factory <issue> | headless <issue> | resume <feature> | pause | status | checks | submit [feature]',
     async handler(args, ctx) {
       const [verb = '', ...rest] = args.trim().split(/\s+/);
       const argument = rest.join(' ');
@@ -839,6 +840,11 @@ export default function softwareFactory(pi: ExtensionAPI) {
         } finally {
           ctx.ui.setStatus('factory-submit', undefined);
         }
+        return;
+      }
+      if (verb === 'headless') {
+        if (argument === '') throw new Error('Usage: /factory headless <issue ref>');
+        pi.sendUserMessage(`Start a headless software-factory run for: ${argument}\nRead skill://software-factory, load the issue, and call factory_start with mode "headless" and that issue as the source.`);
         return;
       }
       pi.sendUserMessage(`Start a software-factory run for: ${args.trim()}\nRead skill://software-factory and follow it.`);

@@ -231,7 +231,7 @@ export async function saveChecks(ws: Workspace, checks: string[]) {
   return parsed;
 }
 
-export async function startRun(ws: Workspace, input: { feature: string; sessionId: string; source: Source }) {
+export async function startRun(ws: Workspace, input: { feature: string; mode?: Run['mode'] | undefined; sessionId: string; source: Source }) {
   requireFeatureName(input.feature);
   if (existsSync(statePath(ws, input.feature))) {
     throw new Error(`Run "${input.feature}" already exists. Use /factory resume ${input.feature}.`);
@@ -251,6 +251,7 @@ export async function startRun(ws: Workspace, input: { feature: string; sessionI
     decisions: [],
     events: [],
     feature: input.feature,
+    mode: input.mode ?? 'interactive',
     models: ws.config.models,
     ownerSessionId: input.sessionId,
     retroRecorded: false,
@@ -971,6 +972,7 @@ export function summarize(ws: Workspace, run: Run) {
     feature: run.feature,
     /** Each role's model from the run snapshot, or `inherit`. */
     models: effectiveModels(run.models),
+    mode: run.mode,
     nextAction: nextAction(run),
     runDir: runDir(ws, run.feature),
     slices: run.slices.map(slice => ({
