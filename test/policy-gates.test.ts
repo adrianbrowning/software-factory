@@ -5,7 +5,7 @@ import { beforeEach, describe, it } from 'node:test';
 import { ctx, load } from './extension.ts';
 import { loadConfig, parseConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
-import { readRun, withRun, type Workspace } from '../src/run.ts';
+import { readRun, withRun, type Run, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, planSlices } from '../src/workflow.ts';
 import { commit, finding, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
@@ -49,16 +49,17 @@ async function headlessRun(root: string, stage: Stage, policy: Record<string, st
 }
 
 
-const GATED: { gate: (typeof GATES)[number]; params: unknown; stage: Stage; titles?: string[]; tool: string }[] = [
-  { gate: 'plan', params: { baseRef: 'main', slices: [slice('Feature')], trunk: 'main' }, stage: 'intake', tool: 'factory_plan' },
-  { gate: 'reslice', params: { slices: [slice('Part one'), slice('Part two')] }, stage: 'active', tool: 'factory_reslice' },
-  { gate: 'decide', params: { decisions: ['Accepted tradeoff.'] }, stage: 'active', tool: 'factory_decide' },
-  { gate: 'seams', params: { seams: ['new seam'] }, stage: 'active', tool: 'factory_amend_seams' },
-  { gate: 'fix', params: { observations: ['thermo-naming'], reason: 'tidy' }, stage: 'green', tool: 'factory_fix' },
-  { gate: 'carry', params: { observations: ['thermo-naming'], to: 'end' }, stage: 'green', tool: 'factory_carry' },
-  { gate: 'reopen', params: { reason: 'bug', slice: '01' }, stage: 'done', tool: 'factory_reopen' },
-  { gate: 'followUp', params: { acceptance: ['logged'], estimateTokens: 500, seams: ['cli'], title: 'Polish', whatToBuild: 'Polish' }, stage: 'done', tool: 'factory_follow_up' },
+const GATED: { effect: (run: Run) => boolean; gate: (typeof GATES)[number]; params: unknown; stage: Stage; titles?: string[]; tool: string }[] = [
+  { effect: run => run.status === 'running' && run.slices.length === 1, gate: 'plan', params: { baseRef: 'main', slices: [slice('Feature')], trunk: 'main' }, stage: 'intake', tool: 'factory_plan' },
+  { effect: run => run.slices.length === 2, gate: 'reslice', params: { slices: [slice('Part one'), slice('Part two')] }, stage: 'active', tool: 'factory_reslice' },
+  { effect: run => run.decisions.includes('Accepted tradeoff.'), gate: 'decide', params: { decisions: ['Accepted tradeoff.'] }, stage: 'active', tool: 'factory_decide' },
+  { effect: run => run.slices[0]?.seams.includes('new seam') === true, gate: 'seams', params: { seams: ['new seam'] }, stage: 'active', tool: 'factory_amend_seams' },
+  { effect: run => run.slices[0]?.fixRounds === 1, gate: 'fix', params: { observations: ['thermo-naming'], reason: 'tidy' }, stage: 'green', tool: 'factory_fix' },
+  { effect: run => run.waiting.length === 1, gate: 'carry', params: { observations: ['thermo-naming'], to: 'end' }, stage: 'green', tool: 'factory_carry' },
+  { effect: run => run.slices[0]?.status === 'active' && run.slices[0].doneSha !== undefined, gate: 'reopen', params: { reason: 'bug', slice: '01' }, stage: 'done', tool: 'factory_reopen' },
+  { effect: run => run.slices.some(item => item.title === 'Polish'), gate: 'followUp', params: { acceptance: ['logged'], estimateTokens: 500, seams: ['cli'], title: 'Polish', whatToBuild: 'Polish' }, stage: 'done', tool: 'factory_follow_up' },
   {
+    effect: run => run.retroRecorded,
     gate: 'retro',
     params: { findings: [{ action: 'apply', category: 'automated-checks', detail: 'Add a lint rule', severity: 'high', target: 'repo', title: 'Lint rule' }] },
     stage: 'done',
@@ -79,11 +80,12 @@ describe('headless config', () => {
 });
 
 describe('headless gates', () => {
-  for (const { gate, params, stage, tool } of GATED) {
+  for (const { effect, gate, params, stage, tool } of GATED) {
     it(`${tool}: auto proceeds with no dialog and records an autonomous event naming "${gate}"`, async () => {
       using repo = tempRepo('factory-gate-', CHECKS_OK);
       const { call, dialogs, ws } = await headlessRun(repo.root, stage, {});
       await call(tool, params);
+      assert.ok(effect(readRun(ws, 'demo')), `${tool} did not take effect`);
       assert.deepEqual(dialogs, []);
       const events = readRun(ws, 'demo').events.filter(event => event.kind === 'autonomous');
       assert.equal(events.length, 1);

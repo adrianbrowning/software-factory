@@ -259,7 +259,11 @@ async function gate(ctx: ExtensionContext, ws: Workspace, feature: string, name:
   throw new Error(`The run is paused, ${reason}. /factory resume ${feature} continues it. Stop now.`);
 }
 
-/** The run source. The tool loads GitHub and file issues itself; the user decides on GitHub text from outside the repository. */
+/**
+ * The run source, plus autonomous-event notes. The tool loads GitHub and file issues itself. For GitHub text from
+ * outside the repository, an interactive run asks the user; a headless run always leaves it out and returns a note
+ * naming the authors.
+ */
 async function loadSource(ctx: ExtensionContext, ws: Workspace, input: SourceInput, mode: Run['mode']): Promise<{ notes: string[]; source: Source }> {
   if (input.kind === 'file') return { notes: [], source: await fileSource(ws, input.ref) };
   if (input.kind !== 'github') return { notes: [], source: input };

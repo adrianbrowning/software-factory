@@ -788,8 +788,8 @@ export async function resumeRun(ws: Workspace, run: Run, sessionId: string) {
   if (filled) run.checks = checksSchema.parse(repoChecks(ws));
   if (activeSlice(run)?.stalled) resolveStall(ws, run, 'continue');
   if (run.status === 'paused' || run.status === 'stalled') {
-    const finished = run.retroRecorded && run.slices.length > 0 && run.slices.every(slice => slice.status === 'done');
-    run.status = run.slices.length === 0 ? 'intake' : finished ? 'done' : 'running';
+    run.status = run.slices.length === 0 ? 'intake' : 'running';
+    settle(run);
   }
   const slice = activeSlice(run);
   if (slice !== undefined && hasPass(slice)) {

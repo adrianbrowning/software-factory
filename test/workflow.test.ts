@@ -380,6 +380,15 @@ describe('pause and resume', () => {
     assert.deepEqual([run.status, run.ownerSessionId], ['running', 'session-2']);
   });
 
+  it('resumes a run with every slice done and a retro but a waiting item to running, not done', async () => {
+    using ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => ((run.slices[0]!.status = 'done'), (run.retroRecorded = true), run.waiting.push('carried'), undefined));
+    await step(ws, run => pauseRun(run, 'test'));
+    await step(ws, run => resumeRun(ws, run, 'session-2'));
+    assert.equal(readRun(ws, 'demo').status, 'running');
+  });
+
   it('keeps a slice in review on its checked commit on resume, dropping only the open review', async () => {
     using ws = workspace();
     await newRun(ws, [slice('Feature')]);
