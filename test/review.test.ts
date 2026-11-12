@@ -990,14 +990,27 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     using ws = workspace({ maxRounds: 2 });
     await twoGreenSlices(ws, false);
     await step(ws, run => fixObservations(ws, run, { observations: ['thermo-naming'] }, 'tidy'));
-    assert.notEqual(readRun(ws, 'demo').slices[1]?.phase, 'ready');
+    const run = readRun(ws, 'demo');
+    assert.equal(run.events.some(event => event.kind === 'fix-observations' && event.slice === '02'), true);
+    assert.equal(run.events.some(event => event.kind === 'fix-observations' && event.slice === '01'), false);
+    assert.equal(run.slices[0]?.status, 'done');
+    assert.equal(run.slices[1]?.fixItems.some(item => item.id === 'thermo-naming'), true);
   });
 
   it('refuses a carry when two done slices list the observation ids, naming both', async () => {
     using ws = workspace({ maxRounds: 2 });
     await twoGreenSlices(ws, true);
-    await assert.rejects(step(ws, run => carryObservations(ws, run, { observations: ['thermo-naming'], to: 'end' })), /Slices 01, 02 all have green reviews that list these observations/);
+    await assert.rejects(
+      step(ws, run => carryObservations(ws, run, { observations: ['thermo-naming'], to: 'end' })),
+      (error: Error) => {
+        assert.match(error.message, /Slices 01, 02 all have green reviews that list these observations.*Build them in a factory_follow_up slice\./);
+        assert.doesNotMatch(error.message, /free-text note/);
+        return true;
+      },
+    );
     assert.deepEqual(readRun(ws, 'demo').waiting, []);
+    await step(ws, run => addFollowUp(ws, run, { acceptance: ['x'], estimateTokens: 500, seams: ['cli'], title: 'Naming', whatToBuild: 'Fix thermo-naming' }));
+    assert.equal(readRun(ws, 'demo').slices.at(-1)?.title, 'Naming');
   });
 
   it('refuses a fix of a done slice\'s observations while a later slice is green, naming the done slice', async () => {
