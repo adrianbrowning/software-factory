@@ -775,7 +775,7 @@ export function resolveObservations(ws: Workspace, run: Run, chosen: Set<string>
     throw unknownObservations(own.review, own.observations, [...chosen].filter(id => !own.observations.some(finding => finding.id === id)));
   }
   const done = run.slices.filter(slice => slice.status === 'done' && slice.review !== undefined);
-  if (done.length === 0) return greenObservations(ws, run, chosen, purpose);
+  if (done.length === 0) throw new Error(`Slice ${requireActive(run).id} has no green review to ${purpose} from.`);
   throw new Error(`No green review lists these observations: ${[...chosen].join(', ')}. Done slices checked: ${done.map(slice => `${slice.id} (${slice.review?.id})`).join(', ')}.`);
 }
 
