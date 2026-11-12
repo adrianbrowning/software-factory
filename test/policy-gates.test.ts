@@ -177,7 +177,7 @@ describe('headless gates', () => {
     await withRun(ws, 'demo', run => resolveStall(ws, run, 'pause'));
     const limit = readRun(ws, 'demo').slices[0]?.roundLimit;
     resetModuleState();
-    await assert.rejects(headlessRunCaller(repo.root).call('factory_start', { resume: 'demo' }), /headless fix budget is fixed/);
+    await assert.rejects(headlessRunCaller(repo.root).call('factory_start', { resume: 'demo' }), /fixed at 1 rounds \(decision 8\)/);
     const run = readRun(ws, 'demo');
     assert.equal(run.slices[0]?.roundLimit, limit);
     assert.equal(run.slices[0]?.stalled, true);
