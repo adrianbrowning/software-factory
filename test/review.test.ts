@@ -568,7 +568,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
   });
 
   /** A state file an older factory wrote: a decision recorded without the decide-time review reset. */
-  const olderDecision = (ws: Workspace) => step(ws, run => void run.decisions.push('Decision an older factory recorded.'));
+  const olderDecision = (ws: Workspace) => step(ws, run => void run.decisions.push({ author: 'user', text: 'Decision an older factory recorded.' }));
 
   it('reopens review on the green commit at completion when an older state file holds a decision newer than the green review', async () => {
     using ws = workspace();
@@ -1557,5 +1557,48 @@ describe('review submissions', { concurrency: 4 }, () => {
     }
     writeFileSync(join(findingsDir, 'security.json'), '[]\n');
     await assert.rejects(step(ws, run => submitValidation(ws, run, { agentId: 'v', dropped: [], keep: [], reviewId })), /changed after it was submitted/);
+  });
+});
+
+describe('autonomous decisions', { concurrency: 4 }, () => {
+  async function headlessReview(ws: Workspace) {
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => void (run.mode = 'headless'));
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => recordDecisions(ws, run, ['Narrow reading: no export.']));
+    await step(ws, run => runChecks(ws, run));
+    return step(ws, run => startReview(ws, run, [], ['react-ts', 'test-validity', 'devops']));
+  }
+
+  it('records the author by run mode, marks autonomous ones in the review data, and loads old string decisions as user', async () => {
+    using ws = workspace();
+    const { dataFile } = await headlessReview(ws);
+    assert.deepEqual(readRun(ws, 'demo').decisions, [{ author: 'autonomous', text: 'Narrow reading: no export.' }]);
+    assert.match(readFileSync(dataFile, 'utf8'), /1\. Narrow reading: no export\. \[AUTONOMOUS:[^\]]*not a waiver\]/);
+    await step(ws, run => void (run.decisions = ['Old plain.'] as never));
+    assert.deepEqual(readRun(ws, 'demo').decisions, [{ author: 'user', text: 'Old plain.' }]);
+  });
+
+  it('records user as the author in an interactive run', async () => {
+    using ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    await step(ws, run => recordDecisions(ws, run, ['User says so.']));
+    assert.equal(readRun(ws, 'demo').decisions[0]?.author, 'user');
+  });
+
+  it('refuses to drop (even as a duplicate) or downgrade a blocking finding that cites an autonomous decision', async () => {
+    using ws = workspace();
+    const { reviewId } = await headlessReview(ws);
+    const cited = { ...finding('react-ts', 'high', 'cited'), decision: 1 };
+    for (const domain of REVIEW_DOMAINS) {
+      await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings: domain === 'react-ts' ? [cited] : domain === 'bug' ? [finding('bug', 'high', 'dup')] : [], reviewId, ...noFixItems(domain) }));
+    }
+    const validate = (input: object) => step(ws, run => submitValidation(ws, run, { agentId: 'v', dropped: [], keep: [], reviewId, ...input }));
+    await assert.rejects(validate({ dropped: [{ id: 'react-ts-cited', reason: 'x' }], keep: ['bug-dup'] }), /autonomous decision cannot be dropped or downgraded/);
+    await assert.rejects(validate({ dropped: [{ id: 'react-ts-cited', reason: 'x', duplicateOf: 'bug-dup' }], keep: ['bug-dup'] }), /autonomous decision cannot be dropped or downgraded/);
+    await assert.rejects(validate({ downgrade: [{ id: 'react-ts-cited', reason: 'x' }], keep: ['bug-dup'] }), /cannot be (dropped or )?downgraded/);
+    await validate({ keep: ['bug-dup', 'react-ts-cited'] });
   });
 });
