@@ -770,9 +770,9 @@ export function requireNotStalled(run: Run) {
   if (slice?.stalled) throw new Error(stallNotice(run, slice));
 }
 
-/** A running, intake, or done run pauses; stalled and paused runs keep their status. Resume restores intake (no approved plan) or done (every slice done and the retro recorded). */
+/** Only a running run pauses; intake, stalled, and done runs keep their status. */
 export function pauseRun(run: Run, reason: string) {
-  if (run.status !== 'running' && run.status !== 'intake' && run.status !== 'done') throw new Error(`Run "${run.feature}" is ${run.status}; only a running, intake, or done run pauses.`);
+  if (run.status !== 'running') throw new Error(`Run "${run.feature}" is ${run.status}; only a running run pauses.`);
   run.status = 'paused';
   addEvent(run, 'pause', reason);
 }
@@ -788,8 +788,11 @@ export async function resumeRun(ws: Workspace, run: Run, sessionId: string) {
   if (filled) run.checks = checksSchema.parse(repoChecks(ws));
   if (activeSlice(run)?.stalled) resolveStall(ws, run, 'continue');
   if (run.status === 'paused' || run.status === 'stalled') {
-    run.status = run.slices.length === 0 ? 'intake' : 'running';
-    settle(run);
+    // Only a headless stop gate pauses an intake or done run, so only a headless run restores intake (no approved plan) or done (settle).
+    if (run.mode === 'headless') {
+      run.status = run.slices.length === 0 ? 'intake' : 'running';
+      settle(run);
+    } else run.status = 'running';
   }
   const slice = activeSlice(run);
   if (slice !== undefined && hasPass(slice)) {

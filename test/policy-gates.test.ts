@@ -7,7 +7,7 @@ import { loadConfig, parseConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
 import { readRun, withRun, type Run, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
-import { approvePlan, nextSlice, planSlices } from '../src/workflow.ts';
+import { approvePlan, nextSlice, planSlices, resolveStall } from '../src/workflow.ts';
 import { commit, finding, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
 
 beforeEach(() => resetModuleState());
@@ -21,8 +21,8 @@ type Stage = 'intake' | 'active' | 'green' | 'done';
 type Reply = { content: { text: string }[] };
 
 /** A headless run in the repo at `root`, whose UI throws on any dialog, taken to `stage` with `titles` slices. */
-async function headlessRun(root: string, stage: Stage, policy: Record<string, string>, titles = ['Feature']) {
-  writeFileSync(join(root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], headless: policy }));
+async function headlessRun(root: string, stage: Stage, policy: Record<string, string>, titles = ['Feature'], extra: Record<string, unknown> = {}) {
+  writeFileSync(join(root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], headless: policy, ...extra }));
   sh(root, 'commit', '-qam', 'policy');
   const commands = new Map<string, Command>();
   const tools = load({ commands, sent: [] });
@@ -127,25 +127,58 @@ describe('headless gates', () => {
     assert.equal(readRun(ws, 'demo').events.some(event => event.kind === 'autonomous'), false);
   });
 
-  it('resume: auto continues a paused headless run with no dialog; stop throws naming the gate and leaves it paused', async () => {
-    for (const policy of ['auto', 'stop']) {
-      using repo = tempRepo('factory-gate-', CHECKS_OK);
-      const { call, dialogs, ws } = await headlessRun(repo.root, 'active', { resume: policy });
-      await call('factory_checks', {}).catch(() => {});
-      await withRun(ws, 'demo', run => ((run.status = 'paused'), undefined));
-      resetModuleState();
-      const again = headlessRunCaller(repo.root);
-      const outcome = again.call('factory_start', { resume: 'demo' });
-      if (policy === 'auto') {
-        await outcome;
-        assert.equal(readRun(ws, 'demo').status, 'running');
-        assert.ok(readRun(ws, 'demo').events.some(event => event.kind === 'autonomous' && /\bresume\b/.test(event.detail)));
-      } else {
-        await assert.rejects(outcome, /\bresume\b/);
-        assert.equal(readRun(ws, 'demo').status, 'paused');
-      }
-      assert.deepEqual(dialogs, []);
-    }
+  it('resume: auto continues a paused headless run with no dialog', async () => {
+    using repo = tempRepo('factory-gate-', CHECKS_OK);
+    const { call, dialogs, ws } = await headlessRun(repo.root, 'active', { resume: 'auto' });
+    await call('factory_checks', {}).catch(() => {});
+    await withRun(ws, 'demo', run => ((run.status = 'paused'), undefined));
+    resetModuleState();
+    await headlessRunCaller(repo.root).call('factory_start', { resume: 'demo' });
+    assert.equal(readRun(ws, 'demo').status, 'running');
+    assert.ok(readRun(ws, 'demo').events.some(event => event.kind === 'autonomous' && /\bresume\b/.test(event.detail)));
+    assert.deepEqual(dialogs, []);
+  });
+
+  /** Rewrites only the headless policy on disk, as a person editing .omp/factory.json between the stop and the resume. */
+  function setPolicy(root: string, extra: Record<string, unknown>, policy: Record<string, string>) {
+    writeFileSync(join(root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], headless: policy, ...extra }));
+  }
+
+  async function assertResumeStops(root: string, ws: Workspace, dialogs: string[]) {
+    const pauses = () => readRun(ws, 'demo').events.filter(event => event.kind === 'pause').length;
+    const before = pauses();
+    const asked = dialogs.length;
+    resetModuleState();
+    await assert.rejects(headlessRunCaller(root).call('factory_start', { resume: 'demo' }), /gate "resume"/);
+    const run = readRun(ws, 'demo');
+    assert.equal(pauses(), before + 1);
+    assert.equal(run.events.at(-1)?.kind, 'pause');
+    assert.match(run.events.at(-1)?.detail ?? '', /gate "resume"/);
+    assert.equal(run.status, 'paused');
+    assert.deepEqual(dialogs.slice(asked), []);
+  }
+
+  it('resume: stop throws naming the gate, records a pause event for it, and keeps a run paused by factory_pause paused', async () => {
+    using repo = tempRepo('factory-gate-', CHECKS_OK);
+    const { call, dialogs, ws } = await headlessRun(repo.root, 'active', { resume: 'auto' });
+    await call('factory_pause', { reason: 'needs a person' });
+    assert.equal(readRun(ws, 'demo').status, 'paused');
+    setPolicy(repo.root, {}, { resume: 'stop' });
+    await assertResumeStops(repo.root, ws, dialogs);
+  });
+
+  it('resume: stop throws naming the gate, records a pause event for it, and leaves a run stalled on its fix budget paused', async () => {
+    using repo = tempRepo('factory-gate-', CHECKS_OK);
+    const { call, dialogs, ws } = await headlessRun(repo.root, 'active', { resume: 'auto' }, ['Feature'], { maxRounds: 1 });
+    sh(repo.root, 'rm', '-q', 'ok');
+    sh(repo.root, 'commit', '-qm', 'break the check');
+    await call('factory_checks', {}).catch(() => {});
+    await call('factory_checks', {}).catch(() => {});
+    assert.equal(readRun(ws, 'demo').slices[0]?.stalled, true);
+    await withRun(ws, 'demo', run => resolveStall(ws, run, 'pause'));
+    assert.equal(readRun(ws, 'demo').status, 'stalled');
+    setPolicy(repo.root, { maxRounds: 1 }, { resume: 'stop' });
+    await assertResumeStops(repo.root, ws, dialogs);
   });
 });
 
