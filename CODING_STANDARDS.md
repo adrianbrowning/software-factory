@@ -13,3 +13,7 @@ The handlers for `before_subagent_spawn`, `turn_end` and `session_stop` run in e
 ## Module state in tests
 
 `src/index.ts` and `src/agents.ts` keep run state at module level, and every test in a file shares it. Every test file that loads the extension calls `resetModuleState()` in a `beforeEach` hook, so each test starts with no runs, stop attempts, cached roots or audited sessions, and passes or fails on its own state alone. Never reset inside a fixture: a second fixture call in the same test must keep the runs the first one started.
+
+## Refusal messages
+
+A refusal or error message that names a next step must name a step that works in the state that produced the refusal, and a test runs that step once after the refusal. Example: the ambiguity refusal in `resolveObservations` told the orchestrator to carry the items as a free-text note, but a note-only `factory_carry` needs an active slice with a green review, and the refusal happened with no active slice.
