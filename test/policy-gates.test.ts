@@ -167,18 +167,21 @@ describe('headless gates', () => {
     await assertResumeStops(repo.root, ws, dialogs);
   });
 
-  it('resume: stop throws naming the gate, records a pause event for it, and leaves a run stalled on its fix budget paused', async () => {
+  it('resume: auto on a headless run stalled on its fix budget refuses, since the headless fix budget is fixed (decision 8)', async () => {
     using repo = tempRepo('factory-gate-', CHECKS_OK);
-    const { call, dialogs, ws } = await headlessRun(repo.root, 'active', { resume: 'auto' }, ['Feature'], { maxRounds: 1 });
+    const { call, ws } = await headlessRun(repo.root, 'active', { resume: 'auto' }, ['Feature'], { maxRounds: 1 });
     sh(repo.root, 'rm', '-q', 'ok');
     sh(repo.root, 'commit', '-qm', 'break the check');
     await call('factory_checks', {}).catch(() => {});
     await call('factory_checks', {}).catch(() => {});
-    assert.equal(readRun(ws, 'demo').slices[0]?.stalled, true);
     await withRun(ws, 'demo', run => resolveStall(ws, run, 'pause'));
-    assert.equal(readRun(ws, 'demo').status, 'stalled');
-    setPolicy(repo.root, { maxRounds: 1 }, { resume: 'stop' });
-    await assertResumeStops(repo.root, ws, dialogs);
+    const limit = readRun(ws, 'demo').slices[0]?.roundLimit;
+    resetModuleState();
+    await assert.rejects(headlessRunCaller(repo.root).call('factory_start', { resume: 'demo' }), /headless fix budget is fixed/);
+    const run = readRun(ws, 'demo');
+    assert.equal(run.slices[0]?.roundLimit, limit);
+    assert.equal(run.slices[0]?.stalled, true);
+    assert.equal(run.status, 'stalled');
   });
 });
 

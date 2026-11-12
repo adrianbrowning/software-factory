@@ -296,6 +296,9 @@ export default function softwareFactory(pi: ExtensionAPI) {
       requireOrchestratorSession(current.models, ctx, 'resume');
       const slice = activeSlice(current);
       if (slice?.stalled) {
+        if (current.mode === 'headless') {
+          throw new Error(`The headless fix budget is fixed (3 rounds, decision 8), so resume does not raise it. "${feature}" stays stalled. ${stallNotice(current, slice)}`);
+        }
         const body = `In "${feature}", slice ${slice.id} "${slice.title}" used up its fix budget of ${slice.roundLimit} rounds. Raise the fix budget by ${ws.config.maxRounds} rounds and resume?`;
         if (!(await gate(ctx, ws, feature, 'resume', 'Resume software factory run', body))) {
           if (current.status !== 'stalled') await withRun(ws, feature, latest => resolveStall(ws, latest, 'pause'));
