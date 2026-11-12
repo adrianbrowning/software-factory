@@ -28,7 +28,7 @@ import {
   type Workspace,
 } from './run.ts';
 import { implementerReportSchema, startImplementerSession, submitImplementerReport } from './report.ts';
-import { boundAt, cachedRoot, NO_ACTIVE_RUN, type Reply, resetRoots, toolRegistrar } from './tool-scope.ts';
+import { boundAt, cachedRoot, NO_ACTIVE_RUN, type Reply, resetRoots, type RootEntry, toolRegistrar } from './tool-scope.ts';
 import { submitStack } from './submit.ts';
 import {
   completeSlice,
@@ -55,6 +55,7 @@ import {
   type FiledIssues,
   fileSource,
   githubSource,
+  headlessTarget,
   nextAction,
   nextSlice,
   parseRetro,
@@ -329,6 +330,53 @@ export default function softwareFactory(pi: ExtensionAPI) {
   const STALL_DESCRIPTION =
     'A used-up fix budget asks the user to continue or pause; a paused run stalls until /factory resume, which asks whether to raise the budget.';
 
+  /** What `factory_start` and `/factory headless` do: resume a run, or load the issue, check the setup, start the run and bind this session to it. */
+  async function startOrResume(params: z.infer<typeof startSchema>, { entry, ws }: { entry: RootEntry; ws: Workspace }, ctx: ExtensionContext) {
+    const sessionId = ctx.sessionManager.getSessionId();
+    let run: Run;
+    if (params.resume !== undefined) {
+      const feature = requireFeatureName(params.resume);
+      if (!existsSync(statePath(ws, feature))) throw new Error(`No run named "${feature}".`);
+      forgetRun(ws, feature);
+      const current = readRun(ws, feature);
+      requireOrchestratorSession(current.models, ctx, 'resume');
+      const slice = activeSlice(current);
+      if (slice?.stalled) {
+        const body = `In "${feature}", slice ${slice.id} "${slice.title}" used up its fix budget of ${slice.roundLimit} rounds. Raise the fix budget by ${ws.config.maxRounds} rounds and resume?`;
+        if (!(await confirm(ctx, 'Resume software factory run', body))) {
+          if (current.status !== 'stalled') await withRun(ws, feature, latest => resolveStall(ws, latest, 'pause'));
+          throw new Error(`The user kept "${feature}" stalled. ${stallNotice(current, slice)}`);
+        }
+      } else if (current.status === 'paused' || current.status === 'stalled') {
+        if (!(await confirm(ctx, 'Resume software factory run', `Resume "${feature}" (${current.status})?`))) {
+          throw new Error(`The user kept "${feature}" ${current.status}.`);
+        }
+      }
+      if (current.checks.length === 0) await ensureChecks(ctx, ws);
+      run = await withRun(ws, feature, async latest => {
+        await resumeRun(ws, latest, sessionId);
+        return latest;
+      });
+    } else {
+      if (params.feature === undefined || params.source === undefined) throw new Error('A new run needs feature and source.');
+      const bound = boundAt(entry);
+      if (bound !== undefined && isRunning(bound)) {
+        throw new Error(`Run "${bound.feature}" is still running in this repository. Finish or /factory pause it first.`);
+      }
+      requireAvailableModels(ws.config.models, spec => ctx.models.resolve(spec));
+      requireOrchestratorSession(ws.config.models, ctx, 'start');
+      const source = await loadSource(ctx, ws, params.source);
+      await ensureChecks(ctx, ws);
+      run = await startRun(ws, { feature: params.feature, mode: params.mode, sessionId, source });
+    }
+    bindRun(entry.pointer, { feature: run.feature, mainId: ctx.agent.id, ws });
+    await pi.setActiveTools([...new Set([...pi.getActiveTools(), ...ORCHESTRATION_TOOLS])]);
+    return reply(
+      `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${ws.config.maxRounds}.\nNext: ${nextAction(run)}`,
+      summarize(ws, run),
+    );
+  }
+
   startTool({
     caller: 'main',
     description:
@@ -337,51 +385,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
     label: 'Factory: start',
     name: 'factory_start',
     schema: startSchema,
-    async run(params, { entry, ws }, ctx) {
-      const sessionId = ctx.sessionManager.getSessionId();
-      let run: Run;
-      if (params.resume !== undefined) {
-        const feature = requireFeatureName(params.resume);
-        if (!existsSync(statePath(ws, feature))) throw new Error(`No run named "${feature}".`);
-        forgetRun(ws, feature);
-        const current = readRun(ws, feature);
-        requireOrchestratorSession(current.models, ctx, 'resume');
-        const slice = activeSlice(current);
-        if (slice?.stalled) {
-          const body = `In "${feature}", slice ${slice.id} "${slice.title}" used up its fix budget of ${slice.roundLimit} rounds. Raise the fix budget by ${ws.config.maxRounds} rounds and resume?`;
-          if (!(await confirm(ctx, 'Resume software factory run', body))) {
-            if (current.status !== 'stalled') await withRun(ws, feature, latest => resolveStall(ws, latest, 'pause'));
-            throw new Error(`The user kept "${feature}" stalled. ${stallNotice(current, slice)}`);
-          }
-        } else if (current.status === 'paused' || current.status === 'stalled') {
-          if (!(await confirm(ctx, 'Resume software factory run', `Resume "${feature}" (${current.status})?`))) {
-            throw new Error(`The user kept "${feature}" ${current.status}.`);
-          }
-        }
-        if (current.checks.length === 0) await ensureChecks(ctx, ws);
-        run = await withRun(ws, feature, async latest => {
-          await resumeRun(ws, latest, sessionId);
-          return latest;
-        });
-      } else {
-        if (params.feature === undefined || params.source === undefined) throw new Error('A new run needs feature and source.');
-        const bound = boundAt(entry);
-        if (bound !== undefined && isRunning(bound)) {
-          throw new Error(`Run "${bound.feature}" is still running in this repository. Finish or /factory pause it first.`);
-        }
-        requireAvailableModels(ws.config.models, spec => ctx.models.resolve(spec));
-        requireOrchestratorSession(ws.config.models, ctx, 'start');
-        const source = await loadSource(ctx, ws, params.source);
-        await ensureChecks(ctx, ws);
-        run = await startRun(ws, { feature: params.feature, mode: params.mode, sessionId, source });
-      }
-      bindRun(entry.pointer, { feature: run.feature, mainId: ctx.agent.id, ws });
-      await pi.setActiveTools([...new Set([...pi.getActiveTools(), ...ORCHESTRATION_TOOLS])]);
-      return reply(
-        `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${ws.config.maxRounds}.\nNext: ${nextAction(run)}`,
-        summarize(ws, run),
-      );
-    },
+    run: startOrResume,
   });
 
   tool({
@@ -844,7 +848,10 @@ export default function softwareFactory(pi: ExtensionAPI) {
       }
       if (verb === 'headless') {
         if (argument === '') throw new Error('Usage: /factory headless <issue ref>');
-        pi.sendUserMessage(`Start a headless software-factory run for: ${argument}\nRead skill://software-factory, load the issue, and call factory_start with mode "headless" and that issue as the source.`);
+        // The command starts the run itself, so its mode is headless whatever the model does next.
+        const { feature, source } = headlessTarget(argument);
+        await startOrResume({ feature, mode: 'headless', source }, { entry: await cachedRoot(ctx.cwd), ws }, ctx);
+        pi.sendUserMessage(`A headless software-factory run "${feature}" is started for: ${argument}\nRead skill://software-factory and continue it from its next action (${nextAction(readRun(ws, feature))}).`);
         return;
       }
       pi.sendUserMessage(`Start a software-factory run for: ${args.trim()}\nRead skill://software-factory and follow it.`);
