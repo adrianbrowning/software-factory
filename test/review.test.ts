@@ -1575,6 +1575,7 @@ describe('autonomous decisions', { concurrency: 4 }, () => {
     using ws = workspace();
     const { dataFile } = await headlessReview(ws);
     assert.deepEqual(readRun(ws, 'demo').decisions, [{ author: 'autonomous', text: 'Narrow reading: no export.' }]);
+    assert.match(readFileSync(ticketPath(ws, 'demo', readRun(ws, 'demo').slices[0]!), 'utf8'), /1\. Narrow reading: no export\. \[AUTONOMOUS:/);
     assert.match(readFileSync(dataFile, 'utf8'), /1\. Narrow reading: no export\. \[AUTONOMOUS:[^\]]*not a waiver\]/);
     await step(ws, run => void (run.decisions = ['Old plain.'] as never));
     assert.deepEqual(readRun(ws, 'demo').decisions, [{ author: 'user', text: 'Old plain.' }]);
