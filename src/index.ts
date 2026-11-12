@@ -249,9 +249,9 @@ async function gate(ctx: ExtensionContext, ws: Workspace, feature: string, name:
   }
   const reason = `headless gate "${name}" is set to stop: ${title}`;
   await withRun(ws, feature, run => {
-    if (run.status === 'running' || run.status === 'intake') pauseRun(run, reason);
+    if (run.status === 'running' || run.status === 'intake' || run.status === 'done') pauseRun(run, reason);
     else {
-      // A stalled run becomes paused (its stalled slice keeps asking to raise the budget on resume); a paused or done run keeps its status.
+      // A stalled run becomes paused (its stalled slice keeps asking to raise the budget on resume); a paused run keeps its status.
       if (run.status === 'stalled') run.status = 'paused';
       addEvent(run, 'pause', reason);
     }

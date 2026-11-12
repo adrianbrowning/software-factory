@@ -370,7 +370,7 @@ describe('pause and resume', () => {
     assert.equal(readRun(ws, 'demo').status, 'paused');
     await step(ws, run => resumeRun(ws, run, 'session-2'));
     assert.equal(readRun(ws, 'demo').status, 'intake');
-    await assert.rejects(step(ws, run => pauseRun(run, 'test')).then(() => step(ws, run => pauseRun(run, 'again'))), /paused; only a running or intake run pauses/);
+    await assert.rejects(step(ws, run => pauseRun(run, 'test')).then(() => step(ws, run => pauseRun(run, 'again'))), /paused; only a running, intake, or done run pauses/);
 
     await step(ws, run => resumeRun(ws, run, 'session-2'));
     await step(ws, run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')])));

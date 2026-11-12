@@ -155,6 +155,21 @@ function headlessRunCaller(root: string) {
   return { call: async (name: string, params: unknown) => tools.get(name)?.execute('id', params, undefined, undefined, caller) };
 }
 
+describe('stop gate on a done run', () => {
+  it('factory_follow_up stop pauses a done run, and resume restores done', async () => {
+    using repo = tempRepo('factory-gate-done-', CHECKS_OK);
+    const { call, ws } = await headlessRun(repo.root, 'done', { followUp: 'stop' });
+    await call('factory_retro', { findings: [] });
+    assert.equal(readRun(ws, 'demo').status, 'done');
+    const params = { acceptance: ['logged'], estimateTokens: 500, seams: ['cli'], title: 'Polish', whatToBuild: 'Polish' };
+    await assert.rejects(call('factory_follow_up', params), /followUp/);
+    assert.equal(readRun(ws, 'demo').status, 'paused');
+    resetModuleState();
+    await headlessRunCaller(repo.root).call('factory_start', { resume: 'demo' });
+    assert.equal(readRun(ws, 'demo').status, 'done');
+  });
+});
+
 describe('factory_pause', () => {
   it('pauses a running headless run with the reason, and refuses a run that is not running', async () => {
     using repo = tempRepo('factory-pause-', CHECKS_OK);
