@@ -904,6 +904,119 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     assert.deepEqual(readRun(ws, 'demo').slices, before.slices, 'a refused carry changes nothing');
   });
 
+  it('carries observations of a done slice to the end of the run and records the carry on that slice, with no active slice', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    await greenWithObservation(ws);
+    await step(ws, run => completeSlice(ws, run));
+
+    await step(ws, run => carryObservations(ws, run, { observations: ['thermo-naming'], to: 'end' }));
+    const run = readRun(ws, 'demo');
+    assert.equal(run.waiting.length, 1);
+    assert.match(run.waiting[0] ?? '', /^### From green review 01-r1 of slice 01 "Feature"\n\n#### \[observation\] thermo-naming/);
+    assert.match(run.events.at(-1)?.detail ?? '', /01-r1 to the end of the run: thermo-naming/);
+    assert.equal(run.events.at(-1)?.slice, '01');
+  });
+
+  it('carries observations of a done slice into a pending slice while the next slice is already active', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    await newRun(ws, [slice('Feature'), slice('Second', ['Feature']), slice('Third', ['Second'])]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const opened = await step(ws, run => startReview(ws, run));
+    await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming')]);
+    await step(ws, run => recordReview(ws, run));
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => nextSlice(ws, run));
+    const before = readRun(ws, 'demo');
+
+    await assert.rejects(step(ws, run => carryObservations(ws, run, { observations: ['thermo-naming', 'bug-made-up'], to: '03' })), /No green review lists these observations: thermo-naming, bug-made-up\. Done slices checked: 01 \(01-r1\)/);
+    await assert.rejects(step(ws, run => carryObservations(ws, run, { observations: ['thermo-naming'], to: '02' })), /Slice 02 is active; factory_carry takes a pending slice/);
+    assert.deepEqual(readRun(ws, 'demo').slices, before.slices);
+
+    await step(ws, run => carryObservations(ws, run, { observations: ['thermo-naming'], to: '03' }));
+    const after = readRun(ws, 'demo');
+    assert.match(readFileSync(ticketPath(ws, 'demo', after.slices[2] ?? assert.fail('no slice')), 'utf8'), /### From green review 01-r1 of slice 01 "Feature"[\s\S]*thermo-naming/);
+    assert.equal(after.slices[1]?.status, 'active');
+  });
+
+  it('refuses observation ids that no done slice lists, with or without an active slice', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    await greenWithObservation(ws);
+    await step(ws, run => completeSlice(ws, run));
+    await assert.rejects(step(ws, run => carryObservations(ws, run, { observations: ['bug-made-up'], to: 'end' })), /No green review lists these observations: bug-made-up\. Done slices checked: 01 \(01-r1\)/);
+    await assert.rejects(step(ws, run => carryObservations(ws, run, { note: 'Later.', to: 'end' })), /No active slice/);
+    assert.deepEqual(readRun(ws, 'demo').waiting, []);
+  });
+
+  it('refuses a fix of observations of a done slice, naming the slice, the review, and the next steps', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    await greenWithObservation(ws);
+    await step(ws, run => completeSlice(ws, run));
+    const message = /Slice 01 is done \(green review 01-r1\); factory_complete_slice already ran\. .*factory_reopen.*factory_follow_up/;
+    await assert.rejects(step(ws, run => fixObservations(ws, run, { observations: ['thermo-naming'] }, 'tidy')), message);
+    assert.equal(readRun(ws, 'demo').slices[0]?.status, 'done');
+  });
+
+  async function twoGreenSlices(ws: Workspace, completeSecond: boolean) {
+    await newRun(ws, [slice('Feature'), slice('Second', ['Feature']), slice('Third', ['Second'])]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const first = await step(ws, run => startReview(ws, run));
+    await review(ws, first.reviewId, [finding('thermo', 'observation', 'naming')]);
+    await step(ws, run => recordReview(ws, run));
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'second.txt');
+    await step(ws, run => runChecks(ws, run));
+    const second = await step(ws, run => startReview(ws, run));
+    await review(ws, second.reviewId, [{ ...finding('thermo', 'observation', 'naming'), path: 'second.txt' }]);
+    await step(ws, run => recordReview(ws, run));
+    if (completeSecond) await step(ws, run => completeSlice(ws, run));
+  }
+
+  it('carries the active slice\'s observations when a done slice\'s review lists the same ids', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    await twoGreenSlices(ws, false);
+    await step(ws, run => carryObservations(ws, run, { observations: ['thermo-naming'], to: '03' }));
+    const run = readRun(ws, 'demo');
+    assert.equal(run.slices[2]?.carried.length, 1);
+    assert.equal(run.events.some(event => event.kind === 'carry' && event.slice === '02'), true);
+    assert.equal(run.events.some(event => event.kind === 'carry' && event.slice === '01'), false);
+  });
+
+  it('fixes the active slice\'s observations when a done slice\'s review lists the same ids', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    await twoGreenSlices(ws, false);
+    await step(ws, run => fixObservations(ws, run, { observations: ['thermo-naming'] }, 'tidy'));
+    assert.notEqual(readRun(ws, 'demo').slices[1]?.phase, 'ready');
+  });
+
+  it('refuses a carry when two done slices list the observation ids, naming both', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    await twoGreenSlices(ws, true);
+    await assert.rejects(step(ws, run => carryObservations(ws, run, { observations: ['thermo-naming'], to: 'end' })), /Slices 01, 02 all have green reviews that list these observations/);
+    assert.deepEqual(readRun(ws, 'demo').waiting, []);
+  });
+
+  it('refuses a fix of a done slice\'s observations while a later slice is green, naming the done slice', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    await newRun(ws, [slice('Feature'), slice('Second', ['Feature'])]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const opened = await step(ws, run => startReview(ws, run));
+    await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming')]);
+    await step(ws, run => recordReview(ws, run));
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'second.txt');
+    await green(ws);
+    await assert.rejects(step(ws, run => fixObservations(ws, run, { observations: ['thermo-naming'] }, 'tidy')), /Slice 01 is done \(green review 01-r1\); factory_complete_slice already ran/);
+    assert.equal(readRun(ws, 'demo').slices[1]?.phase, 'ready');
+  });
+
   it('queues carried work on the run for the end-of-run follow-up without changing any slice', async () => {
     using ws = workspace({ maxRounds: 2 });
     await newRun(ws, [slice('Feature'), slice('Second', ['Feature'])]);

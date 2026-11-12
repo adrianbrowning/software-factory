@@ -50,6 +50,8 @@ Show the breakdown to the user with `ask` and iterate on granularity, blocking e
 
 Repeat until `factory_next` reports no slices left:
 
+Call `factory_*` tools one at a time: wait for each reply before the next call, and never put two in one parallel batch. Each call changes the run state, and a later call in the same batch can see the state before or after an earlier one.
+
 1. `factory_next` checks out the slice branch and returns the ticket path and the implementer report file.
 2. Spawn one `factory-implementer` with the ticket path, branch, check commands, and budget from `factory_next`.
    - `NEEDS SEAM`: ask the user, record the agreed seam with `factory_amend_seams`, and spawn the implementer again.

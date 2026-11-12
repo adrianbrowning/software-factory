@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { effectiveModels } from './config.ts';
 import { evidence, evidenceLine, redact } from './evidence.ts';
 import { gh, git } from './exec.ts';
-import { greenObservations, renderFinding } from './review.ts';
+import { resolveObservations, renderFinding } from './review.ts';
 import {
   activeSlice,
   addEvent,
@@ -361,22 +361,23 @@ ${slice.carried.join('\n\n')}
 }
 
 /**
- * What factory_carry takes: observation ids from the active slice's green review, a free-text note, or both, and where
- * they go: a pending slice id, or "end" to wait on the run for the next follow-up slice.
+ * What factory_carry takes: observation ids from a green review (the active slice's, else the one done slice's that
+ * lists them), a free-text note, or both, and where they go: a pending slice id, or "end" to wait on the run for the
+ * next follow-up slice.
  */
 export type CarryRequest = { note?: string | undefined; observations?: string[] | undefined; to: string };
 
 /**
- * The target of `request.to` (a pending slice, or undefined for "end"), the observations chosen from the active
- * slice's green review, and the note. Throws for a request with neither, for a slice without a green review, for an id
- * that is not one of its observations, and for a target that is neither "end" nor a pending slice. Does not change the
- * run.
+ * The target of `request.to` (a pending slice, or undefined for "end"), the observations chosen from the green review
+ * that lists them (the active slice's first, else one done slice's), and the note. Throws for a request with neither,
+ * for a slice without a green review, for ids no review lists or several done slices list, and for a target that is
+ * neither "end" nor a pending slice. Does not change the run.
  */
 export function planCarry(ws: Workspace, run: Run, request: CarryRequest) {
   const note = request.note?.trim() ? request.note : undefined;
   const chosen = new Set(z.array(z.string().min(1)).parse(request.observations ?? []));
   if (note === undefined && chosen.size === 0) throw new Error('factory_carry needs observation ids, a note, or both.');
-  const green = greenObservations(ws, run, chosen, 'carry observations or a note');
+  const green = resolveObservations(ws, run, chosen, 'carry observations or a note');
   if (request.to === 'end') return { note, ...green, target: undefined };
   const target = run.slices.find(candidate => candidate.id === request.to);
   if (target === undefined) throw new Error(`No slice ${request.to}. Slices: ${run.slices.map(candidate => candidate.id).join(', ')}.`);
@@ -385,9 +386,9 @@ export function planCarry(ws: Workspace, run: Run, request: CarryRequest) {
 }
 
 /**
- * Carries the chosen observations and the note from the active slice's green review into the ticket of a pending
+ * Carries the chosen observations and the note from the green review that lists them into the ticket of a pending
  * slice, whose implementer builds them and whose reviewers check them, or, for "end", onto the run's waiting queue
- * for the next follow-up slice. The active slice keeps its green review.
+ * for the next follow-up slice. The slice keeps its green review.
  */
 export function carryObservations(ws: Workspace, run: Run, request: CarryRequest) {
   const planned = planCarry(ws, run, request);
