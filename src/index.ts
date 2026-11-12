@@ -351,14 +351,20 @@ export default function softwareFactory(pi: ExtensionAPI) {
 
   tool({
     caller: 'main',
-    description: 'Pause a headless run with a reason when the orchestrator cannot resolve something. /factory resume continues it. Refused for an interactive run and for a run that is not running.',
+    description: 'Pause a headless run with a reason when the orchestrator cannot resolve something. /factory resume continues it. Works in intake or while running; refused for an interactive run and for any other status.',
     label: 'Factory: pause',
     name: 'factory_pause',
     schema: z.object({ reason: z.string().min(1).describe('Why the run cannot go on without a person') }),
     async run(params, { feature, ws }) {
       await withRun(ws, feature, run => {
         if (run.mode !== 'headless') throw new Error(`Run "${feature}" is interactive; factory_pause pauses headless runs only. The user pauses an interactive run with /factory pause.`);
-        if (run.status !== 'running') throw new Error(`Run "${feature}" is ${run.status}; factory_pause pauses a running run.`);
+        if (run.status === 'intake') {
+          // Intake has no approved plan; pauseRun stays running-only, so the tool records the pause itself.
+          run.status = 'paused';
+          addEvent(run, 'pause', params.reason);
+          return;
+        }
+        if (run.status !== 'running') throw new Error(`Run "${feature}" is ${run.status}; factory_pause pauses a running or intake run.`);
         pauseRun(run, params.reason);
       });
       return reply(`Run "${feature}" is paused: ${params.reason}\n/factory resume ${feature} continues it. Stop now.`);

@@ -219,7 +219,23 @@ describe('factory_pause', () => {
     const run = readRun(ws, 'demo');
     assert.equal(run.status, 'paused');
     assert.equal(run.events.at(-1)?.detail, 'issue contradicts itself');
-    await assert.rejects(call('factory_pause', { reason: 'again' }), /is paused; factory_pause pauses a running run/);
+    await assert.rejects(call('factory_pause', { reason: 'again' }), /is paused; factory_pause pauses a running or intake run/);
+  });
+
+  it('pauses a headless run in intake with the reason, and resume returns it to intake', async () => {
+    using repo = tempRepo('factory-pause-', CHECKS_OK);
+    const { call, ws } = await headlessRun(repo.root, 'intake', {});
+    await call('factory_pause', { reason: 'issue contradicts itself' });
+    const paused = readRun(ws, 'demo');
+    assert.equal(paused.status, 'paused');
+    assert.equal(paused.events.at(-1)?.kind, 'pause');
+    assert.equal(paused.events.at(-1)?.detail, 'issue contradicts itself');
+    resetModuleState();
+    await headlessRunCaller(repo.root).call('factory_start', { resume: 'demo' });
+    const run = readRun(ws, 'demo');
+    assert.equal(run.status, 'intake');
+    assert.equal(run.slices.length, 0);
+    assert.ok(run.events.some(event => event.kind === 'resume'));
   });
 
   it('refuses an interactive run', async () => {
