@@ -536,6 +536,10 @@ describe('headless submit', () => {
     assert.ok(kinds.includes('autonomous'), kinds.join());
     assert.ok(kinds.includes('submit-failed'));
     assert.ok(!kinds.includes('submit'));
+    await withRun(ws, 'demo', run => { run.retroRecorded = false; });
+    await call('factory_retro', { findings: [] });
+    const gateChoices = readRun(ws, 'demo').events.filter(event => event.kind === 'autonomous' && event.detail.startsWith('gate submission (auto)'));
+    assert.equal(gateChoices.length, 1, 'a repeat submission lists the gate choice once');
   });
 
   it('saves the autonomous, submit and submit-failed events when a PATCH fails after gh stack submit succeeds', async () => {

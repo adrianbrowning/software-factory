@@ -254,7 +254,11 @@ async function submitHeadless(ws: Workspace, feature: string, stop?: { reason: s
   if (ws.config.headless.submission === 'stop') return '\nThe headless policy sets submission to stop, so no PRs were opened. /factory submit opens them.';
   // Saved before submitStack runs, so a later failure cannot discard the choice; each PR body lists it.
   const stopped = stop === undefined ? undefined : run.slices.find(slice => slice.id === stop.sliceId);
-  await withRun(ws, feature, current => addEvent(current, 'autonomous', `gate submission (auto): opening draft PRs${stopped === undefined ? '' : ` for the slices below slice ${stopped.id}`}`));
+  const choice = `gate submission (auto): opening draft PRs${stopped === undefined ? '' : ` for the slices below slice ${stopped.id}`}`;
+  // A repeat submission (a retry) must not list the same gate choice twice.
+  await withRun(ws, feature, current => {
+    if (!current.events.some(event => event.kind === 'autonomous' && event.detail === choice)) addEvent(current, 'autonomous', choice);
+  });
   try {
     return await withRun(ws, feature, async current => {
       const output = await submitStack(ws, current, () => {}, stopped === undefined || stop === undefined ? undefined : { reason: stop.reason, slice: stopped });
