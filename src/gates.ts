@@ -9,6 +9,11 @@ async function confirm(ctx: ExtensionContext, title: string, body: string) {
   return ctx.ui.confirm(title, body);
 }
 
+/** A confirmation only an interactive run asks; a headless run proceeds with no policy lookup. Reads the run's mode, never ctx.hasUI. */
+export async function confirmInteractive(ctx: ExtensionContext, ws: Workspace, feature: string, title: string, body: string) {
+  return readRun(ws, feature).mode === 'headless' || confirm(ctx, title, body);
+}
+
 /**
  * A confirmation gate. An interactive run asks the user. A headless run follows the policy for the gate: auto records an
  * autonomous event and proceeds; stop saves a pause with a reason naming the gate, then throws.

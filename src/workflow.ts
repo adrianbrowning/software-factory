@@ -427,7 +427,7 @@ export function carryObservations(ws: Workspace, run: Run, request: CarryRequest
 }
 
 /** Throws for an observation already sent to the deferred sink; with `alsoCarried`, also for one already carried to a slice or the end queue. */
-function requireUnhandled(run: Run, reviewId: string, observations: { id: string }[], alsoCarried: boolean) {
+export function requireUnhandled(run: Run, reviewId: string, observations: { id: string }[], alsoCarried: boolean) {
   const carried = alsoCarried ? observations.filter(finding => run.carriedObservations.includes(`${reviewId}:${finding.id}`)) : [];
   if (carried.length > 0) throw new Error(`Observations already carried: ${carried.map(finding => finding.id).join(', ')}.`);
   const deferred = observations.filter(finding => run.deferred.some(item => item.key === `${reviewId}:${finding.id}`));

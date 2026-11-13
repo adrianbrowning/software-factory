@@ -49,6 +49,7 @@ import {
   settle,
   UNTRUSTED_NOTE,
   writeTicket,
+  requireUnhandled,
 } from './workflow.ts';
 
 function noGreenReview(sliceId: string, purpose: string): Error {
@@ -841,6 +842,7 @@ export function planFix(ws: Workspace, run: Run, request: FixRequest) {
       `Slice ${found.slice.id} is done (green review ${found.review.id}); factory_complete_slice already ran. Ask the user: factory_reopen fixes these in slice ${found.slice.id}, factory_follow_up builds them in a new slice on top of the stack.`,
     );
   }
+  requireUnhandled(run, found.review.id, found.observations, true);
   return { bug, ...found };
 }
 

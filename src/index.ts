@@ -7,7 +7,7 @@ import { auditChild, IMPLEMENTER, REVIEWER, resetAudit, SPAWN_ROLES, VALIDATOR }
 import { CONFIG_PATH, describeModels, loadConfig, requireAvailableModels, requireOrchestrator, type RoleModels, routeSpawn } from './config.ts';
 import { evidenceHead } from './evidence.ts';
 import { deferItems } from './deferred.ts';
-import { chooseChecks, ensureChecks, gate, loadSource } from './gates.ts';
+import { chooseChecks, confirmInteractive, ensureChecks, gate, loadSource } from './gates.ts';
 import {
   activeSlice,
   addEvent,
@@ -744,7 +744,14 @@ export default function softwareFactory(pi: ExtensionAPI) {
     label: 'Factory: defer to the sink',
     name: 'factory_defer',
     schema: deferSchema,
-    async run(params, { feature, ws }) {
+    async run(params, { feature, ws }, ctx) {
+      // Refuses a project without a sink, empty input, unknown ids, and ids already carried or deferred, without a dialog.
+      const planned = planDefer(ws, readRun(ws, feature), params);
+      const sink = ws.config.deferred?.kind === 'github' ? 'GitHub issues (gh issue create, one per item)' : `the sink file ${ws.config.deferred?.path} (queued on the run)`;
+      const items = planned.map(draft => `- ${draft.id ?? 'Note'}: ${evidenceHead(draft.title, 200)}`);
+      if (!(await confirmInteractive(ctx, ws, feature, `Defer ${planned.length} items to ${ws.config.deferred?.kind === 'github' ? 'GitHub issues' : 'the sink file'}?`, `${items.join('\n')}\n\nSink: ${sink}.`))) {
+        return reply(`The user did not defer the work. Ask how to handle the observations or the note.\nNext: ${nextAction(readRun(ws, feature))}`);
+      }
       const { failure, lines, rest } = await withRun(ws, feature, async run => {
         const drafts = planDefer(ws, run, params);
         const before = run.deferred.length;

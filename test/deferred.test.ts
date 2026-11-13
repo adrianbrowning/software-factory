@@ -41,16 +41,21 @@ function fakeGh() {
   };
 }
 
-/** A headless run with the deferred sink `deferred`, whose active slice has a green review with one observation (`green`) or is ready for review. */
-async function sinkRun(root: string, deferred: unknown, stage: 'active' | 'green' = 'green') {
+/**
+ * A headless run with the deferred sink `deferred` and slice 01 active with a committed change (`active`), or with a green
+ * review listing two observations, thermo-naming and thermo-style (`green`). `interactive` turns the run interactive,
+ * with a confirm dialog that answers `answer` and logs its title to `asked`.
+ */
+async function sinkRun(root: string, deferred: unknown, stage: 'active' | 'green' = 'green', interactive?: { answer: boolean; asked: string[] }) {
   writeFileSync(join(root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], ...(deferred === undefined ? {} : { deferred }) }));
   sh(root, 'commit', '-qam', 'config', '--allow-empty');
   const commands = new Map<string, Command>();
   const tools = load({ commands, sent: [] });
-  const caller = { ...ctx('main', 'main'), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, notify() {}, select: async () => undefined } };
+  const caller = { ...ctx('main', 'main'), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async (title: string, body: string) => (interactive?.asked.push(`${title}\n${body}`), interactive?.answer ?? true), notify() {}, select: async () => undefined } };
   const call = async (name: string, params: unknown) => (await tools.get(name)?.execute('id', params, undefined, undefined, caller)) as Reply;
   await commands.get('factory')?.handler('headless demo.md', caller);
   const ws: Workspace = { config: loadConfig(root), root };
+  if (interactive !== undefined) await withRun(ws, 'demo', run => void (run.mode = 'interactive'));
   await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature'), slice('Second')])));
   await withRun(ws, 'demo', run => nextSlice(ws, run));
   commit(ws, 'ok');
@@ -151,6 +156,37 @@ describe('factory_defer', () => {
     await assert.rejects(none.call('factory_defer', { observations: ['thermo-naming'] }), /deferred/);
   });
 
+  it('interactive: asks the user with the items and sink, then files; a declined dialog files and records nothing', async () => {
+    using gh = fakeGh();
+    using repo = tempRepo('factory-defer-', CHECKS_OK);
+    const asked: string[] = [];
+    const yes = await sinkRun(repo.root, { kind: 'github' }, 'green', { answer: true, asked });
+    await yes.call('factory_defer', { observations: ['thermo-naming'] });
+    assert.equal(asked.length, 1);
+    assert.match(asked[0] ?? '', /Defer 1 items[\s\S]*thermo-naming[\s\S]*gh issue create/);
+    assert.equal(gh.calls().length, 1);
+    assert.equal(readRun(yes.ws, 'demo').deferred.length, 1);
+
+    using other = tempRepo('factory-defer-no-', CHECKS_OK);
+    const declined: string[] = [];
+    const no = await sinkRun(other.root, { kind: 'github' }, 'green', { answer: false, asked: declined });
+    const reply = await no.call('factory_defer', { observations: ['thermo-naming'] });
+    assert.equal(declined.length, 1);
+    assert.match(text(reply), /did not defer/);
+    assert.equal(gh.calls().length, 1);
+    assert.deepEqual(readRun(no.ws, 'demo').deferred, []);
+  });
+
+  it('factory_fix refuses observations already deferred or carried', async () => {
+    using repo = tempRepo('factory-defer-', CHECKS_OK);
+    const { call, ws } = await sinkRun(repo.root, { kind: 'file' });
+    await call('factory_defer', { observations: ['thermo-naming'] });
+    await call('factory_carry', { observations: ['thermo-style'], to: 'end' });
+    await assert.rejects(call('factory_fix', { observations: ['thermo-naming'], reason: 'tidy' }), /already deferred: thermo-naming/);
+    await assert.rejects(call('factory_fix', { observations: ['thermo-style'], reason: 'tidy' }), /already carried: thermo-style/);
+    assert.equal(readRun(ws, 'demo').slices[0]?.fixRounds, 0);
+  });
+
   it('github: a failed issue keeps the URLs already filed and files only the rest on the retry', async () => {
     using gh = fakeGh();
     using repo = tempRepo('factory-defer-', CHECKS_OK);
@@ -185,21 +221,28 @@ describe('factory_defer', () => {
 });
 
 describe('accepted unresolved findings go to the sink', () => {
-  /** Spends the three fix rounds, then records a fourth review with two blocking findings; `decision` first records one that finding "a" breaks. */
-  async function fourthReview(root: string, deferred: unknown, decision?: string) {
+  /**
+   * Spends the three fix rounds, then leaves a fourth review with two blocking findings written but not recorded, for the
+   * test to record; `decision` first records one that finding "a" breaks. `leak` is the title of finding "b" in the first
+   * three rounds; the fourth review then leaves its fix item open instead of blocking on it.
+   */
+  async function fourthReview(root: string, deferred: unknown, decision?: string, leak?: string) {
     const run = await sinkRun(root, deferred, 'active');
     if (decision !== undefined) await run.call('factory_decide', { decisions: [decision] });
-    const blocked = async (file: string) => {
+    const blocked = async (file: string, last = false) => {
       commit(run.ws, file);
       await withRun(run.ws, 'demo', current => runChecks(run.ws, current));
       const { reviewId } = await withRun(run.ws, 'demo', current => startReview(run.ws, current));
-      await review(run.ws, reviewId, [{ ...finding('thermo', 'high', 'a'), ...(decision === undefined ? {} : { decision: 1 }) }, finding('bug', 'high', 'b')]);
+      const a = { ...finding('thermo', 'high', 'a'), ...(decision === undefined ? {} : { decision: 1 }) };
+      const b = { ...finding('bug', 'high', last && leak !== undefined ? 'c' : 'b'), ...(leak === undefined || last ? {} : { title: leak }) };
+      const verdicts = last && leak !== undefined ? [{ id: 'thermo-a', reason: 'fixed', status: 'fixed' as const }, { id: 'bug-b', reason: 'still broken', status: 'open' as const }] : undefined;
+      await review(run.ws, reviewId, [a, b], undefined, verdicts);
     };
     for (const file of ['one', 'two', 'three']) {
       await blocked(file);
       await run.call('factory_review_record', {});
     }
-    await blocked('four');
+    await blocked('four', true);
     return run;
   }
 
@@ -213,6 +256,18 @@ describe('accepted unresolved findings go to the sink', () => {
     assert.ok(run.deferred.some(item => item.body.includes('Breaks decision 1')));
     assert.ok(run.deferred.every(item => !item.body.includes(secret)));
     assert.ok(gh.args().includes('Breaks decision 1'));
+    assert.ok(!gh.args().includes(secret));
+  });
+
+  it('github: a secret in an open fix item summary reaches neither the run nor gh', async () => {
+    using gh = fakeGh();
+    using repo = tempRepo('factory-defer-', CHECKS_OK);
+    const secret = `ghp_${'b'.repeat(30)}`;
+    const { call, ws } = await fourthReview(repo.root, { kind: 'github' }, undefined, `leaks ${secret}`);
+    await call('factory_review_record', {});
+    const run = readRun(ws, 'demo');
+    assert.ok(run.deferred.some(item => item.id === 'bug-b' && item.body.includes('Scope reviewer: still broken')));
+    assert.ok(run.deferred.every(item => !item.body.includes(secret) && !item.title.includes(secret)));
     assert.ok(!gh.args().includes(secret));
   });
 
