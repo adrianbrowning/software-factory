@@ -713,7 +713,17 @@ export async function recordReview(ws: Workspace, run: Run) {
     ...blocking.map(finding => findingRecord(finding, `## Blocking review findings from ${review.id}`, run.decisions)),
     ...open.map(item => ({ group: `## Open fix items from ${review.id}`, item: { id: item.id, summary: item.summary }, section: renderOpenItem(item, verdictOf.get(item.id)) })),
   ];
-  return { blocking: blocking.length, green: false as const, open: open.length, ...requestFix(ws, run, slice, review.sha, records) };
+  if (run.mode === 'headless' && slice.fixRounds >= slice.roundLimit) {
+    // Decisions 8 and 9: a headless slice has a hard round limit and no stall dialog; what is still open goes on record, and green stands in for it.
+    const unresolved = records.map(({ item }) => ('id' in item ? `${item.id}: ${item.summary}` : item.summary));
+    slice.phase = 'ready';
+    slice.green = { decisions: review.decisions };
+    slice.unresolved = unresolved;
+    addEvent(run, 'accepted-unresolved', `${review.id} after ${slice.fixRounds} fix rounds; open: ${unresolved.join('; ')}`, slice);
+    // No new fix file: fixPath is the last round's.
+    return { blocking: blocking.length, fixPath: slice.fixPath ?? '', green: false as const, open: open.length, stalled: false, unresolved };
+  }
+  return { blocking: blocking.length, green: false as const, open: open.length, unresolved: undefined, ...requestFix(ws, run, slice, review.sha, records) };
 }
 
 /** A fix item the scope reviewer left open, with where it was asked for and the reviewer's reason. */
@@ -910,6 +920,9 @@ export async function completeSlice(ws: Workspace, run: Run) {
   const slice = requireActive(run);
   const green = greenCommit(slice);
   if (slice.phase !== 'ready' || green === undefined) throw new Error('The slice has no green review yet.');
+  if (slice.unresolved !== undefined && run.mode !== 'headless') {
+    throw new Error(`Slice ${slice.id} was accepted unresolved by a headless run, and only a headless run completes it. Open: ${slice.unresolved.join('; ')}`);
+  }
   await requireOnBranch(ws.root, slice);
   await requireClean(ws.root, 'Cannot complete the slice');
   if ((await head(ws.root)) !== green) {

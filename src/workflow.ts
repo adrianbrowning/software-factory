@@ -762,6 +762,7 @@ export function resolveStall(ws: Workspace, run: Run, choice: 'continue' | 'paus
 
 /** The one explanation every reply gives for a slice that used up its fix budget. */
 export function stallNotice(run: Run, slice: Slice) {
+  if (run.mode === 'headless') return `The fix budget of slice ${slice.id} "${slice.title}" is used up after ${slice.roundLimit} fix rounds. A headless run cannot raise it, so the run does not continue past this slice.`;
   return `The fix budget of slice ${slice.id} "${slice.title}" is used up after ${slice.roundLimit} fix rounds. Tell the user that /factory resume ${run.feature} asks whether to raise it and resume.`;
 }
 

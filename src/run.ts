@@ -181,6 +181,8 @@ const sliceSchema = sliceInputSchema.extend({
   /** Set while the slice waits for the user to decide on an exhausted fix budget. */
   stalled: z.boolean(),
   status: z.enum(['active', 'done', 'pending']),
+  /** Set when a headless run accepted the slice with blocking findings or open fix items left after its last fix round: one `id: summary` line per item. Green stands in for them; an interactive run never completes such a slice. */
+  unresolved: z.array(text).optional(),
 });
 export type Slice = z.infer<typeof sliceSchema>;
 
@@ -427,6 +429,7 @@ export function dropPass(slice: Slice, phase: Slice['phase']) {
   slice.checked = undefined;
   slice.green = undefined;
   slice.review = undefined;
+  slice.unresolved = undefined;
 }
 
 /** Discards the open review of a slice in review, whose reviewers can no longer finish it, for `reason`; returns its id, or undefined when there was none. */
