@@ -267,7 +267,7 @@ const runSchema = z.object({
   baseRef: text,
   /** Commit `baseRef` pointed at when the plan was approved; slice 01 branches from it. */
   baseSha: z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/).optional(),
-  /** Observations carried to a slice or the end queue, as `review:id`; they cannot be deferred or carried again. */
+  /** Observations carried to a slice or the end queue, as `review:id`; factory_defer refuses them. factory_carry does not check this list, so a repeat carry is allowed. */
   carriedObservations: z.array(text).default([]),
   /** Check commands every slice must pass, fixed when the run starts. Empty in runs from before they were kept here. */
   checks: z.array(text).default([]),

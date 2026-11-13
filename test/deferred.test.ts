@@ -111,6 +111,28 @@ describe('factory_defer', () => {
     assert.match(item?.body ?? '', /Review: 01-r1/);
   });
 
+  for (const [name, sink, location] of [['file', { kind: 'file' }, 'docs/factory-deferred.md'], ['github', { kind: 'github' }, 'https://github.com/o/r/issues/']] as const) {
+    it(`${name}: a note alone adds one note item naming run, slice and review, and a repeat adds a second`, async () => {
+      using gh = fakeGh();
+      using repo = tempRepo('factory-defer-', CHECKS_OK);
+      const { call, ws } = await sinkRun(repo.root, sink);
+      await call('factory_defer', { note: 'Log the parse time.' });
+      const items = readRun(ws, 'demo').deferred;
+      assert.equal(items.length, 1);
+      assert.equal(items[0]?.kind, 'note');
+      assert.equal(items[0]?.id, undefined);
+      assert.ok(items[0]?.location.startsWith(location));
+      assert.match(items[0]?.body ?? '', /Run: demo/);
+      assert.match(items[0]?.body ?? '', /Slice: 01/);
+      assert.match(items[0]?.body ?? '', /Review: 01-r1/);
+      assert.equal(gh.calls().length, name === 'github' ? 1 : 0);
+      await call('factory_defer', { note: 'Log the parse time.' });
+      const after = readRun(ws, 'demo').deferred;
+      assert.equal(after.length, 2);
+      assert.equal(after[1]?.key, '01-r1:note:2');
+    });
+  }
+
   it('refuses unknown ids, ids already deferred, ids already carried, a call with nothing, and a project without a sink', async () => {
     using repo = tempRepo('factory-defer-', CHECKS_OK);
     const { call, ws } = await sinkRun(repo.root, { kind: 'file' });
