@@ -130,18 +130,29 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
     throw error;
   }
   addEvent(run, 'submit', 'stack submitted as draft PRs');
-  let urls: string[];
-  // The stack and its PRs are now on GitHub; a title failure leaves the checkout where gh stack put it.
+  let urls: string[] = [];
+  let failed: Error | undefined;
+  // The stack and its PRs are now on GitHub; a title failure leaves the checkout where gh stack put it, except for a
+  // stopped stack, which goes back to where the run is (the stopped slice) on every exit.
   try {
     urls = await setPrTexts(ws.root, run, slices, stop, progress);
   } catch (caught) {
-    throw new Error(
+    failed = new Error(
       `The stack and its PRs were submitted, but the PR titles were not set: ${caught instanceof Error ? caught.message : String(caught)}\nRunning /factory submit again sets them.`,
       { cause: caught },
     );
+  } finally {
+    if (stop !== undefined) {
+      try {
+        await git(ws.root, 'switch', '-q', ...start);
+      } catch (switchError) {
+        if (failed === undefined) throw switchError;
+        const failure = switchError instanceof Error ? switchError.message : String(switchError);
+        failed = new Error(`${failed.message}\nSwitching back to ${start.at(-1)} also failed: ${failure}`, { cause: failed });
+      }
+    }
   }
-  // gh stack leaves the top submitted branch checked out; a stopped stack goes back to where the run is (the stopped slice).
-  if (stop !== undefined) await git(ws.root, 'switch', '-q', ...start);
+  if (failed !== undefined) throw failed;
   return `${output.trim()}\nPull requests:\n${urls.map(url => `- ${url}`).join('\n')}`.trim();
 }
 

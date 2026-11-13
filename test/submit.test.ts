@@ -490,6 +490,20 @@ describe('headless submit', () => {
     assert.equal(sh(repo.root, 'branch', '--show-current'), branches[1], 'the run is back on the red slice');
   });
 
+  it('puts the checkout back on the red slice when a PR title or body PATCH fails during a stopped submit', async () => {
+    using repo = tempRepo('factory-hsubmit-', HEADLESS_FILES);
+    const { branches, call, ws } = await headlessSubmitRun(repo.root, ['S1', 'S2']);
+    await greenWithObservation(ws);
+    await call('factory_complete_slice', {});
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    sh(repo.root, 'rm', '-q', 'ok');
+    sh(repo.root, 'commit', '-qm', 'break the check');
+    using _gh = fakeGh({ fail: 'api -X', stack: undefined, submitted: withPrs(branches.slice(0, 1)) });
+    for (let round = 0; round < 4; round++) await call('factory_checks', {});
+    assert.equal(readRun(ws, 'demo').status, 'paused');
+    assert.equal(sh(repo.root, 'branch', '--show-current'), branches[1], 'the run is back on the red slice');
+  });
+
   it('keeps the saved result when gh fails: the reply names the failure and /factory submit, and ends with Next', async () => {
     using repo = tempRepo('factory-hsubmit-', HEADLESS_FILES);
     const { branches, call, ws } = await headlessSubmitRun(repo.root, ['S1']);
