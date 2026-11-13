@@ -660,7 +660,7 @@ function findingLocation(finding: Finding) {
 
 /** A finding as a markdown section under a `heading` of the given level (`##` by default). */
 export function renderFinding(finding: Finding, decisions: Decision[], heading = '##') {
-  const decision = finding.decision === undefined ? '' : `\n- Breaks decision ${finding.decision}: ${decisions[finding.decision - 1]?.text ?? ''}`;
+  const decision = finding.decision === undefined ? '' : `\n- Breaks decision ${finding.decision}: ${redact(decisions[finding.decision - 1]?.text ?? '')}`;
   return `${heading} [${finding.severity}] ${finding.id}\n\n- Location: ${findingLocation(finding)}\n- Title: ${evidence(finding.title, 500)}\n- Problem: ${evidence(finding.problem, 2_000)}\n- Fix: ${evidence(finding.fix, 2_000)}\n- Fix prompt: ${evidence(finding.fix_prompt, 2_000)}${decision}`;
 }
 
@@ -746,7 +746,7 @@ export async function recordReview(ws: Workspace, run: Run) {
 
 /** A fix item the scope reviewer left open, with where it was asked for and the reviewer's reason. */
 function renderOpenItem(item: FixItem, verdict: FixVerdict | undefined) {
-  return `### \`${item.id}\`\n\n- Asked in: ${item.path} (round ${item.round})\n- Item: ${item.summary}\n- Scope reviewer: ${verdict === undefined ? 'no verdict' : evidence(verdict.reason, 2_000)}`;
+  return `### \`${item.id}\`\n\n- Asked in: ${item.path} (round ${item.round})\n- Item: ${redact(item.summary)}\n- Scope reviewer: ${verdict === undefined ? 'no verdict' : evidence(verdict.reason, 2_000)}`;
 }
 
 /** A finding as a fix record in `group`: its id and summary `[severity] path:line: title` as the fix item. */

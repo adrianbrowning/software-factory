@@ -23,12 +23,13 @@ function fakeGh() {
   const garble = join(dir.root, 'garble');
   writeFileSync(
     join(dir.root, 'gh'),
-    `#!/bin/sh\nif [ "$1 $2" != 'issue create' ]; then exit 0; fi\necho "$1 $2 $3 $4" >> '${log}'\nn=$(wc -l < '${log}' | tr -d ' ')\nif [ -f '${fail}' ] && [ "$n" = "$(cat '${fail}')" ]; then echo 'HTTP 502' >&2; exit 1; fi\nif [ -f '${garble}' ]; then echo 'created'; exit 0; fi\necho "https://github.com/o/r/issues/$n"\n`,
+    `#!/bin/sh\nif [ "$1 $2" != 'issue create' ]; then exit 0; fi\necho "$1 $2 $3 $4" >> '${log}'\necho "$@" >> '${join(dir.root, 'args.log')}'\nn=$(wc -l < '${log}' | tr -d ' ')\nif [ -f '${fail}' ] && [ "$n" = "$(cat '${fail}')" ]; then echo 'HTTP 502' >&2; exit 1; fi\nif [ -f '${garble}' ]; then echo 'created'; exit 0; fi\necho "https://github.com/o/r/issues/$n"\n`,
   );
   chmodSync(join(dir.root, 'gh'), 0o755);
   const path = process.env.PATH;
   process.env.PATH = `${dir.root}:${path}`;
   return {
+    args: () => (existsSync(join(dir.root, 'args.log')) ? readFileSync(join(dir.root, 'args.log'), 'utf8') : ''),
     calls: () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : []),
     failOn: (n: number) => writeFileSync(fail, String(n)),
     healed: () => writeFileSync(fail, '0'),
@@ -184,14 +185,15 @@ describe('factory_defer', () => {
 });
 
 describe('accepted unresolved findings go to the sink', () => {
-  /** Spends the three fix rounds, then records a fourth review with two blocking findings. */
-  async function fourthReview(root: string, deferred: unknown) {
+  /** Spends the three fix rounds, then records a fourth review with two blocking findings; `decision` first records one that finding "a" breaks. */
+  async function fourthReview(root: string, deferred: unknown, decision?: string) {
     const run = await sinkRun(root, deferred, 'active');
+    if (decision !== undefined) await run.call('factory_decide', { decisions: [decision] });
     const blocked = async (file: string) => {
       commit(run.ws, file);
       await withRun(run.ws, 'demo', current => runChecks(run.ws, current));
       const { reviewId } = await withRun(run.ws, 'demo', current => startReview(run.ws, current));
-      await review(run.ws, reviewId, [finding('thermo', 'high', 'a'), finding('bug', 'high', 'b')]);
+      await review(run.ws, reviewId, [{ ...finding('thermo', 'high', 'a'), ...(decision === undefined ? {} : { decision: 1 }) }, finding('bug', 'high', 'b')]);
     };
     for (const file of ['one', 'two', 'three']) {
       await blocked(file);
@@ -200,6 +202,19 @@ describe('accepted unresolved findings go to the sink', () => {
     await blocked('four');
     return run;
   }
+
+  it('github: a secret in a decision a finding breaks reaches neither the run nor gh', async () => {
+    using gh = fakeGh();
+    using repo = tempRepo('factory-defer-', CHECKS_OK);
+    const secret = `ghp_${'a'.repeat(30)}`;
+    const { call, ws } = await fourthReview(repo.root, { kind: 'github' }, `Use token ${secret} for the API`);
+    await call('factory_review_record', {});
+    const run = readRun(ws, 'demo');
+    assert.ok(run.deferred.some(item => item.body.includes('Breaks decision 1')));
+    assert.ok(run.deferred.every(item => !item.body.includes(secret)));
+    assert.ok(gh.args().includes('Breaks decision 1'));
+    assert.ok(!gh.args().includes(secret));
+  });
 
   it('github: files one issue per open finding by itself when the review is accepted unresolved', async () => {
     using gh = fakeGh();

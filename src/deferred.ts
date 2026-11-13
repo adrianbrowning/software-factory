@@ -1,4 +1,4 @@
-import { evidenceLine } from './evidence.ts';
+import { evidenceLine, redact } from './evidence.ts';
 import { gh } from './exec.ts';
 import type { DeferredItem, Run, Slice, Workspace } from './run.ts';
 
@@ -10,7 +10,7 @@ export function draftOf(run: Run, slice: Slice, reviewId: string, item: Pick<Def
   const { detail, ...rest } = item;
   return {
     ...rest,
-    body: `Run: ${run.feature}\nSlice: ${slice.id} "${slice.title}"\nReview: ${reviewId}\n\n${detail}`,
+    body: redact(`Run: ${run.feature}\nSlice: ${slice.id} "${slice.title}"\nReview: ${reviewId}\n\n${detail}`),
     review: reviewId,
     slice: slice.id,
     title: `${run.feature}/${slice.id}: ${evidenceLine(item.title, 200)}`,
