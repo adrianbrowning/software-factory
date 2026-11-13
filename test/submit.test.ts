@@ -498,8 +498,10 @@ describe('headless submit', () => {
     await withRun(ws, 'demo', run => nextSlice(ws, run));
     sh(repo.root, 'rm', '-q', 'ok');
     sh(repo.root, 'commit', '-qm', 'break the check');
-    using _gh = fakeGh({ fail: 'api -X', stack: undefined, submitted: withPrs(branches.slice(0, 1)) });
+    using gh = fakeGh({ fail: 'api -X', stack: undefined, submitted: withPrs(branches.slice(0, 1)) });
     for (let round = 0; round < 4; round++) await call('factory_checks', {});
+    assert.deepEqual(gh.calls().slice(0, 4), [`stack checkout ${branches[0]}`, `stack init --base main ${branches[0]}`, 'stack submit --auto', 'stack view --json']);
+    assert.ok(gh.calls().at(-1)?.startsWith('api -X PATCH'), gh.calls().join('\n'));
     assert.equal(readRun(ws, 'demo').status, 'paused');
     assert.equal(sh(repo.root, 'branch', '--show-current'), branches[1], 'the run is back on the red slice');
   });
