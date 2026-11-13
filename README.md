@@ -31,7 +31,7 @@ flowchart TD
   O --> H
   J -->|other work after a slice is done| P[factory_follow_up: user approves a slice on top]
   P --> E
-  K --> L[Stack ready: /factory submit opens draft PRs]
+  K --> L[Stack ready: /factory submit opens draft PRs; a headless run opens them itself]
 ```
 
 ## How the work is split
@@ -73,7 +73,7 @@ its agents load.
 | Node.js 24 or later (`engines`: `>=24`) | Always: runs the plugin's TypeScript directly | [nodejs.org](https://nodejs.org) or your version manager |
 | pnpm 10 | Always: installs the plugin's dependencies | `corepack enable` (the repo pins the version in `packageManager`) |
 | `gh`, authenticated | GitHub issues, and filing retro findings on the factory repo | `brew install gh && gh auth login` |
-| [`gh-stack`](https://github.com/github/gh-stack) | Only for `/factory submit` that opens PRs; not for `landOn` runs | `gh extension install github/gh-stack` |
+| [`gh-stack`](https://github.com/github/gh-stack) | Only for `/factory submit` and a headless run's own submission, which open PRs; not for `landOn` runs | `gh extension install github/gh-stack` |
 | Atlassian MCP server | Only for Jira issues | Add it to omp's MCP servers |
 
 `npx` in the skill commands below comes with Node.js.

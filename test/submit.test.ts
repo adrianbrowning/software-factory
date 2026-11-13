@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
-import { addEvent, greenCommit, readRun, type Workspace } from '../src/run.ts';
-import { completeSlice } from '../src/review.ts';
+import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { beforeEach, describe, it } from 'node:test';
+import { type Command, ctx, load } from './extension.ts';
+import { loadConfig } from '../src/config.ts';
+import { resetModuleState } from '../src/index.ts';
+import { addEvent, greenCommit, readRun, withRun, type Workspace } from '../src/run.ts';
+import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { planSubmit, submitStack } from '../src/submit.ts';
 import { approvePlan, nextSlice, parseRetro, planSlices, recordRetro, resolveBase } from '../src/workflow.ts';
-import { fakeGh, prCalls, withPrs } from './fake-gh.ts';
-import { commit, green, newRun, sh, slice, start, step, tempDir, workspace } from './helpers.ts';
+import { commit, finding, green, newRun, review, sh, slice, start, step, tempDir, tempRepo, workspace } from './helpers.ts';
 
 /** A done run of `count` chained slices, each with a reviewed commit, checked out on `main` (off the top slice). */
 async function doneRun(ws: Workspace, count: number) {
@@ -21,6 +25,82 @@ async function doneRun(ws: Workspace, count: number) {
   sh(ws.root, 'switch', '-q', 'main');
   return readRun(ws, 'demo').slices.map(item => item.branch);
 }
+
+const NO_STACK = { code: 2, stderr: '✗ no local or remote stack found for "$3"' };
+
+interface FakeGh {
+  /** The stack `stack view --json` serves (a raw string is served as is); undefined means no stack. */
+  stack: string[] | string | undefined;
+  /** How `stack checkout` fails without a stack; by default gh-stack's real "no stack" exit and stderr. */
+  checkoutFailure?: { code: number; stderr: string };
+  /** The subcommand (such as `stack submit`) that runs `onFail` and exits 1. */
+  fail?: string;
+  onFail?: string;
+  /** The stack `stack view --json` serves after `stack submit`, with each branch's PR number (none: no `pr`). */
+  submitted?: { name: string; pr?: number }[];
+}
+
+/** The branches as a submitted stack, with PRs numbered from 101. */
+const withPrs = (branches: string[]) => branches.map((name, index) => ({ name, pr: 101 + index }));
+
+/** The `gh api` calls that set the title, then the body, of PR 101 onwards (`demo: NN Sn`); `calls()` abbreviates a body to `…`. */
+const prCalls = (count: number) =>
+  Array.from({ length: count }, (_, index) => [
+    `api -X PATCH repos/{owner}/{repo}/pulls/${101 + index} -f title=demo: 0${index + 1} S${index + 1}`,
+    `api -X PATCH repos/{owner}/{repo}/pulls/${101 + index} -f body=…`,
+  ]).flat();
+
+/**
+ * Puts a fake `gh` first on PATH until the `using` scope that holds it ends, then removes it; it records each call.
+ * With a stack, `stack checkout <branch>` switches to that branch, as gh-stack does; `stack init` switches to its last
+ * (top) branch, `stack top` to the stack's top branch, and `stack add <branch>` to the branch it adds.
+ */
+function fakeGh({ stack, checkoutFailure = NO_STACK, fail = '', onFail = ':', submitted }: FakeGh) {
+  const temp = tempDir('factory-gh-');
+  const dir = temp.root;
+  const log = join(dir, 'calls');
+  const view = join(dir, 'view.json');
+  if (typeof stack === 'string') writeFileSync(view, stack);
+  else if (stack !== undefined) {
+    writeFileSync(view, JSON.stringify({ branches: stack.map(name => ({ name })), currentBranch: stack[0], trunk: 'main' }));
+    writeFileSync(join(dir, 'top'), stack.at(-1) ?? '');
+  }
+  const after = join(dir, 'submitted.json');
+  if (submitted !== undefined) {
+    const items = submitted.map(({ name, pr }) => (pr === undefined ? { name } : { name, pr: { number: pr, url: `https://example.test/pull/${pr}`, state: 'OPEN' } }));
+    writeFileSync(after, JSON.stringify({ branches: items, currentBranch: submitted.at(-1)?.name, trunk: 'main' }));
+  }
+  const script = [
+    '#!/bin/sh',
+    // A newline in an argument (a PR body) is logged as \\036, so each call stays one line.
+    `printf '%s\\n' "$(printf '%s' "$*" | tr '\\n' '\\036')" >> '${log}'`,
+    `if [ "$1 $2" = "stack checkout" ] && [ ! -f '${view}' ]; then echo "${checkoutFailure.stderr}" >&2; exit ${checkoutFailure.code}; fi`,
+    `if [ "$1 $2" = "stack checkout" ]; then git switch -q "$3" || exit 1; fi`,
+    `if [ "$1 $2" = "stack view" ]; then cat '${view}' || exit 1; fi`,
+    `if [ "$1 $2" = "stack init" ]; then eval "git switch -q \\"\\\${$#}\\"" || exit 1; fi`,
+    `if [ "$1 $2" = "stack top" ]; then git switch -q "$(cat '${join(dir, 'top')}')" || exit 1; fi`,
+    `if [ "$1 $2" = "stack add" ]; then git switch -q "$3" || exit 1; fi`,
+    `if [ "$1 $2" = '${fail}' ]; then ${onFail}; exit 1; fi`,
+    `if [ "$1 $2" = "stack submit" ] && [ -f '${after}' ]; then cp '${after}' '${view}'; fi`,
+    'exit 0',
+    '',
+  ].join('\n');
+  writeFileSync(join(dir, 'gh'), script);
+  chmodSync(join(dir, 'gh'), 0o755);
+  process.env.PATH = `${dir}:${process.env.PATH}`;
+  const raw = () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').map(call => call.replaceAll('\x1e', '\n')) : []);
+  return {
+    calls: () => raw().map(call => call.replace(/ -f body=[\s\S]*/, ' -f body=…')),
+    /** The body each PR (by number) was last given. */
+    bodies: () => new Map(raw().map(call => /pulls\/(\d+) -f body=([\s\S]*)/.exec(call)).filter((match): match is RegExpExecArray => match !== null).map(match => [Number(match[1]), match[2] ?? ''] as const)),
+    // Removes only this fake's PATH entry, so several fakes in one test clean up in any order.
+    [Symbol.dispose]: () => {
+      process.env.PATH = (process.env.PATH ?? '').split(':').filter(entry => entry !== dir).join(':');
+      temp[Symbol.dispose]();
+    },
+  };
+}
+
 
 describe('submit', () => {
   it('refuses to submit a branch that moved after its green review', async () => {
@@ -328,3 +408,102 @@ describe('planSubmit', () => {
   });
 });
 
+
+beforeEach(() => resetModuleState());
+
+const HEADLESS_FILES = { 'demo.md': '# Demo\n\nDo it.\n', '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) };
+type Reply = { content: { text: string }[] };
+
+/** A headless run planned with `titles` (each blocked by the one before), whose UI throws on any dialog; slice 01 is active with `ok` committed. */
+async function headlessSubmitRun(root: string, titles: string[], policy: Record<string, string> = {}) {
+  writeFileSync(join(root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], headless: policy }));
+  sh(root, 'commit', '-qam', 'policy');
+  const commands = new Map<string, Command>();
+  const tools = load({ commands, sent: [] });
+  const noDialog = async (title: string) => {
+    throw new Error(`dialog: ${title}`);
+  };
+  const caller = { ...ctx('main', 'main'), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: noDialog, notify() {}, select: noDialog } };
+  const call = async (name: string, params: unknown) => (await tools.get(name)?.execute('id', params, undefined, undefined, caller)) as Reply;
+  await commands.get('factory')?.handler('headless demo.md', caller);
+  const ws: Workspace = { config: loadConfig(root), root };
+  await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, titles.map((title, index) => slice(title, index === 0 ? [] : [titles[index - 1] ?? ''])))));
+  await withRun(ws, 'demo', run => nextSlice(ws, run));
+  commit(ws, 'ok');
+  return { branches: readRun(ws, 'demo').slices.map(item => item.branch), call, ws };
+}
+
+/** Takes the active slice to a green review. */
+async function greenWithObservation(ws: Workspace) {
+  await withRun(ws, 'demo', run => runChecks(ws, run));
+  const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+  await review(ws, reviewId, [finding('thermo', 'observation', 'naming')]);
+  await withRun(ws, 'demo', run => recordReview(ws, run));
+}
+
+describe('headless submit', () => {
+  it('opens draft PRs when the stack becomes ready, with no /factory submit, and the reply names the PR URLs', async () => {
+    using repo = tempRepo('factory-hsubmit-', HEADLESS_FILES);
+    const { branches, call, ws } = await headlessSubmitRun(repo.root, ['S1']);
+    await greenWithObservation(ws);
+    using gh = fakeGh({ stack: undefined, submitted: withPrs(branches) });
+    const completed = await call('factory_complete_slice', {});
+    assert.deepEqual(gh.calls(), [], 'the stack is not ready until the retro is recorded');
+    assert.doesNotMatch(completed.content[0]?.text ?? '', /pull/);
+    const text = (await call('factory_retro', { findings: [] })).content[0]?.text ?? '';
+    assert.equal(readRun(ws, 'demo').status, 'done');
+    assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, `stack init --base main ${branches[0]}`, 'stack submit --auto', 'stack view --json', ...prCalls(1)]);
+    assert.match(text, /https:\/\/example\.test\/pull\/101/);
+    assert.match(gh.bodies().get(101) ?? '', /S1/);
+    assert.ok(readRun(ws, 'demo').events.some(event => event.kind === 'submit'));
+  });
+
+  it('does not submit and leaves the run ready when the policy sets submission to stop', async () => {
+    using repo = tempRepo('factory-hsubmit-', HEADLESS_FILES);
+    const { branches, call, ws } = await headlessSubmitRun(repo.root, ['S1'], { submission: 'stop' });
+    await greenWithObservation(ws);
+    using gh = fakeGh({ stack: undefined, submitted: withPrs(branches) });
+    await call('factory_complete_slice', {});
+    const text = (await call('factory_retro', { findings: [] })).content[0]?.text ?? '';
+    assert.equal(readRun(ws, 'demo').status, 'done');
+    assert.deepEqual(gh.calls(), []);
+    assert.match(text, /submission to stop/);
+  });
+
+  it('submits the done slices below a slice that stays red, with bodies that say where and why the stack stopped, and not the red slice', async () => {
+    using repo = tempRepo('factory-hsubmit-', HEADLESS_FILES);
+    const { branches, call, ws } = await headlessSubmitRun(repo.root, ['S1', 'S2']);
+    await greenWithObservation(ws);
+    await call('factory_complete_slice', {});
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    sh(repo.root, 'rm', '-q', 'ok');
+    sh(repo.root, 'commit', '-qm', 'break the check');
+    using gh = fakeGh({ stack: undefined, submitted: withPrs(branches.slice(0, 1)) });
+    for (let round = 0; round < 3; round++) await call('factory_checks', {});
+    assert.deepEqual(gh.calls(), [], 'nothing is submitted before the last fix round');
+    const text = (await call('factory_checks', {})).content[0]?.text ?? '';
+    const run = readRun(ws, 'demo');
+    assert.equal(run.status, 'paused');
+    assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, `stack init --base main ${branches[0]}`, 'stack submit --auto', 'stack view --json', ...prCalls(1)]);
+    assert.match(text, /https:\/\/example\.test\/pull\/101/);
+    assert.match(gh.bodies().get(101) ?? '', /stack stopped at slice 02 "S2".*still red after 3 fix rounds/);
+    assert.equal(sh(repo.root, 'branch', '--show-current'), branches[1], 'the run is back on the red slice');
+  });
+
+  it('keeps the saved result when gh fails: the reply names the failure and /factory submit, and ends with Next', async () => {
+    using repo = tempRepo('factory-hsubmit-', HEADLESS_FILES);
+    const { branches, call, ws } = await headlessSubmitRun(repo.root, ['S1']);
+    await greenWithObservation(ws);
+    using gh = fakeGh({ fail: 'stack submit', onFail: 'echo "push rejected" >&2', stack: undefined, submitted: withPrs(branches) });
+    await call('factory_complete_slice', {});
+    const text = (await call('factory_retro', { findings: [] })).content[0]?.text ?? '';
+    const run = readRun(ws, 'demo');
+    assert.equal(run.status, 'done');
+    assert.equal(run.slices[0]?.status, 'done');
+    assert.ok(run.retroRecorded);
+    assert.ok(gh.calls().includes('stack submit --auto'));
+    assert.match(text, /Submission failed[\s\S]*push rejected[\s\S]*\/factory submit retries it/);
+    assert.match(text, /\nNext: [^\n]*$/, 'the reply ends with the Next line');
+    assert.ok(run.events.some(event => event.kind === 'submit-failed'));
+  });
+});
