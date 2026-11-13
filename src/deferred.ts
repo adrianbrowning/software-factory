@@ -8,12 +8,14 @@ export function isRecordSlice(slice: Slice) {
 }
 
 /**
- * Whether a file-sink item's Record deferred items slice is done but was accepted unresolved, so the item may not have
- * reached the sink file.
+ * Whether a file-sink item's Record deferred items slice, or any slice split from it, is done but was accepted
+ * unresolved, so the item may not have reached the sink file.
  */
 export function recordFailed(run: Run, item: DeferredItem) {
   const record = run.slices.find(slice => slice.id === item.recorded);
-  return record !== undefined && record.status === 'done' && (record.unresolved ?? []).length > 0;
+  if (record === undefined) return false;
+  const batch = record.recordBatch === undefined ? [record] : run.slices.filter(slice => slice.recordBatch === record.recordBatch);
+  return batch.some(slice => slice.status === 'done' && (slice.unresolved ?? []).length > 0);
 }
 
 /** Whether the item waits for a Record slice: none lists it yet, or its one Record slice failed and no retry was made. */

@@ -180,6 +180,8 @@ const sliceSchema = sliceInputSchema.extend({
   roundLimit: z.number().int().positive(),
   /** Set on the Record deferred items slice the factory adds to write file-sink items. Its own reviews defer nothing to the sink. */
   record: z.literal(true).optional(),
+  /** Shared by every Record slice of one batch, so a split Record slice's children fail or succeed together (recordFailed). Absent on a Record slice from an older state file. */
+  recordBatch: text.optional(),
   /** Set while the slice waits for the user to decide on an exhausted fix budget. */
   stalled: z.boolean(),
   status: z.enum(['active', 'done', 'pending']),
