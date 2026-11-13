@@ -253,6 +253,21 @@ describe('factory_pause', () => {
 });
 
 describe('headless start', () => {
+  it('reports the fixed 3 fix rounds for a headless run and the configured maxRounds for an interactive one', async () => {
+    using headless = tempRepo('factory-rounds-', CHECKS_OK);
+    const { ws } = await headlessRun(headless.root, 'active', {}, ['Feature'], { maxRounds: 5 });
+    await withRun(ws, 'demo', run => ((run.status = 'paused'), undefined));
+    resetModuleState();
+    const resumed = (await headlessRunCaller(headless.root).call('factory_start', { resume: 'demo' })) as Reply;
+    assert.match(resumed.content[0]?.text ?? '', /Fix rounds per slice: 3\./);
+    using interactive = tempRepo('factory-rounds-', CHECKS_OK);
+    writeFileSync(join(interactive.root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], maxRounds: 5 }));
+    sh(interactive.root, 'commit', '-qam', 'rounds');
+    const caller = { ...ctx('main', 'main'), cwd: interactive.root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, notify() {} } };
+    const started = (await load().get('factory_start')?.execute('id', { feature: 'demo', source: SOURCE }, undefined, undefined, caller)) as Reply;
+    assert.match(started.content[0]?.text ?? '', /Fix rounds per slice: 5\./);
+  });
+
   it('without configured checks saves the detected ones, and otherwise refuses with a reason', async () => {
     using detected = tempRepo('factory-detect-', { ...TICKET, 'package.json': JSON.stringify({ scripts: { test: 'true' } }), pnpm: '' });
     const run = headlessRunCaller(detected.root);
