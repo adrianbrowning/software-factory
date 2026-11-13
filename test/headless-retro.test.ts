@@ -7,7 +7,7 @@ import { loadConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
 import { readRun, runDir, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
-import { approvePlan, nextSlice, planSlices } from '../src/workflow.ts';
+import { approvePlan, nextAction, nextSlice, planSlices } from '../src/workflow.ts';
 import { commit, finding, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
 
 beforeEach(() => resetModuleState());
@@ -156,5 +156,67 @@ describe('headless retro', () => {
     const ticket = readFileSync(ticketPath(ws, 'demo', run.slices[3] ?? assert.fail('no slice')), 'utf8');
     assert.match(ticket, /Lint rule/);
     assert.doesNotMatch(ticket, /Vague skill/);
+  });
+
+  /** Runs the active slice through checks, a green review listing `findings`, and returns the review's slice work so the caller can defer before completing. */
+  const reviewActive = async (ws: Workspace, file: string, findings: ReturnType<typeof finding>[]) => {
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    commit(ws, 'ok', `${file}\n`);
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+    await review(ws, reviewId, findings);
+    await withRun(ws, 'demo', run => recordReview(ws, run));
+  };
+
+  it('items deferred by a follow-up slice after the retro get a second Record slice before the run is done', async () => {
+    using repo = tempRepo('factory-retro-', CHECKS_OK);
+    const { call, ws } = await doneRun(repo.root, { kind: 'file', path: 'notes/later.md' }, true);
+    await call('factory_retro', { findings: [] });
+    await reviewActive(ws, 'record', []);
+    await withRun(ws, 'demo', run => completeSlice(ws, run));
+    assert.equal(readRun(ws, 'demo').status, 'done');
+    await call('factory_follow_up', { acceptance: ['logged'], estimateTokens: 500, seams: ['cli'], title: 'Polish', whatToBuild: 'Polish' });
+    await reviewActive(ws, 'polish', [finding('thermo', 'observation', 'wording')]);
+    await call('factory_defer', { observations: ['thermo-wording'] });
+    // factory_follow_up reopens the retro; restore the recorded retro so completing the slice is what would settle the run.
+    await withRun(ws, 'demo', run => {
+      run.retroRecorded = true;
+    });
+    await withRun(ws, 'demo', run => completeSlice(ws, run));
+    const run = readRun(ws, 'demo');
+    const reply = nextAction(run);
+    assert.equal(run.status, 'running');
+    assert.deepEqual(run.slices.map(item => item.title), ['Feature', 'Record deferred items', 'Polish', 'Record deferred items 2']);
+    const ticket = readFileSync(ticketPath(ws, 'demo', run.slices[3] ?? assert.fail('no slice')), 'utf8');
+    assert.match(ticket, /wording/);
+    assert.doesNotMatch(ticket, /naming/);
+    assert.match(reply, /factory_next/);
+  });
+
+  it("a Record slice's own review items are not deferred to the file and add no further slice, and the run becomes done", async () => {
+    using repo = tempRepo('factory-retro-', CHECKS_OK);
+    const { call, ws } = await doneRun(repo.root, { kind: 'file', path: 'notes/later.md' }, true);
+    await call('factory_retro', { findings: [] });
+    await reviewActive(ws, 'record', [finding('thermo', 'observation', 'wording')]);
+    const refused = await call('factory_defer', { observations: ['thermo-wording'] }).then(
+      () => '',
+      (error: Error) => error.message,
+    );
+    assert.match(refused, /Record deferred items/);
+    await withRun(ws, 'demo', run => completeSlice(ws, run));
+    const run = readRun(ws, 'demo');
+    assert.equal(run.deferred.length, 1);
+    assert.deepEqual(run.slices.map(item => item.title), ['Feature', 'Record deferred items']);
+    assert.equal(run.status, 'done');
+  });
+
+  it('an ordinary slice titled like the Record slice still defers its review items', async () => {
+    using repo = tempRepo('factory-retro-', CHECKS_OK);
+    const { call, ws } = await doneRun(repo.root, { kind: 'file', path: 'notes/later.md' });
+    await call('factory_retro', { findings: [] });
+    await call('factory_follow_up', { acceptance: ['logged'], estimateTokens: 500, seams: ['cli'], title: 'Record deferred items for X', whatToBuild: 'Polish' });
+    await reviewActive(ws, 'polish', [finding('thermo', 'observation', 'wording')]);
+    await call('factory_defer', { observations: ['thermo-wording'] });
+    assert.deepEqual(readRun(ws, 'demo').deferred.map(item => item.id), ['thermo-wording']);
   });
 });

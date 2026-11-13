@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { effectiveModels } from './config.ts';
 import { evidence, evidenceLine, redact } from './evidence.ts';
 import { gh, git } from './exec.ts';
-import { draftOf, retroDraft, retroKey } from './deferred.ts';
+import { draftOf, isRecordSlice, retroDraft, retroKey } from './deferred.ts';
 import { resolveObservations, renderFinding } from './review.ts';
 import {
   activeSlice,
@@ -448,6 +448,7 @@ export function planDefer(ws: Workspace, run: Run, request: DeferRequest) {
   const chosen = new Set(z.array(z.string().min(1)).parse(request.observations ?? []));
   if (note === undefined && chosen.size === 0) throw new Error('factory_defer needs observation ids, a note, or both.');
   const { observations, review, slice } = resolveObservations(ws, run, chosen, 'defer observations or a note');
+  if (isRecordSlice(slice)) throw new Error(`Slice ${slice.id} "${slice.title}" writes the deferred sink file, so its review items are not deferred. They stay in the review itself (the green review observations, and for accepted-unresolved findings slice.unresolved and the accepted-unresolved event).`);
   requireUnhandled(run, review.id, observations, true);
   const noted = run.deferred.filter(item => item.review === review.id && item.kind === 'note').length;
   return [
@@ -831,7 +832,7 @@ export async function resumeRun(ws: Workspace, run: Run, sessionId: string) {
     // A headless run can be paused in intake or done (by a stop gate, or factory_pause in intake), so only a headless run restores intake (no approved plan) or done (settle).
     if (run.mode === 'headless') {
       run.status = run.slices.length === 0 ? 'intake' : 'running';
-      settle(run);
+      settle(ws, run);
     } else run.status = 'running';
   }
   const slice = activeSlice(run);
@@ -971,9 +972,7 @@ export function recordRetro(ws: Workspace, run: Run, retro: Retro, filed: FiledI
   const repoCount = retro.findings.filter(finding => finding.target === 'repo').length;
   addEvent(run, 'retro', `${retro.findings.length} findings: repo=${repoCount} factory=${retro.findings.length - repoCount}`);
   const slice = retro.slice === undefined ? undefined : pushSlice(ws, run, retro.slice);
-  const record = slice ?? recordDeferredSlice(ws, run);
-  settle(run);
-  return record;
+  return slice ?? settle(ws, run);
 }
 
 /**
@@ -985,7 +984,7 @@ function recordDeferredSlice(ws: Workspace, run: Run) {
   const waiting = run.mode === 'headless' && sink?.kind === 'file' ? run.deferred.filter(item => item.recorded === undefined) : [];
   if (sink?.kind !== 'file' || waiting.length === 0) return undefined;
   // A slice already queued for an item covers it until it is done, so an item is listed once; a later retro's items get a numbered title.
-  const earlier = run.slices.filter(candidate => candidate.title.startsWith('Record deferred items')).length;
+  const earlier = run.slices.filter(isRecordSlice).length;
   const planned = planAppend(ws, run, {
     acceptance: [`${sink.path} holds each of the ${waiting.length} deferred items below, with the run, slice and review it names`],
     estimateTokens: Math.floor(ws.config.sliceTokenBudget / 10),
@@ -994,19 +993,24 @@ function recordDeferredSlice(ws: Workspace, run: Run) {
     title: earlier === 0 ? 'Record deferred items' : `Record deferred items ${earlier + 1}`,
     whatToBuild: `Write these deferred items to ${sink.path}: create the file when it is missing, otherwise append, and keep what is there. Each item keeps its title and body.\n\n${waiting.map(item => `## ${item.title}\n\n${item.body}`).join('\n\n')}`,
   });
+  planned.record = true;
   for (const item of waiting) item.recorded = planned.id;
   return pushSlice(ws, run, planned);
 }
 
 /**
  * Marks the run done once every slice is done, no carried items wait for a follow-up slice, and the retro is
- * recorded: the stack is ready to submit.
+ * recorded: the stack is ready to submit. A headless run with file-sink items no Record deferred items slice has
+ * written instead gets one more such slice and stays running; returns it.
  */
-export function settle(run: Run) {
-  if (run.status !== 'running' || !run.retroRecorded || run.waiting.length > 0) return;
-  if (!run.slices.every(slice => slice.status === 'done')) return;
+export function settle(ws: Workspace, run: Run) {
+  if (run.status !== 'running' || !run.retroRecorded || run.waiting.length > 0) return undefined;
+  if (!run.slices.every(slice => slice.status === 'done')) return undefined;
+  const record = recordDeferredSlice(ws, run);
+  if (record !== undefined) return record;
   run.status = 'done';
   addEvent(run, 'stack-ready', run.slices.map(slice => slice.branch).join(' <- '));
+  return undefined;
 }
 
 /** What to do about the items waiting on the run for the end-of-run follow-up slice. */

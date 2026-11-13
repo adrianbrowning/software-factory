@@ -8,7 +8,7 @@ import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { evidence, evidenceLine, redact } from './evidence.ts';
-import { deferItems, draftOf } from './deferred.ts';
+import { deferItems, draftOf, isRecordSlice } from './deferred.ts';
 import { git, runShell, type CommandResult } from './exec.ts';
 import {
   activeSlice,
@@ -723,10 +723,11 @@ export async function recordReview(ws: Workspace, run: Run) {
     const unresolved = records.map(({ item }, index) => `${index < blocking.length ? 'blocking finding' : 'open fix item'} ${'id' in item ? `${item.id}: ` : ''}${item.summary}`);
     // The open items go to the deferred sink before the slice counts as accepted. A failed issue keeps the ones already filed, and the retry files the rest.
     // With no sink configured they stay on record in slice.unresolved and the event below.
+    // A Record deferred items slice's own findings are not deferred: they would need another Record slice, and so on.
     const failure = await deferItems(
       ws,
       run,
-      records.map(({ item, section }, index) =>
+      (isRecordSlice(slice) ? [] : records).map(({ item, section }, index) =>
         draftOf(run, slice, review.id, { detail: section, id: 'id' in item ? item.id : undefined, key: `${review.id}:${'id' in item ? item.id : `unresolved:${index + 1}`}`, kind: 'unresolved', title: item.summary }),
       ),
     );
@@ -737,7 +738,7 @@ export async function recordReview(ws: Workspace, run: Run) {
     slice.phase = 'ready';
     slice.green = { decisions: review.decisions };
     slice.unresolved = unresolved;
-    const sunk = ws.config.deferred === undefined ? 'no deferred sink configured' : `sent to the ${ws.config.deferred.kind} sink`;
+    const sunk = ws.config.deferred === undefined ? 'no deferred sink configured' : isRecordSlice(slice) ? 'not deferred: a Record deferred items slice' : `sent to the ${ws.config.deferred.kind} sink`;
     addEvent(run, 'accepted-unresolved', `${review.id} after ${slice.fixRounds} fix rounds (${sunk}); open: ${unresolved.join('; ')}`, slice);
     // No new fix file: fixPath is the last round's.
     return { blocking: blocking.length, fixPath: slice.fixPath ?? '', green: false as const, open: open.length, stalled: false, unresolved };
@@ -966,7 +967,7 @@ export async function completeSlice(ws: Workspace, run: Run) {
     addEvent(run, 'budget-exceeded', `peak ${slice.peakContextTokens} tokens, ${slice.compactions} compactions`, slice);
   }
   addEvent(run, 'slice-done', `${slice.fixRounds} fix rounds, ${slice.reviews} reviews`, slice);
-  settle(run);
+  settle(ws, run);
   return slice;
 }
 

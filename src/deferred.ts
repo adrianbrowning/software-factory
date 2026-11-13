@@ -2,6 +2,11 @@ import { evidenceLine, redact } from './evidence.ts';
 import { gh } from './exec.ts';
 import type { DeferredItem, Run, Slice, Workspace } from './run.ts';
 
+/** Whether `slice` is a Record deferred items slice: a headless run's own sink writer, whose reviews never defer to the sink. */
+export function isRecordSlice(slice: Slice) {
+  return slice.record === true;
+}
+
 /** An item to defer, before its sink location is known. */
 export type DeferredDraft = Omit<DeferredItem, 'location'>;
 
