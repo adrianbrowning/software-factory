@@ -504,6 +504,8 @@ describe('headless submit', () => {
     assert.ok(gh.calls().at(-1)?.startsWith('api -X PATCH'), gh.calls().join('\n'));
     assert.equal(readRun(ws, 'demo').status, 'paused');
     assert.equal(sh(repo.root, 'branch', '--show-current'), branches[1], 'the run is back on the red slice');
+    const kinds = readRun(ws, 'demo').events.map(event => event.kind);
+    assert.ok(kinds.includes('autonomous') && kinds.includes('submit') && kinds.includes('submit-failed'), kinds.join());
   });
 
   it('keeps the saved result when gh fails: the reply names the failure and /factory submit, and ends with Next', async () => {
@@ -521,5 +523,29 @@ describe('headless submit', () => {
     assert.match(text, /Submission failed[\s\S]*push rejected[\s\S]*\/factory submit retries it/);
     assert.match(text, /\nNext: [^\n]*$/, 'the reply ends with the Next line');
     assert.ok(run.events.some(event => event.kind === 'submit-failed'));
+  });
+
+  it('saves the autonomous gate event and submit-failed, but no submit event, when gh stack submit fails', async () => {
+    using repo = tempRepo('factory-hsubmit-', HEADLESS_FILES);
+    const { branches, call, ws } = await headlessSubmitRun(repo.root, ['S1']);
+    await greenWithObservation(ws);
+    using _gh = fakeGh({ fail: 'stack submit', onFail: 'echo "push rejected" >&2', stack: undefined, submitted: withPrs(branches) });
+    await call('factory_complete_slice', {});
+    await call('factory_retro', { findings: [] });
+    const kinds = readRun(ws, 'demo').events.map(event => event.kind);
+    assert.ok(kinds.includes('autonomous'), kinds.join());
+    assert.ok(kinds.includes('submit-failed'));
+    assert.ok(!kinds.includes('submit'));
+  });
+
+  it('saves the autonomous, submit and submit-failed events when a PATCH fails after gh stack submit succeeds', async () => {
+    using repo = tempRepo('factory-hsubmit-', HEADLESS_FILES);
+    const { branches, call, ws } = await headlessSubmitRun(repo.root, ['S1']);
+    await greenWithObservation(ws);
+    using _gh = fakeGh({ fail: 'api -X', stack: undefined, submitted: withPrs(branches) });
+    await call('factory_complete_slice', {});
+    await call('factory_retro', { findings: [] });
+    const kinds = readRun(ws, 'demo').events.map(event => event.kind);
+    for (const kind of ['autonomous', 'submit', 'submit-failed']) assert.ok(kinds.includes(kind), `${kind} in ${kinds.join()}`);
   });
 });

@@ -46,6 +46,9 @@ async function readStack(root: string, branch: string) {
   return stackView.parse(JSON.parse(await gh(root, 'stack', 'view', '--json'))).branches.map(item => item.name);
 }
 
+/** The stack was submitted (the `submit` event is on the run) but writing the PR titles or bodies failed. */
+export class PrTextsFailed extends Error {}
+
 /**
  * Submits the reviewed stack. On a first submit it adopts every slice branch into one gh-stack stack and opens draft
  * PRs; on a re-submit, when slice 01 is already stacked, it adds only the slice branches that stack lacks.
@@ -137,7 +140,7 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
   try {
     urls = await setPrTexts(ws.root, run, slices, stop, progress);
   } catch (caught) {
-    failed = new Error(
+    failed = new PrTextsFailed(
       `The stack and its PRs were submitted, but the PR titles were not set: ${caught instanceof Error ? caught.message : String(caught)}\nRunning /factory submit again sets them.`,
       { cause: caught },
     );

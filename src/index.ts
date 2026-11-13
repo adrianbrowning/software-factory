@@ -30,7 +30,7 @@ import {
 } from './run.ts';
 import { implementerReportSchema, startImplementerSession, submitImplementerReport } from './report.ts';
 import { boundAt, cachedRoot, NO_ACTIVE_RUN, type Reply, resetRoots, type RootEntry, toolRegistrar } from './tool-scope.ts';
-import { submitStack } from './submit.ts';
+import { PrTextsFailed, submitStack } from './submit.ts';
 import {
   completeSlice,
   decisionInputSchema,
@@ -252,11 +252,11 @@ async function submitHeadless(ws: Workspace, feature: string, stop?: { reason: s
   if (run.mode !== 'headless' || run.status !== (stop === undefined ? 'done' : 'paused')) return '';
   if (run.landOn !== undefined) return `\nThis run lands on ${run.landOn}, so it opens no PRs: /factory submit fast-forwards it.`;
   if (ws.config.headless.submission === 'stop') return '\nThe headless policy sets submission to stop, so no PRs were opened. /factory submit opens them.';
+  // Saved before submitStack runs, so a later failure cannot discard the choice; each PR body lists it.
+  const stopped = stop === undefined ? undefined : run.slices.find(slice => slice.id === stop.sliceId);
+  await withRun(ws, feature, current => addEvent(current, 'autonomous', `gate submission (auto): opening draft PRs${stopped === undefined ? '' : ` for the slices below slice ${stopped.id}`}`));
   try {
     return await withRun(ws, feature, async current => {
-      const stopped = stop === undefined ? undefined : current.slices.find(slice => slice.id === stop.sliceId);
-      // Recorded before the bodies are written, so each PR body lists this gate choice.
-      addEvent(current, 'autonomous', `gate submission (auto): opening draft PRs${stopped === undefined ? '' : ` for the slices below slice ${stopped.id}`}`);
       const output = await submitStack(ws, current, () => {}, stopped === undefined || stop === undefined ? undefined : { reason: stop.reason, slice: stopped });
       if (output === '') throw new NoSubmission(`\nNo done slice is below slice ${stop?.sliceId}, so no PRs were opened.`);
       return `\nDraft PRs are open (merging stays manual):\n${output}`;
@@ -264,7 +264,11 @@ async function submitHeadless(ws: Workspace, feature: string, stop?: { reason: s
   } catch (error) {
     if (error instanceof NoSubmission) return error.message;
     const message = error instanceof Error ? error.message : String(error);
-    await withRun(ws, feature, current => addEvent(current, 'submit-failed', evidenceLine(message, 500)));
+    await withRun(ws, feature, current => {
+      // gh stack submit succeeded: the discarded mutation held the submit event, so save it here.
+      if (error instanceof PrTextsFailed) addEvent(current, 'submit', 'stack submitted as draft PRs');
+      addEvent(current, 'submit-failed', evidenceLine(message, 500));
+    });
     const retry = stop === undefined ? '/factory submit retries it' : 'after /factory resume finishes the stack, /factory submit opens the PRs';
     return `\nSubmission failed: ${message}\nThe run is saved as ${run.status === 'done' ? 'done' : 'paused'}; ${retry}.`;
   }
