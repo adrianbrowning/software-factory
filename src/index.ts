@@ -593,7 +593,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
       if (result.green) {
         const notes =
           result.observations.length > 0
-            ? `\nObservations (non-blocking):\n${result.observations.join('\n\n')}\nAsk the user where each goes: fixed in this slice (factory_fix with their ids), carried into the ticket of a pending slice (factory_carry with their ids and that slice id), or queued for one follow-up slice at the end of the run (factory_carry with their ids and to "end"). This slice stays green when they are carried.`
+            ? `\nObservations (non-blocking):\n${result.observations.join('\n\n')}\nAsk the user where each goes: fixed in this slice (factory_fix with their ids), carried into the ticket of a pending slice (factory_carry with their ids and that slice id), ${ws.config.deferred === undefined ? 'or ' : ''}queued for one follow-up slice at the end of the run (factory_carry with their ids and to "end")${ws.config.deferred === undefined ? '' : ', or sent to the deferred sink (factory_defer with their ids)'}. This slice stays green when they are carried.`
             : '';
         const bug = '\nWhen the user finds a bug in this slice before it is done, call factory_fix with the bug (and any observation ids).';
         return reply(`Review is green.${notes}${bug}\nNext: ${nextAction(readRun(ws, feature))}`);

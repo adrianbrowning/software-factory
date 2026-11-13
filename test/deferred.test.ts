@@ -51,7 +51,11 @@ async function sinkRun(root: string, deferred: unknown, stage: 'active' | 'green
   sh(root, 'commit', '-qam', 'config', '--allow-empty');
   const commands = new Map<string, Command>();
   const tools = load({ commands, sent: [] });
-  const caller = { ...ctx('main', 'main'), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async (title: string, body: string) => (interactive?.asked.push(`${title}\n${body}`), interactive?.answer ?? true), notify() {}, select: async () => undefined } };
+  const caller = { ...ctx('main', 'main'), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async (title: string, body: string) => {
+    if (interactive === undefined) throw new Error(`headless run asked a dialog: ${title}`);
+    interactive.asked.push(`${title}\n${body}`);
+    return interactive.answer;
+  }, notify() {}, select: async () => undefined } };
   const call = async (name: string, params: unknown) => (await tools.get(name)?.execute('id', params, undefined, undefined, caller)) as Reply;
   await commands.get('factory')?.handler('headless demo.md', caller);
   const ws: Workspace = { config: loadConfig(root), root };
@@ -176,6 +180,38 @@ describe('factory_defer', () => {
     assert.equal(gh.calls().length, 1);
     assert.deepEqual(readRun(no.ws, 'demo').deferred, []);
   });
+
+  it('interactive file sink: asks with the items and the sink path; confirmed queues, declined records nothing', async () => {
+    using repo = tempRepo('factory-defer-', CHECKS_OK);
+    const asked: string[] = [];
+    const yes = await sinkRun(repo.root, { kind: 'file', path: 'notes/later.md' }, 'green', { answer: true, asked });
+    await yes.call('factory_defer', { observations: ['thermo-naming'] });
+    assert.equal(asked.length, 1);
+    assert.match(asked[0] ?? '', /Defer 1 items[\s\S]*thermo-naming[\s\S]*notes\/later\.md/);
+    assert.deepEqual(readRun(yes.ws, 'demo').deferred.map(item => item.id), ['thermo-naming']);
+
+    using other = tempRepo('factory-defer-no-', CHECKS_OK);
+    const declined: string[] = [];
+    const no = await sinkRun(other.root, { kind: 'file' }, 'green', { answer: false, asked: declined });
+    const reply = await no.call('factory_defer', { observations: ['thermo-naming'] });
+    assert.equal(declined.length, 1);
+    assert.match(text(reply), /did not defer/);
+    assert.deepEqual(readRun(no.ws, 'demo').deferred, []);
+  });
+
+  for (const [name, sink, offered] of [['with a sink', { kind: 'file' }, true], ['without a sink', undefined, false]] as const) {
+    it(`green review reply ${offered ? 'offers' : 'omits'} factory_defer ${name}`, async () => {
+      using repo = tempRepo('factory-defer-', CHECKS_OK);
+      const { call, ws } = await sinkRun(repo.root, sink, 'active');
+      await withRun(ws, 'demo', run => runChecks(ws, run));
+      const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+      await review(ws, reviewId, [finding('thermo', 'observation', 'naming')]);
+      const reply = text(await call('factory_review_record', {}));
+      assert.match(reply, /Review is green/);
+      assert.equal(/factory_defer/.test(reply), offered);
+      if (!offered) assert.match(reply, /, or queued for one follow-up slice/);
+    });
+  }
 
   it('factory_fix refuses observations already deferred or carried', async () => {
     using repo = tempRepo('factory-defer-', CHECKS_OK);
