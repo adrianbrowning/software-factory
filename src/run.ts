@@ -251,7 +251,7 @@ const runSchema = z.object({
   /** Check commands every slice must pass, fixed when the run starts. Empty in runs from before they were kept here. */
   checks: z.array(text).default([]),
   createdAt: text,
-  /** Decisions the user made during the run (accepted tradeoffs, out-of-scope work). Reviewers read them. */
+  /** Decisions recorded during the run (accepted tradeoffs, out-of-scope work), each with its author. Reviewers read them; an autonomous one is checked, not a waiver. */
   decisions: z.array(decisionSchema).default([]),
   events: z.array(z.object({ at: text, detail: z.string(), kind: text, slice: z.string().optional() })),
   feature: text,
