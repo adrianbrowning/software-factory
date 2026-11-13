@@ -82,6 +82,11 @@ describe('headless retro', () => {
     assert.match(ticket, /notes\/later\.md/);
     for (const title of ['Lint rule', 'Vague skill', 'Minor thing']) assert.match(ticket, new RegExp(title));
     assert.match(reply, /Next: .*factory_next/);
+    const status = JSON.parse((await call('factory_status', {})).content[0]?.text ?? '') as { deferred: { location: string; slice: string; title: string }[]; nextAction: string; slices: { title: string }[] };
+    assert.deepEqual(status.slices.map(item => item.title), ['Feature', 'Record deferred items']);
+    assert.match(status.nextAction, /factory_next/);
+    assert.equal(status.deferred.length, 3);
+    assert.ok(status.deferred.every(item => item.location === 'notes/later.md' && item.slice === 'retro'));
   });
 
   it('github sink: files one issue per finding on the project, none on the factory repository, and adds no slice', async () => {
@@ -125,5 +130,31 @@ describe('headless retro', () => {
     assert.match(ticket, /notes\/later\.md/);
     assert.match(ticket, /naming/);
     assert.match(reply, /Next: .*factory_next/);
+  });
+
+  it('a second retro after the record slice is done defers its findings and records only the new items', async () => {
+    using repo = tempRepo('factory-retro-', CHECKS_OK);
+    const { call, ws } = await doneRun(repo.root, { kind: 'file', path: 'notes/later.md' });
+    await call('factory_retro', { findings: [FINDINGS[1]] });
+    const finishActive = async (file: string) => {
+      await withRun(ws, 'demo', run => nextSlice(ws, run));
+      commit(ws, file);
+      await withRun(ws, 'demo', run => runChecks(ws, run));
+      const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+      await review(ws, reviewId, []);
+      await withRun(ws, 'demo', run => recordReview(ws, run));
+      await withRun(ws, 'demo', run => completeSlice(ws, run));
+    };
+    await finishActive('record');
+    assert.equal(readRun(ws, 'demo').status, 'done');
+    await call('factory_follow_up', { acceptance: ['logged'], estimateTokens: 500, seams: ['cli'], title: 'Polish', whatToBuild: 'Polish' });
+    await finishActive('polish');
+    await call('factory_retro', { findings: [FINDINGS[0]] });
+    const run = readRun(ws, 'demo');
+    assert.deepEqual(run.deferred.map(item => item.title), ['demo/retro: Vague skill', 'demo/retro: Lint rule']);
+    assert.deepEqual(run.slices.map(item => item.title), ['Feature', 'Record deferred items', 'Polish', 'Record deferred items 2']);
+    const ticket = readFileSync(ticketPath(ws, 'demo', run.slices[3] ?? assert.fail('no slice')), 'utf8');
+    assert.match(ticket, /Lint rule/);
+    assert.doesNotMatch(ticket, /Vague skill/);
   });
 });
