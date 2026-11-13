@@ -34,7 +34,7 @@ function fakeGh() {
 
 /** A headless run with its one slice done, UI dialogs throwing, and the deferred sink `deferred`. With `deferEarlier`, the slice's green review lists one observation, deferred before the slice completes. */
 async function doneRun(root: string, deferred: unknown, deferEarlier = false) {
-  writeFileSync(join(root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], ...(deferred === undefined ? {} : { deferred }) }));
+  writeFileSync(join(root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], headless: { submission: 'stop' }, ...(deferred === undefined ? {} : { deferred }) }));
   sh(root, 'commit', '-qam', 'config', '--allow-empty');
   const commands = new Map<string, Command>();
   const tools = load({ commands, sent: [] });

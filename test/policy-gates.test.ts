@@ -15,14 +15,14 @@ beforeEach(() => resetModuleState());
 const SOURCE = { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' };
 const TICKET = { 'demo.md': '# Demo\n\nDo it.\n' };
 const CHECKS_OK = { ...TICKET, '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) };
-const GATES = ['resume', 'plan', 'reslice', 'decide', 'seams', 'fix', 'carry', 'reopen', 'followUp', 'retro', 'checks'] as const;
+const GATES = ['resume', 'plan', 'reslice', 'decide', 'seams', 'fix', 'carry', 'reopen', 'followUp', 'retro', 'checks', 'submission'] as const;
 
 type Stage = 'intake' | 'active' | 'green' | 'done';
 type Reply = { content: { text: string }[] };
 
 /** A headless run in the repo at `root`, whose UI throws on any dialog, taken to `stage` with `titles` slices. */
 async function headlessRun(root: string, stage: Stage, policy: Record<string, string>, titles = ['Feature'], extra: Record<string, unknown> = {}) {
-  writeFileSync(join(root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], headless: policy, ...extra }));
+  writeFileSync(join(root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], headless: { submission: 'stop', ...policy }, ...extra }));
   sh(root, 'commit', '-qam', 'policy');
   const commands = new Map<string, Command>();
   const tools = load({ commands, sent: [] });
@@ -141,7 +141,7 @@ describe('headless gates', () => {
 
   /** Rewrites only the headless policy on disk, as a person editing .omp/factory.json between the stop and the resume. */
   function setPolicy(root: string, extra: Record<string, unknown>, policy: Record<string, string>) {
-    writeFileSync(join(root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], headless: policy, ...extra }));
+    writeFileSync(join(root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], headless: { submission: 'stop', ...policy }, ...extra }));
   }
 
   async function assertResumeStops(root: string, ws: Workspace, dialogs: string[]) {

@@ -1,11 +1,10 @@
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { greenCommit, readRun, type Workspace } from '../src/run.ts';
+import { addEvent, greenCommit, readRun, type Workspace } from '../src/run.ts';
 import { completeSlice } from '../src/review.ts';
 import { planSubmit, submitStack } from '../src/submit.ts';
 import { approvePlan, nextSlice, parseRetro, planSlices, recordRetro, resolveBase } from '../src/workflow.ts';
+import { fakeGh, prCalls, withPrs } from './fake-gh.ts';
 import { commit, green, newRun, sh, slice, start, step, tempDir, workspace } from './helpers.ts';
 
 /** A done run of `count` chained slices, each with a reviewed commit, checked out on `main` (off the top slice). */
@@ -21,74 +20,6 @@ async function doneRun(ws: Workspace, count: number) {
   await step(ws, run => recordRetro(ws, run, parseRetro(ws, run, [])));
   sh(ws.root, 'switch', '-q', 'main');
   return readRun(ws, 'demo').slices.map(item => item.branch);
-}
-
-const NO_STACK = { code: 2, stderr: '✗ no local or remote stack found for "$3"' };
-
-interface FakeGh {
-  /** The stack `stack view --json` serves (a raw string is served as is); undefined means no stack. */
-  stack: string[] | string | undefined;
-  /** How `stack checkout` fails without a stack; by default gh-stack's real "no stack" exit and stderr. */
-  checkoutFailure?: { code: number; stderr: string };
-  /** The subcommand (such as `stack submit`) that runs `onFail` and exits 1. */
-  fail?: string;
-  onFail?: string;
-  /** The stack `stack view --json` serves after `stack submit`, with each branch's PR number (none: no `pr`). */
-  submitted?: { name: string; pr?: number }[];
-}
-
-/** The branches as a submitted stack, with PRs numbered from 101. */
-const withPrs = (branches: string[]) => branches.map((name, index) => ({ name, pr: 101 + index }));
-
-/** The `gh api` calls that set the title of PR 101 onwards to `demo: NN Sn`. */
-const titleCalls = (count: number) =>
-  Array.from({ length: count }, (_, index) => `api -X PATCH repos/{owner}/{repo}/pulls/${101 + index} -f title=demo: 0${index + 1} S${index + 1}`);
-
-/**
- * Puts a fake `gh` first on PATH until the `using` scope that holds it ends, then removes it; it records each call.
- * With a stack, `stack checkout <branch>` switches to that branch, as gh-stack does; `stack init` switches to its last
- * (top) branch, `stack top` to the stack's top branch, and `stack add <branch>` to the branch it adds.
- */
-function fakeGh({ stack, checkoutFailure = NO_STACK, fail = '', onFail = ':', submitted }: FakeGh) {
-  const temp = tempDir('factory-gh-');
-  const dir = temp.root;
-  const log = join(dir, 'calls');
-  const view = join(dir, 'view.json');
-  if (typeof stack === 'string') writeFileSync(view, stack);
-  else if (stack !== undefined) {
-    writeFileSync(view, JSON.stringify({ branches: stack.map(name => ({ name })), currentBranch: stack[0], trunk: 'main' }));
-    writeFileSync(join(dir, 'top'), stack.at(-1) ?? '');
-  }
-  const after = join(dir, 'submitted.json');
-  if (submitted !== undefined) {
-    const items = submitted.map(({ name, pr }) => (pr === undefined ? { name } : { name, pr: { number: pr, url: `https://example.test/pull/${pr}`, state: 'OPEN' } }));
-    writeFileSync(after, JSON.stringify({ branches: items, currentBranch: submitted.at(-1)?.name, trunk: 'main' }));
-  }
-  const script = [
-    '#!/bin/sh',
-    `echo "$*" >> '${log}'`,
-    `if [ "$1 $2" = "stack checkout" ] && [ ! -f '${view}' ]; then echo "${checkoutFailure.stderr}" >&2; exit ${checkoutFailure.code}; fi`,
-    `if [ "$1 $2" = "stack checkout" ]; then git switch -q "$3" || exit 1; fi`,
-    `if [ "$1 $2" = "stack view" ]; then cat '${view}' || exit 1; fi`,
-    `if [ "$1 $2" = "stack init" ]; then eval "git switch -q \\"\\\${$#}\\"" || exit 1; fi`,
-    `if [ "$1 $2" = "stack top" ]; then git switch -q "$(cat '${join(dir, 'top')}')" || exit 1; fi`,
-    `if [ "$1 $2" = "stack add" ]; then git switch -q "$3" || exit 1; fi`,
-    `if [ "$1 $2" = '${fail}' ]; then ${onFail}; exit 1; fi`,
-    `if [ "$1 $2" = "stack submit" ] && [ -f '${after}' ]; then cp '${after}' '${view}'; fi`,
-    'exit 0',
-    '',
-  ].join('\n');
-  writeFileSync(join(dir, 'gh'), script);
-  chmodSync(join(dir, 'gh'), 0o755);
-  process.env.PATH = `${dir}:${process.env.PATH}`;
-  return {
-    calls: () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : []),
-    // Removes only this fake's PATH entry, so several fakes in one test clean up in any order.
-    [Symbol.dispose]: () => {
-      process.env.PATH = (process.env.PATH ?? '').split(':').filter(entry => entry !== dir).join(':');
-      temp[Symbol.dispose]();
-    },
-  };
 }
 
 describe('submit', () => {
@@ -179,9 +110,42 @@ describe('submit', () => {
     using gh = fakeGh({ stack: undefined, submitted: withPrs(branches) });
     const steps: string[] = [];
     await step(ws, run => submitStack(ws, run, message => steps.push(message)));
-    assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, `stack init --base main ${branches.join(' ')}`, 'stack submit --auto', 'stack view --json', ...titleCalls(3)]);
+    assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, `stack init --base main ${branches.join(' ')}`, 'stack submit --auto', 'stack view --json', ...prCalls(3)]);
     assert.ok(steps.includes('adopting 3 branches into a gh stack onto main'), steps.join('\n'));
     assert.equal(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'a first submit ends on the top slice');
+  });
+
+  it('sets every PR body from run state: the issue link, slice summary, checks, review rounds, autonomous decisions, unresolved findings and deferred items', async () => {
+    using ws = workspace();
+    const branches = await doneRun(ws, 2);
+    await step(ws, run => {
+      run.source = { ...run.source, url: 'https://github.com/o/r/issues/7' };
+      run.decisions.push({ author: 'autonomous', text: 'Took the narrower reading.' }, { author: 'user', text: 'Skip the CLI.' }, { author: 'autonomous', text: 'Used token ghp_abcdefghijklmnopqrstuvwxyz0123456789 for the fixture.' });
+      addEvent(run, 'autonomous', 'gate intake (auto): left out text from outside authors @mallory');
+      const [one] = run.slices;
+      if (one !== undefined) one.unresolved = ['blocking finding bug-x: [high] a.ts:1: wrong'];
+      run.deferred.push({ body: 'b', key: 'r1:thermo-naming', kind: 'observation', location: 'docs/factory-deferred.md', review: 'r1', slice: '01', title: 'demo/01: naming' });
+      run.deferred.push({ body: 'b', key: 'retro:1:1', kind: 'retro', location: 'https://github.com/o/r/issues/9', review: 'retro', slice: 'retro', title: 'demo/retro: lint rule' });
+    });
+    using gh = fakeGh({ stack: undefined, submitted: withPrs(branches) });
+    await step(ws, run => submitStack(ws, run));
+    const first = gh.bodies().get(101) ?? '';
+    const second = gh.bodies().get(102) ?? '';
+    assert.match(first, /https:\/\/github\.com\/o\/r\/issues\/7/);
+    assert.match(first, /S1/);
+    assert.match(first, /S1 works/, 'the acceptance criteria');
+    assert.match(first, /test -f ok/, 'the checks the slice passed');
+    assert.match(first, /1 review/);
+    assert.match(first, /Autonomous decisions[\s\S]*Took the narrower reading\./);
+    assert.doesNotMatch(first, /Skip the CLI/);
+    assert.doesNotMatch(first, /ghp_abcdefghij/, 'a credential in a decision is redacted');
+    assert.match(first, /Used token <REDACTED>/);
+    assert.match(first, /left out text from outside authors @mallory/);
+    assert.match(first, /blocking finding bug-x: \[high\] a\.ts:1: wrong/);
+    assert.match(first, /demo\/01: naming.*docs\/factory-deferred\.md/);
+    assert.doesNotMatch(first, /lint rule/);
+    assert.doesNotMatch(second, /bug-x/);
+    assert.match(second, /demo\/retro: lint rule.*https:\/\/github\.com\/o\/r\/issues\/9/, 'retro items are listed on the top slice');
   });
 
   it('fails without adopting when gh stack checkout fails for another reason than no stack', async () => {
@@ -205,7 +169,7 @@ describe('submit', () => {
       `stack add ${branches[5]}`,
       'stack submit --auto',
       'stack view --json',
-      ...titleCalls(6),
+      ...prCalls(6),
     ]);
     assert.ok(steps.includes(`adding 1 branch to the existing gh stack: ${branches[5]}`), steps.join('\n'));
     assert.equal(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'an add re-submit ends on the top slice');
@@ -225,7 +189,7 @@ describe('submit', () => {
       `stack add ${branches[2]}`,
       'stack submit --auto',
       'stack view --json',
-      ...titleCalls(3),
+      ...prCalls(3),
     ]);
     assert.ok(steps.includes(`adding 2 branches to the existing gh stack: ${branches[1]}, ${branches[2]}`), steps.join('\n'));
   });
@@ -236,7 +200,7 @@ describe('submit', () => {
     using gh = fakeGh({ stack: branches, submitted: withPrs(branches) });
     const steps: string[] = [];
     await step(ws, run => submitStack(ws, run, message => steps.push(message)));
-    assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, 'stack view --json', 'stack top', 'stack submit --auto', 'stack view --json', ...titleCalls(2)]);
+    assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, 'stack view --json', 'stack top', 'stack submit --auto', 'stack view --json', ...prCalls(2)]);
     assert.equal(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'a full-stack re-submit ends on the top slice');
     assert.ok(steps.includes('the gh stack already holds all 2 slice branches'), steps.join('\n'));
   });
