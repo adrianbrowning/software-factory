@@ -563,6 +563,12 @@ export function planReslice(ws: Workspace, run: Run, proposed: unknown) {
   // Review ids are `<slice id>-r<n>` and the first child keeps the slice id: continue the count so a new review
   // never reuses an old review directory.
   first.reviews = active.reviews;
+  // A Record deferred items slice stays one through a split.
+  if (active.record === true) for (const child of slices.slice(index, index + children.length)) child.record = true;
+  pending.forEach((slice, offset) => {
+    const remade = slices[index + children.length + offset];
+    if (remade !== undefined && slice.record === true) remade.record = true;
+  });
   // The decisions the split slice builds go to its last child, which finishes its work; later slices keep theirs.
   slices[index + children.length - 1]?.ownsDecisions.push(...active.ownsDecisions);
   return { children: slices.slice(index, index + children.length), slices };
@@ -581,6 +587,15 @@ export async function applyReslice(ws: Workspace, run: Run, slices: Slice[]) {
     rmSync(ticketPath(ws, run.feature, old), { force: true });
     rmSync(reportPath(ws, run.feature, old), { force: true });
   }
+  // Items a Record slice wrote follow its renumbering: the split slice to its first child, later ones to their remade slice.
+  const index = run.slices.indexOf(active);
+  const children = slices.length - run.slices.length + 1;
+  const renamed = new Map([[active.id, first.id]]);
+  run.slices.slice(index + 1).forEach((old, offset) => {
+    const remade = slices[index + children + offset];
+    if (remade !== undefined) renamed.set(old.id, remade.id);
+  });
+  for (const item of run.deferred) item.recorded = (item.recorded === undefined ? undefined : renamed.get(item.recorded)) ?? item.recorded;
   run.slices = slices;
   for (const slice of slices.filter(candidate => candidate.status !== 'done')) writeTicket(ws, run, slice);
   addEvent(

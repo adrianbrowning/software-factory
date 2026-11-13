@@ -158,7 +158,7 @@ describe('headless retro', () => {
     assert.doesNotMatch(ticket, /Vague skill/);
   });
 
-  /** Runs the active slice through checks, a green review listing `findings`, and returns the review's slice work so the caller can defer before completing. */
+  /** Takes the next slice through checks and a green review listing `findings`, leaving it unfinished so the caller can defer before completeSlice. */
   const reviewActive = async (ws: Workspace, file: string, findings: ReturnType<typeof finding>[]) => {
     await withRun(ws, 'demo', run => nextSlice(ws, run));
     commit(ws, 'ok', `${file}\n`);
@@ -208,6 +208,17 @@ describe('headless retro', () => {
     assert.equal(run.deferred.length, 1);
     assert.deepEqual(run.slices.map(item => item.title), ['Feature', 'Record deferred items']);
     assert.equal(run.status, 'done');
+  });
+
+  it('every child of a resliced Record slice stays a Record slice, and its items point at the first child', async () => {
+    using repo = tempRepo('factory-retro-', CHECKS_OK);
+    const { call, ws } = await doneRun(repo.root, { kind: 'file', path: 'notes/later.md' }, true);
+    await call('factory_retro', { findings: [] });
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    await call('factory_reslice', { slices: [slice('Record part one'), slice('Record part two', ['Record part one'])] });
+    const run = readRun(ws, 'demo');
+    assert.deepEqual(run.slices.map(item => item.record), [undefined, true, true]);
+    assert.deepEqual(run.deferred.map(item => item.recorded), [run.slices[1]?.id]);
   });
 
   it('an ordinary slice titled like the Record slice still defers its review items', async () => {
