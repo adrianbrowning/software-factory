@@ -219,4 +219,28 @@ describe('headless retro', () => {
     await call('factory_defer', { observations: ['thermo-wording'] });
     assert.deepEqual(readRun(ws, 'demo').deferred.map(item => item.id), ['thermo-wording']);
   });
+
+  it("a Record slice accepted unresolved keeps its findings on record, defers none, adds no further Record slice, and the run becomes done", async () => {
+    using repo = tempRepo('factory-retro-', CHECKS_OK);
+    const { call, ws } = await doneRun(repo.root, { kind: 'file', path: 'notes/later.md' }, true);
+    await call('factory_retro', { findings: [] });
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    for (const round of ['one', 'two', 'three', 'four']) {
+      commit(ws, 'ok', `${round}\n`);
+      await withRun(ws, 'demo', run => runChecks(ws, run));
+      const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+      await review(ws, reviewId, [finding('thermo', 'high', 'a'), finding('bug', 'high', 'b')]);
+      await call('factory_review_record', {});
+    }
+    const run = readRun(ws, 'demo');
+    const record = run.slices[1] ?? assert.fail('no record slice');
+    assert.equal(record.record, true);
+    assert.equal(run.deferred.length, 1);
+    assert.ok((record.unresolved ?? []).length > 0);
+    assert.ok(run.events.some(event => event.kind === 'accepted-unresolved' && /not deferred/.test(event.detail)));
+    await withRun(ws, 'demo', current => completeSlice(ws, current));
+    const done = readRun(ws, 'demo');
+    assert.deepEqual(done.slices.map(item => item.title), ['Feature', 'Record deferred items']);
+    assert.equal(done.status, 'done');
+  });
 });
