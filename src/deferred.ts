@@ -7,6 +7,20 @@ export function isRecordSlice(slice: Slice) {
   return slice.record === true;
 }
 
+/**
+ * Whether a file-sink item's Record deferred items slice is done but was accepted unresolved, so the item may not have
+ * reached the sink file.
+ */
+export function recordFailed(run: Run, item: DeferredItem) {
+  const record = run.slices.find(slice => slice.id === item.recorded);
+  return record !== undefined && record.status === 'done' && (record.unresolved ?? []).length > 0;
+}
+
+/** Whether the item waits for a Record slice: none lists it yet, or its one Record slice failed and no retry was made. */
+export function waitsForRecord(run: Run, item: DeferredItem) {
+  return item.recorded === undefined || (item.retried !== true && recordFailed(run, item));
+}
+
 /** An item to defer, before its sink location is known. */
 export type DeferredDraft = Omit<DeferredItem, 'location'>;
 

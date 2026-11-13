@@ -260,6 +260,12 @@ const deferredItemSchema = z.object({
   kind: z.enum(['note', 'observation', 'retro', 'unresolved']),
   location: text,
   recorded: text.optional(),
+  /**
+   * Set once the item was listed in a second Record deferred items slice because its first one was accepted
+   * unresolved. The retry is bounded: an item whose second Record slice also fails is not queued again, and
+   * factory_status shows it as not written to the file.
+   */
+  retried: z.literal(true).optional(),
   review: text,
   slice: text,
   title: text,
