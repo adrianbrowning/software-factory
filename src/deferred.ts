@@ -17,6 +17,23 @@ export function draftOf(run: Run, slice: Slice, reviewId: string, item: Pick<Def
   };
 }
 
+/** The key of the `number`th (1-based) finding of the run's current retro: the retro's own ordinal keeps a later retro's findings from matching an earlier one's. */
+export function retroKey(run: Run, number: number) {
+  return `retro:${run.events.filter(event => event.kind === 'retro').length + 1}:${number}`;
+}
+
+/** A draft for the `number`th (1-based) finding of a headless retro. Redacted: retro details come from a possibly private repository. */
+export function retroDraft(run: Run, number: number, finding: { category: string; detail: string; severity: string; target: string; title: string }): DeferredDraft {
+  return {
+    body: redact(`Run: ${run.feature}\nRetro finding (${finding.target}, ${finding.category}, ${finding.severity})\n\n${finding.detail}`),
+    key: retroKey(run, number),
+    kind: 'retro',
+    review: 'retro',
+    slice: 'retro',
+    title: `${run.feature}/retro: ${evidenceLine(finding.title, 200)}`,
+  };
+}
+
 /**
  * Sends each draft the run has not deferred yet (by key) to the configured sink and records it on the run: a GitHub
  * issue is created at once and its URL stored, a file item waits on the run with the file's path. An issue that fails

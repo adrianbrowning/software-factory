@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { effectiveModels } from './config.ts';
 import { evidence, evidenceLine, redact } from './evidence.ts';
 import { gh, git } from './exec.ts';
-import { draftOf } from './deferred.ts';
+import { draftOf, retroDraft, retroKey } from './deferred.ts';
 import { resolveObservations, renderFinding } from './review.ts';
 import {
   activeSlice,
@@ -898,6 +898,8 @@ export function parseRetro(ws: Workspace, run: Run, proposed: unknown): Retro {
     .array(retroFindingSchema)
     .parse(proposed)
     .toSorted((a, b) => RETRO_SEVERITIES.indexOf(a.severity) - RETRO_SEVERITIES.indexOf(b.severity));
+  // A headless retro defers every finding: no apply slice, no factory issues.
+  if (run.mode === 'headless') return { apply: [], file: [], findings, slice: undefined };
   const apply = findings.filter(finding => finding.action === 'apply');
   const slice =
     apply.length === 0
@@ -911,6 +913,11 @@ export function parseRetro(ws: Workspace, run: Run, proposed: unknown): Retro {
           whatToBuild: apply.map(finding => `${finding.title}: ${finding.detail}`).join('\n'),
         });
   return { apply, file: findings.filter(finding => finding.action === 'file-issue'), findings, slice };
+}
+
+/** One draft per finding of a headless retro, in the retro's order. */
+export function retroDrafts(run: Run, retro: Retro) {
+  return retro.findings.map((finding, index) => retroDraft(run, index + 1, finding));
 }
 
 /** The issue body a factory finding is filed with. Redacted: retro details come from a possibly private repository. */
@@ -943,6 +950,10 @@ export function recordRetro(ws: Workspace, run: Run, retro: Retro, filed: FiledI
     throw new Error('The slices changed since the retro was parsed. Call factory_retro again.');
   }
   const status = (finding: RetroFinding) => {
+    if (run.mode === 'headless') {
+      const item = run.deferred.find(candidate => candidate.key === retroKey(run, retro.findings.indexOf(finding) + 1));
+      return item === undefined ? '\nNot deferred: no deferred sink is configured.\n' : `\nDeferred: ${item.location}\n`;
+    }
     if (finding.action !== 'file-issue') return '';
     const url = filed.urls[finding.title];
     return url === undefined ? `\nNot filed${filed.error === undefined ? '' : `: ${filed.error}`}\n` : `\nFiled: ${url}\n`;
@@ -960,8 +971,31 @@ export function recordRetro(ws: Workspace, run: Run, retro: Retro, filed: FiledI
   const repoCount = retro.findings.filter(finding => finding.target === 'repo').length;
   addEvent(run, 'retro', `${retro.findings.length} findings: repo=${repoCount} factory=${retro.findings.length - repoCount}`);
   const slice = retro.slice === undefined ? undefined : pushSlice(ws, run, retro.slice);
+  const record = slice ?? recordDeferredSlice(ws, run);
   settle(run);
-  return slice;
+  return record;
+}
+
+/**
+ * For a headless run, adds the final Record deferred items slice when file-sink items wait on the run: its ticket lists
+ * every one with the target path, and marks them recorded so a later retro does not list them again.
+ */
+function recordDeferredSlice(ws: Workspace, run: Run) {
+  const sink = ws.config.deferred;
+  const waiting = run.mode === 'headless' && sink?.kind === 'file' ? run.deferred.filter(item => item.recorded === undefined) : [];
+  if (sink?.kind !== 'file' || waiting.length === 0) return undefined;
+  // A slice already queued for an item covers it until it is done, so an item is listed once; a later retro's items get a numbered title.
+  const earlier = run.slices.filter(candidate => candidate.title.startsWith('Record deferred items')).length;
+  const planned = planAppend(ws, run, {
+    acceptance: [`${sink.path} holds each of the ${waiting.length} deferred items below, with the run, slice and review it names`],
+    estimateTokens: Math.floor(ws.config.sliceTokenBudget / 10),
+    noTestReason: 'Records text in a markdown file; there is no behavior to test.',
+    seams: [],
+    title: earlier === 0 ? 'Record deferred items' : `Record deferred items ${earlier + 1}`,
+    whatToBuild: `Write these deferred items to ${sink.path}: create the file when it is missing, otherwise append, and keep what is there. Each item keeps its title and body.\n\n${waiting.map(item => `## ${item.title}\n\n${item.body}`).join('\n\n')}`,
+  });
+  for (const item of waiting) item.recorded = planned.id;
+  return pushSlice(ws, run, planned);
 }
 
 /**

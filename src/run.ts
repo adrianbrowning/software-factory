@@ -245,16 +245,19 @@ const decisionSchema = z.preprocess(
 export type Decision = z.infer<typeof decisionSchema>;
 
 /**
- * One item sent to the deferred sink (factory_defer, or an accepted-unresolved review). `key` is `review:id` for a
- * finding (so it is deferred once) and `review:note:N` for a note. `location` is the GitHub issue URL, or the sink
+ * One item sent to the deferred sink (factory_defer, an accepted-unresolved review, or a headless retro). `key` is
+ * `review:id` for a finding with an id (so it is deferred once), `review:unresolved:N` for an accepted-unresolved item
+ * without an id, `review:note:N` for a note, and `retro:R:N` for the Nth finding of the run's Rth retro. `recorded` names the Record
+ * deferred items slice that writes a file item. `location` is the GitHub issue URL, or the sink
  * file's path while the item waits on the run for the file to be written.
  */
 const deferredItemSchema = z.object({
   body: text,
   id: text.optional(),
   key: text,
-  kind: z.enum(['note', 'observation', 'unresolved']),
+  kind: z.enum(['note', 'observation', 'retro', 'unresolved']),
   location: text,
+  recorded: text.optional(),
   review: text,
   slice: text,
   title: text,
