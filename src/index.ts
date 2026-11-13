@@ -76,6 +76,7 @@ import {
   sourceInputSchema,
   startRun,
   summarize,
+  HEADLESS_FIX_ROUNDS,
 } from './workflow.ts';
 
 const DEFAULT_FACTORY_REPO = 'adrianbrowning/software-factory';
@@ -234,7 +235,7 @@ async function decideStall(ctx: ExtensionContext, ws: Workspace, feature: string
   const slice = activeSlice(run);
   if (slice === undefined || !slice.stalled) return '';
   if (run.mode === 'headless') {
-    // Decision 8: no prompt and no more rounds. Red after the last round pauses the run (decision 10).
+    // A headless run never prompts to raise the fix budget: red checks after the last round pause the run.
     const round = Math.max(...slice.fixItems.map(item => item.round));
     const failing = slice.fixItems.filter(item => item.round === round).map(item => item.summary);
     const reason = `slice ${slice.id} "${slice.title}" is still red after ${slice.roundLimit} fix rounds: ${failing.join('; ')}`;
@@ -344,7 +345,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
     bindRun(entry.pointer, { feature: run.feature, mainId: ctx.agent.id, ws });
     await pi.setActiveTools([...new Set([...pi.getActiveTools(), ...ORCHESTRATION_TOOLS])]);
     return reply(
-      `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${ws.config.maxRounds}.\nNext: ${nextAction(run)}`,
+      `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${run.mode === 'headless' ? HEADLESS_FIX_ROUNDS : ws.config.maxRounds}.\nNext: ${nextAction(run)}`,
       summarize(ws, run),
     );
   }

@@ -293,8 +293,8 @@ function slugify(title: string) {
   return cut > 0 ? full.slice(0, cut) : full.slice(0, 40);
 }
 
-/** Decision 8: the fix budget of a headless slice, whatever `maxRounds` says. */
-const HEADLESS_FIX_ROUNDS = 3;
+/** A headless slice has a fixed 3-round fix budget, whatever `maxRounds` says, and never prompts to raise it. */
+export const HEADLESS_FIX_ROUNDS = 3;
 
 function makeSlice(ws: Workspace, run: Run, input: SliceInput, index: number, parentBranch: string): Slice {
   const id = String(index + 1).padStart(2, '0');

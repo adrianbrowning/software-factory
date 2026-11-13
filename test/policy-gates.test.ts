@@ -402,6 +402,7 @@ describe('headless round limits', () => {
     await withRun(ws, 'demo', run => runChecks(ws, run));
     const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
     await review(ws, reviewId, []);
+    await withRun(ws, 'demo', run => { run.slices[0]!.unresolved = ['stale']; });
     await call('factory_review_record', {});
     assert.equal(readRun(ws, 'demo').slices[0]?.unresolved, undefined);
     await call('factory_complete_slice', {});
