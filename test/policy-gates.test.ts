@@ -319,7 +319,7 @@ describe('headless round limits', () => {
     const run = readRun(ws, 'demo');
     assert.equal(run.status, 'running');
     assert.equal(run.slices[0]?.stalled, false);
-    assert.match(text, /accepted unresolved[\s\S]*thermo-bad/);
+    assert.match(text, /accepted unresolved[\s\S]*blocking finding thermo-bad/);
     assert.match(text, /Next: Call factory_complete_slice/);
     const event = run.events.findLast(item => item.kind === 'accepted-unresolved');
     assert.match(event?.detail ?? '', /thermo-bad/);
@@ -336,7 +336,7 @@ describe('headless round limits', () => {
     const verdicts = readRun(ws, 'demo').slices[0]?.fixItems.map(item => ({ id: item.id, reason: 'still wrong', status: 'open' as const }));
     await review(ws, reviewId, [], [], verdicts);
     const text = (await call('factory_review_record', {})).content[0]?.text ?? '';
-    assert.match(text, /accepted unresolved[\s\S]*thermo-bad \(open fix item\)|accepted unresolved[\s\S]*thermo-bad/);
+    assert.match(text, /accepted unresolved[\s\S]*open fix item thermo-bad/);
   });
 
   it('factory_complete_slice completes an accepted-unresolved slice in a headless run', async () => {

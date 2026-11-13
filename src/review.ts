@@ -715,7 +715,7 @@ export async function recordReview(ws: Workspace, run: Run) {
   ];
   if (run.mode === 'headless' && slice.fixRounds >= slice.roundLimit) {
     // Decisions 8 and 9: a headless slice has a hard round limit and no stall dialog; what is still open goes on record, and green stands in for it.
-    const unresolved = records.map(({ item }) => ('id' in item ? `${item.id}: ${item.summary}` : item.summary));
+    const unresolved = records.map(({ item }, index) => `${index < blocking.length ? 'blocking finding' : 'open fix item'} ${'id' in item ? `${item.id}: ` : ''}${item.summary}`);
     slice.phase = 'ready';
     slice.green = { decisions: review.decisions };
     slice.unresolved = unresolved;
