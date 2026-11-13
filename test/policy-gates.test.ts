@@ -169,15 +169,14 @@ describe('headless gates', () => {
 
   it('resume: auto on a headless run stalled on its fix budget refuses, since the headless fix budget is fixed (decision 8)', async () => {
     using repo = tempRepo('factory-gate-', CHECKS_OK);
-    const { call, ws } = await headlessRun(repo.root, 'active', { resume: 'auto' }, ['Feature'], { maxRounds: 1 });
+    const { call, ws } = await headlessRun(repo.root, 'active', { resume: 'auto' }, ['Feature']);
     sh(repo.root, 'rm', '-q', 'ok');
     sh(repo.root, 'commit', '-qm', 'break the check');
-    await call('factory_checks', {}).catch(() => {});
-    await call('factory_checks', {}).catch(() => {});
+    for (let round = 0; round < 4; round++) await call('factory_checks', {}).catch(() => {});
     await withRun(ws, 'demo', run => resolveStall(ws, run, 'pause'));
     const limit = readRun(ws, 'demo').slices[0]?.roundLimit;
     resetModuleState();
-    await assert.rejects(headlessRunCaller(repo.root).call('factory_start', { resume: 'demo' }), /fixed at 1 rounds \(decision 8\)/);
+    await assert.rejects(headlessRunCaller(repo.root).call('factory_start', { resume: 'demo' }), /fixed at 3 rounds \(decision 8\)/);
     const run = readRun(ws, 'demo');
     assert.equal(run.slices[0]?.roundLimit, limit);
     assert.equal(run.slices[0]?.stalled, true);
@@ -305,11 +304,11 @@ describe('headless round limits', () => {
     return (await call('factory_review_record', {})).content[0]?.text ?? '';
   }
 
-  /** A headless slice whose single fix round is spent on a blocked review, then blocked again. */
+  /** A headless slice whose three fix rounds are spent on blocked reviews, then blocked again. */
   async function acceptedUnresolved(root: string) {
-    const run = await headlessRun(root, 'active', {}, ['Feature'], { maxRounds: 1 });
-    await blockedReview(run.call, run.ws, 'one');
-    const text = await blockedReview(run.call, run.ws, 'two');
+    const run = await headlessRun(root, 'active', {}, ['Feature']);
+    for (const file of ['one', 'two', 'three']) await blockedReview(run.call, run.ws, file);
+    const text = await blockedReview(run.call, run.ws, 'four');
     return { ...run, text };
   }
 
@@ -328,15 +327,17 @@ describe('headless round limits', () => {
 
   it('records an open fix item as unresolved too', async () => {
     using repo = tempRepo('factory-limits-', CHECKS_OK);
-    const { call, ws } = await headlessRun(repo.root, 'active', {}, ['Feature'], { maxRounds: 1 });
-    await blockedReview(call, ws, 'one');
-    commit(ws, 'two');
+    const { call, ws } = await headlessRun(repo.root, 'active', {}, ['Feature']);
+    for (const file of ['one', 'two', 'three']) await blockedReview(call, ws, file);
+    commit(ws, 'four');
     await withRun(ws, 'demo', run => runChecks(ws, run));
     const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
     const verdicts = readRun(ws, 'demo').slices[0]?.fixItems.map(item => ({ id: item.id, reason: 'still wrong', status: 'open' as const }));
     await review(ws, reviewId, [], [], verdicts);
     const text = (await call('factory_review_record', {})).content[0]?.text ?? '';
     assert.match(text, /accepted unresolved[\s\S]*open fix item thermo-bad/);
+    const event = readRun(ws, 'demo').events.findLast(item => item.kind === 'accepted-unresolved');
+    assert.match(event?.detail ?? '', /open fix item thermo-bad/);
   });
 
   it('factory_complete_slice completes an accepted-unresolved slice in a headless run', async () => {
@@ -358,10 +359,10 @@ describe('headless round limits', () => {
 
   it('pauses the run when checks are red after the last fix round, naming the slice and the failing checks, without a dialog', async () => {
     using repo = tempRepo('factory-limits-', CHECKS_OK);
-    const { call, dialogs, ws } = await headlessRun(repo.root, 'active', {}, ['Feature'], { maxRounds: 1 });
+    const { call, dialogs, ws } = await headlessRun(repo.root, 'active', {}, ['Feature']);
     sh(repo.root, 'rm', '-q', 'ok');
     sh(repo.root, 'commit', '-qm', 'break the check');
-    await call('factory_checks', {});
+    for (let round = 0; round < 3; round++) await call('factory_checks', {});
     const text = (await call('factory_checks', {})).content[0]?.text ?? '';
     const run = readRun(ws, 'demo');
     assert.equal(run.status, 'paused');
@@ -374,15 +375,36 @@ describe('headless round limits', () => {
 
   it('does not raise the budget when a headless run paused on red checks resumes', async () => {
     using repo = tempRepo('factory-limits-', CHECKS_OK);
-    const { call, ws } = await headlessRun(repo.root, 'active', {}, ['Feature'], { maxRounds: 1 });
+    const { call, ws } = await headlessRun(repo.root, 'active', {}, ['Feature']);
     sh(repo.root, 'rm', '-q', 'ok');
     sh(repo.root, 'commit', '-qm', 'break the check');
-    await call('factory_checks', {});
-    await call('factory_checks', {});
+    for (let round = 0; round < 4; round++) await call('factory_checks', {});
     resetModuleState();
-    await assert.rejects(headlessRunCaller(repo.root).call('factory_start', { resume: 'demo' }), /fixed at 1 rounds/);
+    await assert.rejects(headlessRunCaller(repo.root).call('factory_start', { resume: 'demo' }), /fixed at 3 rounds/);
     const run = readRun(ws, 'demo');
-    assert.equal(run.slices[0]?.roundLimit, 1);
+    assert.equal(run.slices[0]?.roundLimit, 3);
     assert.equal(run.status, 'paused');
+  });
+
+  it('pins the headless fix budget to 3 rounds whatever maxRounds is configured', async () => {
+    using repo = tempRepo('factory-limits-', CHECKS_OK);
+    const { ws } = await headlessRun(repo.root, 'active', {}, ['Feature'], { maxRounds: 5 });
+    assert.equal(readRun(ws, 'demo').slices[0]?.roundLimit, 3);
+  });
+
+  it('clears the unresolved record when a decision reopens the review and the next review is green', async () => {
+    using repo = tempRepo('factory-limits-', CHECKS_OK);
+    const { call, ws } = await acceptedUnresolved(repo.root);
+    assert.ok(readRun(ws, 'demo').slices[0]?.unresolved?.length);
+    await call('factory_decide', { decisions: ['Later decision.'] });
+    assert.equal(readRun(ws, 'demo').slices[0]?.unresolved, undefined);
+    commit(ws, 'green');
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+    await review(ws, reviewId, []);
+    await call('factory_review_record', {});
+    assert.equal(readRun(ws, 'demo').slices[0]?.unresolved, undefined);
+    await call('factory_complete_slice', {});
+    assert.equal(readRun(ws, 'demo').slices[0]?.status, 'done');
   });
 });

@@ -293,6 +293,9 @@ function slugify(title: string) {
   return cut > 0 ? full.slice(0, cut) : full.slice(0, 40);
 }
 
+/** Decision 8: the fix budget of a headless slice, whatever `maxRounds` says. */
+const HEADLESS_FIX_ROUNDS = 3;
+
 function makeSlice(ws: Workspace, run: Run, input: SliceInput, index: number, parentBranch: string): Slice {
   const id = String(index + 1).padStart(2, '0');
   return {
@@ -308,7 +311,7 @@ function makeSlice(ws: Workspace, run: Run, input: SliceInput, index: number, pa
     peakContextTokens: 0,
     phase: 'implement',
     reviews: 0,
-    roundLimit: ws.config.maxRounds,
+    roundLimit: run.mode === 'headless' ? HEADLESS_FIX_ROUNDS : ws.config.maxRounds,
     stalled: false,
     status: 'pending',
   };

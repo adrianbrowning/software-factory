@@ -107,6 +107,7 @@ function reopenReview(run: Run, slice: Slice) {
   slice.phase = 'review';
   slice.green = undefined;
   slice.review = undefined;
+  slice.unresolved = undefined;
   addEvent(run, 'review-invalidated', 'decisions recorded after the green review', slice);
 }
 
@@ -704,6 +705,7 @@ export async function recordReview(ws: Workspace, run: Run) {
   if (verdict === 'APPROVED') {
     slice.phase = 'ready';
     slice.green = { decisions: review.decisions };
+    slice.unresolved = undefined;
     addEvent(run, 'review-green', detail, slice);
     return { green: true as const, observations: observations.map(finding => renderFinding(finding, run.decisions)) };
   }
