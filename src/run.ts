@@ -181,7 +181,7 @@ const sliceSchema = sliceInputSchema.extend({
   /** Set while the slice waits for the user to decide on an exhausted fix budget. */
   stalled: z.boolean(),
   status: z.enum(['active', 'done', 'pending']),
-  /** Set when a headless run accepted the slice with blocking findings or open fix items left after its last fix round: one `id: summary` line per item. Green stands in for them; an interactive run never completes such a slice. */
+  /** Set when a headless run accepted the slice with blocking findings or open fix items left after its last fix round: one line per item, prefixed `blocking finding` or `open fix item`, then `id: summary` when it has an id. Green stands in for them; an interactive run never completes such a slice. */
   unresolved: z.array(text).optional(),
 });
 export type Slice = z.infer<typeof sliceSchema>;
@@ -244,17 +244,38 @@ const decisionSchema = z.preprocess(
 );
 export type Decision = z.infer<typeof decisionSchema>;
 
+/**
+ * One item sent to the deferred sink (factory_defer, or an accepted-unresolved review). `key` is `review:id` for a
+ * finding (so it is deferred once) and `review:note:N` for a note. `location` is the GitHub issue URL, or the sink
+ * file's path while the item waits on the run for the file to be written.
+ */
+const deferredItemSchema = z.object({
+  body: text,
+  id: text.optional(),
+  key: text,
+  kind: z.enum(['note', 'observation', 'unresolved']),
+  location: text,
+  review: text,
+  slice: text,
+  title: text,
+});
+export type DeferredItem = z.infer<typeof deferredItemSchema>;
+
 const runSchema = z.object({
   /** One record per factory agent or scout session the run's main session spawned. Empty in runs from before it was kept. */
   agents: z.array(agentRecordSchema).default([]),
   baseRef: text,
   /** Commit `baseRef` pointed at when the plan was approved; slice 01 branches from it. */
   baseSha: z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/).optional(),
+  /** Observations carried to a slice or the end queue, as `review:id`; they cannot be deferred or carried again. */
+  carriedObservations: z.array(text).default([]),
   /** Check commands every slice must pass, fixed when the run starts. Empty in runs from before they were kept here. */
   checks: z.array(text).default([]),
   createdAt: text,
   /** Decisions recorded during the run (accepted tradeoffs, out-of-scope work), each with its author. Reviewers read them; an autonomous one is checked, not a waiver. */
   decisions: z.array(decisionSchema).default([]),
+  /** Items sent to the deferred sink, in order. */
+  deferred: z.array(deferredItemSchema).default([]),
   events: z.array(z.object({ at: text, detail: z.string(), kind: text, slice: z.string().optional() })),
   feature: text,
   /** Existing local branch that `/factory submit` fast-forwards to the top slice, instead of opening PRs. */
