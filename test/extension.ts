@@ -1,3 +1,4 @@
+import assert from 'node:assert/strict';
 import type { ExtensionAPI } from '@oh-my-pi/pi-coding-agent';
 import softwareFactory from '../src/index.ts';
 
@@ -19,7 +20,8 @@ export function load({ activated = [], commands = new Map(), handlers = new Map(
   const pi = {
     getActiveTools: () => [],
     getThinkingLevel: thinking,
-    sendUserMessage(message: string) {
+    sendUserMessage(message: string, options?: { attribution?: string; deliverAs?: string }) {
+      assert.deepEqual(options, { deliverAs: 'steer', attribution: 'agent' }, 'a command continuation must use the form omp -p dispatches');
       sent.push(message);
     },
     on(event: string, handler: Handler) {
