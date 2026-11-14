@@ -1,4 +1,3 @@
-import assert from 'node:assert/strict';
 import type { ExtensionAPI } from '@oh-my-pi/pi-coding-agent';
 import softwareFactory from '../src/index.ts';
 
@@ -12,16 +11,16 @@ export type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 
 export type Command = { handler: (args: string, ctx: unknown) => Promise<void> };
 
-type LoadOptions = { activated?: string[]; commands?: Map<string, Command>; handlers?: Map<string, Handler>; sent?: string[]; thinking?: () => string | undefined };
+type LoadOptions = { activated?: string[]; commands?: Map<string, Command>; handlers?: Map<string, Handler>; sent?: string[]; sentOptions?: unknown[]; thinking?: () => string | undefined };
 
 /** Registers the extension against a recording `pi` and returns its tools by name; `activated` collects what setActiveTools gets, `handlers` records its event hooks, `commands` its slash commands, `sent` the messages passed to pi.sendUserMessage, `thinking` gives pi.getThinkingLevel. */
-export function load({ activated = [], commands = new Map(), handlers = new Map(), sent = [], thinking = () => 'off' }: LoadOptions = {}) {
+export function load({ activated = [], commands = new Map(), handlers = new Map(), sent = [], sentOptions = [], thinking = () => 'off' }: LoadOptions = {}) {
   const tools = new Map<string, Registered>();
   const pi = {
     getActiveTools: () => [],
     getThinkingLevel: thinking,
-    sendUserMessage(message: string, options?: { attribution?: string; deliverAs?: string }) {
-      assert.deepEqual(options, { deliverAs: 'steer', attribution: 'agent' }, 'a command continuation must use the form omp -p dispatches');
+    sendUserMessage(message: string, options?: unknown) {
+      sentOptions.push(options);
       sent.push(message);
     },
     on(event: string, handler: Handler) {
