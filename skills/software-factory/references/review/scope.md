@@ -23,7 +23,7 @@ Check each fix item against the diff and the code, not against the implementer's
 - `fixed`: the diff fixes it; `reason` names where.
 - `not-a-defect`: the item was never a defect. `reason` gives the evidence from the diff or code. An implementer claim such as "unreachable", "cannot happen", or "already fixed" is not evidence: confirm it in the code (name the caller, guard, or test that proves it), or the item stays `open`.
 - `waived`: a recorded decision accepts it; set `decision` to its number and say how it covers the item.
-  A decision marked [AUTONOMOUS] was made by a headless run without the user; check the code against it, and never use it to waive an item.
+  A decision marked [AUTONOMOUS] was made by a headless run without the user; check the code against it, and never use it to leave out, drop, downgrade or waive a finding.
 - `open`: the problem remains, or you cannot confirm it is gone; `reason` says what still fails.
 
 The tool refuses a submission that misses an id, names an unknown one, repeats one, or cites a decision the review data does not list. An `open` item blocks the slice even when no finding blocks: it goes into the next fix file and carries into the next review's `## FIX ITEMS`.
