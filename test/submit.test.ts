@@ -638,3 +638,31 @@ describe('prBody many github deferred items', () => {
     assert.ok(body.includes('## Deferred items'));
   });
 });
+
+describe('prBody deferred items beyond the budget', () => {
+  const count = 5_000;
+  const sliceLike = { acceptance: ['a'], fixRounds: 0, id: '07', reviews: 1, title: 'Big', unresolved: [], whatToBuild: 'x'.repeat(100_000) };
+  const build = (location: (i: number) => string) => {
+    const runLike = {
+      checks: [], decisions: [], events: [], feature: 'demo', source: { kind: 'text', ref: 'r', title: 'T' },
+      deferred: Array.from({ length: count }, (_, i) => ({ location: location(i), slice: '07', title: `item ${i} ${'t'.repeat(300)}` })),
+    };
+    const body = prBody(runLike as never, sliceLike as never, [sliceLike as never]);
+    assert.ok(body.length <= 60_000, `length ${body.length}`);
+    for (const heading of ['## Review rounds', '## Autonomous decisions', '## Accepted unresolved', '## Deferred items']) assert.ok(body.includes(heading), heading);
+    const section = body.slice(body.indexOf('## Deferred items'));
+    const more = section.match(/…and (\d+) more deferred items: ([^\n]*)/) ?? assert.fail('no more-items line');
+    const listed = section.split('\n').filter(line => line.startsWith('- ')).length;
+    assert.equal(listed + Number(more[1]), count, 'listed lines plus the count cover every item');
+    assert.ok(Number(more[1]) > 0);
+    return more[2] ?? '';
+  };
+
+  it('file sink: ends with a count line naming the sink path', () => {
+    assert.match(build(() => 'docs/deferred.md'), /docs\/deferred\.md/);
+  });
+
+  it('github sink: ends with a count line saying the issues are in the run state', () => {
+    assert.match(build(i => `https://github.com/o/r/issues/${1000 + i}`), /listed in the run state/);
+  });
+});
