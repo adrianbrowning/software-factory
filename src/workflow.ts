@@ -1062,11 +1062,17 @@ function waitingNotice(run: Run) {
   return `Carried items wait for the end of the run (${run.waiting.length}). Call factory_follow_up for them (title, what to build, acceptance, seams or noTestReason, estimate); its slice takes every waiting item. The retro waits until then.`;
 }
 
+function submittedAfterStackReady(run: Run) {
+  const ready = run.events.findLastIndex(event => event.kind === 'stack-ready');
+  return ready >= 0 && run.events.slice(ready + 1).some(event => event.kind === 'submit');
+}
+
 /** The one thing the orchestrator should do next, in words a model can act on. */
 export function nextAction(run: Run): string {
   if (run.status === 'intake') return 'Clarify the issue with the user, then propose slices with factory_plan.';
   if (run.status === 'done') {
     if (run.waiting.length > 0) return waitingNotice(run);
+    if (run.mode === 'headless' && run.landOn === undefined && submittedAfterStackReady(run)) return 'The draft PRs are open; merging stays manual.';
     return run.landOn === undefined
       ? `The stack is ready. Tell the user they can open draft PRs with /factory submit ${run.feature}.`
       : `The stack is ready. Tell the user that /factory submit ${run.feature} fast-forwards ${run.landOn} to the top slice.`;

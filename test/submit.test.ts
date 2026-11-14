@@ -461,6 +461,17 @@ describe('headless submit', () => {
     assert.ok(readRun(ws, 'demo').events.some(event => event.kind === 'submit'));
   });
 
+  it('does not tell the user to run /factory submit after a headless run opened its PRs', async () => {
+    using repo = tempRepo('factory-hsubmit-', HEADLESS_FILES);
+    const { branches, call, ws } = await headlessSubmitRun(repo.root, ['S1']);
+    await greenWithObservation(ws);
+    using _gh = fakeGh({ stack: undefined, submitted: withPrs(branches) });
+    await call('factory_complete_slice', {});
+    const text = (await call('factory_retro', { findings: [] })).content[0]?.text ?? '';
+    assert.match(text, /Next: The draft PRs are open; merging stays manual\./);
+    assert.doesNotMatch(text, /Next:[^\n]*\/factory submit/);
+  });
+
   it('does not submit and leaves the run ready when the policy sets submission to stop', async () => {
     using repo = tempRepo('factory-hsubmit-', HEADLESS_FILES);
     const { branches, call, ws } = await headlessSubmitRun(repo.root, ['S1'], { submission: 'stop' });
