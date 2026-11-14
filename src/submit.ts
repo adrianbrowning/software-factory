@@ -191,8 +191,19 @@ function clip(text: string, max: number) {
  * where and why it stopped.
  */
 export function prBody(run: Run, slice: Slice, submitted: Slice[], stop?: Stop) {
-  const list = (items: string[]) =>
-    items.length === 0 ? 'None.' : clip(items.map(item => `- ${clip(redact(item), 1_000)}`).join('\n'), 7_000);
+  const list = (items: string[]) => {
+    if (items.length === 0) return 'None.';
+    const lines: string[] = [];
+    let used = 0;
+    for (const item of items) {
+      const line = `- ${clip(redact(item), 1_000)}`;
+      if (used + line.length + 1 > 6_900) break;
+      lines.push(line);
+      used += line.length + 1;
+    }
+    if (lines.length < items.length) lines.push(`…and ${items.length - lines.length} more (truncated)`);
+    return lines.join('\n');
+  };
   const issue = run.source.url ?? `${run.source.kind} ${run.source.ref}`;
   const top = submitted.at(-1) === slice;
   const deferred = run.deferred.filter(item => item.slice === slice.id || (top && item.slice === 'retro'));
@@ -208,8 +219,37 @@ export function prBody(run: Run, slice: Slice, submitted: Slice[], stop?: Stop) 
     `## Review rounds\n\n${slice.reviews} ${slice.reviews === 1 ? 'review' : 'reviews'}, ${slice.fixRounds} fix ${slice.fixRounds === 1 ? 'round' : 'rounds'}.`,
     `## Autonomous decisions\n\n${list(autonomous)}`,
     `## Accepted unresolved\n\n${list(slice.unresolved ?? [])}`,
-    `## Deferred items\n\n${list(deferred.map(item => `${item.title}: ${item.location}`))}`,
   ];
+  const head = '## Deferred items\n\n';
+  const budget = BODY_LIMIT - sections.join('\n\n').length - 2 - head.length;
+  const full = deferred.map(item => `- ${clip(redact(item.title), 120)}: ${redact(item.location)}`);
+  const bare = deferred.map(item => `- ${redact(item.location)}`);
+  const size = (line: string) => line.length + 1;
+  const moreLine = (from: number) => {
+    const locations = [...new Set(deferred.slice(from).map(item => redact(item.location)))];
+    const sink = locations.every(location => /^https?:\/\//.test(location))
+      ? 'the issues are listed in the run state'
+      : clip(locations.join(', '), 500);
+    return `…and ${deferred.length - from} more deferred items: ${sink} (truncated)`;
+  };
+  // Tier 1: full lines for a leading run, location-only lines for the rest, as many full lines as the budget allows.
+  let used = bare.reduce((sum, line) => sum + size(line), 0);
+  let fullCount = 0;
+  if (used <= budget) {
+    while (fullCount < full.length && used - size(bare[fullCount]!) + size(full[fullCount]!) <= budget) {
+      used += size(full[fullCount]!) - size(bare[fullCount]!);
+      fullCount++;
+    }
+  }
+  let shown = [...full.slice(0, fullCount), ...bare.slice(fullCount)];
+  if (used > budget) {
+    // Tier 2: not even location-only lines fit; keep what fits, then one count line naming the sink.
+    let kept = 0;
+    let sum = 0;
+    while (kept < bare.length && sum + size(bare[kept]!) + 600 <= budget) sum += size(bare[kept++]!);
+    shown = [...bare.slice(0, kept), moreLine(kept)];
+  }
+  sections.push(`${head}${shown.length === 0 ? 'None.' : shown.join('\n')}`);
   return clip(redact(sections.join('\n\n')), BODY_LIMIT);
 }
 

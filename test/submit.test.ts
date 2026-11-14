@@ -608,3 +608,33 @@ describe('prBody truncation', () => {
     }
   });
 });
+
+describe('prBody many deferred items', () => {
+  it('lists every sink location, or names the sink, with 300 deferred items and a long whatToBuild', () => {
+    const sliceLike = { acceptance: ['a'], fixRounds: 0, id: '07', reviews: 1, title: 'Big', unresolved: [], whatToBuild: 'x'.repeat(100_000) };
+    const runLike = {
+      checks: [], decisions: [], events: [], feature: 'demo', source: { kind: 'text', ref: 'r', title: 'T' },
+      deferred: Array.from({ length: 300 }, (_, i) => ({ location: 'docs/deferred.md', slice: '07', title: `item ${i} ${'t'.repeat(300)}` })),
+    };
+    const body = prBody(runLike as never, sliceLike as never, [sliceLike as never]);
+    assert.ok(body.length <= 60_000, `length ${body.length}`);
+    for (const heading of ['## Review rounds', '## Autonomous decisions', '## Accepted unresolved', '## Deferred items']) assert.ok(body.includes(heading), heading);
+    const lines = body.split('\n').filter(line => line.startsWith('- ') && line.includes('docs/deferred.md'));
+    assert.equal(lines.length, 300, 'every item keeps its sink location');
+  });
+});
+
+describe('prBody many github deferred items', () => {
+  it('lists every issue URL when 300 deferred items do not fit with their titles', () => {
+    const sliceLike = { acceptance: ['a'], fixRounds: 0, id: '07', reviews: 1, title: 'Big', unresolved: [], whatToBuild: 'x'.repeat(100_000) };
+    const urls = Array.from({ length: 300 }, (_, i) => `https://github.com/o/r/issues/${1000 + i}`);
+    const runLike = {
+      checks: [], decisions: [], events: [], feature: 'demo', source: { kind: 'text', ref: 'r', title: 'T' },
+      deferred: urls.map((location, i) => ({ location, slice: '07', title: `item ${i} ${'t'.repeat(300)}` })),
+    };
+    const body = prBody(runLike as never, sliceLike as never, [sliceLike as never]);
+    assert.ok(body.length <= 60_000, `length ${body.length}`);
+    for (const url of urls) assert.ok(body.includes(url), url);
+    assert.ok(body.includes('## Deferred items'));
+  });
+});
