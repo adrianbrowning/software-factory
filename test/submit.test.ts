@@ -473,6 +473,22 @@ describe('headless submit', () => {
     assert.match(text, /submission to stop/);
   });
 
+  it('tells a paused stopped stack to resume before submitting when the policy sets submission to stop', async () => {
+    using repo = tempRepo('factory-hsubmit-', HEADLESS_FILES);
+    const { branches, call, ws } = await headlessSubmitRun(repo.root, ['S1', 'S2'], { submission: 'stop' });
+    await greenWithObservation(ws);
+    await call('factory_complete_slice', {});
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    sh(repo.root, 'rm', '-q', 'ok');
+    sh(repo.root, 'commit', '-qm', 'break the check');
+    using gh = fakeGh({ stack: undefined, submitted: withPrs(branches.slice(0, 1)) });
+    let text = '';
+    for (let round = 0; round < 4; round++) text = (await call('factory_checks', {})).content[0]?.text ?? '';
+    assert.equal(readRun(ws, 'demo').status, 'paused');
+    assert.deepEqual(gh.calls(), []);
+    assert.match(text, /submission to stop[\s\S]*After \/factory resume finishes the stack/);
+  });
+
   it('submits the done slices below a slice that stays red, with bodies that say where and why the stack stopped, and not the red slice', async () => {
     using repo = tempRepo('factory-hsubmit-', HEADLESS_FILES);
     const { branches, call, ws } = await headlessSubmitRun(repo.root, ['S1', 'S2']);
