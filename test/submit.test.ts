@@ -36,6 +36,8 @@ interface FakeGh {
   /** The subcommand (such as `stack submit`) that runs `onFail` and exits 1. */
   fail?: string;
   onFail?: string;
+  /** A shell command run when `stack submit` succeeds. */
+  onSubmit?: string;
   /** The stack `stack view --json` serves after `stack submit`, with each branch's PR number (none: no `pr`). */
   submitted?: { name: string; pr?: number }[];
 }
@@ -55,7 +57,7 @@ const prCalls = (count: number) =>
  * With a stack, `stack checkout <branch>` switches to that branch, as gh-stack does; `stack init` switches to its last
  * (top) branch, `stack top` to the stack's top branch, and `stack add <branch>` to the branch it adds.
  */
-function fakeGh({ stack, checkoutFailure = NO_STACK, fail = '', onFail = ':', submitted }: FakeGh) {
+function fakeGh({ stack, checkoutFailure = NO_STACK, fail = '', onFail = ':', onSubmit = ':', submitted }: FakeGh) {
   const temp = tempDir('factory-gh-');
   const dir = temp.root;
   const log = join(dir, 'calls');
@@ -81,6 +83,7 @@ function fakeGh({ stack, checkoutFailure = NO_STACK, fail = '', onFail = ':', su
     `if [ "$1 $2" = "stack top" ]; then git switch -q "$(cat '${join(dir, 'top')}')" || exit 1; fi`,
     `if [ "$1 $2" = "stack add" ]; then git switch -q "$3" || exit 1; fi`,
     `if [ "$1 $2" = '${fail}' ]; then ${onFail}; exit 1; fi`,
+    `if [ "$1 $2" = "stack submit" ]; then ${onSubmit}; fi`,
     `if [ "$1 $2" = "stack submit" ] && [ -f '${after}' ]; then cp '${after}' '${view}'; fi`,
     'exit 0',
     '',
@@ -203,7 +206,7 @@ describe('submit', () => {
       run.decisions.push({ author: 'autonomous', text: 'Took the narrower reading.' }, { author: 'user', text: 'Skip the CLI.' }, { author: 'autonomous', text: 'Used token ghp_abcdefghijklmnopqrstuvwxyz0123456789 for the fixture.' });
       addEvent(run, 'autonomous', 'gate intake (auto): left out text from outside authors @mallory');
       const [one] = run.slices;
-      if (one !== undefined) one.unresolved = ['blocking finding bug-x: [high] a.ts:1: wrong'];
+      if (one !== undefined) { one.unresolved = ['blocking finding bug-x: [high] a.ts:1: wrong']; one.whatToBuild = 'Build the S1 widget end to end.'; }
       run.deferred.push({ body: 'b', key: 'r1:thermo-naming', kind: 'observation', location: 'docs/factory-deferred.md', review: 'r1', slice: '01', title: 'demo/01: naming' });
       run.deferred.push({ body: 'b', key: 'retro:1:1', kind: 'retro', location: 'https://github.com/o/r/issues/9', review: 'retro', slice: 'retro', title: 'demo/retro: lint rule' });
     });
@@ -212,7 +215,7 @@ describe('submit', () => {
     const first = gh.bodies().get(101) ?? '';
     const second = gh.bodies().get(102) ?? '';
     assert.match(first, /https:\/\/github\.com\/o\/r\/issues\/7/);
-    assert.match(first, /S1/);
+    assert.match(first, /## Slice 01: S1\n\nBuild the S1 widget end to end\./, 'the slice summary');
     assert.match(first, /S1 works/, 'the acceptance criteria');
     assert.match(first, /test -f ok/, 'the checks the slice passed');
     assert.match(first, /1 review/);
@@ -506,6 +509,23 @@ describe('headless submit', () => {
     assert.equal(sh(repo.root, 'branch', '--show-current'), branches[1], 'the run is back on the red slice');
     const kinds = readRun(ws, 'demo').events.map(event => event.kind);
     assert.ok(kinds.includes('autonomous') && kinds.includes('submit') && kinds.includes('submit-failed'), kinds.join());
+  });
+
+  it('keeps the submit event when the switch back to the red slice fails after a successful stopped submit', async () => {
+    using repo = tempRepo('factory-hsubmit-', HEADLESS_FILES);
+    const { branches, call, ws } = await headlessSubmitRun(repo.root, ['S1', 'S2']);
+    await greenWithObservation(ws);
+    await call('factory_complete_slice', {});
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    sh(repo.root, 'rm', '-q', 'ok');
+    sh(repo.root, 'commit', '-qm', 'break the check');
+    // `ok` is deleted on slice 02 and tracked on slice 01; a local change to it blocks the switch back.
+    using _gh = fakeGh({ onSubmit: 'echo changed > ok', stack: undefined, submitted: withPrs(branches.slice(0, 1)) });
+    for (let round = 0; round < 4; round++) await call('factory_checks', {});
+    const events = readRun(ws, 'demo').events;
+    const kinds = events.map(event => event.kind);
+    assert.ok(kinds.includes('submit') && kinds.includes('submit-failed'), kinds.join());
+    assert.match(events.find(event => event.kind === 'submit-failed')?.detail ?? '', /Switching back to .* failed/);
   });
 
   it('keeps the saved result when gh fails: the reply names the failure and /factory submit, and ends with Next', async () => {

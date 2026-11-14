@@ -149,9 +149,11 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
       try {
         await git(ws.root, 'switch', '-q', ...start);
       } catch (switchError) {
-        if (failed === undefined) throw switchError;
         const failure = switchError instanceof Error ? switchError.message : String(switchError);
-        failed = new Error(`${failed.message}\nSwitching back to ${start.at(-1)} also failed: ${failure}`, { cause: failed });
+        failed = new PrTextsFailed(
+          `${failed?.message ?? 'The stack and its PRs were submitted'}\nSwitching back to ${start.at(-1)} also failed: ${failure}`,
+          { cause: failed ?? switchError },
+        );
       }
     }
   }
