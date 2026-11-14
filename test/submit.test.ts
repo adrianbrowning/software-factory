@@ -7,7 +7,7 @@ import { loadConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
 import { addEvent, greenCommit, readRun, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
-import { planSubmit, submitStack } from '../src/submit.ts';
+import { planSubmit, prBody, submitStack } from '../src/submit.ts';
 import { approvePlan, nextSlice, parseRetro, planSlices, recordRetro, resolveBase } from '../src/workflow.ts';
 import { commit, finding, green, newRun, review, sh, slice, start, step, tempDir, tempRepo, workspace } from './helpers.ts';
 
@@ -587,5 +587,24 @@ describe('headless submit', () => {
     await call('factory_retro', { findings: [] });
     const kinds = readRun(ws, 'demo').events.map(event => event.kind);
     for (const kind of ['autonomous', 'submit', 'submit-failed']) assert.ok(kinds.includes(kind), `${kind} in ${kinds.join()}`);
+  });
+});
+
+describe('prBody truncation', () => {
+  it('keeps every closing section when the slice summary is huge', () => {
+    const sliceLike = {
+      acceptance: ['a works'], checked: undefined, fixRounds: 2, id: '07', reviews: 3, title: 'Big',
+      unresolved: ['left-over finding'], whatToBuild: 'x'.repeat(100_000),
+    };
+    const runLike = {
+      checks: ['pnpm run test'], decisions: [{ author: 'autonomous', text: 'chose option A' }],
+      deferred: [{ location: 'notes/later.md', slice: '07', title: 'later item' }], events: [], feature: 'demo',
+      source: { kind: 'text', ref: 'r', title: 'T' },
+    };
+    const body = prBody(runLike as never, sliceLike as never, [sliceLike as never]);
+    assert.ok(body.length <= 60_000, `length ${body.length}`);
+    for (const part of ['## Review rounds', '## Autonomous decisions', '- chose option A', '## Accepted unresolved', '- left-over finding', '## Deferred items', '- later item: notes/later.md', '(truncated)']) {
+      assert.ok(body.includes(part), part);
+    }
   });
 });

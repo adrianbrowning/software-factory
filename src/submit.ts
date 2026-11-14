@@ -177,6 +177,12 @@ function doneBelow(run: Run, stopped: Slice) {
 export type Stop = { reason: string; slice: Slice };
 
 const BODY_LIMIT = 60_000;
+const MARKER = '… (truncated)';
+
+/** `text` cut to at most `max` characters, ending with a visible marker when it was cut. */
+function clip(text: string, max: number) {
+  return text.length <= max ? text : `${text.slice(0, max - MARKER.length)}${MARKER}`;
+}
 
 /**
  * The PR body of `slice`, written from run state: the issue link, the slice summary and acceptance criteria, the checks
@@ -185,7 +191,8 @@ const BODY_LIMIT = 60_000;
  * where and why it stopped.
  */
 export function prBody(run: Run, slice: Slice, submitted: Slice[], stop?: Stop) {
-  const list = (items: string[]) => (items.length === 0 ? 'None.' : items.map(item => `- ${item}`).join('\n'));
+  const list = (items: string[]) =>
+    items.length === 0 ? 'None.' : clip(items.map(item => `- ${clip(redact(item), 1_000)}`).join('\n'), 7_000);
   const issue = run.source.url ?? `${run.source.kind} ${run.source.ref}`;
   const top = submitted.at(-1) === slice;
   const deferred = run.deferred.filter(item => item.slice === slice.id || (top && item.slice === 'retro'));
@@ -194,16 +201,16 @@ export function prBody(run: Run, slice: Slice, submitted: Slice[], stop?: Stop) 
     ...run.events.filter(event => event.kind === 'autonomous').map(event => event.detail),
   ];
   const sections = [
-    `Issue: ${issue} (${run.source.title})`,
-    ...(stop === undefined ? [] : [`**The stack stopped at slice ${stop.slice.id} "${stop.slice.title}", which is not submitted:** ${stop.reason}`]),
-    `## Slice ${slice.id}: ${slice.title}\n\n${slice.whatToBuild}\n\nAcceptance:\n${list(slice.acceptance)}`,
+    `Issue: ${clip(redact(issue), 1_000)} (${clip(redact(run.source.title), 1_000)})`,
+    ...(stop === undefined ? [] : [`**The stack stopped at slice ${clip(redact(stop.slice.id), 100)} "${clip(redact(stop.slice.title), 500)}", which is not submitted:** ${clip(redact(stop.reason), 2_000)}`]),
+    `## Slice ${clip(redact(slice.id), 100)}: ${clip(redact(slice.title), 500)}\n\n${clip(redact(slice.whatToBuild), 15_000)}\n\nAcceptance:\n${list(slice.acceptance)}`,
     `## Checks run\n\n${list(slice.checked?.results ?? run.checks)}`,
     `## Review rounds\n\n${slice.reviews} ${slice.reviews === 1 ? 'review' : 'reviews'}, ${slice.fixRounds} fix ${slice.fixRounds === 1 ? 'round' : 'rounds'}.`,
     `## Autonomous decisions\n\n${list(autonomous)}`,
     `## Accepted unresolved\n\n${list(slice.unresolved ?? [])}`,
     `## Deferred items\n\n${list(deferred.map(item => `${item.title}: ${item.location}`))}`,
   ];
-  return redact(sections.join('\n\n')).slice(0, BODY_LIMIT);
+  return clip(redact(sections.join('\n\n')), BODY_LIMIT);
 }
 
 /**
