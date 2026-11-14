@@ -649,9 +649,10 @@ describe('prBody deferred items beyond the budget', () => {
     };
     const body = prBody(runLike as never, sliceLike as never, [sliceLike as never]);
     assert.ok(body.length <= 60_000, `length ${body.length}`);
-    for (const heading of ['## Review rounds', '## Autonomous decisions', '## Accepted unresolved', '## Deferred items']) assert.ok(body.includes(heading), heading);
+    for (const heading of ['## Slice 07: Big', '## Checks run', '## Review rounds', '## Autonomous decisions', '## Accepted unresolved', '## Deferred items']) assert.ok(body.includes(heading), heading);
     const section = body.slice(body.indexOf('## Deferred items'));
     const more = section.match(/…and (\d+) more deferred items: ([^\n]*)/) ?? assert.fail('no more-items line');
+    assert.ok(body.endsWith(more[0]), 'the more-items line ends the Deferred items section and the body');
     const listed = section.split('\n').filter(line => line.startsWith('- ')).length;
     assert.equal(listed + Number(more[1]), count, 'listed lines plus the count cover every item');
     assert.ok(Number(more[1]) > 0);
