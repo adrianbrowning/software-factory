@@ -740,6 +740,22 @@ describe('fitDeferred', () => {
     assert.match(fitDeferred(many, 2_000).at(-1) ?? '', /more deferred items: the issues are listed in the run state \(truncated\)$/);
   });
 
+  it('stays within the budget for mixed file and URL locations at every budget around the count line', () => {
+    const mixed = Array.from({ length: 400 }, (_, i) => ({ location: i % 2 === 0 ? `https://github.com/o/r/issues/${i}` : `docs/${'d'.repeat(300)}-${i}.md`, title: `item ${i}` }));
+    for (let budget = 0; budget <= 4_000; budget += 37) {
+      const lines = fitDeferred(mixed, budget);
+      assert.ok(lines.length === 0 || lines.join('\n').length + 1 <= budget, `budget ${budget}: length ${lines.join('\n').length}`);
+    }
+  });
+
+  it('clips the count line, or leaves it out, when the budget is smaller than it', () => {
+    const one = [{ location: 'docs/deferred.md', title: 'x' }];
+    const clipped = fitDeferred(one, 30);
+    assert.equal(clipped.length, 1);
+    assert.ok(clipped.join('\n').length + 1 <= 30, `length ${clipped.join('\n').length}`);
+    assert.deepEqual(fitDeferred(one, 1), []);
+  });
+
   it('clips a location longer than the budget, so one item cannot outgrow it', () => {
     const lines = fitDeferred([{ location: `docs/${'d'.repeat(70_000)}.md`, title: 'huge' }, { location: 'b.md', title: 'second' }], 700);
     assert.ok(lines.join('\n').length + 1 <= 700, `length ${lines.join('\n').length}`);

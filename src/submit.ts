@@ -216,7 +216,8 @@ function moreLine(deferred: DeferredLine[], from: number) {
 /**
  * The lines of the Deferred items section, at most `budget` characters with their newlines. Each item is a `title:
  * location` line; when those do not fit, a leading run keeps its title and the rest are location-only lines; when not
- * even the location-only lines fit, as many as fit are followed by one count line that names the sink.
+ * even the location-only lines fit, as many as fit are followed by one count line that names the sink (clipped, or
+ * left out, when the budget is smaller than that line).
  */
 export function fitDeferred(deferred: DeferredLine[], budget: number) {
   const size = (line: string) => line.length + 1;
@@ -237,7 +238,10 @@ export function fitDeferred(deferred: DeferredLine[], budget: number) {
   let kept = 0;
   let sum = 0;
   while (kept < bare.length && sum + size(bare[kept]!) + reserve <= budget) sum += size(bare[kept++]!);
-  return [...bare.slice(0, kept), moreLine(deferred, kept)];
+  const more = moreLine(deferred, kept);
+  // A budget smaller than the count line itself (the section is all that is left of the body) gets it clipped, or nothing.
+  if (kept === 0 && size(more) > budget) return budget > MARKER.length ? [clip(more, budget - 1)] : [];
+  return [...bare.slice(0, kept), more];
 }
 
 /**
