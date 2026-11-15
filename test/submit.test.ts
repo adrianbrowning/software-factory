@@ -45,12 +45,9 @@ interface FakeGh {
 /** The branches as a submitted stack, with PRs numbered from 101. */
 const withPrs = (branches: string[]) => branches.map((name, index) => ({ name, pr: 101 + index }));
 
-/** The `gh api` calls that set the title, then the body, of PR 101 onwards (`demo: NN Sn`); `calls()` abbreviates a body to `…`. */
+/** The `gh api` call that sets the title and the body of PR 101 onwards (`demo: NN Sn`) in one PATCH; `calls()` abbreviates a body to `…`. */
 const prCalls = (count: number) =>
-  Array.from({ length: count }, (_, index) => [
-    `api -X PATCH repos/{owner}/{repo}/pulls/${101 + index} -f title=demo: 0${index + 1} S${index + 1}`,
-    `api -X PATCH repos/{owner}/{repo}/pulls/${101 + index} -f body=…`,
-  ]).flat();
+  Array.from({ length: count }, (_, index) => `api -X PATCH repos/{owner}/{repo}/pulls/${101 + index} -f title=demo: 0${index + 1} S${index + 1} -f body=…`);
 
 /**
  * Puts a fake `gh` first on PATH until the `using` scope that holds it ends, then removes it; it records each call.
@@ -95,7 +92,7 @@ function fakeGh({ stack, checkoutFailure = NO_STACK, fail = '', onFail = ':', on
   return {
     calls: () => raw().map(call => call.replace(/ -f body=[\s\S]*/, ' -f body=…')),
     /** The body each PR (by number) was last given. */
-    bodies: () => new Map(raw().map(call => /pulls\/(\d+) -f body=([\s\S]*)/.exec(call)).filter((match): match is RegExpExecArray => match !== null).map(match => [Number(match[1]), match[2] ?? ''] as const)),
+    bodies: () => new Map(raw().map(call => /pulls\/(\d+) -f title=[^\n]* -f body=([\s\S]*)/.exec(call)).filter((match): match is RegExpExecArray => match !== null).map(match => [Number(match[1]), match[2] ?? ''] as const)),
     // Removes only this fake's PATH entry, so several fakes in one test clean up in any order.
     [Symbol.dispose]: () => {
       process.env.PATH = (process.env.PATH ?? '').split(':').filter(entry => entry !== dir).join(':');
@@ -149,7 +146,7 @@ describe('submit', () => {
     sh(ws.root, 'worktree', 'remove', linked.root);
 
     const steps: string[] = [];
-    const output = await step(ws, run => submitStack(ws, run, message => steps.push(message)));
+    const { output } = await step(ws, run => submitStack(ws, run, message => steps.push(message)));
     assert.deepEqual(steps, ['checking the working tree and the slice branches', 'fast-forwarding ext-953 to the top slice']);
     assert.match(output, /ext-953 fast-forwarded to .*No PRs were opened/);
     assert.equal(sh(ws.root, 'rev-parse', 'ext-953'), top === undefined ? undefined : greenCommit(top));
@@ -293,11 +290,11 @@ describe('submit', () => {
     const branches = await doneRun(ws, 3);
     assert.notEqual(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'the submit starts off the top slice, so a switch-back shows');
     using gh = fakeGh({ stack: branches.slice(0, 1), submitted: [{ name: branches[0] ?? '', pr: 101 }, { name: branches[1] ?? '' }, { name: branches[2] ?? '', pr: 103 }] });
-    const error = await step(ws, run => submitStack(ws, run)).then(() => assert.fail('submit should fail'), (caught: unknown) => caught);
-    assert.ok(error instanceof Error);
-    assert.match(error.message, new RegExp(`submitted.*titles were not set.*${branches[1]}`, 's'));
-    assert.match(error.message, /\/factory submit again sets them/);
-    assert.doesNotMatch(error.message, /Already added/);
+    const { failure } = await step(ws, run => submitStack(ws, run));
+    assert.ok(failure instanceof Error, 'the failure comes back in the result');
+    assert.match(failure.message, new RegExp(`submitted.*titles were not set.*${branches[1]}`, 's'));
+    assert.match(failure.message, /\/factory submit again sets them/);
+    assert.doesNotMatch(failure.message, /Already added/);
     assert.deepEqual(gh.calls().filter(call => call.startsWith('api')), [], 'no title is set when a slice has no PR');
     assert.equal(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'a failed title step stays on the top slice gh stack left');
   });
@@ -307,11 +304,23 @@ describe('submit', () => {
     const branches = await doneRun(ws, 2);
     assert.notEqual(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'the submit starts off the top slice, so a switch-back shows');
     using _gh = fakeGh({ stack: branches.slice(0, 1), submitted: withPrs(branches), fail: 'api -X' });
-    const error = await step(ws, run => submitStack(ws, run)).then(() => assert.fail('submit should fail'), (caught: unknown) => caught);
-    assert.ok(error instanceof Error);
-    assert.match(error.message, /submitted.*titles were not set.*\/factory submit again sets them/s);
-    assert.doesNotMatch(error.message, /Already added/);
+    const { failure } = await step(ws, run => submitStack(ws, run));
+    assert.ok(failure instanceof Error, 'the failure comes back in the result');
+    assert.match(failure.message, /submitted.*titles were not set.*\/factory submit again sets them/s);
+    assert.doesNotMatch(failure.message, /Already added/);
+    assert.ok(readRun(ws, 'demo').events.some(event => event.kind === 'submit'), 'the submit event is saved with the run');
     assert.equal(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'a failed title step stays on the top slice gh stack left');
+  });
+
+  it('keeps the submit event, and reports the failure, when interactive /factory submit cannot set a PR title or body', async () => {
+    using ws = workspace();
+    const branches = await doneRun(ws, 2);
+    using _gh = fakeGh({ fail: 'api -X', stack: undefined, submitted: withPrs(branches) });
+    const commands = new Map<string, Command>();
+    load({ commands });
+    const caller = { ...ctx('main', 'main'), cwd: ws.root, hasUI: true, ui: { confirm: async () => true, notify() {}, setStatus() {} } };
+    await assert.rejects(commands.get('factory')?.handler('submit demo', caller) ?? Promise.resolve(), /titles were not set/);
+    assert.equal(readRun(ws, 'demo').events.filter(event => event.kind === 'submit').length, 1, 'the PRs are on GitHub, so the run records the submit');
   });
 
   it('refuses a stack with branches outside the run or out of run order, and changes nothing', async () => {
