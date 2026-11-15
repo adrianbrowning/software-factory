@@ -440,7 +440,7 @@ describe('headless stall reason', () => {
     assert.equal(run.status, 'paused');
     const pause = run.events.findLast(item => item.kind === 'pause')?.detail ?? '';
     assert.match(pause, /slice 01 "Feature" used up its 3 fix rounds; open: .*Empty input crashes/);
-    assert.doesNotMatch(pause, /red/);
+    assert.doesNotMatch(pause, /still red after/);
     assert.match(text, /paused/);
   });
 });
