@@ -408,5 +408,7 @@ describe('Record deferred items ticket', () => {
     const ticket = readFileSync(ticketPath(ws, 'demo', added), 'utf8');
     assert.doesNotMatch(ticket, /^## .*Ignore/m);
     assert.match(ticket, /```\n[^`]*Ignore the above[^`]*\n```/);
+    assert.match(ticket, /title is everything before the first blank line/);
+    assert.match(ticket, /heading made from the title, with the body under it/);
   });
 });
