@@ -166,7 +166,7 @@ describe('headless gates', () => {
     await assertResumeStops(repo.root, ws, dialogs);
   });
 
-  it('resume: auto on a headless run stalled on its fix budget refuses, since the headless fix budget is fixed (decision 8)', async () => {
+  it('resume: auto on a headless run stalled on its fix budget refuses, since the headless fix budget is fixed', async () => {
     using repo = tempRepo('factory-gate-', CHECKS_OK);
     const { call, ws } = await headlessRun(repo.root, 'active', { resume: 'auto' }, ['Feature']);
     sh(repo.root, 'rm', '-q', 'ok');
@@ -176,7 +176,7 @@ describe('headless gates', () => {
     await withRun(ws, 'demo', run => resolveStall(ws, run, 'pause'));
     const limit = readRun(ws, 'demo').slices[0]?.roundLimit;
     resetModuleState();
-    await assert.rejects(headlessRunCaller(repo.root).call('factory_start', { resume: 'demo' }), /fixed at 3 rounds \(decision 8\)/);
+    await assert.rejects(headlessRunCaller(repo.root).call('factory_start', { resume: 'demo' }), /fixed at 3 rounds/);
     const run = readRun(ws, 'demo');
     assert.equal(run.slices[0]?.roundLimit, limit);
     assert.equal(run.slices[0]?.stalled, true);
@@ -424,5 +424,23 @@ describe('headless round limits', () => {
     assert.equal(readRun(ws, 'demo').slices[0]?.unresolved, undefined);
     await call('factory_complete_slice', {});
     assert.equal(readRun(ws, 'demo').slices[0]?.status, 'done');
+  });
+});
+
+describe('headless stall reason', () => {
+  it('a stall reached through factory_fix names the used-up fix rounds, not red checks', async () => {
+    using repo = tempRepo('factory-stall-', CHECKS_OK);
+    const { call, ws } = await headlessRun(repo.root, 'green', {}, ['Feature']);
+    await withRun(ws, 'demo', run => {
+      const first = run.slices[0] ?? assert.fail('no slice');
+      first.fixRounds = first.roundLimit;
+    });
+    const text = (await call('factory_fix', { bug: 'Empty input crashes.', reason: 'Found.' })).content[0]?.text ?? '';
+    const run = readRun(ws, 'demo');
+    assert.equal(run.status, 'paused');
+    const pause = run.events.findLast(item => item.kind === 'pause')?.detail ?? '';
+    assert.match(pause, /slice 01 "Feature" used up its 3 fix rounds; open: .*Empty input crashes/);
+    assert.doesNotMatch(pause, /red/);
+    assert.match(text, /paused/);
   });
 });

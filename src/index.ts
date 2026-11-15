@@ -114,7 +114,7 @@ const decisionsSchema = z.object({
   decisions: z
     .array(decisionInputSchema)
     .min(1)
-    .describe('Decisions the user made, each one self-contained sentence; give { text, slice } when the plan assigns the work to one pending or active slice'),
+    .describe('Decisions recorded for the run (a headless run records them as autonomous), each one self-contained sentence; give { text, slice } when the plan assigns the work to one pending or active slice'),
 });
 const planSchema = z.object({ slices: z.array(sliceInputSchema) });
 const planToolSchema = planSchema.extend({
@@ -284,15 +284,17 @@ async function submitHeadless(ws: Workspace, feature: string, stop?: { reason: s
 class NoSubmission extends Error {}
 
 /** Asks the user how to continue once a slice's fix budget is used up. Without a UI the run pauses. */
-async function decideStall(ctx: ExtensionContext, ws: Workspace, feature: string) {
+async function decideStall(ctx: ExtensionContext, ws: Workspace, feature: string, fromChecks: boolean) {
   const run = readRun(ws, feature);
   const slice = activeSlice(run);
   if (slice === undefined || !slice.stalled) return '';
   if (run.mode === 'headless') {
-    // A headless run never prompts to raise the fix budget: red checks after the last round pause the run.
+    // A headless run never prompts to raise the fix budget: a used-up budget pauses the run.
     const round = Math.max(...slice.fixItems.map(item => item.round));
     const failing = slice.fixItems.filter(item => item.round === round).map(item => item.summary);
-    const reason = `slice ${slice.id} "${slice.title}" is still red after ${slice.roundLimit} fix rounds: ${failing.join('; ')}`;
+    const reason = fromChecks
+      ? `slice ${slice.id} "${slice.title}" is still red after ${slice.roundLimit} fix rounds: ${failing.join('; ')}`
+      : `slice ${slice.id} "${slice.title}" used up its ${slice.roundLimit} fix rounds; open: ${failing.join('; ')}`;
     await withRun(ws, feature, current => pauseRun(current, reason));
     const submitted = await submitHeadless(ws, feature, { reason, sliceId: slice.id });
     return `\nThe headless run is paused: ${reason}. ${stallNotice(run, slice)}${submitted} Stop now.`;
@@ -348,7 +350,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
   const STALL_DESCRIPTION =
     'A used-up fix budget asks the user to continue or pause; a paused run stalls until /factory resume, which asks whether to raise the budget.';
 
-  /** What `factory_start` and `/factory headless` do: resume a run, or load the issue, check the setup, start the run and bind this session to it. */
+  /** Shared by `factory_start` and `/factory headless`; only the command passes `mode`, because factory_start always creates interactive runs. */
   async function startOrResume(params: z.infer<typeof startSchema> & { mode?: Run['mode'] }, { entry, ws }: { entry: RootEntry; ws: Workspace }, ctx: ExtensionContext) {
     const sessionId = ctx.sessionManager.getSessionId();
     let run: Run;
@@ -363,7 +365,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
       const slice = activeSlice(current);
       if (slice?.stalled) {
         if (current.mode === 'headless') {
-          throw new Error(`The headless fix budget is fixed at ${slice.roundLimit} rounds (decision 8), so resume does not raise it. "${feature}" stays stalled. ${stallNotice(current, slice)}`);
+          throw new Error(`The headless fix budget is fixed at ${slice.roundLimit} rounds so resume does not raise it. "${feature}" stays stalled. ${stallNotice(current, slice)}`);
         }
         const body = `In "${feature}", slice ${slice.id} "${slice.title}" used up its fix budget of ${slice.roundLimit} rounds. Raise the fix budget by ${ws.config.maxRounds} rounds and resume?`;
         if (!(await gate(ctx, ws, feature, 'resume', 'Resume software factory run', body))) {
@@ -563,7 +565,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         const passed = result.reused ? `All checks already passed on ${result.sha}; reusing their results, no check ran.` : 'All checks passed.';
         return reply(`${passed}\n${summary}\n${work}${unchanged}\nChanged files:\n${result.changed}${byPath}\nNext: ${nextAction(run)}`);
       }
-      const stall = result.stalled ? await decideStall(ctx, ws, feature) : '';
+      const stall = result.stalled ? await decideStall(ctx, ws, feature, true) : '';
       return reply(`Checks failed.\n${summary}\n${work}${unchanged}\nFix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
     },
   });
@@ -650,7 +652,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
           `Review is accepted unresolved: the fix budget is used up, and a headless run does not raise it. Open:\n${result.unresolved.join('\n')}\nThe slice counts as green with these items on record.\nNext: ${nextAction(readRun(ws, feature))}`,
         );
       }
-      const stall = result.stalled ? await decideStall(ctx, ws, feature) : '';
+      const stall = result.stalled ? await decideStall(ctx, ws, feature, false) : '';
       return reply(`${result.blocking} blocking findings, ${result.open} open fix items. Fix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
     },
   });
@@ -695,7 +697,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         return reply(`The user kept the green review. Ask how to handle the observations or the bug, or call factory_complete_slice.\nNext: ${nextAction(readRun(ws, feature))}`);
       }
       const result = await withRun(ws, feature, run => fixObservations(ws, run, params, params.reason));
-      const stall = result.stalled ? await decideStall(ctx, ws, feature) : '';
+      const stall = result.stalled ? await decideStall(ctx, ws, feature, false) : '';
       return reply(`Slice ${planned.slice.id} is back in fix for ${what}. Fix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
     },
   });
@@ -756,7 +758,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         }
       }
       const result = await withRun(ws, feature, run => reopenSlice(ws, run, params.slice, params.reason));
-      const stall = result.stalled ? await decideStall(ctx, ws, feature) : '';
+      const stall = result.stalled ? await decideStall(ctx, ws, feature, false) : '';
       return reply(
         `Slice ${result.slice.id} "${result.slice.title}" is reopened on ${result.slice.branch}. Fix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`,
       );

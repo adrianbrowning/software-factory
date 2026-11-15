@@ -26,7 +26,7 @@ export async function gate(ctx: ExtensionContext, ws: Workspace, feature: string
   }
   const reason = `headless gate "${name}" is set to stop: ${title}`;
   await withRun(ws, feature, run => {
-    // A headless run can be paused in intake or done: by a stop gate, and by factory_pause in intake (decision 19). The /factory pause command (pauseRun) stays running-only.
+    // A headless run can be paused in intake or done: by a stop gate, and by factory_pause in intake, which has no approved plan, so resume restores that state. The /factory pause command (pauseRun) stays running-only.
     run.status = 'paused';
     addEvent(run, 'pause', reason);
   });
