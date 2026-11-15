@@ -494,7 +494,8 @@ export default function softwareFactory(pi: ExtensionAPI) {
         return reply('The user rejected the split. Ask what to change, then call factory_reslice again.');
       }
       return withRun(ws, feature, async current => {
-        const first = await applyReslice(ws, current, planReslice(ws, current, params.slices).slices);
+        const planned = planReslice(ws, current, params.slices);
+        const first = await applyReslice(ws, current, planned.slices, planned.renamed);
         return reply(`Now on slice ${first.id} "${first.title}" (${first.branch}).\nNext: ${nextAction(current)}`);
       });
     },

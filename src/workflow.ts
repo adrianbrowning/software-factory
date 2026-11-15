@@ -593,13 +593,18 @@ export function planReslice(ws: Workspace, run: Run, proposed: unknown) {
   });
   // The decisions the split slice builds go to its last child, which finishes its work; later slices keep theirs.
   slices[index + children.length - 1]?.ownsDecisions.push(...active.ownsDecisions);
-  return { children: slices.slice(index, index + children.length), slices };
+  return { children: slices.slice(index, index + children.length), renamed: renamedIds(remap), slices };
 }
 
 /**
  * Where each slice of the run that a re-slice renumbers goes: the split slice to its first child, each later slice to
  * its remade slice in `slices`. The one place that knows the index arithmetic; slices before the split keep their id.
  */
+/** The old-id to new-id form of `renumbering`. */
+function renamedIds(remap: Map<Slice, Slice>) {
+  return new Map([...remap].map(([old, remade]) => [old.id, remade.id]));
+}
+
 function renumbering(run: Run, active: Slice, slices: Slice[]) {
   const index = run.slices.indexOf(active);
   const children = slices.length - run.slices.length + 1;
@@ -619,7 +624,8 @@ function newRecordBatch(run: Run) {
   return `record-${number}`;
 }
 
-export async function applyReslice(ws: Workspace, run: Run, slices: Slice[]) {
+/** Applies a plan from `planReslice`: its `slices`, and its `renamed` old-to-new slice ids. */
+export async function applyReslice(ws: Workspace, run: Run, slices: Slice[], renamed: Map<string, string>) {
   const active = requireActive(run);
   await requireOnBranch(ws.root, active);
   await requireClean(ws.root, 'Commit the partial work before re-slicing');
@@ -633,7 +639,6 @@ export async function applyReslice(ws: Workspace, run: Run, slices: Slice[]) {
     rmSync(reportPath(ws, run.feature, old), { force: true });
   }
   // Items a Record slice wrote follow its renumbering: the split slice to its first child, later ones to their remade slice.
-  const renamed = new Map([...renumbering(run, active, slices)].map(([old, remade]) => [old.id, remade.id]));
   for (const item of run.deferred) item.recorded = (item.recorded === undefined ? undefined : renamed.get(item.recorded)) ?? item.recorded;
   run.slices = slices;
   for (const slice of slices.filter(candidate => candidate.status !== 'done')) writeTicket(ws, run, slice);

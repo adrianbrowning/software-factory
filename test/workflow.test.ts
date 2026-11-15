@@ -279,7 +279,7 @@ describe('re-slice', () => {
     const big = await step(ws, run => nextSlice(ws, run));
     commit(ws, 'partial.txt');
 
-    const first = await step(ws, async run => applyReslice(ws, run, planReslice(ws, run, [slice('Big part two', ['Big part one']), slice('Big part one')]).slices));
+    const first = await step(ws, async run => { const planned = planReslice(ws, run, [slice('Big part two', ['Big part one']), slice('Big part one')]); return applyReslice(ws, run, planned.slices, planned.renamed); });
     const run = readRun(ws, 'demo');
     assert.deepEqual(
       run.slices.map(item => [item.id, item.title, item.status, item.blockedBy.join('+')]),
@@ -303,7 +303,7 @@ describe('re-slice', () => {
     commit(ws, 'partial.txt');
 
     // A child's claim never reaches the run, whichever caller passes it: planReslice drops it.
-    await step(ws, run => applyReslice(ws, run, planReslice(ws, run, [slice('Part one', [], { ownsDecisions: [2] }), slice('Part two', ['Part one'])]).slices));
+    await step(ws, run => { const planned = planReslice(ws, run, [slice('Part one', [], { ownsDecisions: [2] }), slice('Part two', ['Part one'])]); return applyReslice(ws, run, planned.slices, planned.renamed); });
     const run = readRun(ws, 'demo');
     assert.deepEqual(run.slices.map(item => [item.id, item.title, item.ownsDecisions]), [
       ['01', 'Part one', []],
@@ -329,7 +329,7 @@ describe('re-slice', () => {
     const old = await step(ws, run => startReview(ws, run));
     await review(ws, old.reviewId, []);
 
-    await step(ws, run => applyReslice(ws, run, planReslice(ws, run, [slice('Part one'), slice('Part two', ['Part one'])]).slices));
+    await step(ws, run => { const planned = planReslice(ws, run, [slice('Part one'), slice('Part two', ['Part one'])]); return applyReslice(ws, run, planned.slices, planned.renamed); });
     await step(ws, run => runChecks(ws, run));
     const fresh = await step(ws, run => startReview(ws, run));
     assert.notEqual(fresh.reviewId, old.reviewId);
@@ -343,7 +343,7 @@ describe('re-slice', () => {
     commit(ws, 'ok');
     await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: ['abc1234 01: partial'], open: ['SLICE TOO BIG: part two'] }));
 
-    await step(ws, run => applyReslice(ws, run, planReslice(ws, run, [slice('Part one'), slice('Part two', ['Part one'])]).slices));
+    await step(ws, run => { const planned = planReslice(ws, run, [slice('Part one'), slice('Part two', ['Part one'])]); return applyReslice(ws, run, planned.slices, planned.renamed); });
     const checks = await step(ws, run => runChecks(ws, run));
     assert.match(checks.report, /^No implementer report was submitted for slice 01/);
   });
@@ -356,7 +356,7 @@ describe('re-slice', () => {
     sh(ws.root, 'branch', 'factory/demo/01-part-one');
 
     const before = readFileSync(join(ws.root, '.scratch', 'demo', 'state.json'), 'utf8');
-    await assert.rejects(step(ws, run => applyReslice(ws, run, planReslice(ws, run, [slice('Part one')]).slices)));
+    await assert.rejects(step(ws, run => { const planned = planReslice(ws, run, [slice('Part one')]); return applyReslice(ws, run, planned.slices, planned.renamed); }));
     assert.equal(readFileSync(join(ws.root, '.scratch', 'demo', 'state.json'), 'utf8'), before);
     assert.ok(existsSync(join(ws.root, '.scratch', 'demo', 'issues', '01-big.md')));
   });

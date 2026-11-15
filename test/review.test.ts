@@ -1194,7 +1194,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     await step(ws, run => completeSlice(ws, run));
     await step(ws, run => nextSlice(ws, run));
 
-    await step(ws, async run => applyReslice(ws, run, planReslice(ws, run, [slice('Big A', ['Feature']), slice('Big B', ['Big A'])]).slices));
+    await step(ws, async run => { const planned = planReslice(ws, run, [slice('Big A', ['Feature']), slice('Big B', ['Big A'])]); return applyReslice(ws, run, planned.slices, planned.renamed); });
     const slices = readRun(ws, 'demo').slices;
     const ticket = (index: number) => readFileSync(ticketPath(ws, 'demo', slices[index] ?? assert.fail('no slice')), 'utf8');
     assert.deepEqual(slices.map(item => item.title), ['Feature', 'Big A', 'Big B', 'Last']);
