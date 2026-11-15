@@ -593,18 +593,13 @@ export function planReslice(ws: Workspace, run: Run, proposed: unknown) {
   });
   // The decisions the split slice builds go to its last child, which finishes its work; later slices keep theirs.
   slices[index + children.length - 1]?.ownsDecisions.push(...active.ownsDecisions);
-  return { children: slices.slice(index, index + children.length), renamed: renamedIds(remap), slices };
+  return { children: slices.slice(index, index + children.length), renamed: new Map([...remap].map(([old, remade]) => [old.id, remade.id])), slices };
 }
 
 /**
  * Where each slice of the run that a re-slice renumbers goes: the split slice to its first child, each later slice to
  * its remade slice in `slices`. The one place that knows the index arithmetic; slices before the split keep their id.
  */
-/** The old-id to new-id form of `renumbering`. */
-function renamedIds(remap: Map<Slice, Slice>) {
-  return new Map([...remap].map(([old, remade]) => [old.id, remade.id]));
-}
-
 function renumbering(run: Run, active: Slice, slices: Slice[]) {
   const index = run.slices.indexOf(active);
   const children = slices.length - run.slices.length + 1;
