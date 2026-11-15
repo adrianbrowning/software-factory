@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { effectiveModels } from './config.ts';
 import { evidence, evidenceLine, redact } from './evidence.ts';
 import { gh, git } from './exec.ts';
-import { draftOf, isRecordSlice, recordFailed, retroDraft, retroKey, waitsForRecord } from './deferred.ts';
+import { draftOf, isRecordSlice, itemKey, recordFailed, retroDraft, retroKey, waitsForRecord } from './deferred.ts';
 import { resolveObservations, renderFinding } from './review.ts';
 import {
   activeSlice,
@@ -47,8 +47,9 @@ export function requireFeatureName(feature: string) {
  * URL) is named `issue-<n>` after its number; anything else is an issue file, named after its file name in kebab-case.
  */
 export function headlessTarget(ref: string): { feature: string; source: SourceInput } {
-  const issue = /^#?(\d+)$/.exec(ref) ?? /github\.com\/[^/]+\/[^/]+\/issues\/(\d+)/.exec(ref);
-  if (issue?.[1] !== undefined) return { feature: `issue-${issue[1]}`, source: { kind: 'github', ref: /^#?\d+$/.test(ref) ? issue[1] : ref } };
+  const bare = /^#?(\d+)$/.exec(ref);
+  const issue = bare ?? /github\.com\/[^/]+\/[^/]+\/issues\/(\d+)/.exec(ref);
+  if (issue?.[1] !== undefined) return { feature: `issue-${issue[1]}`, source: { kind: 'github', ref: bare === null ? ref : issue[1] } };
   const name = basename(ref).replace(/\.[^.]*$/, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48).replace(/-+$/, '');
   if (name === '') throw new Error(`Cannot name a run after "${ref}". Give an issue number, an issue URL, or a file with letters or digits in its name.`);
   return { feature: requireFeatureName(name), source: { kind: 'file', ref } };
@@ -398,7 +399,7 @@ export function planCarry(ws: Workspace, run: Run, request: CarryRequest) {
   const chosen = new Set(z.array(z.string().min(1)).parse(request.observations ?? []));
   if (note === undefined && chosen.size === 0) throw new Error('factory_carry needs observation ids, a note, or both.');
   const green = resolveObservations(ws, run, chosen, 'carry observations or a note');
-  requireUnhandled(run, green.review.id, green.observations, false);
+  requireNotDeferred(run, green.review.id, green.observations);
   if (request.to === 'end') return { note, ...green, target: undefined };
   const target = run.slices.find(candidate => candidate.id === request.to);
   if (target === undefined) throw new Error(`No slice ${request.to}. Slices: ${run.slices.map(candidate => candidate.id).join(', ')}.`);
@@ -416,7 +417,7 @@ export function carryObservations(ws: Workspace, run: Run, request: CarryRequest
   const { note, observations, review, slice, target } = planned;
   const items = [...(note === undefined ? [] : [redact(note)]), ...observations.map(finding => renderFinding(finding, run.decisions, '####'))];
   const section = `### From green review ${review.id} of slice ${slice.id} "${slice.title}"\n\n${items.join('\n\n')}`;
-  run.carriedObservations.push(...observations.map(finding => `${review.id}:${finding.id}`));
+  run.carriedObservations.push(...observations.map(finding => itemKey(review.id, finding.id)));
   if (target === undefined) run.waiting.push(section);
   else {
     target.carried.push(section);
@@ -426,12 +427,23 @@ export function carryObservations(ws: Workspace, run: Run, request: CarryRequest
   return planned;
 }
 
-/** Throws for an observation already sent to the deferred sink; with `alsoCarried`, also for one already carried to a slice or the end queue. */
-export function requireUnhandled(run: Run, reviewId: string, observations: { id: string }[], alsoCarried: boolean) {
-  const carried = alsoCarried ? observations.filter(finding => run.carriedObservations.includes(`${reviewId}:${finding.id}`)) : [];
-  if (carried.length > 0) throw new Error(`Observations already carried: ${carried.map(finding => finding.id).join(', ')}.`);
-  const deferred = observations.filter(finding => run.deferred.some(item => item.key === `${reviewId}:${finding.id}`));
+/** Throws for an observation already sent to the deferred sink. */
+export function requireNotDeferred(run: Run, reviewId: string, observations: { id: string }[]) {
+  const deferred = observations.filter(finding => run.deferred.some(item => item.key === itemKey(reviewId, finding.id)));
   if (deferred.length > 0) throw new Error(`Observations already deferred: ${deferred.map(finding => finding.id).join(', ')}.`);
+}
+
+/** Throws for an observation already carried to a slice or the end queue, then for one already deferred. */
+export function requireNotCarriedOrDeferred(run: Run, reviewId: string, observations: { id: string }[]) {
+  const carried = observations.filter(finding => run.carriedObservations.includes(itemKey(reviewId, finding.id)));
+  if (carried.length > 0) throw new Error(`Observations already carried: ${carried.map(finding => finding.id).join(', ')}.`);
+  requireNotDeferred(run, reviewId, observations);
+}
+
+/** The configured deferred sink. Throws without one. */
+export function requireSink(ws: Workspace) {
+  if (ws.config.deferred === undefined) throw new Error('No deferred sink: set "deferred" ({ "kind": "file" } or { "kind": "github" }) in .omp/factory.json.');
+  return ws.config.deferred;
 }
 
 /** What factory_defer takes: observation ids from a green review (as for factory_carry), a free-text note, or both. */
@@ -443,17 +455,17 @@ export type DeferRequest = { note?: string | undefined; observations?: string[] 
  * change the run.
  */
 export function planDefer(ws: Workspace, run: Run, request: DeferRequest) {
-  if (ws.config.deferred === undefined) throw new Error('No deferred sink: set "deferred" ({ "kind": "file" } or { "kind": "github" }) in .omp/factory.json.');
+  requireSink(ws);
   const note = request.note?.trim() ? request.note : undefined;
   const chosen = new Set(z.array(z.string().min(1)).parse(request.observations ?? []));
   if (note === undefined && chosen.size === 0) throw new Error('factory_defer needs observation ids, a note, or both.');
   const { observations, review, slice } = resolveObservations(ws, run, chosen, 'defer observations or a note');
   if (isRecordSlice(slice)) throw new Error(`Slice ${slice.id} "${slice.title}" writes the deferred sink file, so its review items are not deferred. They stay in the review itself (the green review observations, and for accepted-unresolved findings slice.unresolved and the accepted-unresolved event).`);
-  requireUnhandled(run, review.id, observations, true);
+  requireNotCarriedOrDeferred(run, review.id, observations);
   const noted = run.deferred.filter(item => item.review === review.id && item.kind === 'note').length;
   return [
-    ...(note === undefined ? [] : [draftOf(run, slice, review.id, { detail: redact(note), key: `${review.id}:note:${noted + 1}`, kind: 'note', title: note })]),
-    ...observations.map(finding => draftOf(run, slice, review.id, { detail: renderFinding(finding, run.decisions, '###'), id: finding.id, key: `${review.id}:${finding.id}`, kind: 'observation', title: finding.title })),
+    ...(note === undefined ? [] : [draftOf(run, slice, review.id, { detail: redact(note), key: itemKey(review.id, `note:${noted + 1}`), kind: 'note', title: note })]),
+    ...observations.map(finding => draftOf(run, slice, review.id, { detail: renderFinding(finding, run.decisions, '###'), id: finding.id, key: itemKey(review.id, finding.id), kind: 'observation', title: finding.title })),
   ];
 }
 
@@ -556,8 +568,9 @@ export function planReslice(ws: Workspace, run: Run, proposed: unknown) {
   first.status = 'active';
   // Carried-in work goes with the split slice to its first child, and stays on each later slice.
   first.carried = active.carried;
-  pending.forEach((slice, offset) => {
-    const remade = slices[index + children.length + offset];
+  const remap = renumbering(run, active, slices);
+  pending.forEach(slice => {
+    const remade = remap.get(slice);
     if (remade !== undefined) remade.carried = slice.carried;
   });
   // Review ids are `<slice id>-r<n>` and the first child keeps the slice id: continue the count so a new review
@@ -571,8 +584,8 @@ export function planReslice(ws: Workspace, run: Run, proposed: unknown) {
       child.recordBatch = batch;
     }
   }
-  pending.forEach((slice, offset) => {
-    const remade = slices[index + children.length + offset];
+  pending.forEach(slice => {
+    const remade = remap.get(slice);
     if (remade !== undefined && slice.record === true) {
       remade.record = true;
       remade.recordBatch = slice.recordBatch;
@@ -581,6 +594,21 @@ export function planReslice(ws: Workspace, run: Run, proposed: unknown) {
   // The decisions the split slice builds go to its last child, which finishes its work; later slices keep theirs.
   slices[index + children.length - 1]?.ownsDecisions.push(...active.ownsDecisions);
   return { children: slices.slice(index, index + children.length), slices };
+}
+
+/**
+ * Where each slice of the run that a re-slice renumbers goes: the split slice to its first child, each later slice to
+ * its remade slice in `slices`. The one place that knows the index arithmetic; slices before the split keep their id.
+ */
+function renumbering(run: Run, active: Slice, slices: Slice[]) {
+  const index = run.slices.indexOf(active);
+  const children = slices.length - run.slices.length + 1;
+  const remap = new Map<Slice, Slice>();
+  run.slices.slice(index).forEach((old, offset) => {
+    const remade = slices[offset === 0 ? index : index + children + offset - 1];
+    if (remade !== undefined) remap.set(old, remade);
+  });
+  return remap;
 }
 
 /** A batch label no slice of the run holds, counting up from the number of Record slices. */
@@ -605,13 +633,7 @@ export async function applyReslice(ws: Workspace, run: Run, slices: Slice[]) {
     rmSync(reportPath(ws, run.feature, old), { force: true });
   }
   // Items a Record slice wrote follow its renumbering: the split slice to its first child, later ones to their remade slice.
-  const index = run.slices.indexOf(active);
-  const children = slices.length - run.slices.length + 1;
-  const renamed = new Map([[active.id, first.id]]);
-  run.slices.slice(index + 1).forEach((old, offset) => {
-    const remade = slices[index + children + offset];
-    if (remade !== undefined) renamed.set(old.id, remade.id);
-  });
+  const renamed = new Map([...renumbering(run, active, slices)].map(([old, remade]) => [old.id, remade.id]));
   for (const item of run.deferred) item.recorded = (item.recorded === undefined ? undefined : renamed.get(item.recorded)) ?? item.recorded;
   run.slices = slices;
   for (const slice of slices.filter(candidate => candidate.status !== 'done')) writeTicket(ws, run, slice);
@@ -846,6 +868,14 @@ export function requireNotStalled(run: Run) {
 /** Only a running run pauses; intake, stalled, and done runs keep their status. */
 export function pauseRun(run: Run, reason: string) {
   if (run.status !== 'running') throw new Error(`Run "${run.feature}" is ${run.status}; only a running run pauses.`);
+  pauseHeadless(run, reason);
+}
+
+/**
+ * Pauses a run with a recorded reason, whatever its status: the headless pause, which a stop gate or factory_pause
+ * makes from intake, running or done. `/factory pause` goes through `pauseRun`, which stays running-only.
+ */
+export function pauseHeadless(run: Run, reason: string) {
   run.status = 'paused';
   addEvent(run, 'pause', reason);
 }
@@ -861,7 +891,7 @@ export async function resumeRun(ws: Workspace, run: Run, sessionId: string) {
   if (filled) run.checks = checksSchema.parse(repoChecks(ws));
   if (activeSlice(run)?.stalled) resolveStall(ws, run, 'continue');
   if (run.status === 'paused' || run.status === 'stalled') {
-    // A headless run can be paused in intake or done (by a stop gate, or factory_pause in intake), so only a headless run restores intake (no approved plan) or done (settle).
+    // A stop gate pauses a headless run in any status (intake, running or done), so only a headless run restores intake (no approved plan) or done (settle).
     if (run.mode === 'headless') {
       run.status = run.slices.length === 0 ? 'intake' : 'running';
       settle(ws, run);

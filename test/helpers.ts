@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { type FactoryConfig, parseConfig } from '../src/config.ts';
@@ -147,4 +147,31 @@ export async function green(ws: Workspace) {
   const { reviewId } = await step(ws, run => startReview(ws, run));
   await review(ws, reviewId, []);
   return step(ws, run => recordReview(ws, run));
+}
+
+/** A fake `gh` first on PATH that logs each call, prints an issue URL numbered by the call, and fails the call whose number is in `fail`. */
+export function fakeGh() {
+  const dir = tempDir('factory-gh-');
+  const log = join(dir.root, 'calls.log');
+  const fail = join(dir.root, 'fail');
+  const garble = join(dir.root, 'garble');
+  writeFileSync(
+    join(dir.root, 'gh'),
+    `#!/bin/sh\nif [ "$1 $2" != 'issue create' ]; then exit 0; fi\necho "$1 $2 $3 $4" >> '${log}'\necho "$@" >> '${join(dir.root, 'args.log')}'\nn=$(wc -l < '${log}' | tr -d ' ')\nif [ -f '${fail}' ] && [ "$n" = "$(cat '${fail}')" ]; then echo 'HTTP 502' >&2; exit 1; fi\nif [ -f '${garble}' ]; then echo 'created'; exit 0; fi\necho "https://github.com/o/r/issues/$n"\n`,
+  );
+  chmodSync(join(dir.root, 'gh'), 0o755);
+  const path = process.env.PATH;
+  process.env.PATH = `${dir.root}:${path}`;
+  return {
+    args: () => (existsSync(join(dir.root, 'args.log')) ? readFileSync(join(dir.root, 'args.log'), 'utf8') : ''),
+    calls: () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : []),
+    failOn: (n: number) => writeFileSync(fail, String(n)),
+    healed: () => writeFileSync(fail, '0'),
+    garbled: () => writeFileSync(garble, ''),
+    ungarbled: () => rmSync(garble),
+    [Symbol.dispose]: () => {
+      process.env.PATH = path;
+      dir[Symbol.dispose]();
+    },
+  };
 }

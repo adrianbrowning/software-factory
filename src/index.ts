@@ -6,7 +6,7 @@ import { bindRun } from './active-run.ts';
 import { auditChild, IMPLEMENTER, REVIEWER, resetAudit, SPAWN_ROLES, VALIDATOR } from './agents.ts';
 import { CONFIG_PATH, describeModels, loadConfig, requireAvailableModels, requireOrchestrator, type RoleModels, routeSpawn } from './config.ts';
 import { evidenceHead, evidenceLine } from './evidence.ts';
-import { deferItems } from './deferred.ts';
+import { deferItems, describeSink } from './deferred.ts';
 import { chooseChecks, confirmInteractive, ensureChecks, gate, loadSource } from './gates.ts';
 import {
   activeSlice,
@@ -57,7 +57,9 @@ import {
   nextAction,
   nextSlice,
   parseRetro,
+  pauseHeadless,
   pauseRun,
+  requireSink,
   planCarry,
   planDefer,
   planFollowUp,
@@ -283,8 +285,8 @@ async function submitHeadless(ws: Workspace, feature: string, stop?: { reason: s
 /** Nothing to submit: thrown inside the run mutation so it saves no event. */
 class NoSubmission extends Error {}
 
-/** Asks the user how to continue once a slice's fix budget is used up. Without a UI the run pauses. */
-async function decideStall(ctx: ExtensionContext, ws: Workspace, feature: string, fromChecks: boolean) {
+/** Asks the user how to continue once a slice's fix budget is used up. Without a UI the run pauses. `source` is where the stall came from: only the checks name it red. */
+async function decideStall(ctx: ExtensionContext, ws: Workspace, feature: string, source: 'checks' | 'fix' | 'review') {
   const run = readRun(ws, feature);
   const slice = activeSlice(run);
   if (slice === undefined || !slice.stalled) return '';
@@ -292,7 +294,7 @@ async function decideStall(ctx: ExtensionContext, ws: Workspace, feature: string
     // A headless run never prompts to raise the fix budget: a used-up budget pauses the run.
     const round = Math.max(...slice.fixItems.map(item => item.round));
     const failing = slice.fixItems.filter(item => item.round === round).map(item => item.summary);
-    const reason = fromChecks
+    const reason = source === 'checks'
       ? `slice ${slice.id} "${slice.title}" is still red after ${slice.roundLimit} fix rounds: ${failing.join('; ')}`
       : `slice ${slice.id} "${slice.title}" used up its ${slice.roundLimit} fix rounds; open: ${failing.join('; ')}`;
     await withRun(ws, feature, current => pauseRun(current, reason));
@@ -429,14 +431,8 @@ export default function softwareFactory(pi: ExtensionAPI) {
     async run(params, { feature, ws }) {
       await withRun(ws, feature, run => {
         if (run.mode !== 'headless') throw new Error(`Run "${feature}" is interactive; factory_pause pauses headless runs only. The user pauses an interactive run with /factory pause.`);
-        if (run.status === 'intake') {
-          // Intake has no approved plan; pauseRun stays running-only, so the tool records the pause itself.
-          run.status = 'paused';
-          addEvent(run, 'pause', params.reason);
-          return;
-        }
-        if (run.status !== 'running') throw new Error(`Run "${feature}" is ${run.status}; factory_pause pauses a running or intake run.`);
-        pauseRun(run, params.reason);
+        if (run.status !== 'intake' && run.status !== 'running') throw new Error(`Run "${feature}" is ${run.status}; factory_pause pauses a running or intake run.`);
+        pauseHeadless(run, params.reason);
       });
       return reply(`Run "${feature}" is paused: ${params.reason}\n/factory resume ${feature} continues it. Stop now.`);
     },
@@ -565,7 +561,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         const passed = result.reused ? `All checks already passed on ${result.sha}; reusing their results, no check ran.` : 'All checks passed.';
         return reply(`${passed}\n${summary}\n${work}${unchanged}\nChanged files:\n${result.changed}${byPath}\nNext: ${nextAction(run)}`);
       }
-      const stall = result.stalled ? await decideStall(ctx, ws, feature, true) : '';
+      const stall = result.stalled ? await decideStall(ctx, ws, feature, 'checks') : '';
       return reply(`Checks failed.\n${summary}\n${work}${unchanged}\nFix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
     },
   });
@@ -640,9 +636,10 @@ export default function softwareFactory(pi: ExtensionAPI) {
     async run(_params, { feature, ws }, ctx) {
       const result = await withRun(ws, feature, run => recordReview(ws, run));
       if (result.green) {
+        const [orLead, sinkTail] = ws.config.deferred === undefined ? ['or ', ''] : ['', ', or sent to the deferred sink (factory_defer with their ids)'];
         const notes =
           result.observations.length > 0
-            ? `\nObservations (non-blocking):\n${result.observations.join('\n\n')}\nAsk the user where each goes: fixed in this slice (factory_fix with their ids), carried into the ticket of a pending slice (factory_carry with their ids and that slice id), ${ws.config.deferred === undefined ? 'or ' : ''}queued for one follow-up slice at the end of the run (factory_carry with their ids and to "end")${ws.config.deferred === undefined ? '' : ', or sent to the deferred sink (factory_defer with their ids)'}. This slice stays green when they are carried.`
+            ? `\nObservations (non-blocking):\n${result.observations.join('\n\n')}\nAsk the user where each goes: fixed in this slice (factory_fix with their ids), carried into the ticket of a pending slice (factory_carry with their ids and that slice id), ${orLead}queued for one follow-up slice at the end of the run (factory_carry with their ids and to "end")${sinkTail}. This slice stays green when they are carried.`
             : '';
         const bug = '\nWhen the user finds a bug in this slice before it is done, call factory_fix with the bug (and any observation ids).';
         return reply(`Review is green.${notes}${bug}\nNext: ${nextAction(readRun(ws, feature))}`);
@@ -652,7 +649,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
           `Review is accepted unresolved: the fix budget is used up, and a headless run does not raise it. Open:\n${result.unresolved.join('\n')}\nThe slice counts as green with these items on record.\nNext: ${nextAction(readRun(ws, feature))}`,
         );
       }
-      const stall = result.stalled ? await decideStall(ctx, ws, feature, false) : '';
+      const stall = result.stalled ? await decideStall(ctx, ws, feature, 'review') : '';
       return reply(`${result.blocking} blocking findings, ${result.open} open fix items. Fix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
     },
   });
@@ -697,7 +694,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         return reply(`The user kept the green review. Ask how to handle the observations or the bug, or call factory_complete_slice.\nNext: ${nextAction(readRun(ws, feature))}`);
       }
       const result = await withRun(ws, feature, run => fixObservations(ws, run, params, params.reason));
-      const stall = result.stalled ? await decideStall(ctx, ws, feature, false) : '';
+      const stall = result.stalled ? await decideStall(ctx, ws, feature, 'fix') : '';
       return reply(`Slice ${planned.slice.id} is back in fix for ${what}. Fix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
     },
   });
@@ -758,7 +755,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         }
       }
       const result = await withRun(ws, feature, run => reopenSlice(ws, run, params.slice, params.reason));
-      const stall = result.stalled ? await decideStall(ctx, ws, feature, false) : '';
+      const stall = result.stalled ? await decideStall(ctx, ws, feature, 'fix') : '';
       return reply(
         `Slice ${result.slice.id} "${result.slice.title}" is reopened on ${result.slice.branch}. Fix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`,
       );
@@ -798,9 +795,9 @@ export default function softwareFactory(pi: ExtensionAPI) {
     async run(params, { feature, ws }, ctx) {
       // Refuses a project without a sink, empty input, unknown ids, and ids already carried or deferred, without a dialog.
       const planned = planDefer(ws, readRun(ws, feature), params);
-      const sink = ws.config.deferred?.kind === 'github' ? 'GitHub issues (gh issue create, one per item)' : `the sink file ${ws.config.deferred?.path} (queued on the run)`;
+      const sink = describeSink(requireSink(ws));
       const items = planned.map(draft => `- ${draft.id ?? 'Note'}: ${evidenceHead(draft.title, 200)}`);
-      if (!(await confirmInteractive(ctx, ws, feature, `Defer ${planned.length} items to ${ws.config.deferred?.kind === 'github' ? 'GitHub issues' : 'the sink file'}?`, `${items.join('\n')}\n\nSink: ${sink}.`))) {
+      if (!(await confirmInteractive(ctx, ws, feature, `Defer ${planned.length} items to ${sink.name}?`, `${items.join('\n')}\n\nSink: ${sink.line}.`))) {
         return reply(`The user did not defer the work. Ask how to handle the observations or the note.\nNext: ${nextAction(readRun(ws, feature))}`);
       }
       const { failure, lines, rest } = await withRun(ws, feature, async run => {

@@ -123,13 +123,8 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
           `${caught instanceof Error ? caught.message : String(caught)}\nAlready added to the gh stack: ${added.join(', ')}; run /factory submit again to add the rest and submit.`,
           { cause: caught },
         );
-    try {
-      await git(ws.root, 'switch', '-q', ...start);
-    } catch (switchError) {
-      const original = error instanceof Error ? error.message : String(error);
-      const failure = switchError instanceof Error ? switchError.message : String(switchError);
-      throw new Error(`${original}\nSwitching back to ${start.at(-1)} also failed: ${failure}`, { cause: error });
-    }
+    const switchFailure = await switchBack(ws.root, start);
+    if (switchFailure !== undefined) throw new Error(`${error instanceof Error ? error.message : String(error)}\n${switchFailure.message}`, { cause: error });
     throw error;
   }
   addEvent(run, 'submit', 'stack submitted as draft PRs');
@@ -146,19 +141,24 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
     );
   } finally {
     if (stop !== undefined) {
-      try {
-        await git(ws.root, 'switch', '-q', ...start);
-      } catch (switchError) {
-        const failure = switchError instanceof Error ? switchError.message : String(switchError);
-        failed = new PrTextsFailed(
-          `${failed?.message ?? 'The stack and its PRs were submitted'}\nSwitching back to ${start.at(-1)} also failed: ${failure}`,
-          { cause: failed ?? switchError },
-        );
+      const switchFailure = await switchBack(ws.root, start);
+      if (switchFailure !== undefined) {
+        failed = new PrTextsFailed(`${failed?.message ?? 'The stack and its PRs were submitted'}\n${switchFailure.message}`, { cause: failed ?? switchFailure.cause });
       }
     }
   }
   if (failed !== undefined) throw failed;
   return `${output.trim()}\nPull requests:\n${urls.map(url => `- ${url}`).join('\n')}`.trim();
+}
+
+/** Switches the checkout back to `start` (the `git switch` arguments). Returns the error to report when that fails, or undefined. */
+async function switchBack(root: string, start: string[]) {
+  try {
+    await git(root, 'switch', '-q', ...start);
+    return undefined;
+  } catch (switchError) {
+    return new Error(`Switching back to ${start.at(-1)} also failed: ${switchError instanceof Error ? switchError.message : String(switchError)}`, { cause: switchError });
+  }
 }
 
 /** The unbroken run of done slices from the bottom up to (not including) `stopped`; throws when `stopped` is not a slice of the run. */

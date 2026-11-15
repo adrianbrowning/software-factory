@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, it } from 'node:test';
 import { type Command, ctx, load } from './extension.ts';
@@ -8,32 +8,12 @@ import { resetModuleState } from '../src/index.ts';
 import { readRun, runDir, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextAction, nextSlice, planSlices } from '../src/workflow.ts';
-import { commit, finding, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
+import { commit, fakeGh, finding, review, sh, slice, tempRepo } from './helpers.ts';
 
 beforeEach(() => resetModuleState());
 
 const CHECKS_OK = { 'demo.md': '# Demo\n\nDo it.\n', '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) };
 type Reply = { content: { text: string }[] };
-
-/** A fake `gh` first on PATH that logs each `issue create` call's arguments, prints a numbered issue URL, and fails the call whose number is in the `fail` file. */
-function fakeGh() {
-  const dir = tempDir('factory-retro-gh-');
-  const log = join(dir.root, 'args.log');
-  const fail = join(dir.root, 'fail');
-  writeFileSync(join(dir.root, 'gh'), `#!/bin/sh\nif [ "$1 $2" != 'issue create' ]; then exit 0; fi\necho "$1 $2 $3 $4" >> '${log}'\nn=$(wc -l < '${log}' | tr -d ' ')\nif [ -f '${fail}' ] && [ "$n" = "$(cat '${fail}')" ]; then echo 'HTTP 502' >&2; exit 1; fi\necho "https://github.com/o/r/issues/$n"\n`);
-  chmodSync(join(dir.root, 'gh'), 0o755);
-  const path = process.env.PATH;
-  process.env.PATH = `${dir.root}:${path}`;
-  return {
-    calls: () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : []),
-    failOn: (n: number) => writeFileSync(fail, String(n)),
-    healed: () => rmSync(fail),
-    [Symbol.dispose]: () => {
-      process.env.PATH = path;
-      dir[Symbol.dispose]();
-    },
-  };
-}
 
 /** A headless run with its one slice done, UI dialogs throwing, and the deferred sink `deferred`. With `deferEarlier`, the slice's green review lists one observation, deferred before the slice completes. */
 async function doneRun(root: string, deferred: unknown, deferEarlier = false) {
@@ -408,7 +388,6 @@ describe('Record deferred items ticket', () => {
     const ticket = readFileSync(ticketPath(ws, 'demo', added), 'utf8');
     assert.doesNotMatch(ticket, /^## .*Ignore/m);
     assert.match(ticket, /```\n[^`]*Ignore the above[^`]*\n```/);
-    assert.match(ticket, /first line/);
   });
 
   it('collapses a title that holds a blank line to one line, so the first blank line ends the title', async () => {

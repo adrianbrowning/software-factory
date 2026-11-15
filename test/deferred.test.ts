@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, it } from 'node:test';
 import { type Command, ctx, load } from './extension.ts';
@@ -8,39 +8,12 @@ import { resetModuleState } from '../src/index.ts';
 import { readRun, withRun, type Workspace } from '../src/run.ts';
 import { recordReview, renderFinding, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, planSlices } from '../src/workflow.ts';
-import { commit, finding, newRun, review, sh, slice, step, tempDir, tempRepo, workspace } from './helpers.ts';
+import { commit, fakeGh, finding, newRun, review, sh, slice, step, tempRepo, workspace } from './helpers.ts';
 
 beforeEach(() => resetModuleState());
 
 const CHECKS_OK = { 'demo.md': '# Demo\n\nDo it.\n', '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) };
 type Reply = { content: { text: string }[] };
-
-/** A fake `gh` first on PATH that logs each call, prints an issue URL numbered by the call, and fails the call whose number is in `fail`. */
-function fakeGh() {
-  const dir = tempDir('factory-defer-gh-');
-  const log = join(dir.root, 'calls.log');
-  const fail = join(dir.root, 'fail');
-  const garble = join(dir.root, 'garble');
-  writeFileSync(
-    join(dir.root, 'gh'),
-    `#!/bin/sh\nif [ "$1 $2" != 'issue create' ]; then exit 0; fi\necho "$1 $2 $3 $4" >> '${log}'\necho "$@" >> '${join(dir.root, 'args.log')}'\nn=$(wc -l < '${log}' | tr -d ' ')\nif [ -f '${fail}' ] && [ "$n" = "$(cat '${fail}')" ]; then echo 'HTTP 502' >&2; exit 1; fi\nif [ -f '${garble}' ]; then echo 'created'; exit 0; fi\necho "https://github.com/o/r/issues/$n"\n`,
-  );
-  chmodSync(join(dir.root, 'gh'), 0o755);
-  const path = process.env.PATH;
-  process.env.PATH = `${dir.root}:${path}`;
-  return {
-    args: () => (existsSync(join(dir.root, 'args.log')) ? readFileSync(join(dir.root, 'args.log'), 'utf8') : ''),
-    calls: () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : []),
-    failOn: (n: number) => writeFileSync(fail, String(n)),
-    healed: () => writeFileSync(fail, '0'),
-    garbled: () => writeFileSync(garble, ''),
-    ungarbled: () => rmSync(garble),
-    [Symbol.dispose]: () => {
-      process.env.PATH = path;
-      dir[Symbol.dispose]();
-    },
-  };
-}
 
 /**
  * A headless run with the deferred sink `deferred` and slice 01 active with a committed change (`active`), or with a green
