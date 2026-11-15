@@ -6,6 +6,7 @@ import { type Command, ctx, load } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
 import { forgetRun, readRun, statePath } from '../src/run.ts';
 import { resetModuleState } from '../src/index.ts';
+import { headlessTarget } from '../src/workflow.ts';
 import { tempDir, tempRepo } from './helpers.ts';
 
 const CHECKS_OK = { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }), 'ticket.md': '# Add the widget\n\nBuild it.\n' };
@@ -128,5 +129,25 @@ describe('/factory headless', () => {
     const { command, sent } = session(repo.root);
     await assert.rejects(Promise.resolve(command('headless .md')), /Cannot name a run after "\.md"/);
     assert.deepEqual(sent, []);
+  });
+});
+
+describe('headlessTarget', () => {
+  it('keeps a GitHub issue URL as the ref and names the run after its number', () => {
+    assert.deepEqual(headlessTarget('https://github.com/o/r/issues/102'), { feature: 'issue-102', source: { kind: 'github', ref: 'https://github.com/o/r/issues/102' } });
+  });
+
+  it('gives a bare or #-prefixed number as the ref', () => {
+    assert.deepEqual(headlessTarget('#102'), { feature: 'issue-102', source: { kind: 'github', ref: '102' } });
+    assert.deepEqual(headlessTarget('102'), { feature: 'issue-102', source: { kind: 'github', ref: '102' } });
+  });
+
+  it('names a file run after its file name in kebab-case, and keeps the path as the ref', () => {
+    assert.deepEqual(headlessTarget('docs/My Ticket.md'), { feature: 'my-ticket', source: { kind: 'file', ref: 'docs/My Ticket.md' } });
+  });
+
+  it('cuts a long file name to 48 characters without a trailing dash', () => {
+    const { feature } = headlessTarget(`${'a'.repeat(47)} ${'b'.repeat(20)}.md`);
+    assert.equal(feature, 'a'.repeat(47));
   });
 });

@@ -4,7 +4,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { startImplementerSession, submitImplementerReport } from '../src/report.ts';
-import { forgetRun, greenCommit, readRun, REVIEW_DOMAINS, ticketPath, type Workspace } from '../src/run.ts';
+import { forgetRun, greenCommit, readRun, REVIEW_DOMAINS, type Run, ticketPath, type Workspace } from '../src/run.ts';
 import { completeSlice, recordDecisions, recordReview, REVIEW_REFERENCE_DIR, runChecks, startReview } from '../src/review.ts';
 import {
   addFollowUp,
@@ -375,13 +375,27 @@ describe('pause and resume', () => {
     assert.deepEqual([run.status, run.ownerSessionId], ['running', 'session-2']);
   });
 
-  it('resumes a run with every slice done and a retro but a waiting item to running, not done', async () => {
-    using ws = workspace();
+  /** A paused run of `mode` whose only slice is done and whose retro is recorded, with `waiting` carried items, resumed in a new session. */
+  async function resumedFinished(ws: Workspace, mode: Run['mode'], waiting: string[]) {
     await newRun(ws, [slice('Feature')]);
-    await step(ws, run => ((run.slices[0]!.status = 'done'), (run.retroRecorded = true), run.waiting.push('carried'), undefined));
+    await step(ws, run => ((run.mode = mode), (run.slices[0]!.status = 'done'), (run.retroRecorded = true), run.waiting.push(...waiting), undefined));
     await step(ws, run => pauseRun(run, 'test'));
     await step(ws, run => resumeRun(ws, run, 'session-2'));
-    assert.equal(readRun(ws, 'demo').status, 'running');
+    return readRun(ws, 'demo').status;
+  }
+
+  it('resumes a run with every slice done and a retro but a waiting item to running, not done', async () => {
+    using interactive = workspace();
+    assert.equal(await resumedFinished(interactive, 'interactive', ['carried']), 'running');
+    using headless = workspace();
+    assert.equal(await resumedFinished(headless, 'headless', ['carried']), 'running');
+  });
+
+  it('resumes a headless run with every slice done, a retro and nothing waiting to done, as no interactive run does', async () => {
+    using headless = workspace();
+    assert.equal(await resumedFinished(headless, 'headless', []), 'done');
+    using interactive = workspace();
+    assert.equal(await resumedFinished(interactive, 'interactive', []), 'running');
   });
 
   it('keeps a slice in review on its checked commit on resume, dropping only the open review', async () => {

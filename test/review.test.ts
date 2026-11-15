@@ -1561,9 +1561,9 @@ describe('review submissions', { concurrency: 4 }, () => {
 });
 
 describe('autonomous decisions', { concurrency: 4 }, () => {
-  async function headlessReview(ws: Workspace) {
+  async function decisionReview(ws: Workspace, mode: 'headless' | 'interactive') {
     await newRun(ws, [slice('Feature')]);
-    await step(ws, run => void (run.mode = 'headless'));
+    await step(ws, run => void (run.mode = mode));
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
     await step(ws, run => recordDecisions(ws, run, ['Narrow reading: no export.']));
@@ -1573,7 +1573,7 @@ describe('autonomous decisions', { concurrency: 4 }, () => {
 
   it('records the author by run mode, marks autonomous ones in the review data, and loads old string decisions as user', async () => {
     using ws = workspace();
-    const { dataFile } = await headlessReview(ws);
+    const { dataFile } = await decisionReview(ws, 'headless');
     assert.deepEqual(readRun(ws, 'demo').decisions, [{ author: 'autonomous', text: 'Narrow reading: no export.' }]);
     assert.match(readFileSync(ticketPath(ws, 'demo', readRun(ws, 'demo').slices[0]!), 'utf8'), /1\. Narrow reading: no export\. \[AUTONOMOUS:/);
     assert.match(readFileSync(dataFile, 'utf8'), /1\. Narrow reading: no export\. \[AUTONOMOUS:[^\]]*not a waiver\]/);
@@ -1591,7 +1591,7 @@ describe('autonomous decisions', { concurrency: 4 }, () => {
 
   it('refuses to drop (even as a duplicate) or downgrade a blocking finding that cites an autonomous decision', async () => {
     using ws = workspace();
-    const { reviewId } = await headlessReview(ws);
+    const { reviewId } = await decisionReview(ws, 'headless');
     const cited = { ...finding('react-ts', 'high', 'cited'), decision: 1 };
     for (const domain of REVIEW_DOMAINS) {
       await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings: domain === 'react-ts' ? [cited] : domain === 'bug' ? [finding('bug', 'high', 'dup')] : [], reviewId, ...noFixItems(domain) }));
@@ -1599,7 +1599,19 @@ describe('autonomous decisions', { concurrency: 4 }, () => {
     const validate = (input: object) => step(ws, run => submitValidation(ws, run, { agentId: 'v', dropped: [], keep: [], reviewId, ...input }));
     await assert.rejects(validate({ dropped: [{ id: 'react-ts-cited', reason: 'x' }], keep: ['bug-dup'] }), /autonomous decision cannot be dropped or downgraded/);
     await assert.rejects(validate({ dropped: [{ id: 'react-ts-cited', reason: 'x', duplicateOf: 'bug-dup' }], keep: ['bug-dup'] }), /autonomous decision cannot be dropped or downgraded/);
-    await assert.rejects(validate({ downgrade: [{ id: 'react-ts-cited', reason: 'x' }], keep: ['bug-dup'] }), /cannot be (dropped or )?downgraded/);
+    // The downgrade is refused by the check that covers every decision, which runs before the autonomous one.
+    await assert.rejects(validate({ downgrade: [{ id: 'react-ts-cited', reason: 'x' }], keep: ['bug-dup'] }), /breaks a recorded decision cannot be downgraded/);
     await validate({ keep: ['bug-dup', 'react-ts-cited'] });
+  });
+
+  it('still lets the validator drop a blocking finding that cites a user decision in an interactive run', async () => {
+    using ws = workspace();
+    const { reviewId } = await decisionReview(ws, 'interactive');
+    const cited = { ...finding('react-ts', 'high', 'cited'), decision: 1 };
+    for (const domain of REVIEW_DOMAINS) {
+      await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings: domain === 'react-ts' ? [cited] : domain === 'bug' ? [finding('bug', 'high', 'dup')] : [], reviewId, ...noFixItems(domain) }));
+    }
+    const result = await step(ws, run => submitValidation(ws, run, { agentId: 'v', dropped: [{ id: 'react-ts-cited', reason: 'x' }], keep: ['bug-dup'], reviewId }));
+    assert.equal(result.dropped, 1);
   });
 });

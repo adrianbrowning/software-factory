@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, it } from 'node:test';
 import { type Command, ctx, load } from './extension.ts';
 import { loadConfig, parseConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
 import { readRun, withRun, type Workspace } from '../src/run.ts';
-import { recordReview, runChecks, startReview } from '../src/review.ts';
+import { recordReview, renderFinding, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, planSlices } from '../src/workflow.ts';
-import { commit, finding, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
+import { commit, finding, newRun, review, sh, slice, step, tempDir, tempRepo, workspace } from './helpers.ts';
 
 beforeEach(() => resetModuleState());
 
@@ -34,6 +34,7 @@ function fakeGh() {
     failOn: (n: number) => writeFileSync(fail, String(n)),
     healed: () => writeFileSync(fail, '0'),
     garbled: () => writeFileSync(garble, ''),
+    ungarbled: () => rmSync(garble),
     [Symbol.dispose]: () => {
       process.env.PATH = path;
       dir[Symbol.dispose]();
@@ -243,6 +244,11 @@ describe('factory_defer', () => {
     gh.garbled();
     await assert.rejects(call('factory_defer', { observations: ['thermo-naming'] }), /did not print an issue URL: created/);
     assert.deepEqual(readRun(ws, 'demo').deferred, []);
+    gh.ungarbled();
+    await call('factory_defer', { observations: ['thermo-naming'] });
+    const items = readRun(ws, 'demo').deferred;
+    assert.equal(items.length, 1);
+    assert.ok(items[0]?.location.startsWith('https://github.com/o/r/issues/'));
   });
 
   it('factory_status lists the deferred items with their sink locations', async () => {
@@ -302,7 +308,7 @@ describe('accepted unresolved findings go to the sink', () => {
     const { call, ws } = await fourthReview(repo.root, { kind: 'github' }, undefined, `leaks ${secret}`);
     await call('factory_review_record', {});
     const run = readRun(ws, 'demo');
-    assert.ok(run.deferred.some(item => item.id === 'bug-b' && item.body.includes('Scope reviewer: still broken')));
+    assert.ok(run.deferred.some(item => item.id === 'bug-b' && item.body.includes('Scope reviewer: still broken') && item.body.includes('leaks <REDACTED>')));
     assert.ok(run.deferred.every(item => !item.body.includes(secret) && !item.title.includes(secret)));
     assert.ok(!gh.args().includes(secret));
   });
@@ -346,6 +352,7 @@ describe('accepted unresolved findings go to the sink', () => {
     assert.ok(run.slices[0]?.unresolved);
     assert.equal(run.deferred.length, 2);
     assert.equal(gh.calls().length, 3);
+    assert.equal(run.events.filter(event => event.kind === 'review-blocking' && event.slice === '01' && event.detail.startsWith('01-r4 ')).length, 1);
   });
 
   it('without a sink the review is accepted as before and nothing is deferred', async () => {
@@ -355,5 +362,37 @@ describe('accepted unresolved findings go to the sink', () => {
     const run = readRun(ws, 'demo');
     assert.ok(run.slices[0]?.unresolved);
     assert.deepEqual(run.deferred, []);
+  });
+});
+
+describe('redaction in rendered findings and open fix items', () => {
+  const secret = `ghp_${'c'.repeat(30)}`;
+
+  it('renderFinding leaves a credential in the decision a finding breaks out of its text', () => {
+    const broken = { ...finding('thermo', 'high', 'a'), decision: 1 };
+    const rendered = renderFinding(broken, [{ author: 'user', text: `Use token ${secret} for the API` }], '###');
+    assert.match(rendered, /- Breaks decision 1: Use token <REDACTED> for the API/);
+    assert.ok(!rendered.includes(secret));
+  });
+
+  it('the fix file section of an open fix item holds its summary with a credential redacted', async () => {
+    using ws = workspace({ maxRounds: 3 });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const first = await step(ws, run => startReview(ws, run));
+    await review(ws, first.reviewId, [finding('bug', 'high', 'b')]);
+    await step(ws, run => recordReview(ws, run));
+    commit(ws, 'two');
+    await step(ws, run => runChecks(ws, run));
+    const second = await step(ws, run => startReview(ws, run));
+    // A summary that reaches the item unredacted, as an older state file could hold it.
+    await step(ws, run => void (run.slices[0]!.fixItems[0]!.summary = `leaks ${secret}`));
+    await review(ws, second.reviewId, [], [], [{ id: 'bug-b', reason: 'still broken', status: 'open' }]);
+    const result = await step(ws, run => recordReview(ws, run));
+    assert.ok(!result.green && 'fixPath' in result);
+    const section = /- Item: (.*)/.exec(readFileSync(result.fixPath ?? '', 'utf8'))?.[1];
+    assert.equal(section, 'leaks <REDACTED>');
   });
 });
