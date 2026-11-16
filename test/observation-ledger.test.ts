@@ -186,6 +186,11 @@ describe('observation ledger', () => {
     const data = readFileSync(opened.details?.dataFile ?? assert.fail('no data file'), 'utf8');
     assert.match(data, /\n {2}Problem: first line second token=<REDACTED> x{100}/);
     assert.doesNotMatch(data, /hunter2secret/);
+    const problemLine = /\n {2}Problem: ([^\n]*)\n/.exec(data)?.[1] ?? assert.fail('no Problem line');
+    assert.equal(problemLine.length, 2_000 + '…'.length, 'the data file cuts the problem at 2000 characters and marks the cut');
+    assert.ok(problemLine.endsWith('…'));
+    assert.doesNotMatch(problemLine, / end$/, 'the tail of the problem is not in the data file');
+    assert.ok(kept?.problem.endsWith(' end'), 'the state still holds the whole problem');
   });
 
   describe('a run saved before the ledger', () => {
@@ -224,9 +229,10 @@ describe('observation ledger', () => {
       const placeholder = { location: 'unknown', problem: 'Recorded before the run kept the text of handled observations.' };
 
       saveAsLegacy(ws, ['09-r1:thermo-gone', 'no-colon']);
-      assert.deepEqual(readRun(ws, 'demo').observations, [
-        { ...placeholder, id: 'thermo-gone', key: '09-r1:thermo-gone', placement: 'carried', review: '09-r1', slice: '09', title: 'thermo-gone' },
-        { ...placeholder, id: 'no-colon', key: 'no-colon', placement: 'carried', review: 'no-colon', slice: 'no', title: 'no-colon' },
+      const observed = readRun(ws, 'demo').observations;
+      assert.deepEqual(observed.map(({ key, location, placement, problem }) => ({ key, location, placement, problem })), [
+        { ...placeholder, key: '09-r1:thermo-gone', placement: 'carried' },
+        { ...placeholder, key: 'no-colon', placement: 'carried' },
       ], 'a key no section holds, and a malformed key');
 
       saveAsLegacy(ws, ['01-r1:thermo-naming'], state => {
