@@ -16,11 +16,12 @@ const SOURCE = { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' };
 
 function session(root: string) {
   const sent: string[] = [];
+  const sentOptions: unknown[] = [];
   const commands = new Map<string, Command>();
-  const tools = load({ commands, sent });
+  const tools = load({ commands, sent, sentOptions });
   const main = { ...ctx('main', 'main'), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, notify() {} } };
   const call = async (name: string, params: unknown) => JSON.stringify(await tools.get(name)?.execute('id', params, undefined, undefined, main));
-  return { call, command: (args: string) => commands.get('factory')?.handler(args, main), sent };
+  return { call, command: (args: string) => commands.get('factory')?.handler(args, main), sent, sentOptions };
 }
 
 describe('run mode', () => {
@@ -75,6 +76,16 @@ describe('/factory headless', () => {
     assert.match(sent[0] ?? '', /"ticket"/);
     assert.match(sent[0] ?? '', /skill:\/\/software-factory/);
     assert.doesNotMatch(sent[0] ?? '', /factory_start/);
+  });
+
+  it('sends the headless, resume and plain /factory continuations as an agent steer, the only form omp -p dispatches', async () => {
+    using repo = tempRepo('factory-headless-cmd-', CHECKS_OK);
+    const { command, sent, sentOptions } = session(repo.root);
+    await command('headless ticket.md');
+    await command('resume ticket');
+    await command('some pasted issue');
+    assert.equal(sent.length, 3);
+    assert.deepEqual(sentOptions, Array(3).fill({ attribution: 'agent', deliverAs: 'steer' }));
   });
 
   it('names a GitHub issue run issue-<n> from the number, with or without #', async () => {

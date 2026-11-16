@@ -146,6 +146,25 @@ continue with `maxRounds` more fix rounds or pause. A paused stall leaves the ru
 `Next:` line say so. `/factory resume <feature>` on a stalled run names the slice and its used rounds and asks
 whether to raise the fix budget by `maxRounds` and resume; declining keeps the run stalled.
 
+### Headless runs
+
+`/factory headless <issue>` starts a run that asks the user nothing: every gate follows the `headless.*` policy in
+`.omp/factory.json` (default `auto`, each choice recorded as a run event), and the factory opens draft PRs when the stack is
+ready. Run it without a TUI through `omp -p`:
+
+```text
+omp -p --wait-async --no-extensions -e <plugin dir> --max-cost 25 --max-time 5400 "/factory headless #102"
+```
+
+- `--wait-async`: without it `omp -p` exits and cancels the background subagents.
+- `--no-extensions -e <plugin dir>`: loads only this plugin, from the checkout you name.
+- `--max-cost <usd>` and `--max-time <seconds>`: the only cost and time limits of a headless run. `--max-time` exits 1,
+  `--max-cost` exits 3; the run state stays on disk and `/factory resume <feature>` continues it.
+- `/factory headless` in the TUI has no cost cap and no time limit.
+
+Run it from a worktree of the repository, with checks configured (a headless start refuses a repository with no checks).
+The issue-text, planning, stop-report, observation and retro rules of a headless run are in `skills/software-factory/SKILL.md`.
+
 ### Land on an existing branch
 
 Use this when you want the work on a branch that you already have, and you do not want new PRs. At intake, tell

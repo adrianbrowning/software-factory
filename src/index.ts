@@ -334,6 +334,8 @@ export function stopDecision(run: Run, sessionId: string, previous: { count: num
 }
 
 export default function softwareFactory(pi: ExtensionAPI) {
+  // Under omp -p a bare sendUserMessage from a command handler is dropped before dispatch; an explicit steer starts the turn (smoke-tested: only it fires agent_start/turn_start).
+  const sendContinuation = (text: string) => pi.sendUserMessage(text, { deliverAs: 'steer', attribution: 'agent' });
   pi.setLabel('Software Factory');
   const { startTool, tool } = toolRegistrar(pi);
 
@@ -910,7 +912,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
       }
       if (verb === 'resume') {
         const feature = requireFeatureName(argument);
-        pi.sendUserMessage(`Resume software-factory run "${feature}": read skill://software-factory, call factory_start with resume "${feature}", then continue from its next action.`);
+        sendContinuation(`Resume software-factory run "${feature}": read skill://software-factory, call factory_start with resume "${feature}", then continue from its next action.`);
         return;
       }
       if (verb === 'submit') {
@@ -945,10 +947,10 @@ export default function softwareFactory(pi: ExtensionAPI) {
         // The command starts the run itself, so its mode is headless whatever the model does next.
         const { feature, source } = headlessTarget(argument);
         await startOrResume({ feature, mode: 'headless', source }, { entry: await cachedRoot(ctx.cwd), ws }, ctx);
-        pi.sendUserMessage(`A headless software-factory run "${feature}" is started for: ${argument}\nRead skill://software-factory and continue it from its next action (${nextAction(readRun(ws, feature))}).`);
+        sendContinuation(`A headless software-factory run "${feature}" is started for: ${argument}\nRead skill://software-factory and continue it from its next action (${nextAction(readRun(ws, feature))}).`);
         return;
       }
-      pi.sendUserMessage(`Start a software-factory run for: ${args.trim()}\nRead skill://software-factory and follow it.`);
+      sendContinuation(`Start a software-factory run for: ${args.trim()}\nRead skill://software-factory and follow it.`);
     },
   });
 

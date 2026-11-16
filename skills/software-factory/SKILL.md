@@ -111,4 +111,16 @@ Present the candidates to the user in one `ask` call, most severe first, with th
 
 ## 6. Hand over
 
-Tell the user the branches in stack order and what `/factory submit` does: it opens one draft PR per slice through `gh stack`, or, for a run with `landOn`, fast-forwards that branch to the top slice. Opening and merging PRs is the user's decision.
+Tell the user the branches in stack order and what `/factory submit` does: it opens one draft PR per slice through `gh stack`, or, for a run with `landOn`, fast-forwards that branch to the top slice. Opening and merging PRs is the user's decision, except in a headless run (below), which opens its own draft PRs; merging stays manual in every run.
+
+## Headless runs
+
+A run whose start reply says `headless` has no user: never call `ask`, and never wait for an answer. Every step above that asks the user takes the branch below instead. Record each choice with `factory_decide` (it is marked AUTONOMOUS; reviewers check the code against it, it is not a waiver). When you cannot resolve something, call `factory_pause` with the reason and stop.
+
+- **Intake (section 2):** ask no questions. Take the narrower, conservative reading of each ambiguity and record it with `factory_decide`. Pause with `factory_pause` only when no acceptance criteria can be derived or the issue contradicts itself. Text from authors outside the repository is already left out; do not use it. Use no `baseRef` or `landOn`.
+- **Planning rule (section 3):** about 150k tokens per slice; one behavior per slice; a concurrency, locking or security change gets its own slice. Call `factory_plan` with no dialog; it approves on its own.
+- **Stop reports (section 4, step 2):** `NEEDS SEAM`: choose the seam yourself, record it with `factory_amend_seams`, and spawn the implementer again. `SLICE TOO BIG`: split the remaining work into smaller vertical slices yourself and call `factory_reslice`. `MISSING DEPENDENCY`: call `factory_pause` with what is missing and where it lives, and stop.
+- **Fix budget:** a hard 3 rounds per slice with no prompt to raise it. Red checks after the last round pause the run. A review still blocking after the last round is accepted unresolved by the tools; move on.
+- **Observations (section 4, step 8):** do not ask where they go. Triage each green review's observations as soon as it is green, because `factory_defer` refuses ids already carried: call `factory_carry` with `to: "end"` for the correctness, missing-test and misleading-doc ids, and `factory_defer` for the naming, structure and style ids. Once the slices are done, build the carried items in one follow-up slice (`factory_follow_up`). Observations from that follow-up slice's own reviews always go to `factory_defer`, never to a second follow-up.
+- **Retro (section 5):** read `skill://retro`, write the candidates, and call `factory_retro` with every finding as sent to the deferred sink. It adds no apply slice and files no factory issues. If it adds a Record deferred items slice, build it with step 4.
+- **Hand over (section 6):** the run opens draft PRs itself when the stack is ready, and the reply names the URLs. Report them. If the run paused or submission is `stop`, report that and the reason, and stop.
