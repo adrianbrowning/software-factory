@@ -270,7 +270,7 @@ working tree, and unknown keys are rejected.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `checks` | Asked on the first run | Check commands every slice must pass, in order. Unset: the first `factory_start` in the repository opens a dialog with the `lint`, `typecheck`, `test` scripts chosen, and other check-like `package.json` scripts and `.github/workflows` `run:` commands as commented suggestions. The choice is saved in `scratchDir`, and later runs reuse it with no dialog. `/factory checks` changes it for new runs; a run keeps the checks it started with |
+| `checks` | Asked on the first run | Check commands every slice must pass, in order. `factory_checks` runs them in full on the slice's commits; the implementer runs only the typecheck and the test files it touched. Unset: the first `factory_start` in the repository opens a dialog with the `lint`, `typecheck`, `test` scripts chosen, and other check-like `package.json` scripts and `.github/workflows` `run:` commands as commented suggestions. The choice is saved in `scratchDir`, and later runs reuse it with no dialog. `/factory checks` changes it for new runs; a run keeps the checks it started with |
 | `checkPath` | `[]` | Directories put before the omp process `PATH` when checks run. Each entry is an absolute path or starts with `~/`. Use it when a check command is not found (exit 127), for example `["~/Library/pnpm/bin"]`. Find the directory with `command -v <tool>` in your terminal |
 | `checkTimeoutMs` | `600000` | Per-check timeout; the whole process group is killed |
 | `maxRounds` | `3` | Fix rounds per slice before the user decides to continue or pause; each continue, and each yes to the `/factory resume` question on a stalled run, adds this many |

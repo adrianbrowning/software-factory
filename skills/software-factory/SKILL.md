@@ -53,7 +53,7 @@ Repeat until `factory_next` reports no slices left:
 Call `factory_*` tools one at a time: wait for each reply before the next call, and never put two in one parallel batch. Each call changes the run state, and a later call in the same batch can see the state before or after an earlier one.
 
 1. `factory_next` checks out the slice branch and returns the ticket path and the implementer report file.
-2. Spawn one `factory-implementer` with the ticket path, branch, check commands, and budget from `factory_next`.
+2. Spawn one `factory-implementer` with the ticket path, branch, check commands, and budget from `factory_next`. The implementer runs only the typecheck and the test files it touched; `factory_checks` (step 3) runs the full check commands.
    - `NEEDS SEAM`: ask the user, record the agreed seam with `factory_amend_seams`, and spawn the implementer again.
    - `SLICE TOO BIG`: propose smaller vertical slices for the remaining work, show them to the user, and call `factory_reslice`. Committed work carries into the first child.
    - `MISSING DEPENDENCY`: show the user what is missing and where it lives. If the run must build on that branch, `/factory pause` this run and start a new run whose `factory_plan` sets that branch as `baseRef`. Otherwise record the user's decision with `factory_decide` and spawn the implementer again with it.

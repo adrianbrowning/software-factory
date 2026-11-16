@@ -21,7 +21,8 @@ describe('slice loop gates: stacking and review data', { concurrency: 4 }, () =>
     assert.ok(!red.passed);
     const redFix = readFileSync(red.fixPath, 'utf8');
     assert.match(redFix, /test -f ok: failed \(exit 1\)/);
-    assert.match(redFix, /Checks to run before committing: test -f ok/);
+    assert.match(redFix, /Checks that factory_checks runs in full after your commit \(you run only the typecheck and the test files you touched\): test -f ok/);
+    assert.doesNotMatch(redFix, /Checks to run before committing/);
     assert.match(redFix, /Ticket \(seams and acceptance criteria\): .*01-feature\.md/);
     await assert.rejects(step(ws, run => startReview(ws, run)), /Checks must pass first/);
 

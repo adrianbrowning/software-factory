@@ -149,6 +149,14 @@ describe('implementer sessions', () => {
     assert.match(next, /Implementer report file: \S+\/\.scratch\/demo\/reports\/01\.md/);
   });
 
+  it('says in the factory_next reply that factory_checks runs the full checks and the implementer runs only what it touched', async () => {
+    using repo = emptyRepo();
+    const { next } = await startedRun(repo.root);
+    assert.match(next, /Checks that factory_checks runs in full after the implementer commits \(the implementer runs only the typecheck and the test files it touched\): true\\n/);
+    const ticket = readFileSync(/Ticket: ([^\\]+)/.exec(next)?.[1] ?? '', 'utf8');
+    assert.match(ticket, /## Checks\n\nfactory_checks runs these in full after the implementer commits; the implementer runs only the typecheck and the test files it touched\.\n\n- true\n/);
+  });
+
   it('tells the orchestrator to run every reviewer and then the validator in one eval step', async () => {
     using repo = emptyRepo();
     const { root } = repo;

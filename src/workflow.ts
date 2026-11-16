@@ -285,6 +285,12 @@ export function renderTicket(run: Run, slice: Slice, budget: number) {
 
 ${seams}
 
+## Checks
+
+factory_checks runs these in full after the implementer commits; the implementer runs only the typecheck and the test files it touched.
+
+${run.checks.map(check => `- ${check}`).join('\n')}
+
 ## Acceptance criteria
 
 ${slice.acceptance.map(item => `- [ ] ${item}`).join('\n')}
@@ -618,7 +624,7 @@ export function requestFix(ws: Workspace, run: Run, slice: Slice, sha: string, r
   const context = [
     `- Ticket (seams and acceptance criteria): ${ticketPath(ws, run.feature, slice)}`,
     `- Branch: ${slice.branch}`,
-    `- Checks to run before committing: ${run.checks.join('; ')}`,
+    `- Checks that factory_checks runs in full after your commit (you run only the typecheck and the test files you touched): ${run.checks.join('; ')}`,
   ].join('\n');
   const listed = items.map(item => `- \`${item.id}\`: ${item.summary}`).join('\n');
   writeAtomic(fixPath, `# Fix slice ${slice.id}: ${slice.title}\n\n${context}\n\n${UNTRUSTED_NOTE}\n\n## Fix items\n\n${listed}\n\n${parts.join('\n\n')}\n`);
