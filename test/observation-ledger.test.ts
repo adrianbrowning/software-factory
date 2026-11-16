@@ -4,7 +4,7 @@ import { beforeEach, describe, it } from 'node:test';
 import { ctx, load } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
-import { findingLocation } from '../src/ledger.ts';
+import { findingLocation, renderKnownObservations } from '../src/ledger.ts';
 import { renderedObservation } from '../src/legacy-observations.ts';
 import { type Finding, forgetRun, type ObservationEntry, readRun, statePath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, renderFinding, runChecks, startReview } from '../src/review.ts';
@@ -186,6 +186,27 @@ describe('observation ledger', () => {
     const known = /## KNOWN OBSERVATIONS\n\n([\s\S]*?)\n## /.exec(data)?.[1] ?? assert.fail('no KNOWN OBSERVATIONS section');
     assert.match(known, /- `01-r1:thermo-naming` \(carried; carried to this slice: check it\): /);
     assert.match(known, /- `01-r1:thermo-order` \(carried\): /);
+  });
+
+  it('marks an entry carried to the end queue as work to check in the follow-up slice that takes it', async () => {
+    using dir = repo();
+    const { call, ws } = await ledgerRun(dir.root, ['order']);
+    await call('factory_carry', { observations: ['thermo-order'], to: 'end' });
+    await call('factory_follow_up', { acceptance: ['logged'], estimateTokens: 500, seams: ['cli'], title: 'Polish', whatToBuild: 'Polish' });
+    const run = readRun(ws, 'demo');
+    const polish = run.slices.find(item => item.title === 'Polish') ?? assert.fail('no follow-up slice');
+    assert.match(renderKnownObservations(run, polish), /- `01-r1:thermo-order` \(carried; carried to this slice: check it\): /);
+  });
+
+  it('moves an entry carried to a pending slice along with the slice when factory_reslice renumbers it', async () => {
+    using dir = repo();
+    const { call, ws } = await ledgerRun(dir.root, ['naming']);
+    await call('factory_carry', { observations: ['thermo-naming'], to: '02' });
+    await call('factory_reslice', { slices: [slice('Part one'), slice('Part two', ['Part one'])] });
+    const run = readRun(ws, 'demo');
+    const second = run.slices.find(item => item.title === 'Second') ?? assert.fail('no Second slice');
+    assert.equal(second.id, '03');
+    assert.match(renderKnownObservations(run, second), /- `01-r1:thermo-naming` \(carried; carried to this slice: check it\): /);
   });
 
   it('keeps the whole problem of a finding, with a credential redacted, and lists it on one line in the next data file', async () => {
