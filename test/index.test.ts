@@ -84,7 +84,7 @@ describe('implementer sessions', () => {
   /** Starts a run on slice 01 of the empty repo at `root`, with the main and factory-implementer callers. */
   const startedRun = async (root: string) => {
     const handlers = new Map<string, Handler>();
-    const tools = load([], handlers);
+    const tools = load({ handlers });
     const main = {
       ...ctx('main', 'main'),
       cwd: root,
@@ -457,7 +457,7 @@ describe('used-up fix budget', () => {
     using repo = tempRepo('factory-carry-', CHECKS_OK);
     const activated: string[] = [];
     const caller = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { notify() {} } };
-    await load(activated).get('factory_start')?.execute('id', { feature: 'demo', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } }, undefined, undefined, caller);
+    await load({ activated }).get('factory_start')?.execute('id', { feature: 'demo', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } }, undefined, undefined, caller);
     assert.ok(activated.includes('factory_carry'));
   });
 
@@ -569,7 +569,7 @@ describe('active run in a fresh extension copy', () => {
   /** A reviewer child of `parentId` at turn_end in a new extension copy; the audit records it in the run bound to `root`. */
   const turnEnd = async (root: string, parentId: string) => {
     const handlers = new Map<string, Handler>();
-    load([], handlers);
+    load({ handlers });
     const child = {
       ...ctx('sub', 'factory-reviewer'),
       agent: { ...ctx('sub', 'factory-reviewer').agent, parentId },
@@ -627,7 +627,7 @@ describe('active run in a fresh extension copy', () => {
     const { ws } = await sliceAtCommit(repo.root);
     resetModuleState();
     const handlers = new Map<string, Handler>();
-    load([], handlers);
+    load({ handlers });
 
     await handlers.get('auto_compaction_start')?.({}, { ...ctx('sub', 'factory-implementer'), cwd: repo.root, getContextUsage: () => ({ tokens: 1234 }) });
 
@@ -689,7 +689,7 @@ describe('active run in a fresh extension copy', () => {
     using repo = tempRepo('factory-fresh-stale-stop-', CHECKS_OK);
     await startThenDeleteState(repo.root);
     const handlers = new Map<string, Handler>();
-    load([], handlers);
+    load({ handlers });
     const main = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, ui: { notify() {} } };
 
     assert.equal(await handlers.get('session_stop')?.({ session_id: 'session' }, main), undefined);
@@ -699,7 +699,7 @@ describe('active run in a fresh extension copy', () => {
     using repo = tempRepo('factory-fresh-stale-status-', CHECKS_OK);
     await startThenDeleteState(repo.root);
     const commands = new Map<string, Command>();
-    load([], new Map(), commands);
+    load({ commands });
     const notices: string[] = [];
     const main = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, ui: { notify: (message: string) => notices.push(message) } };
 
@@ -742,7 +742,7 @@ describe('active run in a fresh extension copy', () => {
     using repo = tempRepo('factory-fresh-stale-track-', CHECKS_OK);
     await startThenDeleteState(repo.root);
     const handlers = new Map<string, Handler>();
-    load([], handlers);
+    load({ handlers });
     const implementer = { ...ctx('sub', 'factory-implementer'), cwd: repo.root, getContextUsage: () => ({ tokens: 1234 }), sessionManager: { getSessionId: () => 'child' } };
 
     for (const name of ['auto_compaction_start', 'turn_end']) {
@@ -758,7 +758,7 @@ describe('active run in a fresh extension copy', () => {
     resetModuleState();
     writeFileSync(join(repo.root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], scratchDir: '.moved' }));
     const commands = new Map<string, Command>();
-    load([], new Map(), commands);
+    load({ commands });
     const asked: string[] = [];
     const ui = {
       confirm: async (title: string) => {

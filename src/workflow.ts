@@ -41,6 +41,18 @@ export function requireFeatureName(feature: string) {
   return feature;
 }
 
+/**
+ * What `/factory headless <issue ref>` starts a run from, and the run's name. A GitHub issue (`102`, `#102`, or its
+ * URL) is named `issue-<n>` after its number; anything else is an issue file, named after its file name in kebab-case.
+ */
+export function headlessTarget(ref: string): { feature: string; source: SourceInput } {
+  const issue = /^#?(\d+)$/.exec(ref) ?? /github\.com\/[^/]+\/[^/]+\/issues\/(\d+)/.exec(ref);
+  if (issue?.[1] !== undefined) return { feature: `issue-${issue[1]}`, source: { kind: 'github', ref: /^#?\d+$/.test(ref) ? issue[1] : ref } };
+  const name = basename(ref).replace(/\.[^.]*$/, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48).replace(/-+$/, '');
+  if (name === '') throw new Error(`Cannot name a run after "${ref}". Give an issue number, an issue URL, or a file with letters or digits in its name.`);
+  return { feature: requireFeatureName(name), source: { kind: 'file', ref } };
+}
+
 export async function repoRoot(cwd: string) {
   return (await git(cwd, 'rev-parse', '--show-toplevel')).trim();
 }
@@ -231,7 +243,7 @@ export async function saveChecks(ws: Workspace, checks: string[]) {
   return parsed;
 }
 
-export async function startRun(ws: Workspace, input: { feature: string; sessionId: string; source: Source }) {
+export async function startRun(ws: Workspace, input: { feature: string; mode?: Run['mode'] | undefined; sessionId: string; source: Source }) {
   requireFeatureName(input.feature);
   if (existsSync(statePath(ws, input.feature))) {
     throw new Error(`Run "${input.feature}" already exists. Use /factory resume ${input.feature}.`);
@@ -251,6 +263,7 @@ export async function startRun(ws: Workspace, input: { feature: string; sessionI
     decisions: [],
     events: [],
     feature: input.feature,
+    mode: input.mode ?? 'interactive',
     models: ws.config.models,
     ownerSessionId: input.sessionId,
     retroRecorded: false,
@@ -971,6 +984,7 @@ export function summarize(ws: Workspace, run: Run) {
     feature: run.feature,
     /** Each role's model from the run snapshot, or `inherit`. */
     models: effectiveModels(run.models),
+    mode: run.mode,
     nextAction: nextAction(run),
     runDir: runDir(ws, run.feature),
     slices: run.slices.map(slice => ({

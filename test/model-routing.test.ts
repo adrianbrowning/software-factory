@@ -32,7 +32,7 @@ describe('model routing', () => {
     const handlers = new Map<string, Handler>();
     const commands = new Map<string, Command>();
     const live: { ctxModel: string | undefined; model: string | undefined; thinking: string | undefined } = { ctxModel: undefined, model: undefined, thinking: 'off' };
-    const tools = load([], handlers, commands, () => live.thinking);
+    const tools = load({ commands, handlers, thinking: () => live.thinking });
     const available = new Set<string>();
     const asModel = (spec: string) => ({ id: spec.slice(spec.indexOf('/') + 1), provider: spec.slice(0, spec.indexOf('/')) });
     const notes: string[] = [];
@@ -74,7 +74,7 @@ describe('model routing', () => {
     const child = (name: string, model: string | undefined, thinking: string | undefined, parentId = main.agent.id, cwd = repo.root) => {
       children += 1;
       const childHandlers = new Map<string, Handler>();
-      load([], childHandlers, new Map(), () => thinking);
+      load({ handlers: childHandlers, thinking: () => thinking });
       // Session ids are unique across repos, so no record from another test's run can match.
       const sessionId = `child-session-${children}@${repo.root}`;
       const usage = { reads: 0, tokens: 0 };
