@@ -2,6 +2,27 @@ import { evidenceLine, redact } from './evidence.ts';
 import { gh } from './exec.ts';
 import type { DeferredItem, Run, Slice, Workspace } from './run.ts';
 
+/** Whether `slice` is a Record deferred items slice: a headless run's own sink writer, whose reviews never defer to the sink. */
+export function isRecordSlice(slice: Slice) {
+  return slice.record === true;
+}
+
+/**
+ * Whether a file-sink item's Record deferred items slice, or any slice split from it, is done but was accepted
+ * unresolved, so the item may not have reached the sink file.
+ */
+export function recordFailed(run: Run, item: DeferredItem) {
+  const record = run.slices.find(slice => slice.id === item.recorded);
+  if (record === undefined) return false;
+  const batch = record.recordBatch === undefined ? [record] : run.slices.filter(slice => slice.recordBatch === record.recordBatch);
+  return batch.some(slice => slice.status === 'done' && (slice.unresolved ?? []).length > 0);
+}
+
+/** Whether the item waits for a Record slice: none lists it yet, or its one Record slice failed and no retry was made. */
+export function waitsForRecord(run: Run, item: DeferredItem) {
+  return item.recorded === undefined || (item.retried !== true && recordFailed(run, item));
+}
+
 /** An item to defer, before its sink location is known. */
 export type DeferredDraft = Omit<DeferredItem, 'location'>;
 
@@ -14,6 +35,23 @@ export function draftOf(run: Run, slice: Slice, reviewId: string, item: Pick<Def
     review: reviewId,
     slice: slice.id,
     title: `${run.feature}/${slice.id}: ${evidenceLine(item.title, 200)}`,
+  };
+}
+
+/** The key of the `number`th (1-based) finding of the run's current retro: the retro's own ordinal keeps a later retro's findings from matching an earlier one's. */
+export function retroKey(run: Run, number: number) {
+  return `retro:${run.events.filter(event => event.kind === 'retro').length + 1}:${number}`;
+}
+
+/** A draft for the `number`th (1-based) finding of a headless retro. Redacted: retro details come from a possibly private repository. */
+export function retroDraft(run: Run, number: number, finding: { category: string; detail: string; severity: string; target: string; title: string }): DeferredDraft {
+  return {
+    body: redact(`Run: ${run.feature}\nRetro finding (${finding.target}, ${finding.category}, ${finding.severity})\n\n${finding.detail}`),
+    key: retroKey(run, number),
+    kind: 'retro',
+    review: 'retro',
+    slice: 'retro',
+    title: `${run.feature}/retro: ${evidenceLine(finding.title, 200)}`,
   };
 }
 

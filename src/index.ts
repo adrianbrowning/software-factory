@@ -64,6 +64,7 @@ import {
   planReslice,
   planSlices,
   recordRetro,
+  retroDrafts,
   reopenSlice,
   repoChecks,
   requireFeatureName,
@@ -783,14 +784,19 @@ export default function softwareFactory(pi: ExtensionAPI) {
   tool({
     caller: 'main',
     description:
-      'Record the retro the user agreed. apply findings become a final slice; file-issue findings become issues on the factory repository.',
+      'Record the retro the user agreed. apply findings become a final slice; file-issue findings become issues on the factory repository. A headless run defers every finding to the deferred sink instead (no apply slice, no issues), and adds a final Record deferred items slice when file-sink items wait.',
     label: 'Factory: retro',
     name: 'factory_retro',
     schema: retroSchema,
     async run(params, { feature, ws }, ctx) {
       const retro = parseRetro(ws, readRun(ws, feature), params.findings);
       let filed: FiledIssues = { urls: {} };
-      if (retro.apply.length > 0 || retro.file.length > 0) {
+      if (readRun(ws, feature).mode === 'headless') {
+        const where = ws.config.deferred === undefined ? 'nowhere: no deferred sink is configured' : ws.config.deferred.kind === 'github' ? 'GitHub issues on this repository' : `the sink file ${ws.config.deferred.path}`;
+        await gate(ctx, ws, feature, 'retro', 'Record the retro and defer its findings?', `${retro.findings.length} findings go to ${where}:\n${retro.findings.map(finding => `- ${finding.title}`).join('\n')}`);
+        const failure = await withRun(ws, feature, run => deferItems(ws, run, retroDrafts(run, retro)));
+        if (failure !== undefined) throw new Error(`The deferred sink failed: ${failure.message}. Findings already filed stay recorded; call factory_retro again with the same findings to file the rest.`);
+      } else if (retro.apply.length > 0 || retro.file.length > 0) {
         const repo = ws.config.factoryRepo;
         const plan = [
           ...(retro.apply.length > 0 ? ['Final slice applying to this repository:', ...retro.apply.map(finding => `- ${finding.title}`), ''] : []),

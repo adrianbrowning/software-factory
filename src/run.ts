@@ -178,6 +178,10 @@ const sliceSchema = sliceInputSchema.extend({
   review: reviewSchema.optional(),
   reviews: z.number().int().nonnegative(),
   roundLimit: z.number().int().positive(),
+  /** Set on the Record deferred items slice the factory adds to write file-sink items. Its own reviews defer nothing to the sink. */
+  record: z.literal(true).optional(),
+  /** Shared by every Record slice of one batch, so a split Record slice's children fail or succeed together (recordFailed). Absent on a Record slice from an older state file. */
+  recordBatch: text.optional(),
   /** Set while the slice waits for the user to decide on an exhausted fix budget. */
   stalled: z.boolean(),
   status: z.enum(['active', 'done', 'pending']),
@@ -245,16 +249,25 @@ const decisionSchema = z.preprocess(
 export type Decision = z.infer<typeof decisionSchema>;
 
 /**
- * One item sent to the deferred sink (factory_defer, or an accepted-unresolved review). `key` is `review:id` for a
- * finding (so it is deferred once) and `review:note:N` for a note. `location` is the GitHub issue URL, or the sink
+ * One item sent to the deferred sink (factory_defer, an accepted-unresolved review, or a headless retro). `key` is
+ * `review:id` for a finding with an id (so it is deferred once), `review:unresolved:N` for an accepted-unresolved item
+ * without an id, `review:note:N` for a note, and `retro:R:N` for the Nth finding of the run's Rth retro. `recorded` names the Record
+ * deferred items slice that writes a file item. `location` is the GitHub issue URL, or the sink
  * file's path while the item waits on the run for the file to be written.
  */
 const deferredItemSchema = z.object({
   body: text,
   id: text.optional(),
   key: text,
-  kind: z.enum(['note', 'observation', 'unresolved']),
+  kind: z.enum(['note', 'observation', 'retro', 'unresolved']),
   location: text,
+  recorded: text.optional(),
+  /**
+   * Set once the item was listed in a second Record deferred items slice because its first one was accepted
+   * unresolved. The retry is bounded: an item whose second Record slice also fails is not queued again, and
+   * factory_status shows it as not written to the file.
+   */
+  retried: z.literal(true).optional(),
   review: text,
   slice: text,
   title: text,

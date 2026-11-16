@@ -8,7 +8,7 @@ import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { evidence, evidenceLine, redact } from './evidence.ts';
-import { deferItems, draftOf } from './deferred.ts';
+import { deferItems, draftOf, isRecordSlice } from './deferred.ts';
 import { git, runShell, type CommandResult } from './exec.ts';
 import {
   activeSlice,
@@ -301,7 +301,9 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   const chosen = skippedDomainsSchema.parse(skip);
   const kept = z.array(z.enum(REVIEW_DOMAINS)).parse(keep);
   const skippedNames = chosen.map(entry => entry.domain);
-  const required: Domain[] = [...REQUIRED_REVIEW_DOMAINS, ...(slice.seams.length > 0 ? (['testing'] as const) : [])];
+  const record = isRecordSlice(slice);
+  // A Record slice's light review is exactly bug, scope and comments: its seams (a resliced child may carry some) do not bring testing back, and none of the three can be skipped.
+  const required: Domain[] = record ? [...REQUIRED_REVIEW_DOMAINS, 'comments'] : [...REQUIRED_REVIEW_DOMAINS, ...(slice.seams.length > 0 ? (['testing'] as const) : [])];
   const refused = skippedNames.filter(domain => required.includes(domain));
   if (refused.length > 0) throw new Error(`These domains always review this slice: ${refused.join(', ')}.`);
   if (new Set(skippedNames).size !== skippedNames.length) throw new Error('A skipped domain appears twice.');
@@ -318,10 +320,15 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
     fixItems.length === 0
       ? 'None.'
       : `The fix rounds since the last recorded review asked the implementer to fix these items, and the implementer has since committed. The scope reviewer gives each item a verdict in fixItems of factory_review_submit: fixed, not-a-defect, waived, or open. Check each item against the diff and the code, not the implementer's claims: not-a-defect needs evidence from the diff or code, waived needs a recorded decision, and an item left open blocks the slice and carries into the next round. Every other domain checks whether the code still has each problem in its domain, and reports one that remains as a finding under the same id.\n\n${UNTRUSTED_NOTE}\n\n${fixItems.join('\n')}`;
+  // A Record deferred items slice gets the light review decision 12 asks for: exactly bug, scope and comments.
+  const light = record
+    ? REVIEW_DOMAINS.filter(domain => !required.includes(domain)).map(domain => ({ domain, reason: 'Record deferred items slice: light review (scope and comments)' }))
+    : [];
+  const lightNames = light.map(entry => entry.domain);
   const byPath = (await pathSkips(files, committedContent(ws.root, range, checked.sha))).filter(
-    entry => !kept.includes(entry.domain) && !skippedNames.includes(entry.domain),
+    entry => !kept.includes(entry.domain) && !skippedNames.includes(entry.domain) && !lightNames.includes(entry.domain),
   );
-  const skipped = [...byPath, ...chosen];
+  const skipped = [...byPath, ...chosen.filter(entry => !lightNames.includes(entry.domain)), ...light];
   slice.reviews += 1;
   const id = `${slice.id}-r${slice.reviews}`;
   rmSync(reviewDir(ws, run.feature, id), { force: true, recursive: true });
@@ -723,10 +730,11 @@ export async function recordReview(ws: Workspace, run: Run) {
     const unresolved = records.map(({ item }, index) => `${index < blocking.length ? 'blocking finding' : 'open fix item'} ${'id' in item ? `${item.id}: ` : ''}${item.summary}`);
     // The open items go to the deferred sink before the slice counts as accepted. A failed issue keeps the ones already filed, and the retry files the rest.
     // With no sink configured they stay on record in slice.unresolved and the event below.
+    // A Record deferred items slice's own findings are not deferred: they would need another Record slice, and so on.
     const failure = await deferItems(
       ws,
       run,
-      records.map(({ item, section }, index) =>
+      (isRecordSlice(slice) ? [] : records).map(({ item, section }, index) =>
         draftOf(run, slice, review.id, { detail: section, id: 'id' in item ? item.id : undefined, key: `${review.id}:${'id' in item ? item.id : `unresolved:${index + 1}`}`, kind: 'unresolved', title: item.summary }),
       ),
     );
@@ -737,7 +745,7 @@ export async function recordReview(ws: Workspace, run: Run) {
     slice.phase = 'ready';
     slice.green = { decisions: review.decisions };
     slice.unresolved = unresolved;
-    const sunk = ws.config.deferred === undefined ? 'no deferred sink configured' : `sent to the ${ws.config.deferred.kind} sink`;
+    const sunk = ws.config.deferred === undefined ? 'no deferred sink configured' : isRecordSlice(slice) ? 'not deferred: a Record deferred items slice' : `sent to the ${ws.config.deferred.kind} sink`;
     addEvent(run, 'accepted-unresolved', `${review.id} after ${slice.fixRounds} fix rounds (${sunk}); open: ${unresolved.join('; ')}`, slice);
     // No new fix file: fixPath is the last round's.
     return { blocking: blocking.length, fixPath: slice.fixPath ?? '', green: false as const, open: open.length, stalled: false, unresolved };
@@ -966,7 +974,7 @@ export async function completeSlice(ws: Workspace, run: Run) {
     addEvent(run, 'budget-exceeded', `peak ${slice.peakContextTokens} tokens, ${slice.compactions} compactions`, slice);
   }
   addEvent(run, 'slice-done', `${slice.fixRounds} fix rounds, ${slice.reviews} reviews`, slice);
-  settle(run);
+  settle(ws, run);
   return slice;
 }
 
