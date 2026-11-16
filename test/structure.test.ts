@@ -8,102 +8,24 @@ import { describe, it } from 'node:test';
 const SRC = fileURLToPath(new URL('../src/', import.meta.url));
 const MAX_LINES = 1000;
 const TICKET_DECISION = /decisions? \d+/i;
-/** A `/` after one of these starts a regular expression; after anything else it divides. */
-const BEFORE_REGEX = new Set(['', '(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '<', '>', '~', '^']);
-
 type Comment = { line: number; text: string };
 
 /** Every `//` comment and block comment in `source` with its first line. String, template and regex literals are not comments. */
 export function commentsOf(source: string): Comment[] {
-  const comments: Comment[] = [];
-  let line = 1;
-  let prev = '';
-
-  function skipQuoted(from: number, quote: string) {
-    let at = from + 1;
-    while (at < source.length && source[at] !== quote && source[at] !== '\n') {
-      if (source[at] === '\\') {
-        if (source[at + 1] === '\n') line++;
-        at += 2;
-      } else at++;
+  const file = ts.createSourceFile('x.ts', source, ts.ScriptTarget.Latest, true);
+  const found = new Map<number, Comment>();
+  const add = (ranges: ts.CommentRange[] | undefined) => {
+    for (const range of ranges ?? []) {
+      found.set(range.pos, { line: file.getLineAndCharacterOfPosition(range.pos).line + 1, text: source.slice(range.pos, range.end) });
     }
-    return at + 1;
-  }
-
-  function skipTemplate(from: number) {
-    let at = from + 1;
-    while (at < source.length && source[at] !== '`') {
-      if (source[at] === '\\') {
-        if (source[at + 1] === '\n') line++;
-        at += 2;
-      } else if (source[at] === '$' && source[at + 1] === '{') at = scan(at + 2, true);
-      else {
-        if (source[at] === '\n') line++;
-        at++;
-      }
-    }
-    return at + 1;
-  }
-
-  function skipRegex(from: number) {
-    let at = from + 1;
-    let inClass = false;
-    while (at < source.length && source[at] !== '\n' && (inClass || source[at] !== '/')) {
-      if (source[at] === '\\') at++;
-      else if (source[at] === '[') inClass = true;
-      else if (source[at] === ']') inClass = false;
-      at++;
-    }
-    return at + 1;
-  }
-
-  function scan(from: number, untilBrace: boolean) {
-    let depth = 0;
-    let at = from;
-    while (at < source.length) {
-      const ch = source[at] as string;
-      const next = source[at + 1];
-      if (ch === '\n') {
-        line++;
-        at++;
-      } else if (ch === ' ' || ch === '\t' || ch === '\r') {
-        at++;
-      } else if (ch === '/' && next === '/') {
-        const end = source.indexOf('\n', at);
-        const stop = end === -1 ? source.length : end;
-        comments.push({ line, text: source.slice(at, stop) });
-        at = stop;
-      } else if (ch === '/' && next === '*') {
-        const end = source.indexOf('*/', at + 2);
-        const stop = end === -1 ? source.length : end + 2;
-        const text = source.slice(at, stop);
-        comments.push({ line, text });
-        line += text.split('\n').length - 1;
-        at = stop;
-      } else if (ch === "'" || ch === '"') {
-        at = skipQuoted(at, ch);
-        prev = ch;
-      } else if (ch === '`') {
-        at = skipTemplate(at);
-        prev = ch;
-      } else if (ch === '/' && (BEFORE_REGEX.has(prev) || /\b(?:return|typeof|case|yield|await)$/.test(source.slice(Math.max(0, at - 8), at).trimEnd()))) {
-        at = skipRegex(at);
-        prev = ')';
-      } else {
-        if (untilBrace && ch === '{') depth++;
-        if (untilBrace && ch === '}') {
-          if (depth === 0) return at + 1;
-          depth--;
-        }
-        prev = ch;
-        at++;
-      }
-    }
-    return at;
-  }
-
-  scan(0, false);
-  return comments;
+  };
+  const visit = (node: ts.Node) => {
+    add(ts.getLeadingCommentRanges(source, node.getFullStart()));
+    add(ts.getTrailingCommentRanges(source, node.getEnd()));
+    for (const child of node.getChildren(file)) visit(child);
+  };
+  visit(file);
+  return [...found.values()].sort((a, b) => a.line - b.line);
 }
 
 /** One message per comment line that cites a ticket decision number. */
@@ -194,6 +116,15 @@ describe('structure checks: the helpers', () => {
   it('still finds a comment after a template with a nested expression', () => {
     const source = 'const a = `${f(`in ${g}`)} text`;\n// decision 9\n';
     assert.deepEqual(decisionCitations('src/x.ts', source), ['src/x.ts:2: comment cites a ticket decision number: // decision 9']);
+  });
+
+  it('reads a slash after ++ as a divide, so the comment after it is found', () => {
+    assert.deepEqual(decisionCitations('src/x.ts', 'const z = x++ / y; // decision 1\n'), ['src/x.ts:1: comment cites a ticket decision number: // decision 1']);
+  });
+
+  it('reports a comment after a regex that follows a keyword once, at its line', () => {
+    const source = 'function f() {\n  return /a\\/\\/b/; // decision 2\n}\n';
+    assert.deepEqual(decisionCitations('src/x.ts', source), ['src/x.ts:2: comment cites a ticket decision number: // decision 2']);
   });
 
   it('reads every sibling import, including type imports, but not packages', () => {
