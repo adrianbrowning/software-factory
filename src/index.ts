@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { bindRun } from './active-run.ts';
 import { auditChild, IMPLEMENTER, REVIEWER, resetAudit, SPAWN_ROLES, VALIDATOR } from './agents.ts';
 import { CONFIG_PATH, describeModels, loadConfig, requireAvailableModels, requireOrchestrator, type RoleModels, routeSpawn } from './config.ts';
-import { evidenceHead } from './evidence.ts';
+import { evidenceHead, evidenceLine } from './evidence.ts';
 import { deferItems } from './deferred.ts';
 import { chooseChecks, confirmInteractive, ensureChecks, gate, loadSource } from './gates.ts';
 import {
@@ -30,7 +30,7 @@ import {
 } from './run.ts';
 import { implementerReportSchema, startImplementerSession, submitImplementerReport } from './report.ts';
 import { boundAt, cachedRoot, NO_ACTIVE_RUN, type Reply, resetRoots, type RootEntry, toolRegistrar } from './tool-scope.ts';
-import { submitStack } from './submit.ts';
+import { PrTextsFailed, submitStack } from './submit.ts';
 import {
   completeSlice,
   decisionInputSchema,
@@ -240,6 +240,49 @@ function reply(text: string, details?: unknown): Reply {
   return { content: [{ text, type: 'text' }], details };
 }
 
+/**
+ * A headless run's own submission: when the run is done, opens draft PRs for the whole stack; with `stop` (the slice a
+ * paused run stopped at), opens them for the done slices below it, whose bodies say where and why the stack stopped.
+ * Returns the reply text, empty when the run is not headless or not at that point. A policy of submission "stop" opens
+ * nothing. A gh failure does not undo the work the tool already saved: it is recorded as a `submit-failed` event and
+ * reported in the text, and the run stays done (`/factory submit` retries) or paused. Merging stays manual.
+ */
+async function submitHeadless(ws: Workspace, feature: string, stop?: { reason: string; sliceId: string }) {
+  const run = readRun(ws, feature);
+  if (run.mode !== 'headless' || run.status !== (stop === undefined ? 'done' : 'paused')) return '';
+  if (run.landOn !== undefined) return `\nThis run lands on ${run.landOn}, so it opens no PRs: /factory submit fast-forwards it.`;
+  if (ws.config.headless.submission === 'stop') {
+    return `\nThe headless policy sets submission to stop, so no PRs were opened. ${stop === undefined ? '/factory submit opens them.' : 'After /factory resume finishes the stack, /factory submit opens them.'}`;
+  }
+  // Saved before submitStack runs, so a later failure cannot discard the choice; each PR body lists it.
+  const stopped = stop === undefined ? undefined : run.slices.find(slice => slice.id === stop.sliceId);
+  const choice = `gate submission (auto): opening draft PRs${stopped === undefined ? '' : ` for the slices below slice ${stopped.id}`}`;
+  // A repeat submission (a retry) must not list the same gate choice twice.
+  await withRun(ws, feature, current => {
+    if (!current.events.some(event => event.kind === 'autonomous' && event.detail === choice)) addEvent(current, 'autonomous', choice);
+  });
+  try {
+    return await withRun(ws, feature, async current => {
+      const output = await submitStack(ws, current, () => {}, stopped === undefined || stop === undefined ? undefined : { reason: stop.reason, slice: stopped });
+      if (output === '') throw new NoSubmission(`\nNo done slice is below slice ${stop?.sliceId}, so no PRs were opened.`);
+      return `\nDraft PRs are open (merging stays manual):\n${output}`;
+    });
+  } catch (error) {
+    if (error instanceof NoSubmission) return error.message;
+    const message = error instanceof Error ? error.message : String(error);
+    await withRun(ws, feature, current => {
+      // gh stack submit succeeded: the discarded mutation held the submit event, so save it here.
+      if (error instanceof PrTextsFailed) addEvent(current, 'submit', 'stack submitted as draft PRs');
+      addEvent(current, 'submit-failed', evidenceLine(message, 500));
+    });
+    const retry = stop === undefined ? '/factory submit retries it' : 'after /factory resume finishes the stack, /factory submit opens the PRs';
+    return `\nSubmission failed: ${message}\nThe run is saved as ${run.status === 'done' ? 'done' : 'paused'}; ${retry}.`;
+  }
+}
+
+/** Nothing to submit: thrown inside the run mutation so it saves no event. */
+class NoSubmission extends Error {}
+
 /** Asks the user how to continue once a slice's fix budget is used up. Without a UI the run pauses. */
 async function decideStall(ctx: ExtensionContext, ws: Workspace, feature: string) {
   const run = readRun(ws, feature);
@@ -251,7 +294,8 @@ async function decideStall(ctx: ExtensionContext, ws: Workspace, feature: string
     const failing = slice.fixItems.filter(item => item.round === round).map(item => item.summary);
     const reason = `slice ${slice.id} "${slice.title}" is still red after ${slice.roundLimit} fix rounds: ${failing.join('; ')}`;
     await withRun(ws, feature, current => pauseRun(current, reason));
-    return `\nThe headless run is paused: ${reason}. ${stallNotice(run, slice)} Stop now.`;
+    const submitted = await submitHeadless(ws, feature, { reason, sliceId: slice.id });
+    return `\nThe headless run is paused: ${reason}. ${stallNotice(run, slice)}${submitted} Stop now.`;
   }
   const more = `Continue: ${ws.config.maxRounds} more fix rounds`;
   const choice = ctx.hasUI
@@ -616,12 +660,14 @@ export default function softwareFactory(pi: ExtensionAPI) {
     name: 'factory_complete_slice',
     schema: emptySchema,
     async run(_params, { feature, ws }) {
-      return withRun(ws, feature, async run => {
+      const done = await withRun(ws, feature, async run => {
         const reopened = activeSlice(run)?.doneSha !== undefined;
         const slice = await completeSlice(ws, run);
         const restacked = reopened ? ' Every later slice branch is rebased onto it and earns its checks and review again.' : '';
-        return reply(`Slice ${slice.id} is done on ${slice.branch}.${restacked}\nNext: ${nextAction(run)}`);
+        return `Slice ${slice.id} is done on ${slice.branch}.${restacked}`;
       });
+      const submitted = await submitHeadless(ws, feature);
+      return reply(`${done}${submitted}\nNext: ${nextAction(readRun(ws, feature))}`);
     },
   });
 
@@ -812,15 +858,16 @@ export default function softwareFactory(pi: ExtensionAPI) {
         }
         filed = await fileFactoryIssues(ws, retro.file);
       }
-      return withRun(ws, feature, run => {
+      const recorded = await withRun(ws, feature, run => {
         const slice = recordRetro(ws, run, retro, filed);
         const lines = [`Retro written to ${join(ws.config.scratchDir, feature, 'retro.md')}.`];
         if (slice !== undefined) lines.push(`Added slice ${slice.id} "${slice.title}".`);
         lines.push(...Object.values(filed.urls));
         if (filed.error !== undefined) lines.push(`Filing stopped: ${filed.error}. Unfiled findings are marked in retro.md.`);
-        lines.push(`Next: ${nextAction(run)}`);
-        return reply(lines.join('\n'));
+        return lines.join('\n');
       });
+      const submitted = await submitHeadless(ws, feature);
+      return reply(`${recorded}${submitted}\nNext: ${nextAction(readRun(ws, feature))}`);
     },
   });
 

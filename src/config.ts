@@ -163,6 +163,7 @@ const headlessSchema = z
     resume: gatePolicy,
     retro: gatePolicy,
     seams: gatePolicy,
+    submission: gatePolicy,
   })
   .strict();
 export type HeadlessGate = keyof z.infer<typeof headlessSchema>;

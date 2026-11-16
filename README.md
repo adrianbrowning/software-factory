@@ -31,7 +31,7 @@ flowchart TD
   O --> H
   J -->|other work after a slice is done| P[factory_follow_up: user approves a slice on top]
   P --> E
-  K --> L[Stack ready: /factory submit opens draft PRs]
+  K --> L[Stack ready: /factory submit opens draft PRs; a headless run opens them itself]
 ```
 
 ## How the work is split
@@ -45,7 +45,13 @@ flowchart TD
 
 User gates: questions at intake, slice-plan approval, seam additions, re-slice approval, stalled fix loops, fixing
 observations of a green review, reopening a done slice, retro actions, and `/factory submit`. The plugin opens PRs
-only when you run `/factory submit`, and it never merges. A run planned with `landOn` opens no PRs: `/factory submit`
+when you run `/factory submit`, and a headless run opens draft PRs itself when the stack is done (below), and it never
+merges: merging stays manual. Every PR body is written from run state: the issue link, the slice summary, the checks run,
+the review rounds, the autonomous decisions, the accepted-unresolved findings, and the deferred items with their sink locations.
+A headless run opens its draft PRs when it becomes ready, and the reply names the PR URLs. When a headless run pauses on red
+checks, the done slices below the red one are submitted as draft PRs whose bodies say the stack stopped at that slice and
+why; the red slice is not submitted. `headless.submission: "stop"` keeps a headless run from submitting: the run is ready
+and `/factory submit` opens the PRs. A run planned with `landOn` opens no PRs: `/factory submit`
 fast-forwards that existing local branch to the top slice, without a checkout or a merge commit.
 While `/factory submit` runs, it shows each step as a notification and in the status line, for example the
 `gh stack submit` push, which can take a few minutes.
@@ -67,7 +73,7 @@ its agents load.
 | Node.js 24 or later (`engines`: `>=24`) | Always: runs the plugin's TypeScript directly | [nodejs.org](https://nodejs.org) or your version manager |
 | pnpm 10 | Always: installs the plugin's dependencies | `corepack enable` (the repo pins the version in `packageManager`) |
 | `gh`, authenticated | GitHub issues, and filing retro findings on the factory repo | `brew install gh && gh auth login` |
-| [`gh-stack`](https://github.com/github/gh-stack) | Only for `/factory submit` that opens PRs; not for `landOn` runs | `gh extension install github/gh-stack` |
+| [`gh-stack`](https://github.com/github/gh-stack) | Only for `/factory submit` and a headless run's own submission, which open PRs; not for `landOn` runs | `gh extension install github/gh-stack` |
 | Atlassian MCP server | Only for Jira issues | Add it to omp's MCP servers |
 
 `npx` in the skill commands below comes with Node.js.
@@ -249,7 +255,7 @@ working tree, and unknown keys are rejected.
 | `checkPath` | `[]` | Directories put before the omp process `PATH` when checks run. Each entry is an absolute path or starts with `~/`. Use it when a check command is not found (exit 127), for example `["~/Library/pnpm/bin"]`. Find the directory with `command -v <tool>` in your terminal |
 | `checkTimeoutMs` | `600000` | Per-check timeout; the whole process group is killed |
 | `maxRounds` | `3` | Fix rounds per slice before the user decides to continue or pause; each continue, and each yes to the `/factory resume` question on a stalled run, adds this many |
-| `headless.<gate>` | `auto` | Headless runs only (`/factory headless`); interactive runs never read it. One key per gate: `resume`, `plan`, `reslice`, `decide`, `seams`, `fix`, `carry`, `reopen`, `followUp`, `retro`, `checks`. `auto` proceeds and records an `autonomous` run event naming the gate; `stop` pauses the run with a reason naming the gate and throws (`checks` has no run yet, so it refuses the start). The orchestrator can pause a headless run itself with `factory_pause`. Text from issue authors outside the repository is always left out of a headless run, and a headless start without configured checks saves the detected ones, else refuses. |
+| `headless.<gate>` | `auto` | Headless runs only (`/factory headless`); interactive runs never read it. One key per gate: `resume`, `plan`, `reslice`, `decide`, `seams`, `fix`, `carry`, `reopen`, `followUp`, `retro`, `checks`, `submission`. `auto` proceeds and records an `autonomous` run event naming the gate; `stop` pauses the run with a reason naming the gate and throws (except `submission`: `stop` opens no PRs and leaves the run ready; `auto` opens draft PRs through `gh stack`) (`checks` has no run yet, so it refuses the start). The orchestrator can pause a headless run itself with `factory_pause`. Text from issue authors outside the repository is always left out of a headless run, and a headless start without configured checks saves the detected ones, else refuses. |
 | `deferred` | unset | Where `factory_defer` sends green-review observations and notes, and where a headless run's accepted-unresolved findings go by themselves: `{ "kind": "file", "path": "docs/factory-deferred.md" }` (path optional; items queue on the run for the file to be written) or `{ "kind": "github" }` (one `gh issue create` per item, the issue URL stored). Each item names the run, slice and review id, and `factory_status` lists them with their locations. An interactive run asks the user before `factory_defer` files or queues anything (a headless run does not ask). Ids already carried or deferred are refused. With no sink, `factory_defer` is refused and accepted-unresolved findings stay on the slice and in its event. |
 | `sliceTokenBudget` | `400000` | Planned context per slice: 40% of a 1M window |
 | `baseRef` / `trunk` | `origin/HEAD`'s branch, else `origin/main` / `main` | Default base: slice 01 branches from the commit `baseRef` points at when the plan is approved. Unset, it is the remote default branch that `origin/HEAD` points at (`origin/master` in a repository whose trunk is master), else `origin/main`. The stack is based on `trunk`, which defaults to `baseRef` without its git remote (`origin/main` → `main`; a local `feature/auth` stays `feature/auth`). A run that builds on unmerged work names that branch as `baseRef` in `factory_plan`, and its PRs then target it. The plan event in `state.json` records the pinned base |
