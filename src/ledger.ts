@@ -50,7 +50,7 @@ export const CARRIED_HERE = 'carried to this slice: check it';
 /**
  * The ledger as a list for the data file of the review of `slice`, one entry per item with its key, placement, location,
  * title and problem, each text on one line and cut at 500 and 2000 characters; `None.` for an empty ledger. An entry
- * carried to `slice` is marked `CARRIED_HERE`: a finding that it is unbuilt or wrong there is not a repeat.
+ * carried to `slice` is marked `CARRIED_HERE`: a finding that it is unbuilt or wrong there is kept, not dropped as `same as <key>`.
  */
 export function renderKnownObservations(run: Run, slice: Pick<Slice, 'id'>) {
   if (run.observations.length === 0) return 'None.';
