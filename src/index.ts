@@ -29,8 +29,8 @@ import { boundAt, cachedRoot, NO_ACTIVE_RUN, resetRoots, type RootEntry, toolReg
 import { submitHeadless } from './headless-submit.ts';
 import { submitStack } from './submit.ts';
 import { decisionInputSchema, planDecisions, recordDecisions, runChecks } from './review.ts';
-import { registerReviewTools } from './tools/review-tools.ts';
-import { decideStall, emptySchema, reply, STALL_DESCRIPTION } from './tools/shared.ts';
+import { registerReviewTools } from './review-tools.ts';
+import { decideStall, emptySchema, reply, STALL_DESCRIPTION } from './tool-replies.ts';
 import {
   addFollowUp,
   amendSeams,

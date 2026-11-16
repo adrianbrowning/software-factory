@@ -1,14 +1,14 @@
-import { REVIEWER, VALIDATOR } from '../agents.ts';
-import { deferItems, describeSink, requireSink } from '../deferred.ts';
-import { evidenceHead } from '../evidence.ts';
-import { confirmInteractive, gate } from '../gates.ts';
-import { carryObservations, fixObservations, planCarry, planDefer, planFix } from '../observations.ts';
-import { completeSlice, recordReview, startReview, submitDomain, submitValidation, validationSchema } from '../review.ts';
-import { activeSlice, addEvent, findingSchema, fixVerdictSchema, readRun, REQUIRED_REVIEW_DOMAINS, REVIEW_DOMAINS, skippedDomainsSchema, ticketPath, withRun } from '../run.ts';
-import { submitHeadless } from '../headless-submit.ts';
-import type { toolRegistrar } from '../tool-scope.ts';
-import { nextAction } from '../workflow.ts';
-import { decideStall, emptySchema, reply, STALL_DESCRIPTION } from './shared.ts';
+import { REVIEWER, VALIDATOR } from './agents.ts';
+import { deferItems, describeSink, requireSink } from './deferred.ts';
+import { evidenceHead } from './evidence.ts';
+import { confirmInteractive, gate } from './gates.ts';
+import { carryObservations, fixObservations, planCarry, planDefer, planFix } from './observations.ts';
+import { completeSlice, recordReview, startReview, submitDomain, submitValidation, validationSchema } from './review.ts';
+import { activeSlice, addEvent, findingSchema, fixVerdictSchema, readRun, REQUIRED_REVIEW_DOMAINS, REVIEW_DOMAINS, skippedDomainsSchema, ticketPath, withRun } from './run.ts';
+import { submitHeadless } from './headless-submit.ts';
+import type { toolRegistrar } from './tool-scope.ts';
+import { nextAction } from './workflow.ts';
+import { decideStall, emptySchema, reply, STALL_DESCRIPTION } from './tool-replies.ts';
 import { z } from 'zod';
 
 const reviewStartSchema = z.object({

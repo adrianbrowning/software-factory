@@ -1,9 +1,9 @@
 import type { ExtensionContext } from '@oh-my-pi/pi-coding-agent';
 import { z } from 'zod';
-import { pauseAtStall } from '../headless-submit.ts';
-import { activeSlice, readRun, stallNotice, withRun, type Workspace } from '../run.ts';
-import { resolveStall } from '../workflow.ts';
-import type { Reply } from '../tool-scope.ts';
+import { pauseAtStall } from './headless-submit.ts';
+import { activeSlice, readRun, stallNotice, withRun, type Workspace } from './run.ts';
+import { resolveStall } from './workflow.ts';
+import type { Reply } from './tool-scope.ts';
 
 export const STALL_DESCRIPTION =
   'A used-up fix budget asks the user to continue or pause; a paused run stalls until /factory resume, which asks whether to raise the budget.';
