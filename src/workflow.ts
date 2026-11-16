@@ -34,7 +34,7 @@ import {
   stallNotice,
   writeAtomic,
 } from './run.ts';
-import { head, requireClean, requireOnBranch } from './repo.ts';
+import { head, requireClean, requireOnBranchClean } from './repo.ts';
 
 const FEATURE_PATTERN = /^[a-z0-9][a-z0-9-]{0,47}$/;
 export const UNTRUSTED_NOTE =
@@ -471,8 +471,7 @@ function newRecordBatch(run: Run) {
 /** Applies a plan from `planReslice`: the `slices` and `renamed` of one plan cannot be mixed with another's. */
 export async function applyReslice(ws: Workspace, run: Run, { renamed, slices }: ReslicePlan) {
   const active = requireActive(run);
-  await requireOnBranch(ws.root, active);
-  await requireClean(ws.root, 'Commit the partial work before re-slicing');
+  await requireOnBranchClean(ws.root, active, 'Commit the partial work before re-slicing');
   const first = slices[run.slices.indexOf(active)];
   if (first === undefined) throw new Error('Re-slice lost the active slice');
   if (first.branch !== active.branch) await git(ws.root, 'branch', '-m', active.branch, first.branch);

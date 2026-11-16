@@ -41,7 +41,7 @@ import {
   writeAtomic,
 } from './run.ts';
 import { storedReport } from './report.ts';
-import { head, porcelain, requireClean, requireOnBranch, snapshot } from './repo.ts';
+import { head, porcelain, requireOnBranchClean, snapshot } from './repo.ts';
 import {
   type FixRecord,
   pauseRun,
@@ -121,9 +121,8 @@ function describeCheck(command: string, result: CommandResult) {
  * Commits on the slice branch past its parent that a branch or remote outside this run also holds: work pulled in
  * from elsewhere (a merge, rebase, or fast-forward onto another stack) instead of written for this slice.
  */
-async function foreignCommits(ws: Workspace, run: Run, slice: Slice) {
+async function foreignCommits(ws: Workspace, run: Run, slice: Slice, own: string[]) {
   const runBranches = `${ws.config.branchPrefix}/${run.feature}/*`;
-  const own = await git(ws.root, 'rev-list', 'HEAD', '--not', slice.parentBranch);
   const unique = new Set(
     (
       await git(ws.root, 'rev-list', 'HEAD', '--not', slice.parentBranch, `--exclude=${runBranches}`, '--branches', `--exclude=*/${runBranches}`, '--remotes')
@@ -131,25 +130,37 @@ async function foreignCommits(ws: Workspace, run: Run, slice: Slice) {
       .split('\n')
       .filter(Boolean),
   );
-  return own.split('\n').filter(sha => sha !== '' && !unique.has(sha));
+  return own.filter(sha => !unique.has(sha));
+}
+
+/** The slice's commits past its parent, newest first: each full sha with its `--oneline` line (short sha and subject). */
+async function ownCommits(ws: Workspace, slice: Slice) {
+  const log = await git(ws.root, 'log', '--no-show-signature', '--no-color', '--format=%H %h %s', `${slice.parentBranch}..HEAD`);
+  return log
+    .split('\n')
+    .filter(Boolean)
+    .map(line => {
+      const [sha = '', ...oneline] = line.split(' ');
+      return { oneline: oneline.join(' '), sha };
+    });
 }
 
 export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   const slice = requireActive(run);
-  await requireOnBranch(ws.root, slice);
-  await requireClean(ws.root, 'Checks run on committed work only');
+  const sha = await requireOnBranchClean(ws.root, slice, 'Checks run on committed work only');
   // Read before the refusals, so a stop report submitted before any commit still reaches the orchestrator.
   const report = storedReport(ws, run, slice);
-  const foreign = await foreignCommits(ws, run, slice);
+  const own = await ownCommits(ws, slice);
+  const foreign = await foreignCommits(ws, run, slice, own.map(commit => commit.sha));
   if (foreign.length > 0) {
     const listed = await git(ws.root, 'log', '--oneline', '--no-walk', ...foreign.slice(0, 20));
     throw new Error(
       `Slice ${slice.id} holds ${foreign.length} commits from other branches, so its review would include work outside the slice:\n${listed.trim()}\nReset the branch to its own commits on ${slice.parentBranch}. If the slice needs that work, ask the user: a run that builds on another branch starts with factory_start baseRef set to it.\n${report}`,
     );
   }
-  const commits = (await git(ws.root, 'log', '--oneline', `${slice.parentBranch}..HEAD`)).trim();
-  if (commits === '') throw new Error(`Slice ${slice.id} has no commits past ${slice.parentBranch}. The implementer must commit the slice work first.\n${report}`);
-  const sha = await head(ws.root);
+  const commits = own.map(commit => commit.oneline).join('\n');
+  if (own.length === 0) throw new Error(`Slice ${slice.id} has no commits past ${slice.parentBranch}. The implementer must commit the slice work first.\n${report}`);
+  // `sha` is HEAD from the guard above; the log and rev-list reads in between do not move it.
   // A fix round that ends on the commit its fix file described: the implementer changed nothing.
   const unchanged = slice.phase === 'fix' && slice.fixFromSha === sha;
   // Checks that still stand on this commit are not run again. A new commit no longer matches the checked commit, and
@@ -286,11 +297,10 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   // still ready here.
   const outdated = outdatedGreenCount(run, slice) !== undefined;
   if (!outdated && (slice.phase !== 'review' || slice.checked === undefined)) throw new Error('Checks must pass first: call factory_checks.');
-  await requireOnBranch(ws.root, slice);
-  await requireClean(ws.root, 'Review needs committed work');
+  const guarded = await requireOnBranchClean(ws.root, slice, 'Review needs committed work');
   if (outdated) reopenReview(run, slice);
   const checked = slice.checked;
-  if (checked === undefined || (await head(ws.root)) !== checked.sha) {
+  if (checked === undefined || guarded !== checked.sha) {
     dropPass(slice, 'checks');
     throw new Invalidated('HEAD moved after checks passed. Call factory_checks again.');
   }
@@ -847,9 +857,8 @@ export async function completeSlice(ws: Workspace, run: Run) {
   if (slice.unresolved !== undefined && run.mode !== 'headless') {
     throw new Error(`Slice ${slice.id} was accepted unresolved by a headless run, and only a headless run completes it. Open: ${slice.unresolved.join('; ')}`);
   }
-  await requireOnBranch(ws.root, slice);
-  await requireClean(ws.root, 'Cannot complete the slice');
-  if ((await head(ws.root)) !== green) {
+  const sha = await requireOnBranchClean(ws.root, slice, 'Cannot complete the slice');
+  if (sha !== green) {
     dropPass(slice, 'checks');
     throw new Invalidated('HEAD moved after the green review. Call factory_checks again.');
   }

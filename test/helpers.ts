@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { type FactoryConfig, parseConfig } from '../src/config.ts';
+import { type FactoryConfig, parseConfig, loadConfig } from '../src/config.ts';
 import { type Finding, type FixVerdict, readRun, REVIEW_DOMAINS, type SliceInput, type Workspace, withRun } from '../src/run.ts';
-import { recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
+import { recordReview, runChecks, startReview, submitDomain, submitValidation, completeSlice } from '../src/review.ts';
 import { approvePlan, nextSlice, planSlices, startRun } from '../src/workflow.ts';
+import { type Command, ctx, load } from './extension.ts';
+import { parseRetro, recordRetro } from '../src/retro.ts';
 
 export function sh(root: string, ...args: string[]) {
   return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
@@ -33,11 +35,27 @@ export function tempDir(prefix: string) {
   return { root, [Symbol.dispose]: () => rmSync(root, { force: true, maxRetries: 3, recursive: true }) };
 }
 
+/** Built repositories by their files, one per distinct `files` in this process; each test copies one instead of running git init and commit again. */
+const templates = new Map<string, string>();
+
+function templateRepo(files: Record<string, string>) {
+  const key = JSON.stringify(files);
+  let template = templates.get(key);
+  if (template === undefined) {
+    const built = tempDir('factory-template-');
+    initRepo(built.root, files);
+    process.once('exit', () => built[Symbol.dispose]());
+    template = built.root;
+    templates.set(key, template);
+  }
+  return template;
+}
+
 /** A temp git repository with a base commit of `files`, removed when the `using` scope that holds it ends. */
 export function tempRepo(prefix: string, files: Record<string, string>) {
   const repo = tempDir(prefix);
   try {
-    initRepo(repo.root, files);
+    cpSync(templateRepo(files), repo.root, { recursive: true });
   } catch (error) {
     repo[Symbol.dispose]();
     throw error;
@@ -174,4 +192,177 @@ export function fakeGh() {
       dir[Symbol.dispose]();
     },
   };
+}
+
+/** A done run of `count` chained slices, each with a reviewed commit, checked out on `main` (off the top slice). */
+export async function submitDoneRun(ws: Workspace, count: number) {
+  const titles = Array.from({ length: count }, (_, index) => `S${index + 1}`);
+  await newRun(ws, titles.map((title, index) => slice(title, index === 0 ? [] : [titles[index - 1] ?? ''])));
+  for (const [index] of titles.entries()) {
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, index === 0 ? 'ok' : `s${index + 1}.txt`);
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+  }
+  await step(ws, run => recordRetro(ws, run, parseRetro(ws, run, [])));
+  sh(ws.root, 'switch', '-q', 'main');
+  return readRun(ws, 'demo').slices.map(item => item.branch);
+}
+
+export const NO_STACK = { code: 2, stderr: '✗ no local or remote stack found for "$3"' };
+
+export interface FakeGh {
+  /** The stack `stack view --json` serves (a raw string is served as is); undefined means no stack. */
+  stack: string[] | string | undefined;
+  /** How `stack checkout` fails without a stack; by default gh-stack's real "no stack" exit and stderr. */
+  checkoutFailure?: { code: number; stderr: string };
+  /** The subcommand (such as `stack submit`) that runs `onFail` and exits 1. */
+  fail?: string;
+  onFail?: string;
+  /** A shell command run when `stack submit` succeeds. */
+  onSubmit?: string;
+  /** The stack `stack view --json` serves after `stack submit`, with each branch's PR number (none: no `pr`). */
+  submitted?: { name: string; pr?: number }[];
+}
+
+/** The branches as a submitted stack, with PRs numbered from 101. */
+export const withPrs = (branches: string[]) => branches.map((name, index) => ({ name, pr: 101 + index }));
+
+/** The `gh api` call that sets the title and the body of PR 101 onwards (`demo: NN Sn`) in one PATCH; `calls()` abbreviates a body to `…`. */
+export const prCalls = (count: number) =>
+  Array.from({ length: count }, (_, index) => `api -X PATCH repos/{owner}/{repo}/pulls/${101 + index} -f title=demo: 0${index + 1} S${index + 1} -f body=…`);
+
+/**
+ * Puts a fake `gh` first on PATH until the `using` scope that holds it ends, then removes it; it records each call.
+ * With a stack, `stack checkout <branch>` switches to that branch, as gh-stack does; `stack init` switches to its last
+ * (top) branch, `stack top` to the stack's top branch, and `stack add <branch>` to the branch it adds.
+ */
+export function submitFakeGh({ stack, checkoutFailure = NO_STACK, fail = '', onFail = ':', onSubmit = ':', submitted }: FakeGh) {
+  const temp = tempDir('factory-gh-');
+  const dir = temp.root;
+  const log = join(dir, 'calls');
+  const view = join(dir, 'view.json');
+  if (typeof stack === 'string') writeFileSync(view, stack);
+  else if (stack !== undefined) {
+    writeFileSync(view, JSON.stringify({ branches: stack.map(name => ({ name })), currentBranch: stack[0], trunk: 'main' }));
+    writeFileSync(join(dir, 'top'), stack.at(-1) ?? '');
+  }
+  const after = join(dir, 'submitted.json');
+  if (submitted !== undefined) {
+    const items = submitted.map(({ name, pr }) => (pr === undefined ? { name } : { name, pr: { number: pr, url: `https://example.test/pull/${pr}`, state: 'OPEN' } }));
+    writeFileSync(after, JSON.stringify({ branches: items, currentBranch: submitted.at(-1)?.name, trunk: 'main' }));
+  }
+  const script = [
+    '#!/bin/sh',
+    // A newline in an argument (a PR body) is logged as \\036, so each call stays one line.
+    `printf '%s\\n' "$(printf '%s' "$*" | tr '\\n' '\\036')" >> '${log}'`,
+    `if [ "$1 $2" = "stack checkout" ] && [ ! -f '${view}' ]; then echo "${checkoutFailure.stderr}" >&2; exit ${checkoutFailure.code}; fi`,
+    `if [ "$1 $2" = "stack checkout" ]; then git switch -q "$3" || exit 1; fi`,
+    `if [ "$1 $2" = "stack view" ]; then cat '${view}' || exit 1; fi`,
+    `if [ "$1 $2" = "stack init" ]; then eval "git switch -q \\"\\\${$#}\\"" || exit 1; fi`,
+    `if [ "$1 $2" = "stack top" ]; then git switch -q "$(cat '${join(dir, 'top')}')" || exit 1; fi`,
+    `if [ "$1 $2" = "stack add" ]; then git switch -q "$3" || exit 1; fi`,
+    `if [ "$1 $2" = '${fail}' ]; then ${onFail}; exit 1; fi`,
+    `if [ "$1 $2" = "stack submit" ]; then ${onSubmit}; fi`,
+    `if [ "$1 $2" = "stack submit" ] && [ -f '${after}' ]; then cp '${after}' '${view}'; fi`,
+    'exit 0',
+    '',
+  ].join('\n');
+  writeFileSync(join(dir, 'gh'), script);
+  chmodSync(join(dir, 'gh'), 0o755);
+  process.env.PATH = `${dir}:${process.env.PATH}`;
+  const raw = () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').map(call => call.replaceAll('\x1e', '\n')) : []);
+  return {
+    calls: () => raw().map(call => call.replace(/ -f body=[\s\S]*/, ' -f body=…')),
+    /** The body each PR (by number) was last given. */
+    bodies: () => new Map(raw().map(call => /pulls\/(\d+) -f title=[^\n]* -f body=([\s\S]*)/.exec(call)).filter((match): match is RegExpExecArray => match !== null).map(match => [Number(match[1]), match[2] ?? ''] as const)),
+    // Removes only this fake's PATH entry, so several fakes in one test clean up in any order.
+    [Symbol.dispose]: () => {
+      process.env.PATH = (process.env.PATH ?? '').split(':').filter(entry => entry !== dir).join(':');
+      temp[Symbol.dispose]();
+    },
+  };
+}
+export const CHECKS_OK = { 'demo.md': '# Demo\n\nDo it.\n', '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) };
+export type Reply = { content: { text: string }[] };
+
+/** A headless run with its one slice done, UI dialogs throwing, and the deferred sink `deferred`. With `deferEarlier`, the slice's green review lists one observation, deferred before the slice completes. */
+export async function retroDoneRun(root: string, deferred: unknown, deferEarlier = false) {
+  writeFileSync(join(root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], headless: { submission: 'stop' }, ...(deferred === undefined ? {} : { deferred }) }));
+  sh(root, 'commit', '-qam', 'config', '--allow-empty');
+  const commands = new Map<string, Command>();
+  const tools = load({ commands, sent: [] });
+  const noDialog = async (title: string) => {
+    throw new Error(`dialog: ${title}`);
+  };
+  const caller = { ...ctx('main', 'main'), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: noDialog, notify() {}, select: noDialog } };
+  const call = async (name: string, params: unknown) => (await tools.get(name)?.execute('id', params, undefined, undefined, caller)) as Reply;
+  await commands.get('factory')?.handler('headless demo.md', caller);
+  const ws: Workspace = { config: loadConfig(root), root };
+  await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')])));
+  await withRun(ws, 'demo', run => nextSlice(ws, run));
+  commit(ws, 'ok');
+  await withRun(ws, 'demo', run => runChecks(ws, run));
+  const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+  await review(ws, reviewId, deferEarlier ? [finding('thermo', 'observation', 'naming')] : []);
+  await withRun(ws, 'demo', run => recordReview(ws, run));
+  if (deferEarlier) await call('factory_defer', { observations: ['thermo-naming'] });
+  await withRun(ws, 'demo', run => completeSlice(ws, run));
+  return { call, ws };
+}
+
+export const FINDINGS = [
+  { action: 'apply', category: 'automated-checks', detail: 'Add a lint rule', severity: 'high', target: 'repo', title: 'Lint rule' },
+  { action: 'file-issue', category: 'agents-md', detail: 'The skill is vague', severity: 'medium', target: 'factory', title: 'Vague skill' },
+  { action: 'skip', category: 'automated-checks', detail: 'Minor', severity: 'low', target: 'repo', title: 'Minor thing' },
+];
+
+/** Runs the active Record slice through its fix budget with blocking findings, so a headless run accepts it unresolved. */
+export async function acceptUnresolved(ws: Workspace, call: (name: string, params: unknown) => Promise<Reply>, tag: string) {
+  for (const round of ['one', 'two', 'three', 'four']) {
+    commit(ws, 'ok', `${tag}${round}\n`);
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+    await review(ws, reviewId, [finding('scope', 'high', 'a'), finding('bug', 'high', 'b')]);
+    await call('factory_review_record', {});
+  }
+}
+
+/** Takes the next slice through checks and a green review listing `findings`, leaving it unfinished so the caller can defer before completeSlice. */
+export const reviewActive = async (ws: Workspace, file: string, findings: ReturnType<typeof finding>[]) => {
+  await withRun(ws, 'demo', run => nextSlice(ws, run));
+  commit(ws, 'ok', `${file}\n`);
+  await withRun(ws, 'demo', run => runChecks(ws, run));
+  const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+  await review(ws, reviewId, findings);
+  await withRun(ws, 'demo', run => recordReview(ws, run));
+};
+
+export const HEADLESS_FILES = { 'demo.md': '# Demo\n\nDo it.\n', '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) };
+
+/** A headless run planned with `titles` (each blocked by the one before), whose UI throws on any dialog; slice 01 is active with `ok` committed. */
+export async function headlessSubmitRun(root: string, titles: string[], policy: Record<string, string> = {}) {
+  writeFileSync(join(root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], headless: policy }));
+  sh(root, 'commit', '-qam', 'policy');
+  const commands = new Map<string, Command>();
+  const tools = load({ commands, sent: [] });
+  const noDialog = async (title: string) => {
+    throw new Error(`dialog: ${title}`);
+  };
+  const caller = { ...ctx('main', 'main'), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: noDialog, notify() {}, select: noDialog } };
+  const call = async (name: string, params: unknown) => (await tools.get(name)?.execute('id', params, undefined, undefined, caller)) as Reply;
+  await commands.get('factory')?.handler('headless demo.md', caller);
+  const ws: Workspace = { config: loadConfig(root), root };
+  await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, titles.map((title, index) => slice(title, index === 0 ? [] : [titles[index - 1] ?? ''])))));
+  await withRun(ws, 'demo', run => nextSlice(ws, run));
+  commit(ws, 'ok');
+  return { branches: readRun(ws, 'demo').slices.map(item => item.branch), call, ws };
+}
+
+/** Takes the active slice to a green review. */
+export async function submitGreenWithObservation(ws: Workspace) {
+  await withRun(ws, 'demo', run => runChecks(ws, run));
+  const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+  await review(ws, reviewId, [finding('thermo', 'observation', 'naming')]);
+  await withRun(ws, 'demo', run => recordReview(ws, run));
 }
