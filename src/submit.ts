@@ -46,8 +46,11 @@ async function readStack(root: string, branch: string) {
   return stackView.parse(JSON.parse(await gh(root, 'stack', 'view', '--json'))).branches.map(item => item.name);
 }
 
-/** The stack was submitted (the `submit` event is on the run) but writing the PR titles or bodies failed. */
-export class PrTextsFailed extends Error {}
+/**
+ * What a submit did. `failure` is set when the stack and its PRs reached GitHub (the `submit` event is on the run) but a
+ * step after the push failed: writing the PR titles and bodies, or the switch back of a stopped stack.
+ */
+export type Submission = { output: string; failure?: Error };
 
 /**
  * Submits the reviewed stack. On a first submit it adopts every slice branch into one gh-stack stack and opens draft
@@ -55,13 +58,16 @@ export class PrTextsFailed extends Error {}
  * A run with `landOn` instead fast-forwards that local branch to the top slice; no PRs are opened. Never merges.
  * The user-invoked `/factory submit` command calls this, and so does a headless run's own submission (`submitHeadless`);
  * with `stop`, a paused headless run submits only the done slices below the stopped one. `progress` names each step
- * before it starts, so the user sees what the submit is waiting on.
+ * before it starts, so the user sees what the submit is waiting on. Fails before the push by throwing; a failure after
+ * it comes back in the result, so the caller saves the `submit` event with the run.
  */
-export async function submitStack(ws: Workspace, run: Run, progress: (step: string) => void = () => {}, stop?: Stop) {
+export async function submitStack(ws: Workspace, run: Run, progress: (step: string) => void = () => {}, stop?: Stop): Promise<Submission> {
   if (stop === undefined ? run.status !== 'done' : run.status !== 'paused') throw new Error(`Run "${run.feature}" is ${run.status}; its stack is not ready.`);
   // A stopped stack submits only the done slices below the stopped one.
   const slices = stop === undefined ? run.slices : doneBelow(run, stop.slice);
-  if (slices.length === 0) return '';
+  const branches = slices.map(slice => slice.branch);
+  const [bottom] = branches;
+  if (bottom === undefined) throw new Error(`Run "${run.feature}" has no slices to submit.`);
   if (stop !== undefined && run.landOn !== undefined) throw new Error(`Run "${run.feature}" lands on ${run.landOn}: a stopped stack opens no PRs.`);
   progress('checking the working tree and the slice branches');
   await requireClean(ws.root, 'Cannot submit the stack');
@@ -77,11 +83,8 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
   }
   if (run.landOn !== undefined) {
     progress(`fast-forwarding ${run.landOn} to the top slice`);
-    return landStack(ws, run, run.landOn);
+    return { output: await landStack(ws, run, run.landOn) };
   }
-  const branches = slices.map(slice => slice.branch);
-  const bottom = branches[0];
-  if (bottom === undefined) throw new Error(`Run "${run.feature}" has no slices to submit.`);
   progress(`reading the gh stack that holds ${bottom}`);
   // `gh stack checkout` and the gh stack steps after it move HEAD; on a refusal or any failure, submit switches back to
   // where it started, so a refused submit changes nothing. A successful submit stays where gh stack leaves it.
@@ -135,7 +138,7 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
   try {
     urls = await setPrTexts(ws.root, run, slices, stop, progress);
   } catch (caught) {
-    failed = new PrTextsFailed(
+    failed = new Error(
       `The stack and its PRs were submitted, but the PR titles were not set: ${caught instanceof Error ? caught.message : String(caught)}\nRunning /factory submit again sets them.`,
       { cause: caught },
     );
@@ -143,12 +146,12 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
     if (stop !== undefined) {
       const switchFailure = await switchBack(ws.root, start);
       if (switchFailure !== undefined) {
-        failed = new PrTextsFailed(`${failed?.message ?? 'The stack and its PRs were submitted'}\n${switchFailure.message}`, { cause: failed ?? switchFailure.cause });
+        failed = new Error(`${failed?.message ?? 'The stack and its PRs were submitted'}\n${switchFailure.message}`, { cause: failed ?? switchFailure.cause });
       }
     }
   }
-  if (failed !== undefined) throw failed;
-  return `${output.trim()}\nPull requests:\n${urls.map(url => `- ${url}`).join('\n')}`.trim();
+  const text = `${output.trim()}\nPull requests:\n${urls.map(url => `- ${url}`).join('\n')}`.trim();
+  return failed === undefined ? { output: text } : { failure: failed, output: text };
 }
 
 /** Switches the checkout back to `start` (the `git switch` arguments). Returns the error to report when that fails, or undefined. */
@@ -162,7 +165,7 @@ async function switchBack(root: string, start: string[]) {
 }
 
 /** The unbroken run of done slices from the bottom up to (not including) `stopped`; throws when `stopped` is not a slice of the run. */
-function doneBelow(run: Run, stopped: Slice) {
+export function doneBelow(run: Run, stopped: Slice) {
   const index = run.slices.findIndex(slice => slice.id === stopped.id);
   if (index < 0) throw new Error(`Slice ${stopped.id} is not a slice of run "${run.feature}".`);
   const below: Slice[] = [];
@@ -178,10 +181,67 @@ export type Stop = { reason: string; slice: Slice };
 
 const BODY_LIMIT = 60_000;
 const MARKER = '… (truncated)';
+// Per-field clips. The body is redacted per field, before the clip, so a clip never cuts a credential in half and leaves
+// a prefix redact no longer recognizes; the whole body is redacted once more at the end as a guarantee.
+const ITEM_CLIP = 1_000;
+const ID_CLIP = 100;
+const TITLE_CLIP = 500;
+const REASON_CLIP = 2_000;
+const SUMMARY_CLIP = 15_000;
+/** The most a bullet list (acceptance, checks, decisions, unresolved findings) may take. */
+const LIST_CAP = 6_900;
+const DEFERRED_TITLE_CLIP = 120;
+/** The most of one sink location (a file path or an issue URL) a deferred line shows, so one item cannot outgrow the budget. */
+const LOCATION_CLIP = 500;
+/** The most of the sink locations the "…and N more" line names. */
+const SINK_CLIP = 500;
+const ISSUES_SINK = 'the issues are listed in the run state';
 
 /** `text` cut to at most `max` characters, ending with a visible marker when it was cut. */
 function clip(text: string, max: number) {
   return text.length <= max ? text : `${text.slice(0, max - MARKER.length)}${MARKER}`;
+}
+
+type DeferredLine = { location: string; title: string };
+
+const locationOf = (item: DeferredLine) => clip(redact(item.location), LOCATION_CLIP);
+
+/** The "…and N more" line that ends the deferred items when not even their locations fit; `from` items are already listed. */
+function moreLine(deferred: DeferredLine[], from: number) {
+  const locations = [...new Set(deferred.slice(from).map(locationOf))];
+  const sink = locations.every(location => /^https?:\/\//.test(location)) ? ISSUES_SINK : clip(locations.join(', '), SINK_CLIP);
+  return `…and ${deferred.length - from} more deferred items: ${sink} (truncated)`;
+}
+
+/**
+ * The lines of the Deferred items section, at most `budget` characters with their newlines. Each item is a `title:
+ * location` line; when those do not fit, a leading run keeps its title and the rest are location-only lines; when not
+ * even the location-only lines fit, as many as fit are followed by one count line that names the sink (clipped, or
+ * left out, when the budget is smaller than that line).
+ */
+export function fitDeferred(deferred: DeferredLine[], budget: number) {
+  const size = (line: string) => line.length + 1;
+  const full = deferred.map(item => `- ${clip(redact(item.title), DEFERRED_TITLE_CLIP)}: ${locationOf(item)}`);
+  const bare = deferred.map(item => `- ${locationOf(item)}`);
+  // Tier 1: full lines for a leading run, location-only lines for the rest, as many full lines as the budget allows.
+  let used = bare.reduce((sum, line) => sum + size(line), 0);
+  let fullCount = 0;
+  if (used <= budget) {
+    while (fullCount < full.length && used - size(bare[fullCount]!) + size(full[fullCount]!) <= budget) {
+      used += size(full[fullCount]!) - size(bare[fullCount]!);
+      fullCount++;
+    }
+    return [...full.slice(0, fullCount), ...bare.slice(fullCount)];
+  }
+  // Tier 2: keep the location-only lines that fit beside the longest count line the section can end with.
+  const reserve = size(moreLine(deferred.map(item => ({ ...item, location: 'x'.repeat(SINK_CLIP) })), 0));
+  let kept = 0;
+  let sum = 0;
+  while (kept < bare.length && sum + size(bare[kept]!) + reserve <= budget) sum += size(bare[kept++]!);
+  const more = moreLine(deferred, kept);
+  // A budget smaller than the count line itself (the section is all that is left of the body) gets it clipped, or nothing.
+  if (kept === 0 && size(more) > budget) return budget > MARKER.length ? [clip(more, budget - 1)] : [];
+  return [...bare.slice(0, kept), more];
 }
 
 /**
@@ -196,8 +256,8 @@ export function prBody(run: Run, slice: Slice, submitted: Slice[], stop?: Stop) 
     const lines: string[] = [];
     let used = 0;
     for (const item of items) {
-      const line = `- ${clip(redact(item), 1_000)}`;
-      if (used + line.length + 1 > 6_900) break;
+      const line = `- ${clip(redact(item), ITEM_CLIP)}`;
+      if (used + line.length + 1 > LIST_CAP) break;
       lines.push(line);
       used += line.length + 1;
     }
@@ -212,9 +272,9 @@ export function prBody(run: Run, slice: Slice, submitted: Slice[], stop?: Stop) 
     ...run.events.filter(event => event.kind === 'autonomous').map(event => event.detail),
   ];
   const sections = [
-    `Issue: ${clip(redact(issue), 1_000)} (${clip(redact(run.source.title), 1_000)})`,
-    ...(stop === undefined ? [] : [`**The stack stopped at slice ${clip(redact(stop.slice.id), 100)} "${clip(redact(stop.slice.title), 500)}", which is not submitted:** ${clip(redact(stop.reason), 2_000)}`]),
-    `## Slice ${clip(redact(slice.id), 100)}: ${clip(redact(slice.title), 500)}\n\n${clip(redact(slice.whatToBuild), 15_000)}\n\nAcceptance:\n${list(slice.acceptance)}`,
+    `Issue: ${clip(redact(issue), ITEM_CLIP)} (${clip(redact(run.source.title), ITEM_CLIP)})`,
+    ...(stop === undefined ? [] : [`**The stack stopped at slice ${clip(redact(stop.slice.id), ID_CLIP)} "${clip(redact(stop.slice.title), TITLE_CLIP)}", which is not submitted:** ${clip(redact(stop.reason), REASON_CLIP)}`]),
+    `## Slice ${clip(redact(slice.id), ID_CLIP)}: ${clip(redact(slice.title), TITLE_CLIP)}\n\n${clip(redact(slice.whatToBuild), SUMMARY_CLIP)}\n\nAcceptance:\n${list(slice.acceptance)}`,
     `## Checks run\n\n${list(slice.checked?.results ?? run.checks)}`,
     `## Review rounds\n\n${slice.reviews} ${slice.reviews === 1 ? 'review' : 'reviews'}, ${slice.fixRounds} fix ${slice.fixRounds === 1 ? 'round' : 'rounds'}.`,
     `## Autonomous decisions\n\n${list(autonomous)}`,
@@ -222,33 +282,7 @@ export function prBody(run: Run, slice: Slice, submitted: Slice[], stop?: Stop) 
   ];
   const head = '## Deferred items\n\n';
   const budget = BODY_LIMIT - sections.join('\n\n').length - 2 - head.length;
-  const full = deferred.map(item => `- ${clip(redact(item.title), 120)}: ${redact(item.location)}`);
-  const bare = deferred.map(item => `- ${redact(item.location)}`);
-  const size = (line: string) => line.length + 1;
-  const moreLine = (from: number) => {
-    const locations = [...new Set(deferred.slice(from).map(item => redact(item.location)))];
-    const sink = locations.every(location => /^https?:\/\//.test(location))
-      ? 'the issues are listed in the run state'
-      : clip(locations.join(', '), 500);
-    return `…and ${deferred.length - from} more deferred items: ${sink} (truncated)`;
-  };
-  // Tier 1: full lines for a leading run, location-only lines for the rest, as many full lines as the budget allows.
-  let used = bare.reduce((sum, line) => sum + size(line), 0);
-  let fullCount = 0;
-  if (used <= budget) {
-    while (fullCount < full.length && used - size(bare[fullCount]!) + size(full[fullCount]!) <= budget) {
-      used += size(full[fullCount]!) - size(bare[fullCount]!);
-      fullCount++;
-    }
-  }
-  let shown = [...full.slice(0, fullCount), ...bare.slice(fullCount)];
-  if (used > budget) {
-    // Tier 2: not even location-only lines fit; keep what fits, then one count line naming the sink.
-    let kept = 0;
-    let sum = 0;
-    while (kept < bare.length && sum + size(bare[kept]!) + 600 <= budget) sum += size(bare[kept++]!);
-    shown = [...bare.slice(0, kept), moreLine(kept)];
-  }
+  const shown = fitDeferred(deferred, budget);
   sections.push(`${head}${shown.length === 0 ? 'None.' : shown.join('\n')}`);
   return clip(redact(sections.join('\n\n')), BODY_LIMIT);
 }
@@ -265,8 +299,7 @@ async function setPrTexts(root: string, run: Run, slices: Slice[], stop: Stop | 
   if (missing.length > 0) throw new Error(`gh stack submit left these slice branches with no PR: ${missing.join(', ')}.`);
   for (const slice of slices) {
     const endpoint = `repos/{owner}/{repo}/pulls/${prs.get(slice.branch)}`;
-    await gh(root, 'api', '-X', 'PATCH', endpoint, '-f', `title=${run.feature}: ${slice.id} ${slice.title}`);
-    await gh(root, 'api', '-X', 'PATCH', endpoint, '-f', `body=${prBody(run, slice, slices, stop)}`);
+    await gh(root, 'api', '-X', 'PATCH', endpoint, '-f', `title=${run.feature}: ${slice.id} ${slice.title}`, '-f', `body=${prBody(run, slice, slices, stop)}`);
   }
   const urls = new Map(view.branches.map(item => [item.name, item.pr?.url]));
   return slices.flatMap(slice => urls.get(slice.branch) ?? []);

@@ -7,9 +7,11 @@ import { loadConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
 import { addEvent, greenCommit, readRun, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
-import { planSubmit, prBody, submitStack } from '../src/submit.ts';
+import { fitDeferred, planSubmit, prBody, submitStack } from '../src/submit.ts';
 import { approvePlan, nextSlice, parseRetro, planSlices, recordRetro, resolveBase } from '../src/workflow.ts';
 import { commit, finding, green, newRun, review, sh, slice, start, step, tempDir, tempRepo, workspace } from './helpers.ts';
+
+beforeEach(() => resetModuleState());
 
 /** A done run of `count` chained slices, each with a reviewed commit, checked out on `main` (off the top slice). */
 async function doneRun(ws: Workspace, count: number) {
@@ -45,12 +47,9 @@ interface FakeGh {
 /** The branches as a submitted stack, with PRs numbered from 101. */
 const withPrs = (branches: string[]) => branches.map((name, index) => ({ name, pr: 101 + index }));
 
-/** The `gh api` calls that set the title, then the body, of PR 101 onwards (`demo: NN Sn`); `calls()` abbreviates a body to `…`. */
+/** The `gh api` call that sets the title and the body of PR 101 onwards (`demo: NN Sn`) in one PATCH; `calls()` abbreviates a body to `…`. */
 const prCalls = (count: number) =>
-  Array.from({ length: count }, (_, index) => [
-    `api -X PATCH repos/{owner}/{repo}/pulls/${101 + index} -f title=demo: 0${index + 1} S${index + 1}`,
-    `api -X PATCH repos/{owner}/{repo}/pulls/${101 + index} -f body=…`,
-  ]).flat();
+  Array.from({ length: count }, (_, index) => `api -X PATCH repos/{owner}/{repo}/pulls/${101 + index} -f title=demo: 0${index + 1} S${index + 1} -f body=…`);
 
 /**
  * Puts a fake `gh` first on PATH until the `using` scope that holds it ends, then removes it; it records each call.
@@ -95,7 +94,7 @@ function fakeGh({ stack, checkoutFailure = NO_STACK, fail = '', onFail = ':', on
   return {
     calls: () => raw().map(call => call.replace(/ -f body=[\s\S]*/, ' -f body=…')),
     /** The body each PR (by number) was last given. */
-    bodies: () => new Map(raw().map(call => /pulls\/(\d+) -f body=([\s\S]*)/.exec(call)).filter((match): match is RegExpExecArray => match !== null).map(match => [Number(match[1]), match[2] ?? ''] as const)),
+    bodies: () => new Map(raw().map(call => /pulls\/(\d+) -f title=[^\n]* -f body=([\s\S]*)/.exec(call)).filter((match): match is RegExpExecArray => match !== null).map(match => [Number(match[1]), match[2] ?? ''] as const)),
     // Removes only this fake's PATH entry, so several fakes in one test clean up in any order.
     [Symbol.dispose]: () => {
       process.env.PATH = (process.env.PATH ?? '').split(':').filter(entry => entry !== dir).join(':');
@@ -103,7 +102,6 @@ function fakeGh({ stack, checkoutFailure = NO_STACK, fail = '', onFail = ':', on
     },
   };
 }
-
 
 describe('submit', () => {
   it('refuses to submit a branch that moved after its green review', async () => {
@@ -149,7 +147,7 @@ describe('submit', () => {
     sh(ws.root, 'worktree', 'remove', linked.root);
 
     const steps: string[] = [];
-    const output = await step(ws, run => submitStack(ws, run, message => steps.push(message)));
+    const { output } = await step(ws, run => submitStack(ws, run, message => steps.push(message)));
     assert.deepEqual(steps, ['checking the working tree and the slice branches', 'fast-forwarding ext-953 to the top slice']);
     assert.match(output, /ext-953 fast-forwarded to .*No PRs were opened/);
     assert.equal(sh(ws.root, 'rev-parse', 'ext-953'), top === undefined ? undefined : greenCommit(top));
@@ -293,11 +291,11 @@ describe('submit', () => {
     const branches = await doneRun(ws, 3);
     assert.notEqual(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'the submit starts off the top slice, so a switch-back shows');
     using gh = fakeGh({ stack: branches.slice(0, 1), submitted: [{ name: branches[0] ?? '', pr: 101 }, { name: branches[1] ?? '' }, { name: branches[2] ?? '', pr: 103 }] });
-    const error = await step(ws, run => submitStack(ws, run)).then(() => assert.fail('submit should fail'), (caught: unknown) => caught);
-    assert.ok(error instanceof Error);
-    assert.match(error.message, new RegExp(`submitted.*titles were not set.*${branches[1]}`, 's'));
-    assert.match(error.message, /\/factory submit again sets them/);
-    assert.doesNotMatch(error.message, /Already added/);
+    const { failure } = await step(ws, run => submitStack(ws, run));
+    assert.ok(failure instanceof Error, 'the failure comes back in the result');
+    assert.match(failure.message, new RegExp(`submitted.*titles were not set.*${branches[1]}`, 's'));
+    assert.match(failure.message, /\/factory submit again sets them/);
+    assert.doesNotMatch(failure.message, /Already added/);
     assert.deepEqual(gh.calls().filter(call => call.startsWith('api')), [], 'no title is set when a slice has no PR');
     assert.equal(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'a failed title step stays on the top slice gh stack left');
   });
@@ -307,11 +305,23 @@ describe('submit', () => {
     const branches = await doneRun(ws, 2);
     assert.notEqual(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'the submit starts off the top slice, so a switch-back shows');
     using _gh = fakeGh({ stack: branches.slice(0, 1), submitted: withPrs(branches), fail: 'api -X' });
-    const error = await step(ws, run => submitStack(ws, run)).then(() => assert.fail('submit should fail'), (caught: unknown) => caught);
-    assert.ok(error instanceof Error);
-    assert.match(error.message, /submitted.*titles were not set.*\/factory submit again sets them/s);
-    assert.doesNotMatch(error.message, /Already added/);
+    const { failure } = await step(ws, run => submitStack(ws, run));
+    assert.ok(failure instanceof Error, 'the failure comes back in the result');
+    assert.match(failure.message, /submitted.*titles were not set.*\/factory submit again sets them/s);
+    assert.doesNotMatch(failure.message, /Already added/);
+    assert.ok(readRun(ws, 'demo').events.some(event => event.kind === 'submit'), 'the submit event is saved with the run');
     assert.equal(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'a failed title step stays on the top slice gh stack left');
+  });
+
+  it('keeps the submit event, and reports the failure, when interactive /factory submit cannot set a PR title or body', async () => {
+    using ws = workspace();
+    const branches = await doneRun(ws, 2);
+    using _gh = fakeGh({ fail: 'api -X', stack: undefined, submitted: withPrs(branches) });
+    const commands = new Map<string, Command>();
+    load({ commands });
+    const caller = { ...ctx('main', 'main'), cwd: ws.root, hasUI: true, ui: { confirm: async () => true, notify() {}, setStatus() {} } };
+    await assert.rejects(commands.get('factory')?.handler('submit demo', caller) ?? Promise.resolve(), /titles were not set/);
+    assert.equal(readRun(ws, 'demo').events.filter(event => event.kind === 'submit').length, 1, 'the PRs are on GitHub, so the run records the submit');
   });
 
   it('refuses a stack with branches outside the run or out of run order, and changes nothing', async () => {
@@ -411,9 +421,6 @@ describe('planSubmit', () => {
   });
 });
 
-
-beforeEach(() => resetModuleState());
-
 const HEADLESS_FILES = { 'demo.md': '# Demo\n\nDo it.\n', '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) };
 type Reply = { content: { text: string }[] };
 
@@ -445,6 +452,37 @@ async function greenWithObservation(ws: Workspace) {
 }
 
 describe('headless submit', () => {
+  it('records one submission-stop event, not an autonomous one, when the policy sets submission to stop', async () => {
+    using repo = tempRepo('factory-hsubmit-', HEADLESS_FILES);
+    const { branches, call, ws } = await headlessSubmitRun(repo.root, ['S1'], { submission: 'stop' });
+    await greenWithObservation(ws);
+    using gh = fakeGh({ stack: undefined, submitted: withPrs(branches) });
+    await call('factory_complete_slice', {});
+    await call('factory_retro', { findings: [] });
+    await withRun(ws, 'demo', run => { run.retroRecorded = false; });
+    await call('factory_retro', { findings: [] });
+    const { events } = readRun(ws, 'demo');
+    const stops = events.filter(event => event.kind === 'submission-stop');
+    assert.equal(stops.length, 1, 'a repeated submission records the stop once');
+    assert.match(stops[0]?.detail ?? '', /gate submission \(stop\): no PRs opened/);
+    assert.ok(!events.some(event => event.kind === 'autonomous' && /submission/.test(event.detail)), 'the PR bodies list autonomous events only');
+    assert.deepEqual(gh.calls(), []);
+  });
+
+  it('opens nothing and records no gate event when no done slice is below the slice a stopped run is red at', async () => {
+    using repo = tempRepo('factory-hsubmit-', HEADLESS_FILES);
+    const { branches, call, ws } = await headlessSubmitRun(repo.root, ['S1', 'S2']);
+    sh(repo.root, 'rm', '-q', 'ok');
+    sh(repo.root, 'commit', '-qm', 'break the check');
+    using gh = fakeGh({ stack: undefined, submitted: withPrs(branches.slice(0, 1)) });
+    let text = '';
+    for (let round = 0; round < 4; round++) text = (await call('factory_checks', {})).content[0]?.text ?? '';
+    assert.equal(readRun(ws, 'demo').status, 'paused');
+    assert.match(text, /No done slice is below slice 01, so no PRs were opened/);
+    assert.deepEqual(gh.calls(), []);
+    assert.ok(!readRun(ws, 'demo').events.some(event => /gate submission/.test(event.detail)), 'a submission that was never eligible leaves no gate event');
+  });
+
   it('opens draft PRs when the stack becomes ready, with no /factory submit, and the reply names the PR URLs', async () => {
     using repo = tempRepo('factory-hsubmit-', HEADLESS_FILES);
     const { branches, call, ws } = await headlessSubmitRun(repo.root, ['S1']);
@@ -601,80 +639,126 @@ describe('headless submit', () => {
   });
 });
 
-describe('prBody truncation', () => {
-  it('keeps every closing section when the slice summary is huge', () => {
-    const sliceLike = {
-      acceptance: ['a works'], checked: undefined, fixRounds: 2, id: '07', reviews: 3, title: 'Big',
-      unresolved: ['left-over finding'], whatToBuild: 'x'.repeat(100_000),
-    };
-    const runLike = {
-      checks: ['pnpm run test'], decisions: [{ author: 'autonomous', text: 'chose option A' }],
-      deferred: [{ location: 'notes/later.md', slice: '07', title: 'later item' }], events: [], feature: 'demo',
-      source: { kind: 'text', ref: 'r', title: 'T' },
-    };
-    const body = prBody(runLike as never, sliceLike as never, [sliceLike as never]);
-    assert.ok(body.length <= 60_000, `length ${body.length}`);
-    for (const part of ['## Review rounds', '## Autonomous decisions', '- chose option A', '## Accepted unresolved', '- left-over finding', '## Deferred items', '- later item: notes/later.md', '(truncated)']) {
-      assert.ok(body.includes(part), part);
-    }
-  });
-});
+/** The Run and its only Slice for a one-slice run, with `whatToBuild` and the deferred items set; built through the real planner so the fixtures follow the Run and Slice types. */
+async function bigRun(ws: Workspace, { deferred = [], whatToBuild = 'x'.repeat(100_000) }: { deferred?: { location: string; title: string }[]; whatToBuild?: string } = {}) {
+  await newRun(ws, [slice('Big')]);
+  const run = readRun(ws, 'demo');
+  const [only] = run.slices;
+  assert.ok(only);
+  only.whatToBuild = whatToBuild;
+  only.unresolved = ['left-over finding'];
+  run.decisions.push({ author: 'autonomous', text: 'chose option A' });
+  run.deferred = deferred.map((item, index) => ({ body: 'b', key: `r1:item-${index}`, kind: 'observation', review: 'r1', slice: only.id, ...item }));
+  return { run, slice: only };
+}
 
-describe('prBody many deferred items', () => {
-  it('lists every sink location, or names the sink, with 300 deferred items and a long whatToBuild', () => {
-    const sliceLike = { acceptance: ['a'], fixRounds: 0, id: '07', reviews: 1, title: 'Big', unresolved: [], whatToBuild: 'x'.repeat(100_000) };
-    const runLike = {
-      checks: [], decisions: [], events: [], feature: 'demo', source: { kind: 'text', ref: 'r', title: 'T' },
-      deferred: Array.from({ length: 300 }, (_, i) => ({ location: 'docs/deferred.md', slice: '07', title: `item ${i} ${'t'.repeat(300)}` })),
-    };
-    const body = prBody(runLike as never, sliceLike as never, [sliceLike as never]);
-    assert.ok(body.length <= 60_000, `length ${body.length}`);
-    for (const heading of ['## Review rounds', '## Autonomous decisions', '## Accepted unresolved', '## Deferred items']) assert.ok(body.includes(heading), heading);
-    const lines = body.split('\n').filter(line => line.startsWith('- ') && line.includes('docs/deferred.md'));
-    assert.equal(lines.length, 300, 'every item keeps its sink location');
-  });
-});
+const CLOSING_SECTIONS = ['## Checks run', '## Review rounds', '## Autonomous decisions', '## Accepted unresolved', '## Deferred items'];
 
-describe('prBody many github deferred items', () => {
-  it('lists every issue URL when 300 deferred items do not fit with their titles', () => {
-    const sliceLike = { acceptance: ['a'], fixRounds: 0, id: '07', reviews: 1, title: 'Big', unresolved: [], whatToBuild: 'x'.repeat(100_000) };
+describe('prBody', () => {
+  it('keeps every closing section and its entries when the slice summary is huge', async () => {
+    using ws = workspace();
+    const { run, slice: big } = await bigRun(ws, { deferred: [{ location: 'notes/later.md', title: 'later item' }] });
+    const body = prBody(run, big, [big]);
+    assert.ok(body.length <= 60_000, `length ${body.length}`);
+    for (const part of [...CLOSING_SECTIONS, '- chose option A', '- left-over finding', '- later item: notes/later.md', '(truncated)']) assert.ok(body.includes(part), part);
+  });
+
+  it('lists every sink location with 300 deferred items and a long whatToBuild', async () => {
+    using ws = workspace();
+    const deferred = Array.from({ length: 300 }, (_, i) => ({ location: 'docs/deferred.md', title: `item ${i} ${'t'.repeat(300)}` }));
+    const { run, slice: big } = await bigRun(ws, { deferred });
+    const body = prBody(run, big, [big]);
+    assert.ok(body.length <= 60_000, `length ${body.length}`);
+    for (const heading of CLOSING_SECTIONS) assert.ok(body.includes(heading), heading);
+    assert.equal(body.split('\n').filter(line => line.startsWith('- ') && line.includes('docs/deferred.md')).length, 300, 'every item keeps its sink location');
+  });
+
+  it('lists every issue URL when 300 deferred items do not fit with their titles', async () => {
+    using ws = workspace();
     const urls = Array.from({ length: 300 }, (_, i) => `https://github.com/o/r/issues/${1000 + i}`);
-    const runLike = {
-      checks: [], decisions: [], events: [], feature: 'demo', source: { kind: 'text', ref: 'r', title: 'T' },
-      deferred: urls.map((location, i) => ({ location, slice: '07', title: `item ${i} ${'t'.repeat(300)}` })),
-    };
-    const body = prBody(runLike as never, sliceLike as never, [sliceLike as never]);
+    const { run, slice: big } = await bigRun(ws, { deferred: urls.map((location, i) => ({ location, title: `item ${i} ${'t'.repeat(300)}` })) });
+    const body = prBody(run, big, [big]);
     assert.ok(body.length <= 60_000, `length ${body.length}`);
     for (const url of urls) assert.ok(body.includes(url), url);
-    assert.ok(body.includes('## Deferred items'));
+  });
+
+  for (const [name, location, sink] of [
+    ['file sink: ends with a count line naming the sink path', () => 'docs/deferred.md', /docs\/deferred\.md/],
+    ['github sink: ends with a count line saying the issues are in the run state', (i: number) => `https://github.com/o/r/issues/${1000 + i}`, /listed in the run state/],
+  ] as const) {
+    it(`beyond the budget, ${name}`, async () => {
+      using ws = workspace();
+      const count = 5_000;
+      const { run, slice: big } = await bigRun(ws, { deferred: Array.from({ length: count }, (_, i) => ({ location: location(i), title: `item ${i} ${'t'.repeat(300)}` })) });
+      const body = prBody(run, big, [big]);
+      assert.ok(body.length <= 60_000, `length ${body.length}`);
+      for (const heading of ['## Slice 01: Big', ...CLOSING_SECTIONS]) assert.ok(body.includes(heading), heading);
+      const section = body.slice(body.indexOf('## Deferred items'));
+      const more = section.match(/…and (\d+) more deferred items: ([^\n]*)/) ?? assert.fail('no more-items line');
+      assert.ok(body.endsWith(more[0]), 'the more-items line ends the Deferred items section and the body');
+      assert.equal(section.split('\n').filter(line => line.startsWith('- ')).length + Number(more[1]), count, 'listed lines plus the count cover every item');
+      assert.ok(Number(more[1]) > 0);
+      assert.match(more[2] ?? '', sink);
+    });
+  }
+
+  it('keeps the body within the limit when one deferred location is longer than the whole body', async () => {
+    using ws = workspace();
+    const { run, slice: big } = await bigRun(ws, { deferred: [{ location: `docs/${'d'.repeat(70_000)}.md`, title: 'huge location' }] });
+    const body = prBody(run, big, [big]);
+    assert.ok(body.length <= 60_000, `length ${body.length}`);
+    for (const heading of CLOSING_SECTIONS) assert.ok(body.includes(heading), heading);
+    assert.ok(body.includes('- chose option A') && body.includes('- left-over finding'), 'the earlier sections keep their entries');
   });
 });
 
-describe('prBody deferred items beyond the budget', () => {
-  const count = 5_000;
-  const sliceLike = { acceptance: ['a'], fixRounds: 0, id: '07', reviews: 1, title: 'Big', unresolved: [], whatToBuild: 'x'.repeat(100_000) };
-  const build = (location: (i: number) => string) => {
-    const runLike = {
-      checks: [], decisions: [], events: [], feature: 'demo', source: { kind: 'text', ref: 'r', title: 'T' },
-      deferred: Array.from({ length: count }, (_, i) => ({ location: location(i), slice: '07', title: `item ${i} ${'t'.repeat(300)}` })),
-    };
-    const body = prBody(runLike as never, sliceLike as never, [sliceLike as never]);
-    assert.ok(body.length <= 60_000, `length ${body.length}`);
-    for (const heading of ['## Slice 07: Big', '## Checks run', '## Review rounds', '## Autonomous decisions', '## Accepted unresolved', '## Deferred items']) assert.ok(body.includes(heading), heading);
-    const section = body.slice(body.indexOf('## Deferred items'));
-    const more = section.match(/…and (\d+) more deferred items: ([^\n]*)/) ?? assert.fail('no more-items line');
-    assert.ok(body.endsWith(more[0]), 'the more-items line ends the Deferred items section and the body');
-    const listed = section.split('\n').filter(line => line.startsWith('- ')).length;
-    assert.equal(listed + Number(more[1]), count, 'listed lines plus the count cover every item');
-    assert.ok(Number(more[1]) > 0);
-    return more[2] ?? '';
-  };
+describe('fitDeferred', () => {
+  const items = [{ location: 'a.md', title: 'first' }, { location: 'a.md', title: 'second' }];
 
-  it('file sink: ends with a count line naming the sink path', () => {
-    assert.match(build(() => 'docs/deferred.md'), /docs\/deferred\.md/);
+  it('lists every item as title: location when the budget allows', () => {
+    assert.deepEqual(fitDeferred(items, 1_000), ['- first: a.md', '- second: a.md']);
+    assert.deepEqual(fitDeferred([], 1_000), []);
   });
 
-  it('github sink: ends with a count line saying the issues are in the run state', () => {
-    assert.match(build(i => `https://github.com/o/r/issues/${1000 + i}`), /listed in the run state/);
+  it('keeps titles on a leading run and location-only lines for the rest when the full lines do not all fit', () => {
+    assert.deepEqual(fitDeferred(items, 21), ['- first: a.md', '- a.md']);
+    assert.deepEqual(fitDeferred(items, 14), ['- a.md', '- a.md']);
+  });
+
+  it('ends with a count line naming the sink path when not even the locations fit', () => {
+    const many = Array.from({ length: 1_000 }, (_, i) => ({ location: 'docs/deferred.md', title: `item ${i}` }));
+    const lines = fitDeferred(many, 2_000);
+    const last = lines.at(-1) ?? '';
+    const listed = lines.length - 1;
+    assert.match(last, /^…and \d+ more deferred items: docs\/deferred\.md \(truncated\)$/);
+    assert.equal(listed + Number(/\d+/.exec(last)?.[0]), 1_000, 'the listed lines and the count cover every item');
+    assert.ok(lines.join('\n').length + 1 <= 2_000, 'the lines fit the budget');
+  });
+
+  it('names the run state instead of listing GitHub issue URLs in the count line', () => {
+    const many = Array.from({ length: 1_000 }, (_, i) => ({ location: `https://github.com/o/r/issues/${i}`, title: `item ${i}` }));
+    assert.match(fitDeferred(many, 2_000).at(-1) ?? '', /more deferred items: the issues are listed in the run state \(truncated\)$/);
+  });
+
+  it('stays within the budget for mixed file and URL locations at every budget around the count line', () => {
+    const mixed = Array.from({ length: 400 }, (_, i) => ({ location: i % 2 === 0 ? `https://github.com/o/r/issues/${i}` : `docs/${'d'.repeat(300)}-${i}.md`, title: `item ${i}` }));
+    for (let budget = 0; budget <= 4_000; budget += 37) {
+      const lines = fitDeferred(mixed, budget);
+      assert.ok(lines.length === 0 || lines.join('\n').length + 1 <= budget, `budget ${budget}: length ${lines.join('\n').length}`);
+    }
+  });
+
+  it('clips the count line, or leaves it out, when the budget is smaller than it', () => {
+    const one = [{ location: 'docs/deferred.md', title: 'x' }];
+    const clipped = fitDeferred(one, 30);
+    assert.equal(clipped.length, 1);
+    assert.ok(clipped.join('\n').length + 1 <= 30, `length ${clipped.join('\n').length}`);
+    assert.deepEqual(fitDeferred(one, 1), []);
+  });
+
+  it('clips a location longer than the budget, so one item cannot outgrow it', () => {
+    const lines = fitDeferred([{ location: `docs/${'d'.repeat(70_000)}.md`, title: 'huge' }, { location: 'b.md', title: 'second' }], 700);
+    assert.ok(lines.join('\n').length + 1 <= 700, `length ${lines.join('\n').length}`);
+    assert.ok(lines.some(line => line.includes('(truncated)')));
   });
 });
