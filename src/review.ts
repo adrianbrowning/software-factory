@@ -8,7 +8,7 @@ import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { evidence, evidenceLine, redact } from './evidence.ts';
-import { deferItems, draftOf, isRecordSlice, itemKey, requireNotCarriedOrDeferred } from './deferred.ts';
+import { deferItems, draftOf, isRecordSlice, itemKey, requireNotCarriedOrDeferred, requireSink } from './deferred.ts';
 import { git, runShell, type CommandResult } from './exec.ts';
 import {
   activeSlice,
@@ -846,6 +846,29 @@ export function resolveObservations(ws: Workspace, run: Run, chosen: Set<string>
   const done = run.slices.filter(slice => slice.status === 'done' && slice.review !== undefined);
   if (done.length === 0) throw noGreenReview(requireActive(run).id, purpose);
   throw new Error(`No green review lists these observations: ${[...chosen].join(', ')}. Done slices checked: ${done.map(slice => `${slice.id} (${slice.review?.id})`).join(', ')}.`);
+}
+
+/** What factory_defer takes: observation ids from a green review (as for factory_carry), a free-text note, or both. */
+export type DeferRequest = { note?: string | undefined; observations?: string[] | undefined };
+
+/**
+ * One draft per observation and note, from the green review that lists the ids. Throws without a deferred sink, for a
+ * request with neither ids nor a note, and for ids that are unknown, already carried, or already deferred. Does not
+ * change the run.
+ */
+export function planDefer(ws: Workspace, run: Run, request: DeferRequest) {
+  requireSink(ws);
+  const note = request.note?.trim() ? request.note : undefined;
+  const chosen = new Set(z.array(z.string().min(1)).parse(request.observations ?? []));
+  if (note === undefined && chosen.size === 0) throw new Error('factory_defer needs observation ids, a note, or both.');
+  const { observations, review, slice } = resolveObservations(ws, run, chosen, 'defer observations or a note');
+  if (isRecordSlice(slice)) throw new Error(`Slice ${slice.id} "${slice.title}" writes the deferred sink file, so its review items are not deferred. They stay in the review itself (the green review observations, and for accepted-unresolved findings slice.unresolved and the accepted-unresolved event).`);
+  requireNotCarriedOrDeferred(run, review.id, observations);
+  const noted = run.deferred.filter(item => item.review === review.id && item.kind === 'note').length;
+  return [
+    ...(note === undefined ? [] : [draftOf(run, slice, review.id, { detail: redact(note), key: itemKey(review.id, `note:${noted + 1}`), kind: 'note', title: note })]),
+    ...observations.map(finding => draftOf(run, slice, review.id, { detail: renderFinding(finding, run.decisions, '###'), id: finding.id, key: itemKey(review.id, finding.id), kind: 'observation', title: finding.title })),
+  ];
 }
 
 /**
