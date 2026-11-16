@@ -228,3 +228,27 @@ describe('fix item verdicts', { concurrency: 4 }, () => {
     assert.equal(await submit('scope', { fixItems: [] }), 0);
   });
 });
+
+describe('waiver by autonomous decision', () => {
+  it('refuses a waived verdict that names an autonomous decision', async () => {
+    using ws = workspace({ maxRounds: 3 });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => void (run.mode = 'headless'));
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => recordDecisions(ws, run, ['Autonomous call.']));
+    await step(ws, run => runChecks(ws, run));
+    const first = await step(ws, run => startReview(ws, run));
+    await review(ws, first.reviewId, [finding('bug', 'high', 'a')]);
+    await step(ws, run => recordReview(ws, run));
+    commit(ws, 'ok', 'fixed\n');
+    await step(ws, run => runChecks(ws, run));
+    const opened = await step(ws, run => startReview(ws, run));
+    await assert.rejects(
+      step(ws, run =>
+        submitDomain(ws, run, { agentId: 'r-scope', domain: 'scope', findings: [], fixItems: [{ id: 'bug-a', reason: 'accepted', status: 'waived', decision: 1 }], reviewId: opened.reviewId }),
+      ),
+      /recorded autonomously/,
+    );
+  });
+});

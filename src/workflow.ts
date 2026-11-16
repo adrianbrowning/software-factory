@@ -325,7 +325,8 @@ function renderDecisions(run: Run, slice: Slice) {
     .map((decision, index) => {
       const owner = later.find(item => item.ownsDecisions.includes(index + 1));
       const mark = owner === undefined ? '' : ` ${builtBy(owner, 'Built')}: this slice need not build it; report only code that contradicts it.`;
-      return `${index + 1}. ${decision}${mark}`;
+      const author = decision.author === 'autonomous' ? ' [AUTONOMOUS: made by a headless run without the user; check the code against it, it is not a waiver]' : '';
+      return `${index + 1}. ${decision.text}${author}${mark}`;
     })
     .join('\n');
 }

@@ -439,7 +439,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
   tool({
     caller: 'main',
     description:
-      'Record decisions the user made (accepted tradeoffs, out-of-scope work). The user confirms them; every later ticket and review data file lists them. A decision may name the slice that builds it; slices before that one mark it as built later.',
+      'Record decisions (accepted tradeoffs, out-of-scope work). In an interactive run the user confirms them; in a headless run they are recorded as autonomous and marked so. Every later ticket and review data file lists them. A decision may name the slice that builds it; slices before that one mark it as built later.',
     label: 'Factory: record decisions',
     name: 'factory_decide',
     schema: decisionsSchema,
@@ -448,7 +448,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
       const planned = planDecisions(readRun(ws, feature), params.decisions);
       const body = planned.map(({ owner, text }) => `- ${text}${owner === undefined ? '' : ` (${builtBy(owner)})`}`).join('\n');
       if (!(await gate(ctx, ws, feature, 'decide', 'Record these decisions for reviewers?', body))) {
-        return reply('The user rejected these decisions. Ask how to word them.');
+        return reply('The decisions were rejected. Ask how to word them.');
       }
       return withRun(ws, feature, run => {
         const { decisions, discarded } = recordDecisions(ws, run, params.decisions);

@@ -233,7 +233,7 @@ describe('factory_decide', () => {
 
     await call('factory_decide', { decisions: ['Plain decision.', { slice: '02', text: 'Second builds the export.' }] });
     const run = readRun(ws, 'demo');
-    assert.deepEqual(run.decisions, ['Plain decision.', 'Second builds the export.']);
+    assert.deepEqual(run.decisions, [{ author: 'user', text: 'Plain decision.' }, { author: 'user', text: 'Second builds the export.' }]);
     assert.deepEqual(run.slices.map(item => item.ownsDecisions), [[], [2]]);
     assert.match(confirms.at(-1) ?? '', /^- Plain decision\.\n- Second builds the export\. \(built by slice 02 \(Second\)\)$/);
     assert.equal(run.events.at(-1)?.detail, 'Plain decision.; Second builds the export. (built by slice 02 (Second))');

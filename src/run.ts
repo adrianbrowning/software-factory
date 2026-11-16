@@ -235,6 +235,13 @@ const agentRecordSchema = z.object({
 });
 export type AgentRecord = z.infer<typeof agentRecordSchema>;
 
+/** A recorded decision. `autonomous` marks one a headless run made without the user. Older state files hold plain strings, loaded as the user's. */
+const decisionSchema = z.preprocess(
+  value => (typeof value === 'string' ? { text: value } : value),
+  z.object({ author: z.enum(['autonomous', 'user']).default('user'), text }),
+);
+export type Decision = z.infer<typeof decisionSchema>;
+
 const runSchema = z.object({
   /** One record per factory agent or scout session the run's main session spawned. Empty in runs from before it was kept. */
   agents: z.array(agentRecordSchema).default([]),
@@ -244,8 +251,8 @@ const runSchema = z.object({
   /** Check commands every slice must pass, fixed when the run starts. Empty in runs from before they were kept here. */
   checks: z.array(text).default([]),
   createdAt: text,
-  /** Decisions the user made during the run (accepted tradeoffs, out-of-scope work). Reviewers read them. */
-  decisions: z.array(text).default([]),
+  /** Decisions recorded during the run (accepted tradeoffs, out-of-scope work), each with its author. Reviewers read them; an autonomous one is checked, not a waiver. */
+  decisions: z.array(decisionSchema).default([]),
   events: z.array(z.object({ at: text, detail: z.string(), kind: text, slice: z.string().optional() })),
   feature: text,
   /** Existing local branch that `/factory submit` fast-forwards to the top slice, instead of opening PRs. */

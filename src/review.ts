@@ -17,6 +17,7 @@ import {
   dropPass,
   greenCommit,
   outdatedGreenCount,
+  type Decision,
   type Domain,
   type Finding,
   findingListSchema,
@@ -89,7 +90,7 @@ export function planDecisions(run: Run, decisions: unknown) {
 export function recordDecisions(ws: Workspace, run: Run, decisions: unknown) {
   const added = planDecisions(run, decisions);
   for (const { owner, text } of added) {
-    run.decisions.push(text);
+    run.decisions.push({ author: run.mode === 'headless' ? 'autonomous' : 'user', text });
     owner?.ownsDecisions.push(run.decisions.length);
   }
   for (const slice of run.slices.filter(candidate => candidate.status !== 'done')) writeTicket(ws, run, slice);
@@ -456,7 +457,7 @@ export function submitDomain(
   if (domain === 'scope') {
     if (input.fixItems === undefined) throw new Error('The scope domain gives fixItems: a verdict for each FIX ITEMS id, [] when the review data lists none.');
     verdicts = z.array(fixVerdictSchema).parse(input.fixItems);
-    checkFixVerdicts(requireActive(run).fixItems, verdicts, review.decisions);
+    checkFixVerdicts(requireActive(run).fixItems, verdicts, review.decisions, run.decisions);
   } else if (input.fixItems !== undefined) {
     throw new Error('Only the scope domain gives fix item verdicts; leave out fixItems.');
   }
@@ -471,7 +472,7 @@ export function submitDomain(
  * Throws unless `verdicts` give exactly one verdict for each listed fix item, and each waived item names one of the
  * review's `decisionCount` decisions. fixVerdictSchema already holds that a waived item, and only a waived item, names one.
  */
-function checkFixVerdicts(items: FixItem[], verdicts: FixVerdict[], decisionCount: number) {
+function checkFixVerdicts(items: FixItem[], verdicts: FixVerdict[], decisionCount: number, decisions: Decision[]) {
   const listed = new Set(items.map(item => item.id));
   const seen = new Set<string>();
   for (const verdict of verdicts) {
@@ -485,6 +486,9 @@ function checkFixVerdicts(items: FixItem[], verdicts: FixVerdict[], decisionCoun
   for (const verdict of verdicts) {
     if (verdict.status === 'waived' && verdict.decision > decisionCount) {
       throw new Error(`Fix item "${verdict.id}" names decision ${verdict.decision}, but the review data lists ${decisionCount} decisions.`);
+    }
+    if (verdict.status === 'waived' && decisions[verdict.decision - 1]?.author === 'autonomous') {
+      throw new Error(`Fix item "${verdict.id}" names decision ${verdict.decision}, which was recorded autonomously. An autonomous decision is not a waiver; mark the item open or fixed.`);
     }
   }
 }
@@ -561,7 +565,7 @@ function keptFindings(findings: Finding[], validation: Validation) {
  * dropped in favour of a kept, downgraded, or escalated finding of the same or higher severity (original severity,
  * except that an escalated finding counts as high).
  */
-function checkCoverage(findings: Finding[], validation: Validation, decisionCount: number) {
+function checkCoverage(findings: Finding[], validation: Validation, decisionCount: number, decisions: Decision[]) {
   const downgraded = validation.downgrade.map(entry => entry.id);
   const escalated = validation.escalate.map(entry => entry.id);
   const retained = [...validation.keep, ...downgraded, ...escalated];
@@ -577,6 +581,16 @@ function checkCoverage(findings: Finding[], validation: Validation, decisionCoun
   const breaksDecision = downgraded.filter(id => byId.get(id)?.decision !== undefined);
   if (breaksDecision.length > 0) {
     throw new Error(`A finding that breaks a recorded decision cannot be downgraded; keep it or drop it: ${breaksDecision.join(', ')}`);
+  }
+  const autonomous = (id: string) => {
+    const number = byId.get(id)?.decision;
+    return number !== undefined && decisions[number - 1]?.author === 'autonomous';
+  };
+  const usesAutonomous = [...downgraded, ...validation.dropped.map(entry => entry.id)].filter(
+    id => byId.get(id)?.severity !== 'observation' && autonomous(id),
+  );
+  if (usesAutonomous.length > 0) {
+    throw new Error(`A blocking finding that breaks an autonomous decision cannot be dropped or downgraded; keep it: ${usesAutonomous.join(', ')}`);
   }
   const alreadyBlocking = escalated.filter(id => byId.get(id)?.severity !== 'observation');
   if (alreadyBlocking.length > 0) throw new Error(`Only observation findings can be escalated; keep these instead: ${alreadyBlocking.join(', ')}`);
@@ -616,7 +630,7 @@ export function submitValidation(
   const { findings, missing } = readDomainFindings(ws, run, input.reviewId);
   if (missing.length > 0) throw new Error(`Domains not submitted yet: ${missing.join(', ')}`);
   const validation = validationSchema.parse({ downgrade: input.downgrade, dropped: input.dropped, escalate: input.escalate, keep: input.keep });
-  checkCoverage(findings, validation, review.decisions);
+  checkCoverage(findings, validation, review.decisions, run.decisions);
   const content = `${JSON.stringify(validation, null, 2)}\n`;
   writeAtomic(validationFile(ws, run, input.reviewId), content);
   review.validation = { agentId: input.agentId, ...(previous === undefined ? {} : { amended: true }), hash: sha256(content) };
@@ -643,8 +657,8 @@ function findingLocation(finding: Finding) {
 }
 
 /** A finding as a markdown section under a `heading` of the given level (`##` by default). */
-export function renderFinding(finding: Finding, decisions: string[], heading = '##') {
-  const decision = finding.decision === undefined ? '' : `\n- Breaks decision ${finding.decision}: ${decisions[finding.decision - 1] ?? ''}`;
+export function renderFinding(finding: Finding, decisions: Decision[], heading = '##') {
+  const decision = finding.decision === undefined ? '' : `\n- Breaks decision ${finding.decision}: ${decisions[finding.decision - 1]?.text ?? ''}`;
   return `${heading} [${finding.severity}] ${finding.id}\n\n- Location: ${findingLocation(finding)}\n- Title: ${evidence(finding.title, 500)}\n- Problem: ${evidence(finding.problem, 2_000)}\n- Fix: ${evidence(finding.fix, 2_000)}\n- Fix prompt: ${evidence(finding.fix_prompt, 2_000)}${decision}`;
 }
 
@@ -657,7 +671,7 @@ export async function recordReview(ws: Workspace, run: Run) {
   const raw = readRecorded(validationFile(ws, run, review.id), review.validation);
   if (raw === undefined) throw new Error('The validator has not submitted. Spawn factory-review-validator.');
   const validation = validationSchema.parse(raw);
-  checkCoverage(findings, validation, review.decisions);
+  checkCoverage(findings, validation, review.decisions, run.decisions);
   if ((await snapshot(ws.root)) !== review.snapshot) {
     dropPass(slice, 'checks');
     addEvent(run, 'review-invalidated', `${review.id}: repository changed during review`, slice);
@@ -708,7 +722,7 @@ function renderOpenItem(item: FixItem, verdict: FixVerdict | undefined) {
 }
 
 /** A finding as a fix record in `group`: its id and summary `[severity] path:line: title` as the fix item. */
-function findingRecord(finding: Finding, group: string, decisions: string[]): FixRecord {
+function findingRecord(finding: Finding, group: string, decisions: Decision[]): FixRecord {
   const summary = `[${finding.severity}] ${findingLocation(finding)}: ${evidenceLine(finding.title, 500)}`;
   return { group, item: { id: finding.id, summary }, section: renderFinding(finding, decisions, '###') };
 }
