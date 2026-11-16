@@ -311,35 +311,33 @@ function renderedObservation(section: string, id: string) {
   return found === null ? undefined : { location: found[1] ?? '', problem: found[3] ?? '', title: found[2] ?? '' };
 }
 
+/** What an entry migrated from a state file holds when no single rendered finding is found for it. */
+const LEGACY_LOCATION = 'unknown';
+const LEGACY_PROBLEM = 'Recorded before the run kept the text of handled observations.';
+
 /**
- * The ledger of a state file from before it was kept: an entry for each carried key and each deferred observation item,
- * and the keys whose finding text no single section or body holds. `sections` are the carried-in sections of the
- * tickets and the end queue, each with where it waits.
+ * The ledger of a state file from before it was kept: an entry for each carried key and each deferred observation item.
+ * `sections` are the carried-in sections of the tickets and the end queue, each with where it waits.
  */
 function legacyObservations(carried: string[], deferred: DeferredItem[], sections: { text: string; to: string }[]) {
-  // LEGACY-STATE(carried-observations): a state file from before the ledger kept carried observations as `review:id` keys and deferred ones as deferred items. Each becomes an entry whose location, title and problem are read from the finding the carried-in section or the deferred item body rendered; a key whose text is not in exactly one of them makes the state unreadable. Remove once no run saved before the release that ships the ledger is left to resume.
+  // LEGACY-STATE(carried-observations): a state file from before the ledger kept carried observations as `review:id` keys and deferred ones as deferred items. Each becomes an entry whose location, title and problem are read from the finding that exactly one carried-in section or the deferred item body rendered. An entry whose text is not found that way, or is found in more than one carried-in section, gets the placeholder location and problem and its id as title, so the state always loads and a repeat is still refused by key. A key both carried and deferred is one entry, carried. Remove once no run saved before the release that ships the ledger is left to resume.
   const entries: ObservationEntry[] = [];
-  const missing: string[] = [];
   for (const key of new Set(carried)) {
     const at = key.indexOf(':');
-    if (at < 1 || at === key.length - 1) {
-      missing.push(key);
-      continue;
-    }
-    const review = key.slice(0, at);
-    const id = key.slice(at + 1);
+    const review = at < 1 ? key : key.slice(0, at);
+    const id = at < 1 || at === key.length - 1 ? key : key.slice(at + 1);
     const matching = sections.filter(candidate => candidate.text.startsWith(`### From green review ${review} of slice `) && renderedObservation(candidate.text, id) !== undefined);
     const [section, ...others] = matching;
-    const rendered = section === undefined ? undefined : renderedObservation(section.text, id);
-    if (section === undefined || rendered === undefined || others.length > 0) missing.push(key);
-    else entries.push({ id, key, placement: 'carried', review, slice: review.split('-')[0] ?? review, to: section.to, ...rendered });
+    const rendered = section === undefined || others.length > 0 ? undefined : renderedObservation(section.text, id);
+    const base = { id, key, placement: 'carried' as const, review, slice: review.split('-')[0] ?? review };
+    entries.push(rendered === undefined || section === undefined ? { ...base, location: LEGACY_LOCATION, problem: LEGACY_PROBLEM, title: id } : { ...base, to: section.to, ...rendered });
   }
-  for (const item of deferred.filter(candidate => candidate.kind === 'observation' && candidate.id !== undefined)) {
-    const rendered = renderedObservation(item.body, item.id ?? '');
-    if (rendered === undefined || entries.some(entry => entry.key === item.key)) missing.push(item.key);
-    else entries.push({ id: item.id ?? '', key: item.key, placement: 'deferred', review: item.review, slice: item.slice, ...rendered });
+  for (const item of deferred.filter(candidate => candidate.kind === 'observation' && candidate.id !== undefined && !entries.some(entry => entry.key === candidate.key))) {
+    const id = item.id ?? item.key;
+    const base = { id, key: item.key, placement: 'deferred' as const, review: item.review, slice: item.slice };
+    entries.push({ ...base, ...(renderedObservation(item.body, id) ?? { location: LEGACY_LOCATION, problem: LEGACY_PROBLEM, title: id }) });
   }
-  return { entries, missing };
+  return entries;
 }
 
 const runSchema = z.object({
@@ -382,15 +380,11 @@ const runSchema = z.object({
    */
   waiting: z.array(text).default([]),
   version: z.literal(1),
-}).transform(({ carriedObservations, slices, ...run }, context) => {
+}).transform(({ carriedObservations, slices, ...run }) => {
   const sections = [...run.waiting.map(section => ({ text: section, to: 'end' })), ...slices.flatMap(slice => slice.carried.map(section => ({ text: section, to: slice.id })))];
   // A state file with an `observations` list is current: its deferred items are not read as observations.
-  const migrated = run.observations === undefined ? legacyObservations(carriedObservations, run.deferred, sections) : { entries: run.observations, missing: [] };
-  if (migrated.missing.length > 0) {
-    context.addIssue({ code: 'custom', message: `The observation ledger cannot read the carried or deferred observations ${migrated.missing.join(', ')}: each needs exactly one placement and exactly one carried-in section or deferred item that holds its finding text.` });
-    return z.NEVER;
-  }
-  return { ...run, observations: migrated.entries, slices: slices.map(slice => legacySlice(slice, run.checks)) };
+  const observations = run.observations ?? legacyObservations(carriedObservations, run.deferred, sections);
+  return { ...run, observations, slices: slices.map(slice => legacySlice(slice, run.checks)) };
 });
 export type Run = z.infer<typeof runSchema>;
 

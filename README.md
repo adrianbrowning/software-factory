@@ -249,8 +249,9 @@ run asks once; a declined dialog records nothing, and a headless run records wit
   again in the run.
 - A run saved before the ledger loads its carried and deferred observations as ledger entries, with the location,
   title and problem read from the finding that the carried-in section of a ticket or the end queue, or the deferred
-  item's body, rendered. A state file whose carried or deferred observation has no such text, or has it in more than one
-  carried-in section, is refused as corrupt.
+  item's body, rendered. When that text is not found, or more than one carried-in section holds it, the entry gets a
+  placeholder location (`unknown`) and problem, and is still refused by key. A key both carried and deferred is one
+  entry, carried.
 
 ### Reopen a done slice
 

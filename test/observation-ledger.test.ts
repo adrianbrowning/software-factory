@@ -217,24 +217,37 @@ describe('observation ledger', () => {
       assert.deepEqual(readRun(ws, 'demo').observations, [...expected, entry('order', 'left')]);
     });
 
-    it('refuses to read a carried key that no single carried-in section holds, or that is malformed', async () => {
+    it('loads a state whose carried key has no single carried-in section, giving the entry placeholder text, and keeps a key both carried and deferred as one carried entry', async () => {
       using dir = repo();
       const { call, ws } = await ledgerRun(dir.root, ['naming']);
       await call('factory_carry', { observations: ['thermo-naming'], to: '02' });
-      for (const key of ['09-r1:thermo-gone', 'no-colon', ':thermo-naming', '01-r1:thermo-.aming']) {
-        saveAsLegacy(ws, [key]);
-        assert.throws(() => readRun(ws, 'demo'), new RegExp(`Corrupt factory state[\\s\\S]*cannot read the carried or deferred observations ${key.replace('.', '\\.')}`));
-      }
+      const placeholder = { location: 'unknown', problem: 'Recorded before the run kept the text of handled observations.' };
+
+      saveAsLegacy(ws, ['09-r1:thermo-gone', 'no-colon']);
+      assert.deepEqual(readRun(ws, 'demo').observations, [
+        { ...placeholder, id: 'thermo-gone', key: '09-r1:thermo-gone', placement: 'carried', review: '09-r1', slice: '09', title: 'thermo-gone' },
+        { ...placeholder, id: 'no-colon', key: 'no-colon', placement: 'carried', review: 'no-colon', slice: 'no', title: 'no-colon' },
+      ], 'a key no section holds, and a malformed key');
+
       saveAsLegacy(ws, ['01-r1:thermo-naming'], state => {
         const second = (state.slices as { carried: string[] }[])[1] ?? assert.fail('no slice 02');
         second.carried.push(second.carried[0] ?? assert.fail('nothing carried'));
       });
-      assert.throws(() => readRun(ws, 'demo'), /cannot read the carried or deferred observations 01-r1:thermo-naming: each needs exactly one placement/);
+      assert.deepEqual(readRun(ws, 'demo').observations, [{ ...placeholder, id: 'thermo-naming', key: '01-r1:thermo-naming', placement: 'carried', review: '01-r1', slice: '01', title: 'thermo-naming' }], 'a key two sections hold');
+      await assert.rejects(call('factory_leave', { observations: ['thermo-naming'] }), /Observations already carried: thermo-naming\./);
+
       saveAsLegacy(ws, ['01-r1:thermo-naming'], state => {
-        const carried = (state.slices as { carried: string[] }[])[1]?.carried[0] ?? assert.fail('nothing carried');
+        const second = (state.slices as { carried: string[] }[])[1] ?? assert.fail('no slice 02');
+        const carried = second.carried[0] ?? assert.fail('nothing carried');
+        second.carried = [carried];
         state.deferred = [{ body: carried, id: 'thermo-naming', key: '01-r1:thermo-naming', kind: 'observation', location: 'docs/factory-deferred.md', review: '01-r1', slice: '01', title: 'naming' }];
       });
-      assert.throws(() => readRun(ws, 'demo'), /cannot read the carried or deferred observations 01-r1:thermo-naming: each needs exactly one placement/, 'a key that is both carried and deferred');
+      assert.deepEqual(readRun(ws, 'demo').observations, [entry('naming', 'carried', '02')], 'one carried entry with the text read');
+
+      saveAsLegacy(ws, [], state => {
+        state.deferred = [{ body: 'no rendered finding', id: 'thermo-naming', key: '01-r1:thermo-naming', kind: 'observation', location: 'docs/factory-deferred.md', review: '01-r1', slice: '01', title: 'naming' }];
+      });
+      assert.deepEqual(readRun(ws, 'demo').observations, [{ ...placeholder, id: 'thermo-naming', key: '01-r1:thermo-naming', placement: 'deferred', review: '01-r1', slice: '01', title: 'thermo-naming' }], 'a deferred body with no finding');
     });
   });
 });
