@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
-import { readRun } from '../src/run.ts';
+import { forgetRun, readRun, statePath } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { fixObservations } from '../src/observations.ts';
 import { nextAction, nextSlice } from '../src/workflow.ts';
@@ -72,6 +72,33 @@ describe('slice loop gates: fixes', { concurrency: 4 }, () => {
     assert.equal(again.stalled, false);
     assert.notEqual(again.fixPath, fixed.fixPath, 'a second observation round does not overwrite the first fix file');
     assert.equal(readRun(ws, 'demo').slices[0]?.fixRounds, 1);
+  });
+
+  it('numbers fix files from a per-slice counter: two observation rounds then a bug round are f1, f2, f3 and only the bug round counts', async () => {
+    using ws = workspace({ maxRounds: 3 });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const paths: string[] = [];
+    for (const name of ['one', 'two', 'three']) {
+      const opened = await step(ws, run => startReview(ws, run));
+      await review(ws, opened.reviewId, [finding('thermo', 'observation', name)]);
+      await step(ws, run => recordReview(ws, run));
+      const round = await step(ws, run => fixObservations(ws, run, name === 'three' ? { bug: 'Crash.', observations: ['thermo-three'] } : { observations: [`thermo-${name}`] }, 'tidy'));
+      paths.push(round.fixPath);
+      commit(ws, 'ok', `${name}\n`);
+      await step(ws, run => runChecks(ws, run));
+    }
+    assert.deepEqual(paths.map(path => path.slice(path.lastIndexOf('/') + 1)), ['01-f1.md', '01-f2.md', '01-f3.md']);
+    assert.equal(readRun(ws, 'demo').slices[0]?.fixRounds, 1);
+    assert.equal(readRun(ws, 'demo').slices[0]?.fixFiles, 3);
+    const path = statePath(ws, 'demo');
+    const saved = JSON.parse(readFileSync(path, 'utf8'));
+    delete saved.slices[0].fixFiles;
+    writeFileSync(path, JSON.stringify(saved));
+    forgetRun(ws, 'demo');
+    assert.equal(readRun(ws, 'demo').slices[0]?.fixFiles, 1, 'a slice saved without the counter starts from fixRounds');
   });
 
   it('counts a fix round for a bug together with observations and stalls at the limit', async () => {

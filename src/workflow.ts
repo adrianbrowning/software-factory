@@ -234,6 +234,7 @@ function makeSlice(ws: Workspace, run: Run, input: SliceInput, index: number, pa
     carried: [],
     compactions: 0,
     fixItems: [],
+    fixFiles: 0,
     fixRounds: 0,
     id,
     ownsDecisions: input.ownsDecisions ?? [],
@@ -608,9 +609,8 @@ export type FixRecord = { group?: string; item: FixItemInput; section: string };
  * `counted` is false (observation-only rounds from factory_fix).
  */
 export function requestFix(ws: Workspace, run: Run, slice: Slice, sha: string, records: FixRecord[], counted = true) {
-  let round = slice.fixRounds + 1;
-  // An uncounted round leaves fixRounds alone, so the next round number can name a fix file that exists already.
-  while (existsSync(join(runDir(ws, run.feature), 'fixes', `${slice.id}-f${round}.md`))) round += 1;
+  slice.fixFiles += 1;
+  const round = slice.fixFiles;
   let checks = 0;
   const items = records.map(({ item }) => {
     if ('id' in item) return item;

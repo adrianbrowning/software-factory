@@ -163,6 +163,8 @@ const sliceSchema = sliceInputSchema.extend({
   fixFromSha: sha.optional(),
   /** Fix items from every fix round since the slice's last recorded review; recording a review clears them, and its fix file asks again for the blocking findings and open items. */
   fixItems: z.array(fixItemSchema).default([]),
+  /** Fix files written for the slice, counted or not; the next fix file is `<id>-f<fixFiles + 1>`. `fixRounds` is only the fix budget count. A slice saved without it starts from `fixRounds`, since every old round counted (see legacySlice). */
+  fixFiles: z.number().int().nonnegative(),
   fixRounds: z.number().int().nonnegative(),
   /**
    * The green review of the checked commit (`checked.sha`, see `greenCommit`): how many recorded decisions it covered,
@@ -200,6 +202,7 @@ export function builtBy(slice: Slice, start: 'built' | 'Built' = 'built') {
  * review as greenSha and greenDecisions. Read by `legacySlice`.
  */
 const legacySliceSchema = sliceSchema.extend({
+  fixFiles: z.number().int().nonnegative().optional(),
   checkedSha: sha.optional(),
   checkResults: z.array(text).optional(),
   greenDecisions: z.number().int().nonnegative().optional(),
@@ -222,7 +225,7 @@ function legacySlice({ checkedSha, checkResults, greenDecisions, greenSha, ...sl
   // LEGACY-STATE(green-sha): a green review was greenSha; it carries over as `green` only when greenSha is the checked commit, so a slice not done whose checkedSha moved past it loses its green review. Remove with checked-pass.
   let green = slice.green;
   if (green === undefined && greenSha !== undefined && checked?.sha === greenSha) green = greenDecisions === undefined ? {} : { decisions: greenDecisions };
-  return { ...slice, checked, green };
+  return { ...slice, checked, fixFiles: slice.fixFiles ?? slice.fixRounds, green };
 }
 
 /**
