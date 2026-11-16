@@ -76,6 +76,7 @@ import {
   sourceInputSchema,
   startRun,
   summarize,
+  HEADLESS_FIX_ROUNDS,
 } from './workflow.ts';
 
 const DEFAULT_FACTORY_REPO = 'adrianbrowning/software-factory';
@@ -233,6 +234,14 @@ async function decideStall(ctx: ExtensionContext, ws: Workspace, feature: string
   const run = readRun(ws, feature);
   const slice = activeSlice(run);
   if (slice === undefined || !slice.stalled) return '';
+  if (run.mode === 'headless') {
+    // A headless run never prompts to raise the fix budget: red checks after the last round pause the run.
+    const round = Math.max(...slice.fixItems.map(item => item.round));
+    const failing = slice.fixItems.filter(item => item.round === round).map(item => item.summary);
+    const reason = `slice ${slice.id} "${slice.title}" is still red after ${slice.roundLimit} fix rounds: ${failing.join('; ')}`;
+    await withRun(ws, feature, current => pauseRun(current, reason));
+    return `\nThe headless run is paused: ${reason}. ${stallNotice(run, slice)} Stop now.`;
+  }
   const more = `Continue: ${ws.config.maxRounds} more fix rounds`;
   const choice = ctx.hasUI
     ? await ctx.ui.select(`Slice ${slice.id} "${slice.title}" is not green after ${slice.roundLimit} fix rounds`, [
@@ -336,7 +345,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
     bindRun(entry.pointer, { feature: run.feature, mainId: ctx.agent.id, ws });
     await pi.setActiveTools([...new Set([...pi.getActiveTools(), ...ORCHESTRATION_TOOLS])]);
     return reply(
-      `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${ws.config.maxRounds}.\nNext: ${nextAction(run)}`,
+      `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${run.mode === 'headless' ? HEADLESS_FIX_ROUNDS : ws.config.maxRounds}.\nNext: ${nextAction(run)}`,
       summarize(ws, run),
     );
   }
@@ -578,6 +587,11 @@ export default function softwareFactory(pi: ExtensionAPI) {
             : '';
         const bug = '\nWhen the user finds a bug in this slice before it is done, call factory_fix with the bug (and any observation ids).';
         return reply(`Review is green.${notes}${bug}\nNext: ${nextAction(readRun(ws, feature))}`);
+      }
+      if (result.unresolved !== undefined) {
+        return reply(
+          `Review is accepted unresolved: the fix budget is used up, and a headless run does not raise it. Open:\n${result.unresolved.join('\n')}\nThe slice counts as green with these items on record.\nNext: ${nextAction(readRun(ws, feature))}`,
+        );
       }
       const stall = result.stalled ? await decideStall(ctx, ws, feature) : '';
       return reply(`${result.blocking} blocking findings, ${result.open} open fix items. Fix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
