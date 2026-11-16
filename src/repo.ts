@@ -13,34 +13,44 @@ export async function porcelain(root: string) {
 }
 
 /** Identity of the committed and uncommitted repository state at `sha` with `status` (as `porcelain` returns it); ignored files (the run state) are excluded. */
-export function snapshotOf(sha: string, status: string) {
+function snapshotOf(sha: string, status: string) {
   return createHash('sha256').update(`${sha}\n${status}`).digest('hex');
 }
 
-export async function snapshot(root: string) {
-  return snapshotOf(await head(root), await porcelain(root));
+/**
+ * HEAD, the checked-out branch ('' when detached) and whether the tree is clean, from one `git status` call. A clean
+ * tree is the common case, so the dirty text (`porcelain`) is read only when something needs it.
+ */
+async function readState(root: string) {
+  const lines = (await git(root, 'status', '--porcelain=v2', '--branch', '--untracked-files=all')).split('\n').filter(Boolean);
+  const header = (name: string) => lines.find(line => line.startsWith(`# ${name} `))?.slice(`# ${name} `.length);
+  const oid = header('branch.oid');
+  const branch = header('branch.head');
+  return {
+    branch: branch === undefined || branch === '(detached)' ? '' : branch,
+    clean: lines.every(line => line.startsWith('# ')),
+    // A repository with no commit has no HEAD: `head` then fails as it always did.
+    sha: oid === undefined || oid === '(initial)' ? await head(root) : oid,
+  };
 }
 
-function refuseDirty(status: string, action: string) {
-  if (status.trim() !== '') throw new Error(`${action}: commit or remove these changes first:\n${evidence(status, 2_000)}`);
+export async function snapshot(root: string) {
+  const state = await readState(root);
+  return snapshotOf(state.sha, state.clean ? '' : await porcelain(root));
 }
 
 export async function requireClean(root: string, action: string) {
-  refuseDirty(await porcelain(root), action);
+  const status = await porcelain(root);
+  if (status.trim() !== '') throw new Error(`${action}: commit or remove these changes first:\n${evidence(status, 2_000)}`);
 }
 
 /**
- * Refuses unless the slice branch is checked out and the working tree is clean, from one `git status` call. Returns the
- * status (as `porcelain` returns it), so a caller that needs the state it just checked does not read it again.
+ * Refuses unless the slice branch is checked out and the working tree is clean, from one `git status` call.
+ * Returns HEAD, so a caller that needs it does not read it again.
  */
 export async function requireOnBranchClean(root: string, slice: Slice, action: string) {
-  const out = await git(root, 'status', '--porcelain=v1', '--branch', '--untracked-files=all');
-  const end = out.indexOf('\n');
-  const header = (end === -1 ? out : out.slice(0, end)).slice('## '.length);
-  const status = end === -1 ? '' : out.slice(end + 1);
-  // `main`, `main...origin/main [ahead 1]`, `No commits yet on main`, or `HEAD (no branch)`; a branch name holds no space and no `...`.
-  const branch = header.startsWith('HEAD (no branch)') ? '' : (/^(?:No commits yet on |Initial commit on )?(.*?)(?:\.\.\.| |$)/.exec(header)?.[1] ?? '');
-  if (branch !== slice.branch) throw new Error(`Slice ${slice.id} works on ${slice.branch}, but ${branch || 'a detached HEAD'} is checked out.`);
-  refuseDirty(status, action);
-  return status;
+  const state = await readState(root);
+  if (state.branch !== slice.branch) throw new Error(`Slice ${slice.id} works on ${slice.branch}, but ${state.branch || 'a detached HEAD'} is checked out.`);
+  if (!state.clean) await requireClean(root, action);
+  return state.sha;
 }

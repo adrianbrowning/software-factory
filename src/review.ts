@@ -41,7 +41,7 @@ import {
   writeAtomic,
 } from './run.ts';
 import { storedReport } from './report.ts';
-import { head, porcelain, requireOnBranchClean, snapshot, snapshotOf } from './repo.ts';
+import { head, porcelain, requireOnBranchClean, snapshot } from './repo.ts';
 import {
   type FixRecord,
   pauseRun,
@@ -147,7 +147,7 @@ async function ownCommits(ws: Workspace, slice: Slice) {
 
 export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   const slice = requireActive(run);
-  await requireOnBranchClean(ws.root, slice, 'Checks run on committed work only');
+  const sha = await requireOnBranchClean(ws.root, slice, 'Checks run on committed work only');
   // Read before the refusals, so a stop report submitted before any commit still reaches the orchestrator.
   const report = storedReport(ws, run, slice);
   const own = await ownCommits(ws, slice);
@@ -160,7 +160,7 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   }
   const commits = own.map(commit => commit.oneline).join('\n');
   if (own.length === 0) throw new Error(`Slice ${slice.id} has no commits past ${slice.parentBranch}. The implementer must commit the slice work first.\n${report}`);
-  const sha = await head(ws.root);
+  // `sha` is HEAD from the guard above; the log and rev-list reads in between do not move it.
   // A fix round that ends on the commit its fix file described: the implementer changed nothing.
   const unchanged = slice.phase === 'fix' && slice.fixFromSha === sha;
   // Checks that still stand on this commit are not run again. A new commit no longer matches the checked commit, and
@@ -297,10 +297,10 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   // still ready here.
   const outdated = outdatedGreenCount(run, slice) !== undefined;
   if (!outdated && (slice.phase !== 'review' || slice.checked === undefined)) throw new Error('Checks must pass first: call factory_checks.');
-  const clean = await requireOnBranchClean(ws.root, slice, 'Review needs committed work');
+  const guarded = await requireOnBranchClean(ws.root, slice, 'Review needs committed work');
   if (outdated) reopenReview(run, slice);
   const checked = slice.checked;
-  if (checked === undefined || (await head(ws.root)) !== checked.sha) {
+  if (checked === undefined || guarded !== checked.sha) {
     dropPass(slice, 'checks');
     throw new Invalidated('HEAD moved after checks passed. Call factory_checks again.');
   }
@@ -344,8 +344,7 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
     `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n${renderLaterSlices(run, slice)}\n\n## CHECKS\n\nThe factory ran every configured check on \`${checked.sha}\` and all passed. Do not run them again.\n\n${checked.results.map(result => `- ${result}`).join('\n')}\n\n## FIX ITEMS\n\n${listed}\n\n## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files.join('\n')}\n`,
   );
   const lines = changedLines(diff, files);
-  // The tree was clean at the check above and `checked.sha` is HEAD, so the snapshot needs no second read.
-  slice.review = { decisions: run.decisions.length, id, lines, sha: checked.sha, skipped, snapshot: snapshotOf(checked.sha, clean), submissions: {} };
+  slice.review = { decisions: run.decisions.length, id, lines, sha: checked.sha, skipped, snapshot: await snapshot(ws.root), submissions: {} };
   const skippedDetail = skipped.map(entry => `${entry.domain} (${entry.reason})`).join('; ');
   addEvent(run, 'review-start', skipped.length === 0 ? id : `${id} skipped ${skippedDetail}`, slice);
   return {
@@ -858,8 +857,8 @@ export async function completeSlice(ws: Workspace, run: Run) {
   if (slice.unresolved !== undefined && run.mode !== 'headless') {
     throw new Error(`Slice ${slice.id} was accepted unresolved by a headless run, and only a headless run completes it. Open: ${slice.unresolved.join('; ')}`);
   }
-  await requireOnBranchClean(ws.root, slice, 'Cannot complete the slice');
-  if ((await head(ws.root)) !== green) {
+  const sha = await requireOnBranchClean(ws.root, slice, 'Cannot complete the slice');
+  if (sha !== green) {
     dropPass(slice, 'checks');
     throw new Invalidated('HEAD moved after the green review. Call factory_checks again.');
   }
