@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, it } from 'node:test';
 
-const SRC = new URL('../src/', import.meta.url).pathname;
+const SRC = fileURLToPath(new URL('../src/', import.meta.url));
 const MAX_LINES = 1000;
 const TICKET_DECISION = /decisions? \d+/i;
 /** A `/` after one of these starts a regular expression; after anything else it divides. */
