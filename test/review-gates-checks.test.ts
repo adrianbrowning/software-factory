@@ -244,4 +244,19 @@ describe('slice loop gates: checks and the fix budget', { concurrency: 4 }, () =
     const run = readRun(ws, 'demo');
     assert.deepEqual([run.status, run.slices[0]?.stalled, run.slices[0]?.roundLimit], ['running', false, 3]);
   });
+
+  it('refuses to run the checks while another branch or a detached HEAD is checked out', async () => {
+    using ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    const sliceBranch = sh(ws.root, 'branch', '--show-current');
+    sh(ws.root, 'switch', '-q', '-c', 'elsewhere');
+    await assert.rejects(step(ws, run => runChecks(ws, run)), new RegExp(`works on ${sliceBranch}, but elsewhere is checked out`));
+    sh(ws.root, 'switch', '-q', '--detach');
+    await assert.rejects(step(ws, run => runChecks(ws, run)), new RegExp(`works on ${sliceBranch}, but a detached HEAD is checked out`));
+    sh(ws.root, 'switch', '-q', sliceBranch);
+    sh(ws.root, 'branch', '-q', '-D', 'elsewhere');
+    assert.ok((await step(ws, run => runChecks(ws, run))).passed);
+  });
 });
