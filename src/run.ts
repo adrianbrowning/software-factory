@@ -225,7 +225,9 @@ function legacySlice({ checkedSha, checkResults, greenDecisions, greenSha, ...sl
   // LEGACY-STATE(green-sha): a green review was greenSha; it carries over as `green` only when greenSha is the checked commit, so a slice not done whose checkedSha moved past it loses its green review. Remove with checked-pass.
   let green = slice.green;
   if (green === undefined && greenSha !== undefined && checked?.sha === greenSha) green = greenDecisions === undefined ? {} : { decisions: greenDecisions };
-  return { ...slice, checked, fixFiles: slice.fixFiles ?? slice.fixRounds, green };
+  // LEGACY-STATE(fix-files): an old state file counted every fix round in fixRounds, so fixFiles starts from it. A slice saved while stalled had already written its f<fixRounds+1> file without raising fixRounds, so fixFiles starts from the higher of fixRounds and the N in the retained fixPath (`<id>-f<N>.md`); otherwise the round after a resumed stall would overwrite that file. Remove with checked-pass, once no run paused before the release that ships fixFiles is left to resume.
+  const pathRound = Number(/-f(\d+)\.md$/.exec(slice.fixPath ?? '')?.[1] ?? 0);
+  return { ...slice, checked, fixFiles: slice.fixFiles ?? Math.max(slice.fixRounds, pathRound), green };
 }
 
 /**

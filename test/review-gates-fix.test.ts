@@ -4,7 +4,7 @@ import { describe, it } from 'node:test';
 import { forgetRun, readRun, statePath } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { fixObservations } from '../src/observations.ts';
-import { nextAction, nextSlice } from '../src/workflow.ts';
+import { nextAction, nextSlice, resolveStall } from '../src/workflow.ts';
 import { commit, finding, green, greenWithObservation, newRun, review, slice, step, workspace } from './helpers.ts';
 
 describe('slice loop gates: fixes', { concurrency: 4 }, () => {
@@ -98,7 +98,38 @@ describe('slice loop gates: fixes', { concurrency: 4 }, () => {
     delete saved.slices[0].fixFiles;
     writeFileSync(path, JSON.stringify(saved));
     forgetRun(ws, 'demo');
-    assert.equal(readRun(ws, 'demo').slices[0]?.fixFiles, 1, 'a slice saved without the counter starts from fixRounds');
+    assert.equal(readRun(ws, 'demo').slices[0]?.fixFiles, 3, 'a slice saved without the counter starts from the retained fix file number, which is ahead of fixRounds');
+  });
+
+  it('numbers the fix file after a resumed stall past the stalled round in a state saved without the counter', async () => {
+    using ws = workspace({ maxRounds: 1 });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'work.txt');
+    assert.ok(!(await step(ws, run => runChecks(ws, run))).passed);
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const opened = await step(ws, run => startReview(ws, run));
+    await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming')]);
+    await step(ws, run => recordReview(ws, run));
+    const stalled = await step(ws, run => fixObservations(ws, run, { bug: 'Crash.', observations: ['thermo-naming'] }, 'tidy'));
+    assert.equal(stalled.stalled, true);
+    const path = statePath(ws, 'demo');
+    const saved = JSON.parse(readFileSync(path, 'utf8'));
+    delete saved.slices[0].fixFiles;
+    writeFileSync(path, JSON.stringify(saved));
+    forgetRun(ws, 'demo');
+
+    await step(ws, run => resolveStall(ws, run, 'continue'));
+    commit(ws, 'ok', 'fixed\n');
+    await step(ws, run => runChecks(ws, run));
+    const again = await step(ws, run => startReview(ws, run));
+    await review(ws, again.reviewId, [finding('thermo', 'observation', 'again')]);
+    await step(ws, run => recordReview(ws, run));
+    const next = await step(ws, run => fixObservations(ws, run, { bug: 'Again.' }, 'tidy'));
+    assert.match(next.fixPath, /01-f3\.md$/);
+    assert.notEqual(next.fixPath, stalled.fixPath);
+    assert.match(readFileSync(stalled.fixPath, 'utf8'), /Crash\./, 'the stalled round file is intact');
   });
 
   it('counts a fix round for a bug together with observations and stalls at the limit', async () => {
