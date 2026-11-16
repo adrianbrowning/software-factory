@@ -149,7 +149,7 @@ export function requireOrchestrator(
 }
 
 const gatePolicy = z.enum(['auto', 'stop']).default('auto');
-/** What a headless run does at each confirmation gate: proceed alone (auto) or pause the run (stop). Interactive runs never read it. */
+/** What a headless run does at each confirmation gate: proceed alone (auto) or pause the run (stop). Interactive runs never read it. `submission` is the exception: `stop` pauses nothing, it only keeps `submitHeadless` from opening PRs (the run keeps its status; once it is done `/factory submit` opens the PRs, and a run paused on red checks needs `/factory resume` to finish the stack first). */
 const headlessSchema = z
   .object({
     carry: gatePolicy,

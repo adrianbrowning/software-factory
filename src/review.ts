@@ -82,9 +82,10 @@ export function planDecisions(run: Run, decisions: unknown) {
 }
 
 /**
- * Records decisions the user confirmed (accepted tradeoffs, out-of-scope work) so every later ticket and review
- * data file carries them. Reviewers check the code against them: they report code that breaks a decision, and do
- * not re-raise a tradeoff the user already accepted. A decision that names a slice belongs to it: slices before it
+ * Records decisions for the run (accepted tradeoffs, out-of-scope work) so every later ticket and review
+ * data file carries them. A user's decision has author `user`; a headless run records its own as `autonomous`.
+ * Reviewers check the code against them: they report code that breaks a decision, and do not re-raise a tradeoff
+ * the user accepted. An autonomous decision is checked, not a waiver. A decision that names a slice belongs to it: slices before it
  * mark the decision as built later. An open review of the active slice froze the older decisions,
  * so it is discarded and `discarded` names it; a green review did not see them either, so the slice goes back to
  * review on its green commit. Either way the slice keeps its checks.
@@ -320,7 +321,7 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
     fixItems.length === 0
       ? 'None.'
       : `The fix rounds since the last recorded review asked the implementer to fix these items, and the implementer has since committed. The scope reviewer gives each item a verdict in fixItems of factory_review_submit: fixed, not-a-defect, waived, or open. Check each item against the diff and the code, not the implementer's claims: not-a-defect needs evidence from the diff or code, waived needs a recorded decision, and an item left open blocks the slice and carries into the next round. Every other domain checks whether the code still has each problem in its domain, and reports one that remains as a finding under the same id.\n\n${UNTRUSTED_NOTE}\n\n${fixItems.join('\n')}`;
-  // A Record deferred items slice gets the light review decision 12 asks for: exactly bug, scope and comments.
+  // A Record deferred items slice gets a light review: exactly bug, scope and comments.
   const light = record
     ? REVIEW_DOMAINS.filter(domain => !required.includes(domain)).map(domain => ({ domain, reason: 'Record deferred items slice: light review (scope and comments)' }))
     : [];
@@ -480,7 +481,7 @@ export function submitDomain(
 
 /**
  * Throws unless `verdicts` give exactly one verdict for each listed fix item, and each waived item names one of the
- * review's `decisionCount` decisions. fixVerdictSchema already holds that a waived item, and only a waived item, names one.
+ * review's `decisionCount` decisions, which must not be autonomous (an autonomous decision is checked, not a waiver). fixVerdictSchema already holds that a waived item, and only a waived item, names one.
  */
 function checkFixVerdicts(items: FixItem[], verdicts: FixVerdict[], decisionCount: number, decisions: Decision[]) {
   const listed = new Set(items.map(item => item.id));

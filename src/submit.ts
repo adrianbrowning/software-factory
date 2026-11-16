@@ -6,7 +6,7 @@
  *   needsRebase, pr?: {number, url, state}}]}: branches bottom first, trunk not in branches, `pr` left out for a branch
  *   with no PR.
  * - `gh api` fills `{owner}/{repo}` in the endpoint from the current repo.
- * - `gh pr edit` fails with a Projects (classic) deprecation error, so PR titles go through `gh api -X PATCH`.
+ * - `gh pr edit` fails with a Projects (classic) deprecation error, so PR titles and bodies go through `gh api -X PATCH`.
  */
 import { z } from 'zod';
 import { redact } from './evidence.ts';
