@@ -6,7 +6,7 @@ import { bindRun } from './active-run.ts';
 import { auditChild, IMPLEMENTER, REVIEWER, resetAudit, SPAWN_ROLES, VALIDATOR } from './agents.ts';
 import { CONFIG_PATH, describeModels, loadConfig, requireAvailableModels, requireOrchestrator, type RoleModels, routeSpawn } from './config.ts';
 import { evidenceHead } from './evidence.ts';
-import { deferItems, describeSink, planDefer, requireSink } from './deferred.ts';
+import { deferItems, describeSink, requireSink } from './deferred.ts';
 import { chooseChecks, confirmInteractive, ensureChecks, gate, loadSource } from './gates.ts';
 import {
   activeSlice,
@@ -44,6 +44,7 @@ import {
   startReview,
   submitDomain,
   submitValidation,
+  planDefer,
   validationSchema,
 } from './review.ts';
 import {

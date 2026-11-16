@@ -1,6 +1,4 @@
-import { z } from 'zod';
 import { evidenceLine, redact } from './evidence.ts';
-import { renderFinding, resolveObservations } from './review.ts';
 import { gh } from './exec.ts';
 import type { DeferredSink } from './config.ts';
 import type { DeferredItem, Run, Slice, Workspace } from './run.ts';
@@ -113,27 +111,4 @@ export function requireNotCarriedOrDeferred(run: Run, reviewId: string, observat
 export function requireSink(ws: Workspace) {
   if (ws.config.deferred === undefined) throw new Error('No deferred sink: set "deferred" ({ "kind": "file" } or { "kind": "github" }) in .omp/factory.json.');
   return ws.config.deferred;
-}
-
-/** What factory_defer takes: observation ids from a green review (as for factory_carry), a free-text note, or both. */
-export type DeferRequest = { note?: string | undefined; observations?: string[] | undefined };
-
-/**
- * One draft per observation and note, from the green review that lists the ids. Throws without a deferred sink, for a
- * request with neither ids nor a note, and for ids that are unknown, already carried, or already deferred. Does not
- * change the run.
- */
-export function planDefer(ws: Workspace, run: Run, request: DeferRequest) {
-  requireSink(ws);
-  const note = request.note?.trim() ? request.note : undefined;
-  const chosen = new Set(z.array(z.string().min(1)).parse(request.observations ?? []));
-  if (note === undefined && chosen.size === 0) throw new Error('factory_defer needs observation ids, a note, or both.');
-  const { observations, review, slice } = resolveObservations(ws, run, chosen, 'defer observations or a note');
-  if (isRecordSlice(slice)) throw new Error(`Slice ${slice.id} "${slice.title}" writes the deferred sink file, so its review items are not deferred. They stay in the review itself (the green review observations, and for accepted-unresolved findings slice.unresolved and the accepted-unresolved event).`);
-  requireNotCarriedOrDeferred(run, review.id, observations);
-  const noted = run.deferred.filter(item => item.review === review.id && item.kind === 'note').length;
-  return [
-    ...(note === undefined ? [] : [draftOf(run, slice, review.id, { detail: redact(note), key: itemKey(review.id, `note:${noted + 1}`), kind: 'note', title: note })]),
-    ...observations.map(finding => draftOf(run, slice, review.id, { detail: renderFinding(finding, run.decisions, '###'), id: finding.id, key: itemKey(review.id, finding.id), kind: 'observation', title: finding.title })),
-  ];
 }
