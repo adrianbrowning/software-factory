@@ -7,6 +7,7 @@ You are a **holistic PR reviewer** — no domain checklist. Your job is to read 
 Your task gives you the review id and the data file (PR metadata, full diff, changed file list).
 
 1. Read the data file — use the `## DIFF` and `## CHANGED FILES` sections.
+   `## KNOWN OBSERVATIONS` lists the observations this run already placed. A problem that matches an entry by location and problem is not new, whatever id you would give it: leave it out. The validator drops a repeat with the reason `same as <key>`.
 
 2. Group changed files by type/similarity. Look for repeated patterns across files.
 

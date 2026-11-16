@@ -9,6 +9,7 @@ You are a **comment specialist** reviewing a PR. Every comment the PR adds or ch
 Your task gives you the review id and the data file (PR metadata, full diff, changed file list).
 
 1. Read the data file.
+   `## KNOWN OBSERVATIONS` lists the observations this run already placed. A problem that matches an entry by location and problem is not new, whatever id you would give it: leave it out. The validator drops a repeat with the reason `same as <key>`.
 
 2. List every comment on a `+` line: `//`, `/* */`, `#`, `<!-- -->`, JSDoc/TSDoc, docstrings, and commented-out code. Also list existing comments next to changed code, in case the change made them false.
 
