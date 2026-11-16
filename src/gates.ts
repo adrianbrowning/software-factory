@@ -2,7 +2,7 @@ import type { ExtensionContext } from '@oh-my-pi/pi-coding-agent';
 import { checksPrompt, type HeadlessGate, parseChecks, suggestChecks } from './config.ts';
 import { evidence } from './evidence.ts';
 import { addEvent, readRun, type Run, type Source, withRun, type Workspace } from './run.ts';
-import { fetchGithubIssue, fileSource, githubSource, repoChecks, saveChecks, type SourceInput } from './workflow.ts';
+import { fetchGithubIssue, fileSource, githubSource, pauseHeadless, repoChecks, saveChecks, type SourceInput } from './workflow.ts';
 
 async function confirm(ctx: ExtensionContext, title: string, body: string) {
   if (!ctx.hasUI) throw new Error(`${title} needs the interactive UI.`);
@@ -25,11 +25,7 @@ export async function gate(ctx: ExtensionContext, ws: Workspace, feature: string
     return true;
   }
   const reason = `headless gate "${name}" is set to stop: ${title}`;
-  await withRun(ws, feature, run => {
-    // A stop gate pauses a headless run in whatever status it has (intake, running or done), so resume must restore that status. factory_pause is the only path limited to a running or intake run; the /factory pause command (pauseRun) stays running-only.
-    run.status = 'paused';
-    addEvent(run, 'pause', reason);
-  });
+  await withRun(ws, feature, run => pauseHeadless(run, reason));
   throw new Error(`The run is paused, ${reason}. /factory resume ${feature} continues it. Stop now.`);
 }
 

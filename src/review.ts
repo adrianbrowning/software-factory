@@ -8,7 +8,7 @@ import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { evidence, evidenceLine, redact } from './evidence.ts';
-import { deferItems, draftOf, isRecordSlice } from './deferred.ts';
+import { deferItems, draftOf, isRecordSlice, itemKey } from './deferred.ts';
 import { git, runShell, type CommandResult } from './exec.ts';
 import {
   activeSlice,
@@ -18,6 +18,7 @@ import {
   dropPass,
   greenCommit,
   outdatedGreenCount,
+  isAutonomous,
   type Decision,
   type Domain,
   type Finding,
@@ -49,7 +50,7 @@ import {
   settle,
   UNTRUSTED_NOTE,
   writeTicket,
-  requireUnhandled,
+  requireNotCarriedOrDeferred,
 } from './workflow.ts';
 
 function noGreenReview(sliceId: string, purpose: string): Error {
@@ -498,7 +499,7 @@ function checkFixVerdicts(items: FixItem[], verdicts: FixVerdict[], decisionCoun
     if (verdict.status === 'waived' && verdict.decision > decisionCount) {
       throw new Error(`Fix item "${verdict.id}" names decision ${verdict.decision}, but the review data lists ${decisionCount} decisions.`);
     }
-    if (verdict.status === 'waived' && decisions[verdict.decision - 1]?.author === 'autonomous') {
+    if (verdict.status === 'waived' && isAutonomous(decisions, verdict.decision)) {
       throw new Error(`Fix item "${verdict.id}" names decision ${verdict.decision}, which was recorded autonomously. An autonomous decision is not a waiver; mark the item open or fixed.`);
     }
   }
@@ -593,12 +594,8 @@ function checkCoverage(findings: Finding[], validation: Validation, decisionCoun
   if (breaksDecision.length > 0) {
     throw new Error(`A finding that breaks a recorded decision cannot be downgraded; keep it or drop it: ${breaksDecision.join(', ')}`);
   }
-  const autonomous = (id: string) => {
-    const number = byId.get(id)?.decision;
-    return number !== undefined && decisions[number - 1]?.author === 'autonomous';
-  };
   const usesAutonomous = [...downgraded, ...validation.dropped.map(entry => entry.id)].filter(
-    id => byId.get(id)?.severity !== 'observation' && autonomous(id),
+    id => byId.get(id)?.severity !== 'observation' && isAutonomous(decisions, byId.get(id)?.decision),
   );
   if (usesAutonomous.length > 0) {
     throw new Error(`A blocking finding that breaks an autonomous decision cannot be dropped or downgraded; keep it: ${usesAutonomous.join(', ')}`);
@@ -722,29 +719,31 @@ export async function recordReview(ws: Workspace, run: Run) {
   }
   const blockingIds = [...blocking.map(finding => finding.id), ...open.map(item => `${item.id} (open fix item)`)];
   // Logged once the review is recorded, so a retry after a failed deferred sink does not log it twice.
-  const logBlocking = () => addEvent(run, 'review-blocking', `${detail}; blocking ${blockingIds.join(', ')}`, slice);
+  const blockingDetail = `${detail}; blocking ${blockingIds.join(', ')}`;
   const records: FixRecord[] = [
     ...blocking.map(finding => findingRecord(finding, `## Blocking review findings from ${review.id}`, run.decisions)),
     ...open.map(item => ({ group: `## Open fix items from ${review.id}`, item: { id: item.id, summary: item.summary }, section: renderOpenItem(item, verdictOf.get(item.id)) })),
   ];
   if (run.mode === 'headless' && slice.fixRounds >= slice.roundLimit) {
     // A headless slice has a fixed fix budget and no stall dialog: what is still open goes on record as unresolved, and that stands in for green.
-    const unresolved = records.map(({ item }, index) => `${index < blocking.length ? 'blocking finding' : 'open fix item'} ${'id' in item ? `${item.id}: ` : ''}${item.summary}`);
+    const itemId = ({ item }: FixRecord) => ('id' in item ? item.id : undefined);
+    const unresolved = records.map((record, index) => `${index < blocking.length ? 'blocking finding' : 'open fix item'} ${itemId(record) === undefined ? '' : `${itemId(record)}: `}${record.item.summary}`);
     // The open items go to the deferred sink before the slice counts as accepted. A failed issue keeps the ones already filed, and the retry files the rest.
     // With no sink configured they stay on record in slice.unresolved and the event below.
     // A Record deferred items slice's own findings are not deferred: they would need another Record slice, and so on.
     const failure = await deferItems(
       ws,
       run,
-      (isRecordSlice(slice) ? [] : records).map(({ item, section }, index) =>
-        draftOf(run, slice, review.id, { detail: section, id: 'id' in item ? item.id : undefined, key: `${review.id}:${'id' in item ? item.id : `unresolved:${index + 1}`}`, kind: 'unresolved', title: item.summary }),
-      ),
+      (isRecordSlice(slice) ? [] : records).map((record, index) => {
+        const id = itemId(record);
+        return draftOf(run, slice, review.id, { detail: record.section, id, key: itemKey(review.id, id ?? `unresolved:${index + 1}`), kind: 'unresolved', title: record.item.summary });
+      }),
     );
     if (failure !== undefined) {
       slice.fixItems = gathered;
       throw new Invalidated(`The deferred sink failed, so review ${review.id} is not accepted unresolved: ${failure.message}. The items already filed stay recorded; call factory_review_record again.`);
     }
-    logBlocking();
+    addEvent(run, 'review-blocking', blockingDetail, slice);
     slice.phase = 'ready';
     slice.green = { decisions: review.decisions };
     slice.unresolved = unresolved;
@@ -753,7 +752,7 @@ export async function recordReview(ws: Workspace, run: Run) {
     // No new fix file: fixPath is the last round's.
     return { blocking: blocking.length, fixPath: slice.fixPath ?? '', green: false as const, open: open.length, stalled: false, unresolved };
   }
-  logBlocking();
+  addEvent(run, 'review-blocking', blockingDetail, slice);
   return { blocking: blocking.length, green: false as const, open: open.length, unresolved: undefined, ...requestFix(ws, run, slice, review.sha, records) };
 }
 
@@ -854,7 +853,7 @@ export function planFix(ws: Workspace, run: Run, request: FixRequest) {
       `Slice ${found.slice.id} is done (green review ${found.review.id}); factory_complete_slice already ran. Ask the user: factory_reopen fixes these in slice ${found.slice.id}, factory_follow_up builds them in a new slice on top of the stack.`,
     );
   }
-  requireUnhandled(run, found.review.id, found.observations, true);
+  requireNotCarriedOrDeferred(run, found.review.id, found.observations);
   return { bug, ...found };
 }
 

@@ -1,5 +1,6 @@
 import { evidenceLine, redact } from './evidence.ts';
 import { gh } from './exec.ts';
+import type { DeferredSink } from './config.ts';
 import type { DeferredItem, Run, Slice, Workspace } from './run.ts';
 
 /** Whether `slice` is a Record deferred items slice: a headless run's own sink writer, whose reviews never defer to the sink. */
@@ -21,6 +22,18 @@ export function recordFailed(run: Run, item: DeferredItem) {
 /** Whether the item waits for a Record slice: none lists it yet, or its one Record slice failed and no retry was made. */
 export function waitsForRecord(run: Run, item: DeferredItem) {
   return item.recorded === undefined || (item.retried !== true && recordFailed(run, item));
+}
+
+/** The key of a review's item `id` (an observation id, `note:N`, or `unresolved:N`): the one format deferItems relies on to defer an item once. */
+export function itemKey(reviewId: string, id: string) {
+  return `${reviewId}:${id}`;
+}
+
+/** How the factory_defer dialog names the sink: `name` in its title, `line` in its body. */
+export function describeSink(sink: DeferredSink) {
+  return sink.kind === 'github'
+    ? { line: 'GitHub issues (gh issue create, one per item)', name: 'GitHub issues' }
+    : { line: `the sink file ${sink.path} (queued on the run)`, name: 'the sink file' };
 }
 
 /** An item to defer, before its sink location is known. */

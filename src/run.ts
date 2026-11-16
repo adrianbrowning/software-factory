@@ -248,6 +248,11 @@ const decisionSchema = z.preprocess(
 );
 export type Decision = z.infer<typeof decisionSchema>;
 
+/** Whether decision `number` (1-based) is one a headless run made without the user. An autonomous decision is checked, never a waiver. */
+export function isAutonomous(decisions: Decision[], number: number | undefined) {
+  return number !== undefined && decisions[number - 1]?.author === 'autonomous';
+}
+
 /**
  * One item sent to the deferred sink (factory_defer, an accepted-unresolved review, or a headless retro). `key` is
  * `review:id` for a finding with an id (so it is deferred once), `review:unresolved:N` for an accepted-unresolved item
