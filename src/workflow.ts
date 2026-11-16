@@ -490,8 +490,6 @@ export async function applyReslice(ws: Workspace, run: Run, { renamed, slices }:
   }
   // Items a Record slice wrote follow its renumbering: the split slice to its first child, later ones to their remade slice.
   for (const item of run.deferred) item.recorded = (item.recorded === undefined ? undefined : renamed.get(item.recorded)) ?? item.recorded;
-  // Entries carried to a renumbered slice follow it; those carried to the split slice go to its first child.
-  for (const entry of run.observations) if (entry.to !== undefined) entry.to = renamed.get(entry.to) ?? entry.to;
   run.slices = slices;
   for (const slice of slices.filter(candidate => candidate.status !== 'done')) writeTicket(ws, run, slice);
   addEvent(
@@ -565,8 +563,6 @@ export function addFollowUp(ws: Workspace, run: Run, proposed: AppendInput) {
   planned.carried = run.waiting;
   run.waiting = [];
   const slice = pushSlice(ws, run, planned);
-  // The carried sections now live in this slice, so its review checks the entries that point to it.
-  for (const entry of run.observations) if (entry.placement === 'carried' && entry.to === 'end') entry.to = slice.id;
   if (run.status === 'done') run.status = 'running';
   run.retroRecorded = false;
   return slice;

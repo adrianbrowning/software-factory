@@ -5,6 +5,7 @@
  */
 import { itemKey } from './deferred.ts';
 import { evidenceLine, redact } from './evidence.ts';
+import { renderedObservation } from './legacy-observations.ts';
 import { PLACEMENTS } from './run.ts';
 import type { Finding, ObservationEntry, Run, Slice } from './run.ts';
 
@@ -27,7 +28,7 @@ export function requireUnplaced(run: Run, reviewId: string, observations: { id: 
   if (lines.length > 0) throw new Error(lines.join(' '));
 }
 
-/** Adds one ledger entry per observation of `review`, kept in `slice`, with the finding's location, title and problem. `to` is where a carried one went. */
+/** Adds one ledger entry per observation of `review`, kept in `slice`, with the finding's location, title and problem. `to` is where a carried one went when it was carried, written once: later moves of the carried text (a reslice, a follow-up) do not rewrite it, so it is for factory_status only; the review data file reads where the text sits. */
 export function placeObservations(run: Run, review: { id: string }, slice: Slice, observations: Finding[], placement: ObservationEntry['placement'], to?: string) {
   for (const finding of observations) {
     run.observations.push({
@@ -42,6 +43,11 @@ export function placeObservations(run: Run, review: { id: string }, slice: Slice
   }
 }
 
+/** Whether the carried-in sections of `slice` hold the finding of `entry`: a section from the entry's review that renders its observation. Read from where the text sits, so a renumbered or follow-up slice needs no rewrite. */
+function isCarriedTo(entry: ObservationEntry, slice: Pick<Slice, 'carried'>) {
+  return slice.carried.some(section => section.startsWith(`### From green review ${entry.review} of slice `) && renderedObservation(section, entry.id) !== undefined);
+}
+
 /** The mark after the placement of an entry in the list of a review data file, `(carried; carried to this slice: check it)`, for work carried to the slice under review, which that slice builds and its reviewers check. */
 export const CARRIED_HERE = 'carried to this slice: check it';
 
@@ -50,7 +56,7 @@ export const CARRIED_HERE = 'carried to this slice: check it';
  * title and problem, each text on one line and cut at 500 and 2000 characters; `None.` for an empty ledger. An entry
  * carried to `slice` is marked `CARRIED_HERE`: a finding that it is unbuilt or wrong there is kept, not dropped as `same as <key>`.
  */
-export function renderKnownObservations(run: Run, slice: Pick<Slice, 'id'>) {
+export function renderKnownObservations(run: Run, slice: Pick<Slice, 'carried'>) {
   if (run.observations.length === 0) return 'None.';
-  return run.observations.map(entry => `- \`${entry.key}\` (${entry.placement === 'carried' && entry.to === slice.id ? `${entry.placement}; ${CARRIED_HERE}` : entry.placement}): ${entry.location} - ${evidenceLine(entry.title, 500)}\n  Problem: ${evidenceLine(entry.problem, 2_000)}`).join('\n');
+  return run.observations.map(entry => `- \`${entry.key}\` (${entry.placement === 'carried' && isCarriedTo(entry, slice) ? `${entry.placement}; ${CARRIED_HERE}` : entry.placement}): ${entry.location} - ${evidenceLine(entry.title, 500)}\n  Problem: ${evidenceLine(entry.problem, 2_000)}`).join('\n');
 }

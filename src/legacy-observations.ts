@@ -1,8 +1,9 @@
 /**
- * Reads the observation ledger of a state file saved before it was kept. It imports nothing from run.ts, which calls it
- * while loading state, so it names the shapes it reads and writes itself.
+ * Reads the observation ledger of a state file saved before it was kept. It imports only types from run.ts, which calls it
+ * while loading state, so no runtime cycle forms.
  */
-type LegacyEntry = { id: string; key: string; location: string; placement: 'carried' | 'deferred'; problem: string; review: string; slice: string; title: string; to?: string };
+import type { ObservationEntry } from './run.ts';
+
 type LegacyDeferred = { body: string; id?: string | undefined; key: string; kind: string; review: string; slice: string };
 
 /** What a rendered finding (`renderFinding`) says of itself: its location, title and problem. Undefined when `section` holds no such observation. */
@@ -22,7 +23,7 @@ const LEGACY_PROBLEM = 'Recorded before the run kept the text of handled observa
  */
 export function legacyObservations(carried: string[], deferred: LegacyDeferred[], sections: { text: string; to: string }[]) {
   // LEGACY-STATE(carried-observations): a state file from before the ledger kept carried observations as `review:id` keys and deferred ones as deferred items. Each becomes an entry whose location, title and problem are read from the finding that exactly one carried-in section or the deferred item body rendered. An entry whose text is not found that way, or is found in more than one carried-in section, gets the placeholder location and problem and its id as title, so the state always loads and a repeat is still refused by key. A key both carried and deferred is one entry, carried. Remove once no run saved before the release that ships the ledger is left to resume.
-  const entries: LegacyEntry[] = [];
+  const entries: ObservationEntry[] = [];
   for (const key of new Set(carried)) {
     const at = key.indexOf(':');
     const review = at < 1 ? key : key.slice(0, at);

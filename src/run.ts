@@ -285,14 +285,16 @@ const deferredItemSchema = z.object({
 });
 export type DeferredItem = z.infer<typeof deferredItemSchema>;
 
-/**
- * One observation the run has handled, kept so a repeat is refused and a later review can tell it is not new. `key` is
- * `review:id`, the key of a deferred item. `location`, `title` and `problem` are the kept finding's text, for matching a
- * repeat under a new id. `to` is where a carried observation went: a pending slice id, or `end`.
- */
 /** Where a handled observation went. */
 export const PLACEMENTS = ['carried', 'deferred', 'fixed', 'left'] as const;
 
+/**
+ * One observation the run has handled, kept so a repeat is refused and a later review can tell it is not new. `key` is
+ * `review:id`, the key of a deferred item. `location`, `title` and `problem` are the kept finding's text, for matching a
+ * repeat under a new id. `to` is where a carried observation went when it was carried: a pending slice id, or `end`. It
+ * is written once and not kept in step when the carried text moves (reslice, follow-up); the review data file reads where
+ * the text sits instead.
+ */
 const observationEntrySchema = z.object({
   id: text,
   key: text,
