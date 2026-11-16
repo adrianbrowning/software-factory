@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import { type FactoryConfig, modelsSchema, SPAWN_MODEL_ROLES } from './config.ts';
+import { legacyObservations, PLACEMENTS } from './ledger.ts';
 import { withFileLock } from './state-lock.ts';
 
 /** The cc-pr-review domains. Each has a vendored reference under skills/software-factory/references/review/. */
@@ -284,8 +285,6 @@ const deferredItemSchema = z.object({
 });
 export type DeferredItem = z.infer<typeof deferredItemSchema>;
 
-export const PLACEMENTS = ['carried', 'deferred', 'fixed', 'left'] as const;
-
 /**
  * One observation the run has handled, kept so a repeat is refused and a later review can tell it is not new. `key` is
  * `review:id`, the key of a deferred item. `location`, `title` and `problem` are the kept finding's text, for matching a
@@ -303,42 +302,6 @@ const observationEntrySchema = z.object({
   to: text.optional(),
 });
 export type ObservationEntry = z.infer<typeof observationEntrySchema>;
-
-/** What a rendered finding (`renderFinding`) says of itself: its location, title and problem. Undefined when `section` holds no such observation. */
-function renderedObservation(section: string, id: string) {
-  const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
-  const found = new RegExp(`\\[observation\\] ${escaped}\\n\\n- Location: ([^\\n]*)\\n- Title: ([\\s\\S]*?)\\n- Problem: ([\\s\\S]*?)\\n- Fix: `).exec(section);
-  return found === null ? undefined : { location: found[1] ?? '', problem: found[3] ?? '', title: found[2] ?? '' };
-}
-
-/** What an entry migrated from a state file holds when no single rendered finding is found for it. */
-const LEGACY_LOCATION = 'unknown';
-const LEGACY_PROBLEM = 'Recorded before the run kept the text of handled observations.';
-
-/**
- * The ledger of a state file from before it was kept: an entry for each carried key and each deferred observation item.
- * `sections` are the carried-in sections of the tickets and the end queue, each with where it waits.
- */
-function legacyObservations(carried: string[], deferred: DeferredItem[], sections: { text: string; to: string }[]) {
-  // LEGACY-STATE(carried-observations): a state file from before the ledger kept carried observations as `review:id` keys and deferred ones as deferred items. Each becomes an entry whose location, title and problem are read from the finding that exactly one carried-in section or the deferred item body rendered. An entry whose text is not found that way, or is found in more than one carried-in section, gets the placeholder location and problem and its id as title, so the state always loads and a repeat is still refused by key. A key both carried and deferred is one entry, carried. Remove once no run saved before the release that ships the ledger is left to resume.
-  const entries: ObservationEntry[] = [];
-  for (const key of new Set(carried)) {
-    const at = key.indexOf(':');
-    const review = at < 1 ? key : key.slice(0, at);
-    const id = at < 1 || at === key.length - 1 ? key : key.slice(at + 1);
-    const matching = sections.filter(candidate => candidate.text.startsWith(`### From green review ${review} of slice `) && renderedObservation(candidate.text, id) !== undefined);
-    const [section, ...others] = matching;
-    const rendered = section === undefined || others.length > 0 ? undefined : renderedObservation(section.text, id);
-    const base = { id, key, placement: 'carried' as const, review, slice: review.split('-')[0] ?? review };
-    entries.push(rendered === undefined || section === undefined ? { ...base, location: LEGACY_LOCATION, problem: LEGACY_PROBLEM, title: id } : { ...base, to: section.to, ...rendered });
-  }
-  for (const item of deferred.filter(candidate => candidate.kind === 'observation' && candidate.id !== undefined && !entries.some(entry => entry.key === candidate.key))) {
-    const id = item.id ?? item.key;
-    const base = { id, key: item.key, placement: 'deferred' as const, review: item.review, slice: item.slice };
-    entries.push({ ...base, ...(renderedObservation(item.body, id) ?? { location: LEGACY_LOCATION, problem: LEGACY_PROBLEM, title: id }) });
-  }
-  return entries;
-}
 
 const runSchema = z.object({
   /** One record per factory agent or scout session the run's main session spawned. Empty in runs from before it was kept. */

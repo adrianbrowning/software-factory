@@ -4,8 +4,9 @@ import { beforeEach, describe, it } from 'node:test';
 import { ctx, load } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
+import { findingLocation, renderedObservation } from '../src/ledger.ts';
 import { type Finding, forgetRun, type ObservationEntry, readRun, statePath, withRun, type Workspace } from '../src/run.ts';
-import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
+import { completeSlice, recordReview, renderFinding, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, planSlices } from '../src/workflow.ts';
 import { commit, finding, review, slice, tempRepo } from './helpers.ts';
 
@@ -194,6 +195,14 @@ describe('observation ledger', () => {
   });
 
   describe('a run saved before the ledger', () => {
+    it('reads back the location, title and problem that renderFinding wrote', () => {
+      const observation = { ...finding('thermo', 'observation', 'naming'), line: 12, path: 'src/a.ts', problem: 'The name\nmisleads the reader.', title: 'Misleading name' };
+      for (const heading of ['##', '###', '####']) {
+        assert.deepEqual(renderedObservation(renderFinding(observation, [], heading), 'thermo-naming'), { location: findingLocation(observation), problem: observation.problem, title: observation.title });
+      }
+      assert.equal(renderedObservation(renderFinding(observation, []), 'thermo-other'), undefined);
+    });
+
     /** Saves the state of `ws` as a file from before the ledger wrote it: no `observations`, the carried keys in `carriedObservations`, and `edit` applied. */
     function saveAsLegacy(ws: Workspace, carried: string[], edit: (state: Record<string, unknown>) => void = () => {}) {
       forgetRun(ws, 'demo');
