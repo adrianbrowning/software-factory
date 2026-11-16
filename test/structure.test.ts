@@ -122,9 +122,9 @@ describe('structure checks: the helpers', () => {
     assert.deepEqual(decisionCitations('src/x.ts', 'const z = x++ / y; // decision 1\n'), ['src/x.ts:1: comment cites a ticket decision number: // decision 1']);
   });
 
-  it('reports a comment after a regex that follows a keyword once, at its line', () => {
-    const source = 'function f() {\n  return /a\\/\\/b/; // decision 2\n}\n';
-    assert.deepEqual(decisionCitations('src/x.ts', source), ['src/x.ts:2: comment cites a ticket decision number: // decision 2']);
+  it('reports a comment after a regex that follows a keyword such as void, once, at its line', () => {
+    const source = "const v = void /'/; // decision 2\n";
+    assert.deepEqual(decisionCitations('src/x.ts', source), ['src/x.ts:1: comment cites a ticket decision number: // decision 2']);
   });
 
   it('reads every sibling import, including type imports, but not packages', () => {
