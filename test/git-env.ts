@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, join } from 'node:path';
 
@@ -12,15 +12,10 @@ process.env.GIT_CONFIG_NOSYSTEM = '1';
 // PATH than the system one can be an x86_64 build under Rosetta on an Apple Silicon Mac, which starts much slower.
 // Tests run the system git when there is one.
 // Only git is redirected: a directory holding just a `git` symlink goes first on PATH, so node, sh, pnpm and every
-// other tool still resolve as they do outside the tests. One fixed directory serves every test process; they run in
-// parallel, so a process that loses the race to create the symlink finds it already in place.
+// other tool still resolves as it does outside the tests. Each test process makes its own private (0700) directory and removes it on exit, so no shared tmp path is trusted.
 if (existsSync('/usr/bin/git') && spawnSync('/usr/bin/git', ['--version']).status === 0) {
-  const gitDir = join(tmpdir(), 'test-git-shim');
-  mkdirSync(gitDir, { recursive: true });
-  try {
-    symlinkSync('/usr/bin/git', join(gitDir, 'git'));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-  }
+  const gitDir = mkdtempSync(join(tmpdir(), 'test-git-shim-'));
+  symlinkSync('/usr/bin/git', join(gitDir, 'git'));
+  process.once('exit', () => rmSync(gitDir, { recursive: true, force: true }));
   process.env.PATH = `${gitDir}${delimiter}${process.env.PATH ?? ''}`;
 }

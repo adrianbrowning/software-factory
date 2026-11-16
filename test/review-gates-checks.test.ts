@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { readRun } from '../src/run.ts';
@@ -257,6 +257,21 @@ describe('slice loop gates: checks and the fix budget', { concurrency: 4 }, () =
     await assert.rejects(step(ws, run => runChecks(ws, run)), new RegExp(`works on ${sliceBranch}, but a detached HEAD is checked out`));
     sh(ws.root, 'switch', '-q', sliceBranch);
     sh(ws.root, 'branch', '-q', '-D', 'elsewhere');
+    assert.ok((await step(ws, run => runChecks(ws, run))).passed);
+  });
+
+  it('refuses to run the checks while the working tree has uncommitted changes', async () => {
+    using ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    const dirty = /commit or remove these changes first/;
+    writeFileSync(join(ws.root, 'untracked.txt'), 'x\n');
+    await assert.rejects(step(ws, run => runChecks(ws, run)), dirty);
+    rmSync(join(ws.root, 'untracked.txt'));
+    writeFileSync(join(ws.root, 'ok'), 'changed\n');
+    await assert.rejects(step(ws, run => runChecks(ws, run)), dirty);
+    sh(ws.root, 'checkout', '--', 'ok');
     assert.ok((await step(ws, run => runChecks(ws, run))).passed);
   });
 });
