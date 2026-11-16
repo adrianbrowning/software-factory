@@ -6,7 +6,7 @@ import { carryObservations, fixObservations, planCarry, planDefer, planFix } fro
 import { completeSlice, recordReview, startReview, submitDomain, submitValidation, validationSchema } from './review.ts';
 import { activeSlice, addEvent, findingSchema, fixVerdictSchema, readRun, REQUIRED_REVIEW_DOMAINS, REVIEW_DOMAINS, skippedDomainsSchema, ticketPath, withRun } from './run.ts';
 import { submitHeadless } from './headless-submit.ts';
-import type { toolRegistrar } from './tool-scope.ts';
+import type { RunTool } from './tool-scope.ts';
 import { nextAction } from './workflow.ts';
 import { decideStall, emptySchema, reply, STALL_DESCRIPTION } from './tool-replies.ts';
 import { z } from 'zod';
@@ -65,7 +65,7 @@ const deferSchema = z.object({
 });
 
 /** Registers the review, completion and observation-placement tools. */
-export function registerReviewTools(tool: ReturnType<typeof toolRegistrar>['tool']) {
+export function registerReviewTools(tool: RunTool) {
   tool({
     caller: 'main',
     description: `Freeze the reviewed state and write the review data file. Then spawn one factory-reviewer per domain. The factory skips react-ts, test-validity, and devops by changed paths unless kept; skip any other domain the diff gives nothing to review, with a reason. ${REQUIRED_REVIEW_DOMAINS.join(' and ')} always review, and testing does too for a slice with test seams.`,
@@ -222,7 +222,10 @@ export function registerReviewTools(tool: ReturnType<typeof toolRegistrar>['tool
       });
     },
   });
+}
 
+/** Registers factory_defer. Separate so index.ts keeps the tool's original place in the registration order. */
+export function registerDeferTool(tool: RunTool) {
   tool({
     caller: 'main',
     description:

@@ -52,6 +52,9 @@ type ToolDefinition<S extends z.ZodType, Scope> = {
   schema: S;
 };
 
+/** Registers a tool that works on the bound run; what `toolRegistrar` returns as `tool`. */
+export type RunTool = <S extends z.ZodType>(definition: ToolDefinition<S, { feature: string; ws: Workspace }>) => void;
+
 export function toolRegistrar(pi: ExtensionAPI) {
   /** Registers a tool whose parameters are the JSON Schema of `schema`; `schema` is also the only runtime parse. `scopeOf` builds what `run` receives from the checkout's cache entry. */
   function register<S extends z.ZodType, Scope>(
