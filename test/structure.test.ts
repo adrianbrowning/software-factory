@@ -21,15 +21,22 @@ export function commentsOf(source: string): Comment[] {
 
   function skipQuoted(from: number, quote: string) {
     let at = from + 1;
-    while (at < source.length && source[at] !== quote && source[at] !== '\n') at += source[at] === '\\' ? 2 : 1;
+    while (at < source.length && source[at] !== quote && source[at] !== '\n') {
+      if (source[at] === '\\') {
+        if (source[at + 1] === '\n') line++;
+        at += 2;
+      } else at++;
+    }
     return at + 1;
   }
 
   function skipTemplate(from: number) {
     let at = from + 1;
     while (at < source.length && source[at] !== '`') {
-      if (source[at] === '\\') at += 2;
-      else if (source[at] === '$' && source[at + 1] === '{') at = scan(at + 2, true);
+      if (source[at] === '\\') {
+        if (source[at + 1] === '\n') line++;
+        at += 2;
+      } else if (source[at] === '$' && source[at + 1] === '{') at = scan(at + 2, true);
       else {
         if (source[at] === '\n') line++;
         at++;
@@ -157,9 +164,26 @@ describe('structure checks: the helpers', () => {
     ]);
   });
 
-  it('ignores decision numbers in string, template and regex literals', () => {
-    const source = ["const a = 'decision 4 // not a comment';", 'const b = `Breaks decision ${n} /* nor this */ decision 5`;', 'const c = /decision 6\\/\\/ x/;', 'const d = "it\'s decision 7";', 'const e = x / 2; // fine'].join('\n');
-    assert.deepEqual(decisionCitations('src/x.ts', source), []);
+  it('ignores comment-looking text in string, template and regex literals, and reports only the real comments', () => {
+    const source = [
+      "const a = '// decision 4';",
+      '// decision 7',
+      'const b = "// decision 4";',
+      '// decision 7',
+      'const c = `/* decision 4 */`;',
+      '// decision 7',
+      'const d = /\\/*decision 4/;',
+      '// decision 7',
+    ].join('\n');
+    assert.deepEqual(
+      commentsOf(source).map(comment => `${comment.line}:${comment.text}`),
+      ['2:// decision 7', '4:// decision 7', '6:// decision 7', '8:// decision 7'],
+    );
+  });
+
+  it('counts the line of a backslash-newline continuation in a string and in a template', () => {
+    const source = "const s = 'a\\\n b';\nconst t = `a\\\n b`;\n// decision 1\n";
+    assert.deepEqual(decisionCitations('src/x.ts', source), ['src/x.ts:5: comment cites a ticket decision number: // decision 1']);
   });
 
   it('still finds a comment after a template with a nested expression', () => {
