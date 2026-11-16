@@ -439,6 +439,20 @@ describe('used-up fix budget', () => {
     assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'fix');
   });
 
+  it('factory_fix for observations only never stalls or mentions the fix budget, even at the round limit', async () => {
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature']);
+    await greenWithObservation(ws, 2);
+    const asked: string[] = [];
+    let selects = 0;
+    const fixed = await call('factory_fix', { observations: ['thermo-naming'], reason: 'tidy' }, { confirm: async (title: string, body: string) => (asked.push(`${title}\n${body}`), true), select: async () => (selects++, 'Pause the run') });
+    assert.doesNotMatch(asked[0] ?? '', /fix budget/);
+    assert.doesNotMatch(fixed.content[0]?.text ?? '', /fix budget|used up/);
+    assert.equal(selects, 0);
+    const slice = readRun(ws, 'demo').slices[0];
+    assert.deepEqual([slice?.stalled, slice?.fixRounds, slice?.phase], [false, 2, 'fix']);
+  });
+
   it('shows the start of a long bug in the factory_fix dialog', async () => {
     using repo = budgetRepo();
     const { call, ws } = await budgetRun(repo.root, ['Feature']);
