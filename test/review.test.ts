@@ -5,7 +5,8 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { type Finding, readRun, REVIEW_DOMAINS, ticketPath, type Workspace } from '../src/run.ts';
 import { completeSlice, fixObservations, pathSkips, recordDecisions, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
-import { addFollowUp, applyReslice, approvePlan, carryObservations, nextAction, nextSlice, parseRetro, pauseRun, planFollowUp, planReslice, planSlices, recordRetro, reopenSlice, resolveBase, resolveStall, resumeRun, saveChecks, startRun } from '../src/workflow.ts';
+import { addFollowUp, applyReslice, approvePlan, carryObservations, nextAction, nextSlice, pauseRun, planFollowUp, planReslice, planSlices, reopenSlice, resolveBase, resolveStall, resumeRun, saveChecks, startRun } from '../src/workflow.ts';
+import { parseRetro, recordRetro } from '../src/retro.ts';
 import { checkRuns, commit, countedCheck, finding, fixItems, green, greenWithObservation, newRun, noFixItems, review, sh, slice, start, step, tempDir, workspace } from './helpers.ts';
 
 describe('slice loop gates', { concurrency: 4 }, () => {
@@ -1113,7 +1114,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     assert.throws(() => parseRetro(ws, readRun(ws, 'demo'), []), (error: Error) => /Finish the pending slices first/.test(error.message) && !/Call factory_follow_up/.test(error.message));
     await step(ws, run => completeSlice(ws, run));
     assert.throws(() => parseRetro(ws, readRun(ws, 'demo'), []), /Carried items wait for the end of the run \(2\)\. Call factory_follow_up for them/);
-    await assert.rejects(step(ws, run => recordRetro(ws, run, { apply: [], file: [], findings: [] })), /Carried items wait for the end of the run \(2\)/);
+    await assert.rejects(step(ws, run => recordRetro(ws, run, { apply: [], file: [], findings: [], ordinal: 1 })), /Carried items wait for the end of the run \(2\)/);
     await step(ws, run => addFollowUp(ws, run, followUp));
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'polish.txt');
@@ -1194,7 +1195,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     await step(ws, run => completeSlice(ws, run));
     await step(ws, run => nextSlice(ws, run));
 
-    await step(ws, async run => { const planned = planReslice(ws, run, [slice('Big A', ['Feature']), slice('Big B', ['Big A'])]); return applyReslice(ws, run, planned.slices, planned.renamed); });
+    await step(ws, run => applyReslice(ws, run, planReslice(ws, run, [slice('Big A', ['Feature']), slice('Big B', ['Big A'])])));
     const slices = readRun(ws, 'demo').slices;
     const ticket = (index: number) => readFileSync(ticketPath(ws, 'demo', slices[index] ?? assert.fail('no slice')), 'utf8');
     assert.deepEqual(slices.map(item => item.title), ['Feature', 'Big A', 'Big B', 'Last']);

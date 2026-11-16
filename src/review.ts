@@ -8,7 +8,7 @@ import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { evidence, evidenceLine, redact } from './evidence.ts';
-import { deferItems, draftOf, isRecordSlice, itemKey } from './deferred.ts';
+import { deferItems, draftOf, isRecordSlice, itemKey, requireNotCarriedOrDeferred } from './deferred.ts';
 import { git, runShell, type CommandResult } from './exec.ts';
 import {
   activeSlice,
@@ -50,7 +50,6 @@ import {
   settle,
   UNTRUSTED_NOTE,
   writeTicket,
-  requireNotCarriedOrDeferred,
 } from './workflow.ts';
 
 function noGreenReview(sliceId: string, purpose: string): Error {

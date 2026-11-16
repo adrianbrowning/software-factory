@@ -15,8 +15,9 @@ function addOnce(ws: Workspace, feature: string, kind: string, detail: string) {
  * paused run stopped at), opens them for the done slices below it, whose bodies say where and why the stack stopped.
  * Returns the reply text, empty when the run is not headless or not at that point. A stopped stack with no done slice
  * below the stop opens nothing and records nothing. A policy of submission "stop" opens nothing and records that once
- * as a `submission-stop` event (not an autonomous one: the policy chose it). A gh failure does not undo the work the tool already saved: it is recorded as a `submit-failed` event and reported in the text, and the
- * run stays done (`/factory submit` retries) or paused. Merging stays manual.
+ * as a `submission-stop` event (not an autonomous one: the policy chose it). A gh failure does not undo the work the
+ * tool already saved: it is recorded as a `submit-failed` event and reported in the text, and the run stays done
+ * (`/factory submit` retries) or paused. Merging stays manual.
  */
 export async function submitHeadless(ws: Workspace, feature: string, stop?: Stop) {
   const run = readRun(ws, feature);
