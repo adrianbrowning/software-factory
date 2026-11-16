@@ -300,3 +300,53 @@ export const FINDINGS = [
   { action: 'file-issue', category: 'agents-md', detail: 'The skill is vague', severity: 'medium', target: 'factory', title: 'Vague skill' },
   { action: 'skip', category: 'automated-checks', detail: 'Minor', severity: 'low', target: 'repo', title: 'Minor thing' },
 ];
+
+/** Runs the active Record slice through its fix budget with blocking findings, so a headless run accepts it unresolved. */
+export async function acceptUnresolved(ws: Workspace, call: (name: string, params: unknown) => Promise<Reply>, tag: string) {
+  for (const round of ['one', 'two', 'three', 'four']) {
+    commit(ws, 'ok', `${tag}${round}\n`);
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+    await review(ws, reviewId, [finding('scope', 'high', 'a'), finding('bug', 'high', 'b')]);
+    await call('factory_review_record', {});
+  }
+}
+
+/** Takes the next slice through checks and a green review listing `findings`, leaving it unfinished so the caller can defer before completeSlice. */
+export const reviewActive = async (ws: Workspace, file: string, findings: ReturnType<typeof finding>[]) => {
+  await withRun(ws, 'demo', run => nextSlice(ws, run));
+  commit(ws, 'ok', `${file}\n`);
+  await withRun(ws, 'demo', run => runChecks(ws, run));
+  const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+  await review(ws, reviewId, findings);
+  await withRun(ws, 'demo', run => recordReview(ws, run));
+};
+
+export const HEADLESS_FILES = { 'demo.md': '# Demo\n\nDo it.\n', '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) };
+
+/** A headless run planned with `titles` (each blocked by the one before), whose UI throws on any dialog; slice 01 is active with `ok` committed. */
+export async function headlessSubmitRun(root: string, titles: string[], policy: Record<string, string> = {}) {
+  writeFileSync(join(root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], headless: policy }));
+  sh(root, 'commit', '-qam', 'policy');
+  const commands = new Map<string, Command>();
+  const tools = load({ commands, sent: [] });
+  const noDialog = async (title: string) => {
+    throw new Error(`dialog: ${title}`);
+  };
+  const caller = { ...ctx('main', 'main'), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: noDialog, notify() {}, select: noDialog } };
+  const call = async (name: string, params: unknown) => (await tools.get(name)?.execute('id', params, undefined, undefined, caller)) as Reply;
+  await commands.get('factory')?.handler('headless demo.md', caller);
+  const ws: Workspace = { config: loadConfig(root), root };
+  await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, titles.map((title, index) => slice(title, index === 0 ? [] : [titles[index - 1] ?? ''])))));
+  await withRun(ws, 'demo', run => nextSlice(ws, run));
+  commit(ws, 'ok');
+  return { branches: readRun(ws, 'demo').slices.map(item => item.branch), call, ws };
+}
+
+/** Takes the active slice to a green review. */
+export async function submitGreenWithObservation(ws: Workspace) {
+  await withRun(ws, 'demo', run => runChecks(ws, run));
+  const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+  await review(ws, reviewId, [finding('thermo', 'observation', 'naming')]);
+  await withRun(ws, 'demo', run => recordReview(ws, run));
+}
