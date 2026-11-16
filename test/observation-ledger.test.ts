@@ -4,7 +4,7 @@ import { beforeEach, describe, it } from 'node:test';
 import { ctx, load } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
-import { findingLocation, renderKnownObservations } from '../src/ledger.ts';
+import { findingLocation } from '../src/ledger.ts';
 import { renderedObservation } from '../src/legacy-observations.ts';
 import { type Finding, forgetRun, type ObservationEntry, readRun, statePath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, renderFinding, runChecks, startReview } from '../src/review.ts';
@@ -188,25 +188,46 @@ describe('observation ledger', () => {
     assert.match(known, /- `01-r1:thermo-order` \(carried\): /);
   });
 
-  it('marks an entry carried to the end queue as work to check in the follow-up slice that takes it', async () => {
+  /** Builds the active slice to a green review and completes it, then starts the next one. */
+  const finishActive = async (ws: Workspace, file: string) => {
+    commit(ws, file);
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+    await review(ws, reviewId, []);
+    await withRun(ws, 'demo', run => recordReview(ws, run));
+    await withRun(ws, 'demo', run => completeSlice(ws, run));
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+  };
+  /** The KNOWN OBSERVATIONS section of the data file of the review of the active slice. */
+  const knownOf = async (ws: Workspace, call: (name: string, params: unknown) => Promise<Reply>, file: string) => {
+    commit(ws, file);
+    await call('factory_checks', {});
+    const opened = await call('factory_review_start', { skip: [] });
+    const data = readFileSync(opened.details?.dataFile ?? assert.fail('no data file'), 'utf8');
+    return /## KNOWN OBSERVATIONS\n\n([\s\S]*?)\n## /.exec(data)?.[1] ?? assert.fail('no KNOWN OBSERVATIONS section');
+  };
+
+  it('marks an entry carried to the end queue as work to check in the review of the follow-up slice that takes it', async () => {
     using dir = repo();
     const { call, ws } = await ledgerRun(dir.root, ['order']);
     await call('factory_carry', { observations: ['thermo-order'], to: 'end' });
+    await withRun(ws, 'demo', run => completeSlice(ws, run));
     await call('factory_follow_up', { acceptance: ['logged'], estimateTokens: 500, seams: ['cli'], title: 'Polish', whatToBuild: 'Polish' });
-    const run = readRun(ws, 'demo');
-    const polish = run.slices.find(item => item.title === 'Polish') ?? assert.fail('no follow-up slice');
-    assert.match(renderKnownObservations(run, polish), /- `01-r1:thermo-order` \(carried; carried to this slice: check it\): /);
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    await finishActive(ws, 'second.txt');
+    assert.equal(readRun(ws, 'demo').slices.find(item => item.status === 'active')?.title, 'Polish');
+    assert.match(await knownOf(ws, call, 'polish.txt'), /- `01-r1:thermo-order` \(carried; carried to this slice: check it\): /);
   });
 
-  it('moves an entry carried to a pending slice along with the slice when factory_reslice renumbers it', async () => {
+  it('keeps an entry carried to a pending slice marked in that slice\'s review after factory_reslice renumbers it', async () => {
     using dir = repo();
     const { call, ws } = await ledgerRun(dir.root, ['naming']);
     await call('factory_carry', { observations: ['thermo-naming'], to: '02' });
     await call('factory_reslice', { slices: [slice('Part one'), slice('Part two', ['Part one'])] });
-    const run = readRun(ws, 'demo');
-    const second = run.slices.find(item => item.title === 'Second') ?? assert.fail('no Second slice');
-    assert.equal(second.id, '03');
-    assert.match(renderKnownObservations(run, second), /- `01-r1:thermo-naming` \(carried; carried to this slice: check it\): /);
+    await finishActive(ws, 'one.txt');
+    await finishActive(ws, 'two.txt');
+    assert.equal(readRun(ws, 'demo').slices.find(item => item.status === 'active')?.title, 'Second');
+    assert.match(await knownOf(ws, call, 'second.txt'), /- `01-r1:thermo-naming` \(carried; carried to this slice: check it\): /);
   });
 
   it('keeps the whole problem of a finding, with a credential redacted, and lists it on one line in the next data file', async () => {
