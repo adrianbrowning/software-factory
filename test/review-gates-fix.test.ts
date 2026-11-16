@@ -74,6 +74,23 @@ describe('slice loop gates: fixes', { concurrency: 4 }, () => {
     assert.equal(readRun(ws, 'demo').slices[0]?.fixRounds, 1);
   });
 
+  it('counts a fix round for a bug together with observations and stalls at the limit', async () => {
+    using ws = workspace({ maxRounds: 1 });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'work.txt');
+    assert.ok(!(await step(ws, run => runChecks(ws, run))).passed);
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const opened = await step(ws, run => startReview(ws, run));
+    await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming')]);
+    await step(ws, run => recordReview(ws, run));
+
+    const fixed = await step(ws, run => fixObservations(ws, run, { bug: 'Crash.', observations: ['thermo-naming'] }, 'tidy'));
+    assert.equal(fixed.stalled, true);
+    assert.equal(readRun(ws, 'demo').slices[0]?.stalled, true);
+  });
+
   it('fixes a bug the user found after a green review in a tracked round that needs new checks and a new review', async () => {
     using ws = workspace({ maxRounds: 2 });
     await greenWithObservation(ws);
