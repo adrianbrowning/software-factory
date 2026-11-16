@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { type FactoryConfig, parseConfig, loadConfig } from '../src/config.ts';
@@ -35,11 +35,27 @@ export function tempDir(prefix: string) {
   return { root, [Symbol.dispose]: () => rmSync(root, { force: true, maxRetries: 3, recursive: true }) };
 }
 
+/** Built repositories by their files, one per distinct `files` in this process; each test copies one instead of running git init and commit again. */
+const templates = new Map<string, string>();
+
+function templateRepo(files: Record<string, string>) {
+  const key = JSON.stringify(files);
+  let template = templates.get(key);
+  if (template === undefined) {
+    const built = tempDir('factory-template-');
+    initRepo(built.root, files);
+    process.once('exit', () => built[Symbol.dispose]());
+    template = built.root;
+    templates.set(key, template);
+  }
+  return template;
+}
+
 /** A temp git repository with a base commit of `files`, removed when the `using` scope that holds it ends. */
 export function tempRepo(prefix: string, files: Record<string, string>) {
   const repo = tempDir(prefix);
   try {
-    initRepo(repo.root, files);
+    cpSync(templateRepo(files), repo.root, { recursive: true });
   } catch (error) {
     repo[Symbol.dispose]();
     throw error;
