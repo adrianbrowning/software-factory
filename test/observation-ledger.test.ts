@@ -4,7 +4,7 @@ import { beforeEach, describe, it } from 'node:test';
 import { ctx, load } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
-import { forgetRun, type ObservationEntry, readRun, statePath, withRun, type Workspace } from '../src/run.ts';
+import { type Finding, forgetRun, type ObservationEntry, readRun, statePath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, planSlices } from '../src/workflow.ts';
 import { commit, finding, review, slice, tempRepo } from './helpers.ts';
@@ -21,7 +21,7 @@ const problemOf = (name: string) => `${name} misleads the reader`;
  * An interactive run of slices Feature and Second, with a file deferred sink, whose slice 01 is green with one thermo
  * observation per name in `names`. `dialogs` collects the title of every confirm dialog the tools ask, all answered yes.
  */
-async function ledgerRun(root: string, names: string[]) {
+async function ledgerRun(root: string, names: string[], shape: (finding: Finding) => Finding = same => same) {
   const tools = load();
   const dialogs: string[] = [];
   const yes: Ui = { confirm: async title => (dialogs.push(title), true) };
@@ -38,7 +38,7 @@ async function ledgerRun(root: string, names: string[]) {
   commit(ws, 'ok');
   await withRun(ws, 'demo', run => runChecks(ws, run));
   const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
-  await review(ws, reviewId, names.map(name => ({ ...finding('thermo', 'observation', name), problem: problemOf(name) })));
+  await review(ws, reviewId, names.map(name => shape({ ...finding('thermo', 'observation', name), problem: problemOf(name) })));
   assert.equal((await withRun(ws, 'demo', run => recordReview(ws, run))).kind, 'green');
   return { call, dialogs, ws };
 }
@@ -71,6 +71,8 @@ describe('observation ledger', () => {
     const run = readRun(ws, 'demo');
     assert.deepEqual(run.observations, [entry('naming', 'carried', '02'), entry('order', 'carried', 'end'), entry('style', 'deferred'), entry('length', 'left'), entry('tidy', 'fixed')]);
     assert.equal('carriedObservations' in run, false, 'the ledger replaces the carried list');
+    const status = JSON.parse((await call('factory_status', {})).content[0]?.text ?? '') as { observations: unknown };
+    assert.deepEqual(status.observations, run.observations, 'factory_status shows the ledger');
   });
 
   it('refuses an observation the ledger holds in every placement tool, naming its placement, before any dialog', async () => {
@@ -166,6 +168,24 @@ describe('observation ledger', () => {
     const known = /## KNOWN OBSERVATIONS\n\n([\s\S]*?)\n## /.exec(data)?.[1] ?? assert.fail('no KNOWN OBSERVATIONS section');
     assert.match(known, /- `01-r1:thermo-naming` \(carried\): ok:1 - naming\n {2}Problem: naming misleads the reader/);
     assert.match(known, /- `01-r1:thermo-style` \(left\): ok:1 - style\n {2}Problem: style misleads the reader/);
+  });
+
+  it('keeps the whole problem of a finding, with a credential redacted, and lists it on one line in the next data file', async () => {
+    using dir = repo();
+    const long = `${'x'.repeat(2_500)} end`;
+    const { call, ws } = await ledgerRun(dir.root, ['naming'], same => ({ ...same, problem: `first line\nsecond token=hunter2secret ${long}` }));
+    await call('factory_leave', { observations: ['thermo-naming'] });
+    const [kept] = readRun(ws, 'demo').observations;
+    assert.equal(kept?.problem, `first line\nsecond token=<REDACTED> ${long}`);
+
+    await withRun(ws, 'demo', run => completeSlice(ws, run));
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    commit(ws, 'second.txt');
+    await call('factory_checks', {});
+    const opened = await call('factory_review_start', { skip: [] });
+    const data = readFileSync(opened.details?.dataFile ?? assert.fail('no data file'), 'utf8');
+    assert.match(data, /\n {2}Problem: first line second token=<REDACTED> x{100}/);
+    assert.doesNotMatch(data, /hunter2secret/);
   });
 
   it('reads a run saved with the carried list and deferred observation items as ledger entries, and the next review fills their text from the kept findings', async () => {

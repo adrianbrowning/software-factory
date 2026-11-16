@@ -873,6 +873,8 @@ export function summarize(ws: Workspace, run: Run) {
     feature: run.feature,
     /** Each role's model from the run snapshot, or `inherit`. */
     models: effectiveModels(run.models),
+    /** The observation ledger: every observation the run carried, deferred, fixed or left, with its placement. */
+    observations: run.observations,
     mode: run.mode,
     nextAction: nextAction(run),
     runDir: runDir(ws, run.feature),

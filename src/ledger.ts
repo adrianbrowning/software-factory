@@ -4,7 +4,7 @@
  * lists the entries so a reviewer and the validator can tell a repeat from a new observation.
  */
 import { itemKey } from './deferred.ts';
-import { evidenceLine } from './evidence.ts';
+import { evidenceLine, redact } from './evidence.ts';
 import { PLACEMENTS, type Finding, type ObservationEntry, type Run, type Slice } from './run.ts';
 
 /** Where a finding points: `path:line`, or `path` when it names no line. */
@@ -12,9 +12,9 @@ export function findingLocation(finding: Finding) {
   return `${finding.path}${finding.line === undefined ? '' : `:${finding.line}`}`;
 }
 
-/** What a ledger entry keeps of its finding: where it points, and its title and problem on one line each. */
+/** What a ledger entry keeps of its finding: where it points, and its title and problem in full, redacted. */
 export function ledgerText(finding: Finding) {
-  return { location: findingLocation(finding), problem: evidenceLine(finding.problem, 2_000), title: evidenceLine(finding.title, 500) };
+  return { location: findingLocation(finding), problem: redact(finding.problem), title: redact(finding.title) };
 }
 
 /** Throws for an observation the ledger already holds, naming each placement: `Observations already carried: a, b. Observations already left: c.` */
@@ -41,8 +41,8 @@ export function placeObservations(run: Run, review: { id: string }, slice: Slice
   }
 }
 
-/** The ledger as a list for a review data file, one entry per item with its key, placement, location, title and problem; `None.` for an empty ledger. */
+/** The ledger as a list for a review data file, one entry per item with its key, placement, location, title and problem, each text on one line and cut at 500 and 2000 characters; `None.` for an empty ledger. */
 export function renderKnownObservations(run: Run) {
   if (run.observations.length === 0) return 'None.';
-  return run.observations.map(entry => `- \`${entry.key}\` (${entry.placement}): ${entry.location} - ${entry.title}\n  Problem: ${entry.problem}`).join('\n');
+  return run.observations.map(entry => `- \`${entry.key}\` (${entry.placement}): ${entry.location} - ${evidenceLine(entry.title, 500)}\n  Problem: ${evidenceLine(entry.problem, 2_000)}`).join('\n');
 }
