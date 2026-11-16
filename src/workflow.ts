@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { effectiveModels } from './config.ts';
 import { evidence, evidenceLine, redact } from './evidence.ts';
 import { gh, git } from './exec.ts';
+import { draftOf } from './deferred.ts';
 import { resolveObservations, renderFinding } from './review.ts';
 import {
   activeSlice,
@@ -258,9 +259,11 @@ export async function startRun(ws: Workspace, input: { feature: string; mode?: R
   const run: Run = {
     agents: [],
     baseRef,
+    carriedObservations: [],
     checks,
     createdAt: new Date().toISOString(),
     decisions: [],
+    deferred: [],
     events: [],
     feature: input.feature,
     mode: input.mode ?? 'interactive',
@@ -395,6 +398,7 @@ export function planCarry(ws: Workspace, run: Run, request: CarryRequest) {
   const chosen = new Set(z.array(z.string().min(1)).parse(request.observations ?? []));
   if (note === undefined && chosen.size === 0) throw new Error('factory_carry needs observation ids, a note, or both.');
   const green = resolveObservations(ws, run, chosen, 'carry observations or a note');
+  requireUnhandled(run, green.review.id, green.observations, false);
   if (request.to === 'end') return { note, ...green, target: undefined };
   const target = run.slices.find(candidate => candidate.id === request.to);
   if (target === undefined) throw new Error(`No slice ${request.to}. Slices: ${run.slices.map(candidate => candidate.id).join(', ')}.`);
@@ -412,6 +416,7 @@ export function carryObservations(ws: Workspace, run: Run, request: CarryRequest
   const { note, observations, review, slice, target } = planned;
   const items = [...(note === undefined ? [] : [redact(note)]), ...observations.map(finding => renderFinding(finding, run.decisions, '####'))];
   const section = `### From green review ${review.id} of slice ${slice.id} "${slice.title}"\n\n${items.join('\n\n')}`;
+  run.carriedObservations.push(...observations.map(finding => `${review.id}:${finding.id}`));
   if (target === undefined) run.waiting.push(section);
   else {
     target.carried.push(section);
@@ -419,6 +424,36 @@ export function carryObservations(ws: Workspace, run: Run, request: CarryRequest
   }
   addEvent(run, 'carry', `${review.id} to ${target === undefined ? 'the end of the run' : `slice ${target.id}`}: ${[...(note === undefined ? [] : ['note']), ...observations.map(finding => finding.id)].join(', ')}`, slice);
   return planned;
+}
+
+/** Throws for an observation already sent to the deferred sink; with `alsoCarried`, also for one already carried to a slice or the end queue. */
+export function requireUnhandled(run: Run, reviewId: string, observations: { id: string }[], alsoCarried: boolean) {
+  const carried = alsoCarried ? observations.filter(finding => run.carriedObservations.includes(`${reviewId}:${finding.id}`)) : [];
+  if (carried.length > 0) throw new Error(`Observations already carried: ${carried.map(finding => finding.id).join(', ')}.`);
+  const deferred = observations.filter(finding => run.deferred.some(item => item.key === `${reviewId}:${finding.id}`));
+  if (deferred.length > 0) throw new Error(`Observations already deferred: ${deferred.map(finding => finding.id).join(', ')}.`);
+}
+
+/** What factory_defer takes: observation ids from a green review (as for factory_carry), a free-text note, or both. */
+export type DeferRequest = { note?: string | undefined; observations?: string[] | undefined };
+
+/**
+ * One draft per observation and note, from the green review that lists the ids. Throws without a deferred sink, for a
+ * request with neither ids nor a note, and for ids that are unknown, already carried, or already deferred. Does not
+ * change the run.
+ */
+export function planDefer(ws: Workspace, run: Run, request: DeferRequest) {
+  if (ws.config.deferred === undefined) throw new Error('No deferred sink: set "deferred" ({ "kind": "file" } or { "kind": "github" }) in .omp/factory.json.');
+  const note = request.note?.trim() ? request.note : undefined;
+  const chosen = new Set(z.array(z.string().min(1)).parse(request.observations ?? []));
+  if (note === undefined && chosen.size === 0) throw new Error('factory_defer needs observation ids, a note, or both.');
+  const { observations, review, slice } = resolveObservations(ws, run, chosen, 'defer observations or a note');
+  requireUnhandled(run, review.id, observations, true);
+  const noted = run.deferred.filter(item => item.review === review.id && item.kind === 'note').length;
+  return [
+    ...(note === undefined ? [] : [draftOf(run, slice, review.id, { detail: redact(note), key: `${review.id}:note:${noted + 1}`, kind: 'note', title: note })]),
+    ...observations.map(finding => draftOf(run, slice, review.id, { detail: renderFinding(finding, run.decisions, '###'), id: finding.id, key: `${review.id}:${finding.id}`, kind: 'observation', title: finding.title })),
+  ];
 }
 
 export function writeTicket(ws: Workspace, run: Run, slice: Slice) {
@@ -991,6 +1026,8 @@ export function summarize(ws: Workspace, run: Run) {
   return {
     /** Agent records from when no slice was active, such as a scout during intake. */
     agentsOutsideSlices: run.agents.filter(agent => agent.slice === undefined),
+    /** Items sent to the deferred sink, each with its location: an issue URL, or the sink file's path while it waits on the run. */
+    deferred: run.deferred.map(({ id, kind, location, review, slice, title }) => ({ id, kind, location, review, slice, title })),
     events: run.events.slice(-30),
     feature: run.feature,
     /** Each role's model from the run snapshot, or `inherit`. */

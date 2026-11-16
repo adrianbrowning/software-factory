@@ -6,7 +6,8 @@ import { bindRun } from './active-run.ts';
 import { auditChild, IMPLEMENTER, REVIEWER, resetAudit, SPAWN_ROLES, VALIDATOR } from './agents.ts';
 import { CONFIG_PATH, describeModels, loadConfig, requireAvailableModels, requireOrchestrator, type RoleModels, routeSpawn } from './config.ts';
 import { evidenceHead } from './evidence.ts';
-import { chooseChecks, ensureChecks, gate, loadSource } from './gates.ts';
+import { deferItems } from './deferred.ts';
+import { chooseChecks, confirmInteractive, ensureChecks, gate, loadSource } from './gates.ts';
 import {
   activeSlice,
   addEvent,
@@ -58,6 +59,7 @@ import {
   parseRetro,
   pauseRun,
   planCarry,
+  planDefer,
   planFollowUp,
   planReslice,
   planSlices,
@@ -94,6 +96,7 @@ const ORCHESTRATION_TOOLS = [
   'factory_complete_slice',
   'factory_fix',
   'factory_carry',
+  'factory_defer',
   'factory_reopen',
   'factory_follow_up',
   'factory_status',
@@ -179,6 +182,13 @@ const carrySchema = z.object({
   to: z
     .union([z.string().regex(/^\d{2}$/), z.literal('end')])
     .describe('Id of the pending slice whose ticket takes the work, for example "03"; or "end": the work waits on the run for the next factory_follow_up slice'),
+});
+const deferSchema = z.object({
+  note: z.string().optional().describe('Work to send to the deferred sink in full. Give it, observations, or both'),
+  observations: z
+    .array(z.string().min(1))
+    .optional()
+    .describe('Ids of observations from the active slice\'s green review, else from the one done slice whose last green review lists them, to send to the deferred sink, for example "thermo-naming". Ids already carried or deferred are refused'),
 });
 const emptySchema = z.object({});
 
@@ -583,7 +593,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
       if (result.green) {
         const notes =
           result.observations.length > 0
-            ? `\nObservations (non-blocking):\n${result.observations.join('\n\n')}\nAsk the user where each goes: fixed in this slice (factory_fix with their ids), carried into the ticket of a pending slice (factory_carry with their ids and that slice id), or queued for one follow-up slice at the end of the run (factory_carry with their ids and to "end"). This slice stays green when they are carried.`
+            ? `\nObservations (non-blocking):\n${result.observations.join('\n\n')}\nAsk the user where each goes: fixed in this slice (factory_fix with their ids), carried into the ticket of a pending slice (factory_carry with their ids and that slice id), ${ws.config.deferred === undefined ? 'or ' : ''}queued for one follow-up slice at the end of the run (factory_carry with their ids and to "end")${ws.config.deferred === undefined ? '' : ', or sent to the deferred sink (factory_defer with their ids)'}. This slice stays green when they are carried.`
             : '';
         const bug = '\nWhen the user finds a bug in this slice before it is done, call factory_fix with the bug (and any observation ids).';
         return reply(`Review is green.${notes}${bug}\nNext: ${nextAction(readRun(ws, feature))}`);
@@ -724,6 +734,37 @@ export default function softwareFactory(pi: ExtensionAPI) {
         const taken = slice.carried.length === 0 ? '' : `, with the waiting carried items (${slice.carried.length})`;
         return reply(`Slice ${slice.id} "${slice.title}" is added on ${slice.branch}${taken}.\nNext: ${nextAction(run)}`);
       });
+    },
+  });
+
+  tool({
+    caller: 'main',
+    description:
+      'Send green-review observations (observations), a free-text note (note), or both to the deferred sink set in .omp/factory.json: one GitHub issue per item (filed at once, URL stored), or the sink file, written later from the items queued on the run. Each item names the run, slice and review. Ids already carried or deferred are refused. The slice keeps its green review. Accepted-unresolved findings go to the sink by themselves.',
+    label: 'Factory: defer to the sink',
+    name: 'factory_defer',
+    schema: deferSchema,
+    async run(params, { feature, ws }, ctx) {
+      // Refuses a project without a sink, empty input, unknown ids, and ids already carried or deferred, without a dialog.
+      const planned = planDefer(ws, readRun(ws, feature), params);
+      const sink = ws.config.deferred?.kind === 'github' ? 'GitHub issues (gh issue create, one per item)' : `the sink file ${ws.config.deferred?.path} (queued on the run)`;
+      const items = planned.map(draft => `- ${draft.id ?? 'Note'}: ${evidenceHead(draft.title, 200)}`);
+      if (!(await confirmInteractive(ctx, ws, feature, `Defer ${planned.length} items to ${ws.config.deferred?.kind === 'github' ? 'GitHub issues' : 'the sink file'}?`, `${items.join('\n')}\n\nSink: ${sink}.`))) {
+        return reply(`The user did not defer the work. Ask how to handle the observations or the note.\nNext: ${nextAction(readRun(ws, feature))}`);
+      }
+      const { failure, lines, rest } = await withRun(ws, feature, async run => {
+        const drafts = planDefer(ws, run, params);
+        const before = run.deferred.length;
+        const failed = await deferItems(ws, run, drafts);
+        const filed = run.deferred.slice(before);
+        if (filed.length > 0) addEvent(run, 'defer', `${filed[0]?.review}: ${filed.map(item => item.id ?? 'note').join(', ')}`);
+        const rest = drafts.filter(draft => !filed.some(item => item.key === draft.key)).map(draft => draft.id ?? 'the note');
+        return { failure: failed, lines: [...filed.map(item => `${item.id ?? 'note'}: ${item.location}`), `Next: ${nextAction(run)}`], rest };
+      });
+      if (failure !== undefined) {
+        throw new Error(`The deferred sink failed: ${failure.message}. Filed items stay recorded and are refused if sent again; call factory_defer again with only the rest: ${rest.join(', ')}.\n${lines.join('\n')}`);
+      }
+      return reply(`Deferred:\n${lines.join('\n')}`);
     },
   });
 

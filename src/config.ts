@@ -167,6 +167,18 @@ const headlessSchema = z
   .strict();
 export type HeadlessGate = keyof z.infer<typeof headlessSchema>;
 
+/** Where deferred items go: a file the run writes in a final slice (path inside the repository), or one GitHub issue per item. */
+const deferredSchema = z.discriminatedUnion('kind', [
+  z
+    .object({
+      kind: z.literal('file'),
+      path: text.refine(value => !isAbsolute(value) && !value.replaceAll('\\', '/').split('/').includes('..'), 'must be a path inside the repository').default('docs/factory-deferred.md'),
+    })
+    .strict(),
+  z.object({ kind: z.literal('github') }).strict(),
+]);
+export type DeferredSink = z.infer<typeof deferredSchema>;
+
 const configSchema = z
   .object({
     /** Ref the first slice branches from. Unset: the remote default branch from `origin/HEAD`, else `origin/main`. */
@@ -177,6 +189,8 @@ const configSchema = z
     /** Directories put before the omp process PATH when checks run. Each is absolute or starts with `~/`. */
     checkPath: z.array(text).default([]),
     checkTimeoutMs: positiveInt.default(10 * 60 * 1_000),
+    /** Sink for review observations and accepted-unresolved findings the run defers. Unset: nothing can be deferred. */
+    deferred: deferredSchema.optional(),
     /** Repository that receives retro findings about the factory itself. */
     factoryRepo: text.default('adrianbrowning/software-factory'),
     /** Headless gate policy, one key per gate. */

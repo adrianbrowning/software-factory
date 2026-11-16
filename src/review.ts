@@ -8,6 +8,7 @@ import { delimiter, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { evidence, evidenceLine, redact } from './evidence.ts';
+import { deferItems, draftOf } from './deferred.ts';
 import { git, runShell, type CommandResult } from './exec.ts';
 import {
   activeSlice,
@@ -48,6 +49,7 @@ import {
   settle,
   UNTRUSTED_NOTE,
   writeTicket,
+  requireUnhandled,
 } from './workflow.ts';
 
 function noGreenReview(sliceId: string, purpose: string): Error {
@@ -659,7 +661,7 @@ function findingLocation(finding: Finding) {
 
 /** A finding as a markdown section under a `heading` of the given level (`##` by default). */
 export function renderFinding(finding: Finding, decisions: Decision[], heading = '##') {
-  const decision = finding.decision === undefined ? '' : `\n- Breaks decision ${finding.decision}: ${decisions[finding.decision - 1]?.text ?? ''}`;
+  const decision = finding.decision === undefined ? '' : `\n- Breaks decision ${finding.decision}: ${redact(decisions[finding.decision - 1]?.text ?? '')}`;
   return `${heading} [${finding.severity}] ${finding.id}\n\n- Location: ${findingLocation(finding)}\n- Title: ${evidence(finding.title, 500)}\n- Problem: ${evidence(finding.problem, 2_000)}\n- Fix: ${evidence(finding.fix, 2_000)}\n- Fix prompt: ${evidence(finding.fix_prompt, 2_000)}${decision}`;
 }
 
@@ -700,6 +702,7 @@ export async function recordReview(ws: Workspace, run: Run) {
   );
   const detail = `${review.id} kept ${kept.length} (${countBy(kept, 'severity')}) downgraded ${validation.downgrade.length} escalated ${validation.escalate.length} dropped ${validation.dropped.length} by-domain ${countBy(kept, 'domain')}`;
   // The recorded review checked every fix item gathered before it; the open ones go into the next fix file.
+  const gathered = slice.fixItems;
   slice.fixItems = [];
 
   if (verdict === 'APPROVED') {
@@ -718,10 +721,24 @@ export async function recordReview(ws: Workspace, run: Run) {
   if (run.mode === 'headless' && slice.fixRounds >= slice.roundLimit) {
     // A headless slice has a fixed fix budget and no stall dialog: what is still open goes on record as unresolved, and that stands in for green.
     const unresolved = records.map(({ item }, index) => `${index < blocking.length ? 'blocking finding' : 'open fix item'} ${'id' in item ? `${item.id}: ` : ''}${item.summary}`);
+    // The open items go to the deferred sink before the slice counts as accepted. A failed issue keeps the ones already filed, and the retry files the rest.
+    // With no sink configured they stay on record in slice.unresolved and the event below.
+    const failure = await deferItems(
+      ws,
+      run,
+      records.map(({ item, section }, index) =>
+        draftOf(run, slice, review.id, { detail: section, id: 'id' in item ? item.id : undefined, key: `${review.id}:${'id' in item ? item.id : `unresolved:${index + 1}`}`, kind: 'unresolved', title: item.summary }),
+      ),
+    );
+    if (failure !== undefined) {
+      slice.fixItems = gathered;
+      throw new Invalidated(`The deferred sink failed, so review ${review.id} is not accepted unresolved: ${failure.message}. The items already filed stay recorded; call factory_review_record again.`);
+    }
     slice.phase = 'ready';
     slice.green = { decisions: review.decisions };
     slice.unresolved = unresolved;
-    addEvent(run, 'accepted-unresolved', `${review.id} after ${slice.fixRounds} fix rounds; open: ${unresolved.join('; ')}`, slice);
+    const sunk = ws.config.deferred === undefined ? 'no deferred sink configured' : `sent to the ${ws.config.deferred.kind} sink`;
+    addEvent(run, 'accepted-unresolved', `${review.id} after ${slice.fixRounds} fix rounds (${sunk}); open: ${unresolved.join('; ')}`, slice);
     // No new fix file: fixPath is the last round's.
     return { blocking: blocking.length, fixPath: slice.fixPath ?? '', green: false as const, open: open.length, stalled: false, unresolved };
   }
@@ -730,7 +747,7 @@ export async function recordReview(ws: Workspace, run: Run) {
 
 /** A fix item the scope reviewer left open, with where it was asked for and the reviewer's reason. */
 function renderOpenItem(item: FixItem, verdict: FixVerdict | undefined) {
-  return `### \`${item.id}\`\n\n- Asked in: ${item.path} (round ${item.round})\n- Item: ${item.summary}\n- Scope reviewer: ${verdict === undefined ? 'no verdict' : evidence(verdict.reason, 2_000)}`;
+  return `### \`${item.id}\`\n\n- Asked in: ${item.path} (round ${item.round})\n- Item: ${redact(item.summary)}\n- Scope reviewer: ${verdict === undefined ? 'no verdict' : evidence(verdict.reason, 2_000)}`;
 }
 
 /** A finding as a fix record in `group`: its id and summary `[severity] path:line: title` as the fix item. */
@@ -825,6 +842,7 @@ export function planFix(ws: Workspace, run: Run, request: FixRequest) {
       `Slice ${found.slice.id} is done (green review ${found.review.id}); factory_complete_slice already ran. Ask the user: factory_reopen fixes these in slice ${found.slice.id}, factory_follow_up builds them in a new slice on top of the stack.`,
     );
   }
+  requireUnhandled(run, found.review.id, found.observations, true);
   return { bug, ...found };
 }
 
