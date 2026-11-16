@@ -104,11 +104,12 @@ export function decisionCitations(file: string, source: string) {
   );
 }
 
-/** The files `source` imports from its own directory, by its `from './x.ts'` lines. */
+/** The files `source` imports from its own directory, by its `from './x.ts'` lines and its side-effect `import './x.ts'` lines. */
 export function importsOf(source: string) {
   return source.split('\n').flatMap(text => {
-    const from = /^\s*(?:(?:import|export)\b.*|\})\s*from\s+['"]\.\/([^'"]+\.ts)['"]/.exec(text);
-    return from?.[1] === undefined ? [] : [from[1]];
+    const from = /^\s*(?:(?:import|export)\b.*|\})\s*from\s+['"]\.\/([^'"]+\.ts)['"]|^\s*import\s+['"]\.\/([^'"]+\.ts)['"]/.exec(text);
+    const target = from?.[1] ?? from?.[2];
+    return target === undefined ? [] : [target];
   });
 }
 
@@ -163,8 +164,8 @@ describe('structure checks: the helpers', () => {
   });
 
   it('reads every sibling import, including type imports, but not packages', () => {
-    const source = ["import { a } from './a.ts';", "import type { B } from './b.ts';", 'import {', '  c,', "} from './c.ts';", 'export { e } from "./e.ts";', "import { x } from 'node:fs';"].join('\n');
-    assert.deepEqual(importsOf(source), ['a.ts', 'b.ts', 'c.ts', 'e.ts']);
+    const source = ["import { a } from './a.ts';", "import type { B } from './b.ts';", 'import {', '  c,', "} from './c.ts';", 'export { e } from "./e.ts";', "import './s.ts';", 'import "./t.ts"', "import { x } from 'node:fs';"].join('\n');
+    assert.deepEqual(importsOf(source), ['a.ts', 'b.ts', 'c.ts', 'e.ts', 's.ts', 't.ts']);
   });
 
   it('names an import cycle by its path', () => {
@@ -176,6 +177,12 @@ describe('structure checks: the helpers', () => {
     ]);
     assert.deepEqual(cyclesOf(graph), ['a.ts -> b.ts -> c.ts -> a.ts']);
     assert.deepEqual(cyclesOf(new Map([['a.ts', ['b.ts']], ['b.ts', []]])), []);
+  });
+
+  it('finds a cycle that runs through a side-effect import', () => {
+    const files = { 'a.ts': "import './b.ts';", 'b.ts': "export * from './a.ts';" };
+    const graph = new Map(Object.entries(files).map(([name, source]) => [name, importsOf(source)]));
+    assert.deepEqual(cyclesOf(graph), ['a.ts -> b.ts -> a.ts']);
   });
 });
 
