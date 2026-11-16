@@ -787,7 +787,13 @@ export async function resumeRun(ws: Workspace, run: Run, sessionId: string) {
   const filled = run.checks.length === 0;
   if (filled) run.checks = checksSchema.parse(repoChecks(ws));
   if (activeSlice(run)?.stalled) resolveStall(ws, run, 'continue');
-  if (run.status === 'paused' || run.status === 'stalled') run.status = 'running';
+  if (run.status === 'paused' || run.status === 'stalled') {
+    // A headless run can be paused in intake or done (by a stop gate, or factory_pause in intake), so only a headless run restores intake (no approved plan) or done (settle).
+    if (run.mode === 'headless') {
+      run.status = run.slices.length === 0 ? 'intake' : 'running';
+      settle(run);
+    } else run.status = 'running';
+  }
   const slice = activeSlice(run);
   if (slice !== undefined && hasPass(slice)) {
     if (filled || standingChecks(slice, await head(ws.root)) === undefined) dropPass(slice, 'checks');

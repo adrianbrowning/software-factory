@@ -4,8 +4,9 @@ import { join } from 'node:path';
 import { z } from 'zod';
 import { bindRun } from './active-run.ts';
 import { auditChild, IMPLEMENTER, REVIEWER, resetAudit, SPAWN_ROLES, VALIDATOR } from './agents.ts';
-import { CONFIG_PATH, checksPrompt, describeModels, loadConfig, parseChecks, requireAvailableModels, requireOrchestrator, type RoleModels, routeSpawn, suggestChecks } from './config.ts';
-import { evidence, evidenceHead } from './evidence.ts';
+import { CONFIG_PATH, describeModels, loadConfig, requireAvailableModels, requireOrchestrator, type RoleModels, routeSpawn } from './config.ts';
+import { evidenceHead } from './evidence.ts';
+import { chooseChecks, ensureChecks, gate, loadSource } from './gates.ts';
 import {
   activeSlice,
   addEvent,
@@ -21,7 +22,6 @@ import {
   skippedDomainsSchema,
   resliceItemSchema,
   sliceInputSchema,
-  type Source,
   statePath,
   ticketPath,
   withRun,
@@ -50,11 +50,8 @@ import {
   applyReslice,
   approvePlan,
   carryObservations,
-  fetchGithubIssue,
   fileFactoryIssues,
   type FiledIssues,
-  fileSource,
-  githubSource,
   headlessTarget,
   nextAction,
   nextSlice,
@@ -77,7 +74,6 @@ import {
   retroSchema,
   saveChecks,
   sourceInputSchema,
-  type SourceInput,
   startRun,
   summarize,
 } from './workflow.ts';
@@ -85,6 +81,7 @@ import {
 const DEFAULT_FACTORY_REPO = 'adrianbrowning/software-factory';
 /** Tools `factory_start` activates; they stay out of every other session's tool list. */
 const ORCHESTRATION_TOOLS = [
+  'factory_pause',
   'factory_plan',
   'factory_next',
   'factory_reslice',
@@ -231,50 +228,6 @@ function reply(text: string, details?: unknown): Reply {
   return { content: [{ text, type: 'text' }], details };
 }
 
-async function confirm(ctx: ExtensionContext, title: string, body: string) {
-  if (!ctx.hasUI) throw new Error(`${title} needs the interactive UI.`);
-  return ctx.ui.confirm(title, body);
-}
-
-/** The run source. The tool loads GitHub and file issues itself; the user decides on GitHub text from outside the repository. */
-async function loadSource(ctx: ExtensionContext, ws: Workspace, input: SourceInput): Promise<Source> {
-  if (input.kind === 'file') return fileSource(ws, input.ref);
-  if (input.kind !== 'github') return input;
-  return githubSource(input.ref, await fetchGithubIssue(ws, input.ref), outside =>
-    confirm(
-      ctx,
-      `Use ${outside.length} parts of the issue written outside the repository?`,
-      `These authors are not repository collaborators. Yes uses their text as evidence for the run; No leaves it out.\n\n${outside.map(part => `@${part.author} (${part.association}):\n${evidence(part.text, 1_000)}`).join('\n\n')}`,
-    ),
-  );
-}
-
-/** Shows the check dialog: the repository's current checks (or the default ones) chosen, other suggestions commented out. */
-async function chooseChecks(ctx: ExtensionContext, ws: Workspace) {
-  if (!ctx.hasUI) throw new Error('Choosing the checks needs the interactive UI.');
-  const suggestions = suggestChecks(ws.root, ws.config);
-  const current = repoChecks(ws);
-  const chosen = current.length === 0 ? suggestions.chosen : current;
-  const prompt = checksPrompt({
-    chosen,
-    scripts: suggestions.scripts.filter(command => !chosen.includes(command)),
-    workflows: suggestions.workflows.filter(command => !chosen.includes(command)),
-  });
-  const text = await ctx.ui.editor('Checks for this repository (one command per line)', prompt);
-  return text === undefined ? undefined : parseChecks(text);
-}
-
-/** The first run in a repository asks the user for its checks and saves them; later runs reuse them. */
-async function ensureChecks(ctx: ExtensionContext, ws: Workspace) {
-  if (repoChecks(ws).length > 0) return;
-  for (;;) {
-    const checks = await chooseChecks(ctx, ws);
-    if (checks === undefined) throw new Error('The user cancelled the checks dialog. Every run needs at least one check: ask which checks to run, then call factory_start again.');
-    if (checks.length > 0) return saveChecks(ws, checks);
-    ctx.ui.notify('Every run needs at least one check. Type at least one command, or cancel.', 'warning');
-  }
-}
-
 /** Asks the user how to continue once a slice's fix budget is used up. Without a UI the run pauses. */
 async function decideStall(ctx: ExtensionContext, ws: Workspace, feature: string) {
   const run = readRun(ws, feature);
@@ -333,6 +286,8 @@ export default function softwareFactory(pi: ExtensionAPI) {
   async function startOrResume(params: z.infer<typeof startSchema> & { mode?: Run['mode'] }, { entry, ws }: { entry: RootEntry; ws: Workspace }, ctx: ExtensionContext) {
     const sessionId = ctx.sessionManager.getSessionId();
     let run: Run;
+    const notes: string[] = [];
+    const mode = params.mode ?? 'interactive';
     if (params.resume !== undefined) {
       const feature = requireFeatureName(params.resume);
       if (!existsSync(statePath(ws, feature))) throw new Error(`No run named "${feature}".`);
@@ -341,19 +296,23 @@ export default function softwareFactory(pi: ExtensionAPI) {
       requireOrchestratorSession(current.models, ctx, 'resume');
       const slice = activeSlice(current);
       if (slice?.stalled) {
+        if (current.mode === 'headless') {
+          throw new Error(`The headless fix budget is fixed at ${slice.roundLimit} rounds (decision 8), so resume does not raise it. "${feature}" stays stalled. ${stallNotice(current, slice)}`);
+        }
         const body = `In "${feature}", slice ${slice.id} "${slice.title}" used up its fix budget of ${slice.roundLimit} rounds. Raise the fix budget by ${ws.config.maxRounds} rounds and resume?`;
-        if (!(await confirm(ctx, 'Resume software factory run', body))) {
+        if (!(await gate(ctx, ws, feature, 'resume', 'Resume software factory run', body))) {
           if (current.status !== 'stalled') await withRun(ws, feature, latest => resolveStall(ws, latest, 'pause'));
           throw new Error(`The user kept "${feature}" stalled. ${stallNotice(current, slice)}`);
         }
       } else if (current.status === 'paused' || current.status === 'stalled') {
-        if (!(await confirm(ctx, 'Resume software factory run', `Resume "${feature}" (${current.status})?`))) {
+        if (!(await gate(ctx, ws, feature, 'resume', 'Resume software factory run', `Resume "${feature}" (${current.status})?`))) {
           throw new Error(`The user kept "${feature}" ${current.status}.`);
         }
       }
-      if (current.checks.length === 0) await ensureChecks(ctx, ws);
+      if (current.checks.length === 0) notes.push(...(await ensureChecks(ctx, ws, current.mode)));
       run = await withRun(ws, feature, async latest => {
         await resumeRun(ws, latest, sessionId);
+        for (const note of notes) addEvent(latest, 'autonomous', note);
         return latest;
       });
     } else {
@@ -364,9 +323,15 @@ export default function softwareFactory(pi: ExtensionAPI) {
       }
       requireAvailableModels(ws.config.models, spec => ctx.models.resolve(spec));
       requireOrchestratorSession(ws.config.models, ctx, 'start');
-      const source = await loadSource(ctx, ws, params.source);
-      await ensureChecks(ctx, ws);
-      run = await startRun(ws, { feature: params.feature, mode: params.mode, sessionId, source });
+      const loaded = await loadSource(ctx, ws, params.source, mode);
+      notes.push(...loaded.notes, ...(await ensureChecks(ctx, ws, mode)));
+      run = await startRun(ws, { feature: params.feature, mode, sessionId, source: loaded.source });
+      if (notes.length > 0) {
+        run = await withRun(ws, run.feature, latest => {
+          for (const note of notes) addEvent(latest, 'autonomous', note);
+          return latest;
+        });
+      }
     }
     bindRun(entry.pointer, { feature: run.feature, mainId: ctx.agent.id, ws });
     await pi.setActiveTools([...new Set([...pi.getActiveTools(), ...ORCHESTRATION_TOOLS])]);
@@ -389,6 +354,28 @@ export default function softwareFactory(pi: ExtensionAPI) {
 
   tool({
     caller: 'main',
+    description: 'Pause a headless run with a reason when the orchestrator cannot resolve something. /factory resume continues it. Works in intake or while running; refused for an interactive run and for any other status.',
+    label: 'Factory: pause',
+    name: 'factory_pause',
+    schema: z.object({ reason: z.string().min(1).describe('Why the run cannot go on without a person') }),
+    async run(params, { feature, ws }) {
+      await withRun(ws, feature, run => {
+        if (run.mode !== 'headless') throw new Error(`Run "${feature}" is interactive; factory_pause pauses headless runs only. The user pauses an interactive run with /factory pause.`);
+        if (run.status === 'intake') {
+          // Intake has no approved plan; pauseRun stays running-only, so the tool records the pause itself.
+          run.status = 'paused';
+          addEvent(run, 'pause', params.reason);
+          return;
+        }
+        if (run.status !== 'running') throw new Error(`Run "${feature}" is ${run.status}; factory_pause pauses a running or intake run.`);
+        pauseRun(run, params.reason);
+      });
+      return reply(`Run "${feature}" is paused: ${params.reason}\n/factory resume ${feature} continues it. Stop now.`);
+    },
+  });
+
+  tool({
+    caller: 'main',
     description:
       'Propose the tracer-bullet slices. The user approves or rejects them in a dialog. Each slice must fit the context budget and name its test seams.',
     label: 'Factory: plan',
@@ -399,7 +386,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
       const slices = planSlices(ws, readRun(ws, feature), params.slices, base);
       const target = base.landOn === undefined ? `PRs target ${base.trunk}` : `/factory submit fast-forwards ${base.landOn} to the top slice; no PRs`;
       const where = `Slice 01 branches from ${base.baseRef} (${base.baseSha.slice(0, 12)}); ${target}.`;
-      if (!(await confirm(ctx, `Approve ${slices.length} slices for "${feature}"?`, `${where}\n\n${planSummary(slices)}`))) {
+      if (!(await gate(ctx, ws, feature, 'plan', `Approve ${slices.length} slices for "${feature}"?`, `${where}\n\n${planSummary(slices)}`))) {
         return reply('The user rejected the plan. Ask what to change, then call factory_plan again.');
       }
       const run = await withRun(ws, feature, current => {
@@ -439,7 +426,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
       const { children, slices } = planReslice(ws, run, params.slices);
       const active = activeSlice(run);
       const remaining = slices.slice(active === undefined ? 0 : run.slices.indexOf(active));
-      if (!(await confirm(ctx, `Split slice ${active?.id} into ${children.length} slices?`, planSummary(remaining)))) {
+      if (!(await gate(ctx, ws, feature, 'reslice', `Split slice ${active?.id} into ${children.length} slices?`, planSummary(remaining)))) {
         return reply('The user rejected the split. Ask what to change, then call factory_reslice again.');
       }
       return withRun(ws, feature, async current => {
@@ -460,7 +447,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
       // An unknown or done slice is refused by planDecisions, without a dialog.
       const planned = planDecisions(readRun(ws, feature), params.decisions);
       const body = planned.map(({ owner, text }) => `- ${text}${owner === undefined ? '' : ` (${builtBy(owner)})`}`).join('\n');
-      if (!(await confirm(ctx, 'Record these decisions for reviewers?', body))) {
+      if (!(await gate(ctx, ws, feature, 'decide', 'Record these decisions for reviewers?', body))) {
         return reply('The user rejected these decisions. Ask how to word them.');
       }
       return withRun(ws, feature, run => {
@@ -480,7 +467,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
     async run(params, { feature, ws }, ctx) {
       const slice = activeSlice(readRun(ws, feature));
       if (slice === undefined) throw new Error('No active slice. Call factory_next.');
-      if (!(await confirm(ctx, `Add test seams to slice ${slice.id}?`, params.seams.map(seam => `- ${seam}`).join('\n')))) {
+      if (!(await gate(ctx, ws, feature, 'seams', `Add test seams to slice ${slice.id}?`, params.seams.map(seam => `- ${seam}`).join('\n')))) {
         return reply('The user rejected these seams. Ask which seams to use.');
       }
       return withRun(ws, feature, run => {
@@ -631,7 +618,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
       const what = [...(planned.bug === undefined ? [] : ['the bug']), ...planned.observations.map(finding => finding.id)].join(', ');
       const body = `${params.reason}\n\n${items.join('\n')}\n\nThe green review ${planned.review.id} is dropped. The implementer fixes these in fix mode, then the slice gets checks and a new review again. The round counts toward the fix budget.`;
       const title = planned.observations.length === 0 ? 'Fix a bug' : planned.bug === undefined ? 'Fix observations' : 'Fix a bug and observations';
-      if (!(await confirm(ctx, `${title} in slice ${planned.slice.id} "${planned.slice.title}"?`, body))) {
+      if (!(await gate(ctx, ws, feature, 'fix', `${title} in slice ${planned.slice.id} "${planned.slice.title}"?`, body))) {
         return reply(`The user kept the green review. Ask how to handle the observations or the bug, or call factory_complete_slice.\nNext: ${nextAction(readRun(ws, feature))}`);
       }
       const result = await withRun(ws, feature, run => fixObservations(ws, run, params, params.reason));
@@ -663,7 +650,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
           : `Slice ${target.id} builds these, and its reviewers check them.`;
       const body = `${items.join('\n')}\n\nSlice ${planned.slice.id} keeps its green review. ${builder}`;
       const title = target === undefined ? 'Carry to the end of the run?' : `Carry into slice ${target.id} "${target.title}"?`;
-      if (!(await confirm(ctx, title, body))) {
+      if (!(await gate(ctx, ws, feature, 'carry', title, body))) {
         return reply(`The user did not carry the work. Ask how to handle the observations or the note.\nNext: ${nextAction(readRun(ws, feature))}`);
       }
       return withRun(ws, feature, run => {
@@ -691,7 +678,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
       // Anything but a done slice is refused by reopenSlice, without a dialog.
       if (target?.status === 'done') {
         const body = `${params.reason}\n\nThe active slice goes back to pending with its commits. When slice ${target.id} is done again, every later slice branch is rebased onto the fix and earns its checks and review again. The run needs a new retro before /factory submit.`;
-        if (!(await confirm(ctx, `Reopen slice ${target.id} "${target.title}"?`, body))) {
+        if (!(await gate(ctx, ws, feature, 'reopen', `Reopen slice ${target.id} "${target.title}"?`, body))) {
           return reply(`The user kept slice ${target.id} done. Ask how to handle the bug.`);
         }
       }
@@ -715,7 +702,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
       const planned = planFollowUp(ws, current, params);
       const carried = current.waiting.length === 0 ? '' : `\n\nThe slice also takes the carried items waiting on the run (${current.waiting.length}).`;
       const body = `${params.whatToBuild}\n\nAcceptance:\n${params.acceptance.map(item => `- ${item}`).join('\n')}${carried}\n\nThe slice branches from ${planned.parentBranch}. The slices below it are not changed. The run needs a new retro before /factory submit.`;
-      if (!(await confirm(ctx, `Add follow-up slice "${params.title}"?`, body))) {
+      if (!(await gate(ctx, ws, feature, 'followUp', `Add follow-up slice "${params.title}"?`, body))) {
         return reply('The user did not add the follow-up slice. Ask how to handle the work.');
       }
       return withRun(ws, feature, run => {
@@ -759,7 +746,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
               ]
             : []),
         ];
-        if (!(await confirm(ctx, 'Record the retro with these actions?', plan.join('\n')))) {
+        if (!(await gate(ctx, ws, feature, 'retro', 'Record the retro with these actions?', plan.join('\n')))) {
           throw new Error('The user declined these retro actions. Ask which to change, then call factory_retro again.');
         }
         filed = await fileFactoryIssues(ws, retro.file);
