@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import ts from 'typescript';
 import { describe, it } from 'node:test';
 
 const SRC = new URL('../src/', import.meta.url).pathname;
@@ -104,11 +105,13 @@ export function decisionCitations(file: string, source: string) {
   );
 }
 
-/** The files `source` imports from its own directory, by its `from './x.ts'` lines and its side-effect `import './x.ts'` lines. */
+/** The files `source` imports from its own directory, by its static import and `export … from` declarations, side-effect imports included. */
 export function importsOf(source: string) {
-  return source.split('\n').flatMap(text => {
-    const from = /^\s*(?:(?:import|export)\b.*|\})\s*from\s+['"]\.\/([^'"]+\.ts)['"]|^\s*import\s+['"]\.\/([^'"]+\.ts)['"]/.exec(text);
-    const target = from?.[1] ?? from?.[2];
+  const file = ts.createSourceFile('source.ts', source, ts.ScriptTarget.Latest);
+  return file.statements.flatMap(statement => {
+    if (!ts.isImportDeclaration(statement) && !ts.isExportDeclaration(statement)) return [];
+    const specifier = statement.moduleSpecifier;
+    const target = specifier !== undefined && ts.isStringLiteral(specifier) ? /^\.\/([^/]+\.ts)$/.exec(specifier.text)?.[1] : undefined;
     return target === undefined ? [] : [target];
   });
 }
@@ -166,6 +169,12 @@ describe('structure checks: the helpers', () => {
   it('reads every sibling import, including type imports, but not packages', () => {
     const source = ["import { a } from './a.ts';", "import type { B } from './b.ts';", 'import {', '  c,', "} from './c.ts';", 'export { e } from "./e.ts";', "import './s.ts';", 'import "./t.ts"', "import { x } from 'node:fs';"].join('\n');
     assert.deepEqual(importsOf(source), ['a.ts', 'b.ts', 'c.ts', 'e.ts', 's.ts', 't.ts']);
+  });
+
+  it('finds a cycle through a multi-line import list', () => {
+    const files = { 'a.ts': ['import x, {', '  y,', '  z }', "  from './b.ts';"].join('\n'), 'b.ts': "import './a.ts';" };
+    const graph = new Map(Object.entries(files).map(([name, source]) => [name, importsOf(source)]));
+    assert.deepEqual(cyclesOf(graph), ['a.ts -> b.ts -> a.ts']);
   });
 
   it('names an import cycle by its path', () => {
