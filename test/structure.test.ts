@@ -186,6 +186,11 @@ describe('structure checks: the helpers', () => {
     assert.deepEqual(decisionCitations('src/x.ts', source), ['src/x.ts:5: comment cites a ticket decision number: // decision 1']);
   });
 
+  it('reads a slash after a value as a divide, so the comment after it is found', () => {
+    const source = 'const x = 4;\nconst e = x / 2; // decision 8\n';
+    assert.deepEqual(decisionCitations('src/x.ts', source), ['src/x.ts:2: comment cites a ticket decision number: // decision 8']);
+  });
+
   it('still finds a comment after a template with a nested expression', () => {
     const source = 'const a = `${f(`in ${g}`)} text`;\n// decision 9\n';
     assert.deepEqual(decisionCitations('src/x.ts', source), ['src/x.ts:2: comment cites a ticket decision number: // decision 9']);
