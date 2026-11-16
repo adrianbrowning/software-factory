@@ -26,7 +26,7 @@ The fix file starts with the ticket path, the branch, and the check commands. Be
 
 ## Running checks
 
-Run the typecheck (the typecheck command among your task's check commands) and the test files you touched (with the repository's test runner, naming only those files) each as its own bash call, exactly as written, so its exit code is the command's own; a pipe into `grep`, `tail`, `head`, or similar replaces it with the filter's. Read that exit code before you commit: a nonzero exit is a failing check. When the output is long, find the failures in the full output the bash tool saves (its artifact) rather than filtering it or running the suite again.
+Run the typecheck and the test files you touched, each as its own bash call, exactly as written, so its exit code is the command's own; a pipe into `grep`, `tail`, `head`, or similar replaces it with the filter's. For the typecheck, use the typecheck command among your task's check commands; if none is listed, use the repository's own typecheck script if it has one, otherwise skip the typecheck. For the tests, use the runner of the listed test command, or else the repository's test script, naming only the files you touched. Read that exit code before you commit: a nonzero exit is a failing check. When the output is long, find the failures in the full output the bash tool saves (its artifact) rather than filtering it or running the suite again.
 
 ## Stop and report
 
