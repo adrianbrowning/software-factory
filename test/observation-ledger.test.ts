@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { cpSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { beforeEach, describe, it } from 'node:test';
 import { ctx, load } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
@@ -188,34 +188,53 @@ describe('observation ledger', () => {
     assert.doesNotMatch(data, /hunter2secret/);
   });
 
-  it('reads a run saved with the carried list and deferred observation items as ledger entries, and the next review fills their text from the kept findings', async () => {
-    using dir = repo();
-    const { call, ws } = await ledgerRun(dir.root, ['naming', 'style', 'length']);
-    forgetRun(ws, 'demo');
-    const state = JSON.parse(readFileSync(statePath(ws, 'demo'), 'utf8')) as Record<string, unknown>;
-    delete state.observations;
-    cpSync(`${ws.root}/.scratch/demo/reviews/01-r1`, `${ws.root}/.scratch/demo/reviews/01-r0`, { recursive: true });
-    state.carriedObservations = ['01-r1:thermo-naming', '09-r1:thermo-gone', '01-r0:thermo-length'];
-    state.deferred = [{ body: 'b', id: 'thermo-style', key: '01-r1:thermo-style', kind: 'observation', location: 'docs/factory-deferred.md', review: '01-r1', slice: '01', title: 'demo/01: style' }];
-    writeFileSync(statePath(ws, 'demo'), JSON.stringify(state));
+  describe('a run saved before the ledger', () => {
+    /** Saves the state of `ws` as a file from before the ledger wrote it: no `observations`, the carried keys in `carriedObservations`, and `edit` applied. */
+    function saveAsLegacy(ws: Workspace, carried: string[], edit: (state: Record<string, unknown>) => void = () => {}) {
+      forgetRun(ws, 'demo');
+      const state = JSON.parse(readFileSync(statePath(ws, 'demo'), 'utf8')) as Record<string, unknown>;
+      delete state.observations;
+      state.carriedObservations = carried;
+      edit(state);
+      writeFileSync(statePath(ws, 'demo'), JSON.stringify(state));
+    }
 
-    const run = readRun(ws, 'demo');
-    assert.deepEqual(run.observations.map(item => [item.key, item.placement]), [['01-r1:thermo-naming', 'carried'], ['09-r1:thermo-gone', 'carried'], ['01-r0:thermo-length', 'carried'], ['01-r1:thermo-style', 'deferred']]);
-    await assert.rejects(call('factory_leave', { observations: ['thermo-naming'] }), /Observations already carried: thermo-naming\./);
-    await assert.rejects(call('factory_carry', { observations: ['thermo-style'], to: 'end' }), /Observations already deferred: thermo-style\./);
-    await call('factory_leave', { observations: ['thermo-length'] });
+    it('reads each carried and deferred observation as a ledger entry with the text of the finding its carried-in section or deferred item rendered', async () => {
+      using dir = repo();
+      const { call, ws } = await ledgerRun(dir.root, ['naming', 'style', 'length', 'order']);
+      await call('factory_carry', { observations: ['thermo-naming'], to: '02' });
+      await call('factory_carry', { observations: ['thermo-length'], to: 'end' });
+      await call('factory_defer', { observations: ['thermo-style'] });
+      const expected = readRun(ws, 'demo').observations;
+      assert.deepEqual(expected.map(item => item.placement), ['carried', 'carried', 'deferred']);
 
-    await withRun(ws, 'demo', current => completeSlice(ws, current));
-    await withRun(ws, 'demo', current => nextSlice(ws, current));
-    commit(ws, 'second.txt');
-    await call('factory_checks', {});
-    await call('factory_review_start', { skip: [] });
-    const saved = JSON.parse(readFileSync(statePath(ws, 'demo'), 'utf8')) as Record<string, unknown>;
-    assert.equal('carriedObservations' in saved, false);
-    const filled = readRun(ws, 'demo').observations;
-    assert.deepEqual([filled[0], filled[3]], [entry('naming', 'carried'), entry('style', 'deferred')]);
-    assert.deepEqual(filled[2], { ...entry('length', 'carried'), key: '01-r0:thermo-length', review: '01-r0' }, 'an earlier review of the slice is read as its files are');
-    assert.equal(filled[1]?.location, 'unknown', 'an entry whose review files are gone keeps its placeholders');
-    assert.equal(filled[4]?.location, 'ok:1');
+      saveAsLegacy(ws, ['01-r1:thermo-naming', '01-r1:thermo-length', '01-r1:thermo-naming']);
+      assert.deepEqual(readRun(ws, 'demo').observations, expected);
+
+      await call('factory_leave', { observations: ['thermo-order'] });
+      const saved = JSON.parse(readFileSync(statePath(ws, 'demo'), 'utf8')) as Record<string, unknown>;
+      assert.equal('carriedObservations' in saved, false);
+      assert.deepEqual(readRun(ws, 'demo').observations, [...expected, entry('order', 'left')]);
+    });
+
+    it('refuses to read a carried key that no single carried-in section holds, or that is malformed', async () => {
+      using dir = repo();
+      const { call, ws } = await ledgerRun(dir.root, ['naming']);
+      await call('factory_carry', { observations: ['thermo-naming'], to: '02' });
+      for (const key of ['09-r1:thermo-gone', 'no-colon', ':thermo-naming', '01-r1:thermo-.aming']) {
+        saveAsLegacy(ws, [key]);
+        assert.throws(() => readRun(ws, 'demo'), new RegExp(`Corrupt factory state[\\s\\S]*cannot read the carried or deferred observations ${key.replace('.', '\\.')}`));
+      }
+      saveAsLegacy(ws, ['01-r1:thermo-naming'], state => {
+        const second = (state.slices as { carried: string[] }[])[1] ?? assert.fail('no slice 02');
+        second.carried.push(second.carried[0] ?? assert.fail('nothing carried'));
+      });
+      assert.throws(() => readRun(ws, 'demo'), /cannot read the carried or deferred observations 01-r1:thermo-naming: each needs exactly one placement/);
+      saveAsLegacy(ws, ['01-r1:thermo-naming'], state => {
+        const carried = (state.slices as { carried: string[] }[])[1]?.carried[0] ?? assert.fail('nothing carried');
+        state.deferred = [{ body: carried, id: 'thermo-naming', key: '01-r1:thermo-naming', kind: 'observation', location: 'docs/factory-deferred.md', review: '01-r1', slice: '01', title: 'naming' }];
+      });
+      assert.throws(() => readRun(ws, 'demo'), /cannot read the carried or deferred observations 01-r1:thermo-naming: each needs exactly one placement/, 'a key that is both carried and deferred');
+    });
   });
 });

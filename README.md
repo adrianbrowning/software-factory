@@ -247,9 +247,10 @@ run asks once; a declined dialog records nothing, and a headless run records wit
   placement, location, title and problem. Reviewers leave out a problem that matches an entry by location and problem,
   and the validator drops a repeat under a new id with the reason `same as <key>`. A left observation is never raised
   again in the run.
-- A run saved before the ledger keeps its carried and deferred observations as entries with no text. The next review
-  fills the text from the kept finding in that review's files, and an entry whose review files are gone keeps a
-  placeholder, still refused by key.
+- A run saved before the ledger loads its carried and deferred observations as ledger entries, with the location,
+  title and problem read from the finding that the carried-in section of a ticket or the end queue, or the deferred
+  item's body, rendered. A state file whose carried or deferred observation has no such text, or has it in more than one
+  carried-in section, is refused as corrupt.
 
 ### Reopen a done slice
 
