@@ -196,8 +196,8 @@ shows them. After you confirm:
 - The slice gets a fix file with those observations and a "Bug found after green review" section for the bug, and
   goes back to fix. The green review is dropped, so the slice goes through checks and a new review again before
   `factory_complete_slice`.
-- The round counts in the slice's fix rounds (`factory_status`) and against its round limit; a used-up budget stalls
-  like any other fix round.
+- A round with a bug counts in the slice's fix rounds (`factory_status`) and against its round limit; a used-up
+  budget stalls like any other fix round. A round for observations only does not count and never stalls the slice.
 - It refuses a call with neither a bug nor observation ids, an id that is not an observation of that green review,
   and a slice without a green review. Observation ids that only a done slice's green review lists are refused too:
   the message names the slice and its review, and says to use `factory_reopen` for that slice or `factory_follow_up`.
