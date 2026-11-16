@@ -30,7 +30,7 @@ describe('fix items', { concurrency: 4 }, () => {
     await step(ws, run => runChecks(ws, run));
     const opened = await step(ws, run => startReview(ws, run));
     await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming')]);
-    assert.ok((await step(ws, run => recordReview(ws, run))).green);
+    assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
 
     await step(ws, run => fixObservations(ws, run, { bug: 'Crash.', observations: ['thermo-naming'] }, 'Fix both now.'));
     commit(ws, 'ok', 'fixed\n');
@@ -66,7 +66,7 @@ describe('fix items', { concurrency: 4 }, () => {
     const first = await step(ws, run => startReview(ws, run));
     await review(ws, first.reviewId, [finding('bug', 'high', 'null-crash')]);
     const blocked = await step(ws, run => recordReview(ws, run));
-    assert.ok(!blocked.green);
+    assert.ok(blocked.kind === 'fix');
     assert.match(
       readFileSync(blocked.fixPath, 'utf8'),
       /## Fix items\n\n- `bug-null-crash`: [^\n]*\n\n## Blocking review findings from 01-r1\n\n### \[high\] bug-null-crash\n/,
@@ -100,7 +100,7 @@ describe('fix item verdicts', { concurrency: 4 }, () => {
     await step(ws, run => runChecks(ws, run));
     const first = await step(ws, run => startReview(ws, run));
     await review(ws, first.reviewId, [finding('bug', 'high', 'a'), finding('bug', 'high', 'b')]);
-    assert.ok(!(await step(ws, run => recordReview(ws, run))).green);
+    assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'fix');
     commit(ws, 'ok', 'fixed\n');
     await step(ws, run => runChecks(ws, run));
     const opened = await step(ws, run => startReview(ws, run));
@@ -148,7 +148,7 @@ describe('fix item verdicts', { concurrency: 4 }, () => {
     const open = { id: 'bug-b', reason: 'Unreachable is claimed, but parse still passes null', status: 'open' } as const;
     await review(ws, reviewId, [finding('thermo', 'observation', 'naming')], ['thermo-naming'], [fixed('bug-a'), open]);
     const recorded = await step(ws, run => recordReview(ws, run));
-    assert.ok(!recorded.green);
+    assert.equal(recorded.kind, 'fix');
     const stored = JSON.parse(readFileSync(join(dataFile, '..', 'review.json'), 'utf8'));
     assert.equal(stored.verdict, 'CHANGES_REQUESTED');
     assert.deepEqual(stored.fixItems, [fixed('bug-a'), open]);
@@ -170,7 +170,7 @@ describe('fix item verdicts', { concurrency: 4 }, () => {
     const { reviewId } = await reviewOfFixItems(ws);
     await review(ws, reviewId, [finding('bug', 'high', 'b')], ['bug-b'], [fixed('bug-a'), { id: 'bug-b', reason: 'still crashes', status: 'open' }]);
     const recorded = await step(ws, run => recordReview(ws, run));
-    assert.ok(!recorded.green);
+    assert.equal(recorded.kind, 'fix');
     assert.equal(readRun(ws, 'demo').slices[0]?.fixItems.filter(item => item.id === 'bug-b').length, 1);
   });
 
@@ -179,7 +179,7 @@ describe('fix item verdicts', { concurrency: 4 }, () => {
     const { reviewId } = await reviewOfFixItems(ws);
     await review(ws, reviewId, [finding('bug', 'high', 'c'), finding('bug', 'high', 'd')], undefined, [fixed('bug-a'), { id: 'bug-b', reason: 'still crashes', status: 'open' }]);
     const recorded = await step(ws, run => recordReview(ws, run));
-    assert.ok(!recorded.green);
+    assert.ok(recorded.kind === 'fix');
     const fix = readFileSync(recorded.fixPath, 'utf8');
     assert.equal(fix.match(/## Blocking review findings from 01-r2/g)?.length, 1);
     assert.equal(fix.match(/## Open fix items from 01-r2/g)?.length, 1);
@@ -194,7 +194,7 @@ describe('fix item verdicts', { concurrency: 4 }, () => {
     await step(ws, run => runChecks(ws, run));
     const { reviewId } = await step(ws, run => startReview(ws, run));
     await review(ws, reviewId, [finding('thermo', 'observation', 'naming'), finding('thermo', 'observation', 'length')]);
-    assert.ok((await step(ws, run => recordReview(ws, run))).green);
+    assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
     const fixed = await step(ws, run => fixObservations(ws, run, { observations: ['thermo-naming', 'thermo-length'] }, 'Fix both now.'));
     const fix = readFileSync(fixed.fixPath, 'utf8');
     assert.equal(fix.match(/## Observations from green review 01-r1/g)?.length, 1);
@@ -209,7 +209,7 @@ describe('fix item verdicts', { concurrency: 4 }, () => {
       { decision: 1, id: 'bug-b', reason: 'decision 1 accepts it', status: 'waived' },
     ];
     await review(ws, reviewId, [], [], verdicts);
-    assert.ok((await step(ws, run => recordReview(ws, run))).green);
+    assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
     const stored = JSON.parse(readFileSync(join(dataFile, '..', 'review.json'), 'utf8'));
     assert.equal(stored.verdict, 'APPROVED');
     assert.deepEqual(stored.fixItems, verdicts);

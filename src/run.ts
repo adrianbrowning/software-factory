@@ -462,13 +462,18 @@ export function standingChecks(slice: Slice, sha: string) {
   return checked?.sha === sha && hasPass(slice) ? checked.results : undefined;
 }
 
+/** Drops the slice's green review: its green mark, its review, and any unresolved items it was accepted with. */
+export function clearGreen(slice: Slice) {
+  slice.green = undefined;
+  slice.review = undefined;
+  slice.unresolved = undefined;
+}
+
 /** Drops the slice's passed checks and review and moves it to `phase`. */
 export function dropPass(slice: Slice, phase: Slice['phase']) {
   slice.phase = phase;
   slice.checked = undefined;
-  slice.green = undefined;
-  slice.review = undefined;
-  slice.unresolved = undefined;
+  clearGreen(slice);
 }
 
 /** Discards the open review of a slice in review, whose reviewers can no longer finish it, for `reason`; returns its id, or undefined when there was none. */

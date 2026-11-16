@@ -138,7 +138,7 @@ export async function greenWithObservation(ws: Workspace) {
   await step(ws, run => runChecks(ws, run));
   const opened = await step(ws, run => startReview(ws, run));
   await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming')]);
-  assert.ok((await step(ws, run => recordReview(ws, run))).green);
+  assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
 }
 
 /** Takes the active slice from committed work to green. */

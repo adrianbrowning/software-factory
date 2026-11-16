@@ -14,6 +14,7 @@ import {
   activeSlice,
   addEvent,
   builtBy,
+  clearGreen,
   discardReview,
   dropPass,
   greenCommit,
@@ -108,9 +109,7 @@ export function recordDecisions(ws: Workspace, run: Run, decisions: unknown) {
 /** Sends a green slice back to review on its green commit, for decisions newer than the review; its checks, which passed on that commit, stand. */
 function reopenReview(run: Run, slice: Slice) {
   slice.phase = 'review';
-  slice.green = undefined;
-  slice.review = undefined;
-  slice.unresolved = undefined;
+  clearGreen(slice);
   addEvent(run, 'review-invalidated', 'decisions recorded after the green review', slice);
 }
 
@@ -669,7 +668,24 @@ export function renderFinding(finding: Finding, decisions: Decision[], heading =
   return `${heading} [${finding.severity}] ${finding.id}\n\n- Location: ${findingLocation(finding)}\n- Title: ${evidence(finding.title, 500)}\n- Problem: ${evidence(finding.problem, 2_000)}\n- Fix: ${evidence(finding.fix, 2_000)}\n- Fix prompt: ${evidence(finding.fix_prompt, 2_000)}${decision}`;
 }
 
-export async function recordReview(ws: Workspace, run: Run) {
+/**
+ * What `recordReview` decided: `green` (with the observations to place), `accepted-unresolved` (a headless slice with no
+ * fix rounds left, counted as green with its open items on record), or `fix` (a fix file written for the blocking
+ * findings and open fix items, `stalled` when the round limit is used up).
+ */
+export type RecordedReview =
+  | { kind: 'green'; observations: string[] }
+  | { kind: 'accepted-unresolved'; unresolved: string[] }
+  | { blocking: number; fixPath: string; kind: 'fix'; open: number; stalled: boolean };
+
+/** Marks the slice's review green over `decisions`; `unresolved` are the items it is accepted with, if any. */
+function markGreen(slice: Slice, decisions: number, unresolved?: string[]) {
+  slice.phase = 'ready';
+  slice.green = { decisions };
+  slice.unresolved = unresolved;
+}
+
+export async function recordReview(ws: Workspace, run: Run): Promise<RecordedReview> {
   const slice = requireActive(run);
   const review = slice.review;
   if (slice.phase !== 'review' || review === undefined) throw new Error('No review in progress: call factory_review_start.');
@@ -710,14 +726,11 @@ export async function recordReview(ws: Workspace, run: Run) {
   slice.fixItems = [];
 
   if (verdict === 'APPROVED') {
-    slice.phase = 'ready';
-    slice.green = { decisions: review.decisions };
-    slice.unresolved = undefined;
+    markGreen(slice, review.decisions);
     addEvent(run, 'review-green', detail, slice);
-    return { green: true as const, observations: observations.map(finding => renderFinding(finding, run.decisions)) };
+    return { kind: 'green', observations: observations.map(finding => renderFinding(finding, run.decisions)) };
   }
   const blockingIds = [...blocking.map(finding => finding.id), ...open.map(item => `${item.id} (open fix item)`)];
-  // Logged once the review is recorded, so a retry after a failed deferred sink does not log it twice.
   const blockingDetail = `${detail}; blocking ${blockingIds.join(', ')}`;
   const records: FixRecord[] = [
     ...blocking.map(finding => findingRecord(finding, `## Blocking review findings from ${review.id}`, run.decisions)),
@@ -742,17 +755,15 @@ export async function recordReview(ws: Workspace, run: Run) {
       slice.fixItems = gathered;
       throw new Invalidated(`The deferred sink failed, so review ${review.id} is not accepted unresolved: ${failure.message}. The items already filed stay recorded; call factory_review_record again.`);
     }
+    // Added only now that the deferred sink succeeded, so a retry after a failed sink does not log it twice.
     addEvent(run, 'review-blocking', blockingDetail, slice);
-    slice.phase = 'ready';
-    slice.green = { decisions: review.decisions };
-    slice.unresolved = unresolved;
+    markGreen(slice, review.decisions, unresolved);
     const sunk = ws.config.deferred === undefined ? 'no deferred sink configured' : isRecordSlice(slice) ? 'not deferred: a Record deferred items slice' : `sent to the ${ws.config.deferred.kind} sink`;
     addEvent(run, 'accepted-unresolved', `${review.id} after ${slice.fixRounds} fix rounds (${sunk}); open: ${unresolved.join('; ')}`, slice);
-    // No new fix file: fixPath is the last round's.
-    return { blocking: blocking.length, fixPath: slice.fixPath ?? '', green: false as const, open: open.length, stalled: false, unresolved };
+    return { kind: 'accepted-unresolved', unresolved };
   }
   addEvent(run, 'review-blocking', blockingDetail, slice);
-  return { blocking: blocking.length, green: false as const, open: open.length, unresolved: undefined, ...requestFix(ws, run, slice, review.sha, records) };
+  return { blocking: blocking.length, kind: 'fix', open: open.length, ...requestFix(ws, run, slice, review.sha, records) };
 }
 
 /** A fix item the scope reviewer left open, with where it was asked for and the reviewer's reason. */

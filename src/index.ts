@@ -575,7 +575,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
     schema: emptySchema,
     async run(_params, { feature, ws }, ctx) {
       const result = await withRun(ws, feature, run => recordReview(ws, run));
-      if (result.green) {
+      if (result.kind === 'green') {
         const [orLead, sinkTail] = ws.config.deferred === undefined ? ['or ', ''] : ['', ', or sent to the deferred sink (factory_defer with their ids)'];
         const notes =
           result.observations.length > 0
@@ -584,7 +584,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         const bug = '\nWhen the user finds a bug in this slice before it is done, call factory_fix with the bug (and any observation ids).';
         return reply(`Review is green.${notes}${bug}\nNext: ${nextAction(readRun(ws, feature))}`);
       }
-      if (result.unresolved !== undefined) {
+      if (result.kind === 'accepted-unresolved') {
         return reply(
           `Review is accepted unresolved: the fix budget is used up, and a headless run does not raise it. Open:\n${result.unresolved.join('\n')}\nThe slice counts as green with these items on record.\nNext: ${nextAction(readRun(ws, feature))}`,
         );

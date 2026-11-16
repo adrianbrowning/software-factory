@@ -36,7 +36,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     await assert.rejects(step(ws, run => recordReview(ws, run)), /Domains not submitted yet: security/);
     await review(ws, first.reviewId, [finding('bug', 'high', 'null-crash'), finding('thermo', 'observation', 'naming')]);
     const blocked = await step(ws, run => recordReview(ws, run));
-    assert.ok(!blocked.green);
+    assert.ok(blocked.kind === 'fix');
     const fix = readFileSync(blocked.fixPath, 'utf8');
     assert.match(fix, /\[high\] bug-null-crash/);
     assert.doesNotMatch(fix, /thermo-naming/);
@@ -54,7 +54,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     assert.doesNotMatch(secondData, /PREVIOUS REVIEW/);
     await review(ws, second.reviewId, [finding('thermo', 'observation', 'naming')]);
     const result = await step(ws, run => recordReview(ws, run));
-    assert.ok(result.green);
+    assert.ok(result.kind === 'green');
     assert.equal(result.observations.length, 1);
 
     const done = await step(ws, run => completeSlice(ws, run));
@@ -80,7 +80,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     assert.deepEqual([fixed.passed, fixed.unchanged], [true, false]);
     const { reviewId } = await step(ws, run => startReview(ws, run));
     await review(ws, reviewId, [finding('bug', 'high', 'null-crash')]);
-    assert.ok(!(await step(ws, run => recordReview(ws, run))).green);
+    assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'fix');
     const afterReview = await step(ws, run => runChecks(ws, run));
     assert.deepEqual([afterReview.passed, afterReview.unchanged], [true, true]);
   });
@@ -293,7 +293,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
 
     const { reviewId } = await step(ws, run => startReview(ws, run));
     await review(ws, reviewId, [finding('bug', 'high', 'null-crash')]);
-    assert.ok(!(await step(ws, run => recordReview(ws, run))).green);
+    assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'fix');
     const fixing = readRun(ws, 'demo').slices[0];
     assert.deepEqual([fixing?.phase, fixing?.checked], ['fix', undefined]);
     const fixed = await step(ws, run => runChecks(ws, run));
@@ -529,7 +529,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     assert.equal(readRun(ws, 'demo').slices[0]?.review?.decisions, 1);
     assert.match(readFileSync(again.dataFile, 'utf8'), /Late decision\./);
     await review(ws, again.reviewId, []);
-    assert.equal((await step(ws, run => recordReview(ws, run))).green, true);
+    assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
   });
 
   it('keeps the last recorded blocking findings in the next review after a decision discards the review in between', async () => {
@@ -540,7 +540,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     await step(ws, run => runChecks(ws, run));
     const first = await step(ws, run => startReview(ws, run));
     await review(ws, first.reviewId, [finding('bug', 'high', 'null-crash')]);
-    assert.ok(!(await step(ws, run => recordReview(ws, run))).green);
+    assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'fix');
 
     commit(ws, 'ok', 'fixed\n');
     assert.equal((await step(ws, run => runChecks(ws, run))).passed, true);
@@ -658,7 +658,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     assert.match(data, /Early decision\./);
     assert.match(data, /Late decision\./);
     await review(ws, opened.reviewId, []);
-    assert.equal((await step(ws, run => recordReview(ws, run))).green, true);
+    assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
     assert.equal((await step(ws, run => completeSlice(ws, run))).status, 'done');
   });
 
@@ -731,7 +731,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     await step(ws, run => runChecks(ws, run));
     const opened = await step(ws, run => startReview(ws, run));
     await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming'), finding('comments', 'observation', 'stale')]);
-    assert.ok((await step(ws, run => recordReview(ws, run))).green);
+    assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
 
     await assert.rejects(
       step(ws, run => fixObservations(ws, run, { observations: ['thermo-naming', 'bug-made-up'] }, 'tidy')),
@@ -857,7 +857,7 @@ describe('slice loop gates', { concurrency: 4 }, () => {
     await step(ws, run => runChecks(ws, run));
     const opened = await step(ws, run => startReview(ws, run));
     await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming'), finding('comments', 'observation', 'stale')]);
-    assert.ok((await step(ws, run => recordReview(ws, run))).green);
+    assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
     const before = readRun(ws, 'demo').slices[0];
 
     await step(ws, run => carryObservations(ws, run, { note: 'Also log the parse time.', observations: ['thermo-naming'], to: '02' }));
@@ -1245,7 +1245,8 @@ describe('review submissions', { concurrency: 4 }, () => {
     await validate(['bug-a'], [{ id: 'bug-b', reason: 'not in diff' }]);
 
     const result = await step(ws, run => recordReview(ws, run));
-    assert.equal(result.green ? 0 : result.blocking, 1);
+    assert.ok(result.kind === 'fix');
+    assert.equal(result.blocking, 1);
   });
 
   it('lets a reviewer replace its findings any number of times until validation', async () => {
@@ -1269,7 +1270,8 @@ describe('review submissions', { concurrency: 4 }, () => {
     await assert.rejects(submit('bug', []), /already validated/);
 
     const result = await step(ws, run => recordReview(ws, run));
-    assert.equal(result.green ? 0 : result.blocking, 1);
+    assert.ok(result.kind === 'fix');
+    assert.equal(result.blocking, 1);
   });
 
   it('accepts a finding only on a changed path and inside a new-side hunk', async () => {
@@ -1391,7 +1393,7 @@ describe('review submissions', { concurrency: 4 }, () => {
     await assert.rejects(validate('v', { downgrade, keep: [] }), /already corrected once/);
 
     const result = await step(ws, run => recordReview(ws, run));
-    assert.ok(!result.green);
+    assert.ok(result.kind === 'fix');
     assert.equal(result.blocking, 1);
   });
 
@@ -1399,7 +1401,7 @@ describe('review submissions', { concurrency: 4 }, () => {
     using ws = workspace();
     const { reviewId } = await openReview(ws);
     await review(ws, reviewId, []);
-    assert.ok((await step(ws, run => recordReview(ws, run))).green);
+    assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
     await assert.rejects(step(ws, run => submitValidation(ws, run, { agentId: 'validator', dropped: [], keep: [], reviewId })), /already recorded/);
   });
 
@@ -1434,7 +1436,7 @@ describe('review submissions', { concurrency: 4 }, () => {
     await validate({ escalate: [{ decision: 1, id: 'bug-missed-conflict', reason }], keep: ['react-ts-undefined-field'] });
 
     const result = await step(ws, run => recordReview(ws, run));
-    assert.ok(!result.green);
+    assert.ok(result.kind === 'fix');
     assert.equal(result.blocking, 2);
     const fix = readFileSync(result.fixPath, 'utf8');
     assert.match(fix, /\[high\] bug-missed-conflict[\s\S]*- Breaks decision 1: The shared field is a non-optional record\./);
@@ -1464,7 +1466,7 @@ describe('review submissions', { concurrency: 4 }, () => {
       await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings: [], reviewId: opened.reviewId, ...noFixItems(domain) }));
     }
     await step(ws, run => submitValidation(ws, run, { agentId: 'v', dropped: [], keep: [], reviewId: opened.reviewId }));
-    assert.ok((await step(ws, run => recordReview(ws, run))).green);
+    assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
     assert.match(readRun(ws, 'demo').events.find(event => event.kind === 'review-start')?.detail ?? '', /skipped react-ts \(no TypeScript or React\)/);
   });
 
@@ -1507,7 +1509,7 @@ describe('review submissions', { concurrency: 4 }, () => {
       { duplicateOf: 'react-ts-ts5097', id: 'devops-ts5097', reason: 'same issue' },
     ]);
     const result = await step(ws, run => recordReview(ws, run));
-    assert.ok(!result.green);
+    assert.ok(result.kind === 'fix');
     assert.equal(result.blocking, 1);
   });
 
@@ -1531,7 +1533,7 @@ describe('review submissions', { concurrency: 4 }, () => {
     await validate([{ id: 'thermo-extract-layer', reason }, { id: 'bug-unreachable-guard', reason }], ['thermo-naming']);
 
     const result = await step(ws, run => recordReview(ws, run));
-    assert.ok(result.green);
+    assert.ok(result.kind === 'green');
     assert.equal(result.observations.length, 3);
     assert.match(result.observations.join('\n'), /\[observation\] thermo-extract-layer/);
   });

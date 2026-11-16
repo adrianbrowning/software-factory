@@ -364,7 +364,7 @@ describe('redaction in rendered findings and open fix items', () => {
     await step(ws, run => void (run.slices[0]!.fixItems[0]!.summary = `leaks ${secret}`));
     await review(ws, second.reviewId, [], [], [{ id: 'bug-b', reason: 'still broken', status: 'open' }]);
     const result = await step(ws, run => recordReview(ws, run));
-    assert.ok(!result.green && 'fixPath' in result);
+    assert.ok(result.kind === 'fix');
     const section = /- Item: (.*)/.exec(readFileSync(result.fixPath ?? '', 'utf8'))?.[1];
     assert.equal(section, 'leaks <REDACTED>');
   });
