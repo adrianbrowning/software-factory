@@ -135,7 +135,7 @@ async function foreignCommits(ws: Workspace, run: Run, slice: Slice, own: string
 
 /** The slice's commits past its parent, newest first: each full sha with its `--oneline` line (short sha and subject). */
 async function ownCommits(ws: Workspace, slice: Slice) {
-  const log = await git(ws.root, 'log', '--format=%H %h %s', `${slice.parentBranch}..HEAD`);
+  const log = await git(ws.root, 'log', '--no-show-signature', '--no-color', '--format=%H %h %s', `${slice.parentBranch}..HEAD`);
   return log
     .split('\n')
     .filter(Boolean)

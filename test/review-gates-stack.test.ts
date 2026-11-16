@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { readRun, ticketPath } from '../src/run.ts';
 import { completeSlice, recordDecisions, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextAction, nextSlice, planSlices, reopenSlice, resolveBase } from '../src/workflow.ts';
-import { commit, finding, green, newRun, review, sh, slice, start, step, workspace } from './helpers.ts';
+import { commit, finding, green, newRun, review, sh, slice, start, step, tempDir, workspace } from './helpers.ts';
 
 describe('slice loop gates: stacking and review data', { concurrency: 4 }, () => {
   it('takes a slice from red checks through a blocking review to done', async () => {
@@ -137,6 +137,30 @@ describe('slice loop gates: stacking and review data', { concurrency: 4 }, () =>
     sh(ws.root, 'merge', '-q', '--ff-only', 'ext-950');
     commit(ws, 'ok');
     await assert.rejects(step(ws, run => runChecks(ws, run)), /holds 1 commits from other branches[\s\S]*add ext\.txt/);
+  });
+
+  it('lists the slice commits whatever log.showSignature and color.ui the repository config sets', async () => {
+    using ws = workspace();
+    using verifier = tempDir('factory-gpg-');
+    const program = join(verifier.root, 'gpg');
+    writeFileSync(program, '#!/bin/sh\necho "gpg: fake verification line" >&2\nexit 1\n', { mode: 0o755 });
+    sh(ws.root, 'config', 'log.showSignature', 'true');
+    sh(ws.root, 'config', 'color.ui', 'always');
+    sh(ws.root, 'config', 'gpg.program', program);
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    // A commit carrying a gpgsig header, so `git log` runs the verifier above and prints its output.
+    const signed = execFileSync('git', ['hash-object', '-t', 'commit', '-w', '--stdin'], {
+      cwd: ws.root,
+      encoding: 'utf8',
+      input: `tree ${sh(ws.root, 'rev-parse', 'HEAD^{tree}')}\nparent ${sh(ws.root, 'rev-parse', 'HEAD')}\nauthor A <a@b.c> 1 +0000\ncommitter A <a@b.c> 1 +0000\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n x\n -----END PGP SIGNATURE-----\n\nsigned work\n`,
+    }).trim();
+    sh(ws.root, 'reset', '-q', '--hard', signed);
+    const checks = await step(ws, run => runChecks(ws, run));
+    assert.ok(checks.passed);
+    assert.match(checks.commits, /signed work\n[0-9a-f]+ add ok$/);
+    assert.doesNotMatch(checks.commits, /gpg/);
   });
 
   it('lists the slice commits and changed files in the checks result and the numbered user decisions in the review data', async () => {
