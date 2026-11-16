@@ -2,10 +2,9 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'nod
 import { basename, dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { effectiveModels } from './config.ts';
-import { evidence, evidenceLine, redact } from './evidence.ts';
+import { evidence, evidenceLine } from './evidence.ts';
 import { git } from './exec.ts';
-import { isRecordSlice, itemKey, recordFailed, requireNotDeferred, waitsForRecord } from './deferred.ts';
-import { resolveObservations, renderFinding } from './review.ts';
+import { isRecordSlice, recordFailed, waitsForRecord } from './deferred.ts';
 import type { SourceInput } from './source.ts';
 import {
   activeSlice,
@@ -30,6 +29,9 @@ import {
   statePath,
   ticketPath,
   type Workspace,
+  requireActive,
+  requireNotStalled,
+  stallNotice,
   writeAtomic,
 } from './run.ts';
 import { head, requireClean, requireOnBranch } from './repo.ts';
@@ -58,17 +60,6 @@ export function headlessTarget(ref: string): { feature: string; source: SourceIn
 
 export async function repoRoot(cwd: string) {
   return (await git(cwd, 'rev-parse', '--show-toplevel')).trim();
-}
-
-export function requireActive(run: Run) {
-  const slice = activeSlice(run);
-  if (slice === undefined) {
-    throw new Error(
-      'No active slice. Call factory_next. To change a slice that is done, ask the user: factory_reopen fixes a bug in that slice, factory_follow_up adds a slice on top of the stack.',
-    );
-  }
-  requireNotStalled(run);
-  return slice;
 }
 
 async function excludeScratch(ws: Workspace) {
@@ -314,52 +305,6 @@ Build these in this slice like its acceptance criteria; its reviewers check them
 
 ${slice.carried.join('\n\n')}
 `;
-}
-
-/**
- * What factory_carry takes: observation ids from a green review (the active slice's, else the one done slice's that
- * lists them), a free-text note, or both, and where they go: a pending slice id, or "end" to wait on the run for the
- * next follow-up slice.
- */
-export type CarryRequest = { note?: string | undefined; observations?: string[] | undefined; to: string };
-
-/**
- * The target of `request.to` (a pending slice, or undefined for "end"), the observations chosen from the green review
- * that lists them (the active slice's first, else one done slice's), and the note. Throws for a request with neither,
- * for a slice without a green review, for ids no review lists or several done slices list, and for a target that is
- * neither "end" nor a pending slice. Does not change the run.
- */
-export function planCarry(ws: Workspace, run: Run, request: CarryRequest) {
-  const note = request.note?.trim() ? request.note : undefined;
-  const chosen = new Set(z.array(z.string().min(1)).parse(request.observations ?? []));
-  if (note === undefined && chosen.size === 0) throw new Error('factory_carry needs observation ids, a note, or both.');
-  const green = resolveObservations(ws, run, chosen, 'carry observations or a note');
-  requireNotDeferred(run, green.review.id, green.observations);
-  if (request.to === 'end') return { note, ...green, target: undefined };
-  const target = run.slices.find(candidate => candidate.id === request.to);
-  if (target === undefined) throw new Error(`No slice ${request.to}. Slices: ${run.slices.map(candidate => candidate.id).join(', ')}.`);
-  if (target.status !== 'pending') throw new Error(`Slice ${target.id} is ${target.status}; factory_carry takes a pending slice.`);
-  return { note, ...green, target };
-}
-
-/**
- * Carries the chosen observations and the note from the green review that lists them into the ticket of a pending
- * slice, whose implementer builds them and whose reviewers check them, or, for "end", onto the run's waiting queue
- * for the next follow-up slice. The slice keeps its green review.
- */
-export function carryObservations(ws: Workspace, run: Run, request: CarryRequest) {
-  const planned = planCarry(ws, run, request);
-  const { note, observations, review, slice, target } = planned;
-  const items = [...(note === undefined ? [] : [redact(note)]), ...observations.map(finding => renderFinding(finding, run.decisions, '####'))];
-  const section = `### From green review ${review.id} of slice ${slice.id} "${slice.title}"\n\n${items.join('\n\n')}`;
-  run.carriedObservations.push(...observations.map(finding => itemKey(review.id, finding.id)));
-  if (target === undefined) run.waiting.push(section);
-  else {
-    target.carried.push(section);
-    writeTicket(ws, run, target);
-  }
-  addEvent(run, 'carry', `${review.id} to ${target === undefined ? 'the end of the run' : `slice ${target.id}`}: ${[...(note === undefined ? [] : ['note']), ...observations.map(finding => finding.id)].join(', ')}`, slice);
-  return planned;
 }
 
 export function writeTicket(ws: Workspace, run: Run, slice: Slice) {
@@ -755,18 +700,6 @@ export function resolveStall(ws: Workspace, run: Run, choice: 'continue' | 'paus
   slice.fixRounds += 1;
   run.status = 'running';
   addEvent(run, 'stall-continue', `round limit raised to ${slice.roundLimit}`, slice);
-}
-
-/** The one explanation every reply gives for a slice that used up its fix budget. */
-export function stallNotice(run: Run, slice: Slice) {
-  if (run.mode === 'headless') return `The fix budget of slice ${slice.id} "${slice.title}" is used up after ${slice.roundLimit} fix rounds. A headless run cannot raise it, so the run does not continue past this slice.`;
-  return `The fix budget of slice ${slice.id} "${slice.title}" is used up after ${slice.roundLimit} fix rounds. Tell the user that /factory resume ${run.feature} asks whether to raise it and resume.`;
-}
-
-/** Throws the stall notice when the active slice used up its fix budget. */
-export function requireNotStalled(run: Run) {
-  const slice = activeSlice(run);
-  if (slice?.stalled) throw new Error(stallNotice(run, slice));
 }
 
 /** Only a running run pauses; intake, stalled, and done runs keep their status. */
