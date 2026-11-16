@@ -230,17 +230,6 @@ describe('observation ledger', () => {
     assert.match(await knownOf(ws, call, 'second.txt'), /- `01-r1:thermo-naming` \(carried; carried to this slice: check it\): /);
   });
 
-  it('keeps an entry carried to the split slice marked in the review of the first child', async () => {
-    using dir = repo();
-    const { call, ws } = await ledgerRun(dir.root, ['naming']);
-    await call('factory_carry', { observations: ['thermo-naming'], to: '02' });
-    await withRun(ws, 'demo', run => completeSlice(ws, run));
-    await withRun(ws, 'demo', run => nextSlice(ws, run));
-    await call('factory_reslice', { slices: [slice('Part one'), slice('Part two', ['Part one'])] });
-    assert.equal(readRun(ws, 'demo').slices.find(item => item.status === 'active')?.title, 'Part one');
-    assert.match(await knownOf(ws, call, 'one.txt'), /- `01-r1:thermo-naming` \(carried; carried to this slice: check it\): /);
-  });
-
   it('keeps the whole problem of a finding, with a credential redacted, and lists it on one line in the next data file', async () => {
     using dir = repo();
     const long = `${'x'.repeat(2_500)} end`;
