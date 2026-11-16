@@ -762,6 +762,7 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
     addEvent(run, 'accepted-unresolved', `${review.id} after ${slice.fixRounds} fix rounds (${sunk}); open: ${unresolved.join('; ')}`, slice);
     return { kind: 'accepted-unresolved', unresolved };
   }
+  // No deferred sink step on this path, so nothing can fail between the review and this event: it is added once.
   addEvent(run, 'review-blocking', blockingDetail, slice);
   return { blocking: blocking.length, kind: 'fix', open: open.length, ...requestFix(ws, run, slice, review.sha, records) };
 }
