@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import { type FactoryConfig, modelsSchema, SPAWN_MODEL_ROLES } from './config.ts';
-import { legacyObservations, PLACEMENTS } from './ledger.ts';
+import { legacyObservations } from './legacy-observations.ts';
 import { withFileLock } from './state-lock.ts';
 
 /** The cc-pr-review domains. Each has a vendored reference under skills/software-factory/references/review/. */
@@ -290,6 +290,9 @@ export type DeferredItem = z.infer<typeof deferredItemSchema>;
  * `review:id`, the key of a deferred item. `location`, `title` and `problem` are the kept finding's text, for matching a
  * repeat under a new id. `to` is where a carried observation went: a pending slice id, or `end`.
  */
+/** Where a handled observation went. */
+export const PLACEMENTS = ['carried', 'deferred', 'fixed', 'left'] as const;
+
 const observationEntrySchema = z.object({
   id: text,
   key: text,
