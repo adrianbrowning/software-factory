@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, it } from 'node:test';
 import { type Command, ctx, load } from './extension.ts';
@@ -15,16 +15,19 @@ beforeEach(() => resetModuleState());
 const CHECKS_OK = { 'demo.md': '# Demo\n\nDo it.\n', '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) };
 type Reply = { content: { text: string }[] };
 
-/** A fake `gh` first on PATH that logs each `issue create` call's arguments and prints a numbered issue URL. */
+/** A fake `gh` first on PATH that logs each `issue create` call's arguments, prints a numbered issue URL, and fails the call whose number is in the `fail` file. */
 function fakeGh() {
   const dir = tempDir('factory-retro-gh-');
   const log = join(dir.root, 'args.log');
-  writeFileSync(join(dir.root, 'gh'), `#!/bin/sh\nif [ "$1 $2" != 'issue create' ]; then exit 0; fi\necho "$@" >> '${log}'\necho "https://github.com/o/r/issues/$(wc -l < '${log}' | tr -d ' ')"\n`);
+  const fail = join(dir.root, 'fail');
+  writeFileSync(join(dir.root, 'gh'), `#!/bin/sh\nif [ "$1 $2" != 'issue create' ]; then exit 0; fi\necho "$1 $2 $3 $4" >> '${log}'\nn=$(wc -l < '${log}' | tr -d ' ')\nif [ -f '${fail}' ] && [ "$n" = "$(cat '${fail}')" ]; then echo 'HTTP 502' >&2; exit 1; fi\necho "https://github.com/o/r/issues/$n"\n`);
   chmodSync(join(dir.root, 'gh'), 0o755);
   const path = process.env.PATH;
   process.env.PATH = `${dir.root}:${path}`;
   return {
     calls: () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : []),
+    failOn: (n: number) => writeFileSync(fail, String(n)),
+    healed: () => rmSync(fail),
     [Symbol.dispose]: () => {
       process.env.PATH = path;
       dir[Symbol.dispose]();
@@ -100,6 +103,28 @@ describe('headless retro', () => {
     assert.ok(run.deferred.every(item => item.location.startsWith('https://github.com/o/r/issues/')));
     assert.equal(run.slices.length, 1);
     assert.equal(run.status, 'done');
+  });
+
+  it('github sink: a failed issue keeps the finding already filed, and the retry files only the rest', async () => {
+    using gh = fakeGh();
+    using repo = tempRepo('factory-retro-', CHECKS_OK);
+    const { call, ws } = await doneRun(repo.root, { kind: 'github' });
+    gh.failOn(2);
+    await assert.rejects(call('factory_retro', { findings: FINDINGS }), /deferred sink failed: [\s\S]*HTTP 502/);
+    const failed = readRun(ws, 'demo');
+    assert.deepEqual(failed.deferred.map(item => item.title), ['demo/retro: Lint rule']);
+    assert.equal(failed.retroRecorded, false);
+    gh.healed();
+    await call('factory_retro', { findings: FINDINGS });
+    const run = readRun(ws, 'demo');
+    assert.equal(run.retroRecorded, true);
+    assert.deepEqual(run.deferred.map(item => item.title), ['demo/retro: Lint rule', 'demo/retro: Vague skill', 'demo/retro: Minor thing']);
+    assert.equal(run.deferred[0]?.location, failed.deferred[0]?.location, 'the filed finding is not filed again');
+    assert.equal(new Set(run.deferred.map(item => item.location)).size, 3);
+    assert.equal(gh.calls().length, 4, 'three issues and the one failed attempt');
+    const retro = readFileSync(join(runDir(ws, 'demo'), 'retro.md'), 'utf8');
+    assert.doesNotMatch(retro, /Not deferred/);
+    for (const item of run.deferred) assert.match(retro, new RegExp(`Deferred: ${item.location}`));
   });
 
   it('without a sink: no slice is added and the run is ready', async () => {

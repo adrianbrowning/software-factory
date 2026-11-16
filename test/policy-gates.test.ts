@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { chmodSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, it } from 'node:test';
 import { type Command, ctx, load } from './extension.ts';
 import { loadConfig, parseConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
-import { readRun, withRun, type Run, type Workspace } from '../src/run.ts';
+import { readRun, statePath, withRun, type Run, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, planSlices, resolveStall } from '../src/workflow.ts';
 import { commit, finding, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
@@ -129,8 +129,7 @@ describe('headless gates', () => {
 
   it('resume: auto continues a paused headless run with no dialog', async () => {
     using repo = tempRepo('factory-gate-', CHECKS_OK);
-    const { call, dialogs, ws } = await headlessRun(repo.root, 'active', { resume: 'auto' });
-    await call('factory_checks', {}).catch(() => {});
+    const { dialogs, ws } = await headlessRun(repo.root, 'active', { resume: 'auto' });
     await withRun(ws, 'demo', run => ((run.status = 'paused'), undefined));
     resetModuleState();
     await headlessRunCaller(repo.root).call('factory_start', { resume: 'demo' });
@@ -173,6 +172,7 @@ describe('headless gates', () => {
     sh(repo.root, 'rm', '-q', 'ok');
     sh(repo.root, 'commit', '-qm', 'break the check');
     for (let round = 0; round < 4; round++) await call('factory_checks', {}).catch(() => {});
+    assert.equal(readRun(ws, 'demo').slices[0]?.stalled, true);
     await withRun(ws, 'demo', run => resolveStall(ws, run, 'pause'));
     const limit = readRun(ws, 'demo').slices[0]?.roundLimit;
     resetModuleState();
@@ -277,12 +277,14 @@ describe('headless start', () => {
     assert.ok(readRun(ws, 'demo').events.some(event => event.kind === 'autonomous' && /checks/.test(event.detail)));
 
     using bare = tempRepo('factory-nodetect-', { ...TICKET, 'README.md': 'base\n' });
-    await assert.rejects(headlessRunCaller(bare.root).headless('demo.md'), /checks/);
+    await assert.rejects(headlessRunCaller(bare.root).headless('demo.md'), /Headless gate "checks": the repository has no configured checks and none could be detected/);
+    assert.equal(existsSync(statePath({ config: loadConfig(bare.root), root: bare.root }, 'demo')), false);
   });
 
   it('the checks gate set to stop refuses even when checks are detected', async () => {
     using repo = tempRepo('factory-detect-', { '.omp/factory.json': JSON.stringify({ baseRef: 'main', headless: { checks: 'stop' } }), ...TICKET, 'package.json': JSON.stringify({ scripts: { test: 'true' } }) });
-    await assert.rejects(headlessRunCaller(repo.root).headless('demo.md'), /\bchecks\b/);
+    await assert.rejects(headlessRunCaller(repo.root).headless('demo.md'), /Headless gate "checks" is set to stop and the repository has no configured checks/);
+    assert.equal(existsSync(statePath({ config: loadConfig(repo.root), root: repo.root }, 'demo')), false);
   });
 });
 

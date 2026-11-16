@@ -720,7 +720,8 @@ export async function recordReview(ws: Workspace, run: Run) {
     return { green: true as const, observations: observations.map(finding => renderFinding(finding, run.decisions)) };
   }
   const blockingIds = [...blocking.map(finding => finding.id), ...open.map(item => `${item.id} (open fix item)`)];
-  addEvent(run, 'review-blocking', `${detail}; blocking ${blockingIds.join(', ')}`, slice);
+  // Logged once the review is recorded, so a retry after a failed deferred sink does not log it twice.
+  const logBlocking = () => addEvent(run, 'review-blocking', `${detail}; blocking ${blockingIds.join(', ')}`, slice);
   const records: FixRecord[] = [
     ...blocking.map(finding => findingRecord(finding, `## Blocking review findings from ${review.id}`, run.decisions)),
     ...open.map(item => ({ group: `## Open fix items from ${review.id}`, item: { id: item.id, summary: item.summary }, section: renderOpenItem(item, verdictOf.get(item.id)) })),
@@ -742,6 +743,7 @@ export async function recordReview(ws: Workspace, run: Run) {
       slice.fixItems = gathered;
       throw new Invalidated(`The deferred sink failed, so review ${review.id} is not accepted unresolved: ${failure.message}. The items already filed stay recorded; call factory_review_record again.`);
     }
+    logBlocking();
     slice.phase = 'ready';
     slice.green = { decisions: review.decisions };
     slice.unresolved = unresolved;
@@ -750,6 +752,7 @@ export async function recordReview(ws: Workspace, run: Run) {
     // No new fix file: fixPath is the last round's.
     return { blocking: blocking.length, fixPath: slice.fixPath ?? '', green: false as const, open: open.length, stalled: false, unresolved };
   }
+  logBlocking();
   return { blocking: blocking.length, green: false as const, open: open.length, unresolved: undefined, ...requestFix(ws, run, slice, review.sha, records) };
 }
 
