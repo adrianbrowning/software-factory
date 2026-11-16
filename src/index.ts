@@ -29,7 +29,7 @@ import { boundAt, cachedRoot, NO_ACTIVE_RUN, resetRoots, type RootEntry, toolReg
 import { submitHeadless } from './headless-submit.ts';
 import { submitStack } from './submit.ts';
 import { decisionInputSchema, planDecisions, recordDecisions, runChecks } from './review.ts';
-import { registerDeferTool, registerReviewTools } from './review-tools.ts';
+import { registerReviewTools } from './review-tools.ts';
 import { decideStall, emptySchema, reply, STALL_DESCRIPTION } from './tool-replies.ts';
 import {
   addFollowUp,
@@ -74,6 +74,7 @@ const ORCHESTRATION_TOOLS = [
   'factory_fix',
   'factory_carry',
   'factory_defer',
+  'factory_leave',
   'factory_reopen',
   'factory_follow_up',
   'factory_status',
@@ -465,8 +466,6 @@ export default function softwareFactory(pi: ExtensionAPI) {
       });
     },
   });
-
-  registerDeferTool(tool);
 
   tool({
     caller: 'main',

@@ -284,13 +284,62 @@ const deferredItemSchema = z.object({
 });
 export type DeferredItem = z.infer<typeof deferredItemSchema>;
 
+export const PLACEMENTS = ['carried', 'deferred', 'fixed', 'left'] as const;
+
+/**
+ * One observation the run has handled, kept so a repeat is refused and a later review can tell it is not new. `key` is
+ * `review:id`, the key of a deferred item. `location`, `title` and `problem` are the kept finding's text, for matching a
+ * repeat under a new id. `to` is where a carried observation went: a pending slice id, or `end`.
+ */
+const observationEntrySchema = z.object({
+  id: text,
+  key: text,
+  location: text,
+  placement: z.enum(PLACEMENTS),
+  problem: text,
+  review: text,
+  slice: text,
+  title: text,
+  to: text.optional(),
+});
+export type ObservationEntry = z.infer<typeof observationEntrySchema>;
+
+/** The location of an entry migrated from a state file that kept none. `startReview` fills such an entry from its review's kept finding when it can. */
+export const LEGACY_LOCATION = 'unknown';
+const LEGACY_PROBLEM = 'Recorded before the run kept the text of handled observations.';
+
+/**
+ * The ledger of a state file: its entries, plus an entry for each carried key and each deferred observation item the
+ * entries do not hold yet.
+ */
+function legacyObservations(entries: ObservationEntry[], carried: string[], deferred: DeferredItem[]): ObservationEntry[] {
+  // LEGACY-STATE(carried-observations): a state file from before the ledger kept carried observations as `review:id` keys and deferred ones as deferred items, with no location, title or problem. Each becomes an entry with that text unknown, so a repeat is still refused by key; startReview fills the text from the entry's kept finding while that review is still its slice's recorded one. Remove once no run saved before the release that ships the ledger is left to resume.
+  const held = new Set(entries.map(entry => entry.key));
+  const added: ObservationEntry[] = [];
+  const add = (entry: ObservationEntry) => {
+    if (held.has(entry.key)) return;
+    held.add(entry.key);
+    added.push(entry);
+  };
+  for (const key of carried) {
+    const at = key.indexOf(':');
+    const review = key.slice(0, at);
+    add({ id: key.slice(at + 1), key, location: LEGACY_LOCATION, placement: 'carried', problem: LEGACY_PROBLEM, review, slice: review.split('-')[0] ?? review, title: key.slice(at + 1) });
+  }
+  for (const item of deferred) {
+    if (item.kind !== 'observation' || item.id === undefined) continue;
+    add({ id: item.id, key: item.key, location: LEGACY_LOCATION, placement: 'deferred', problem: LEGACY_PROBLEM, review: item.review, slice: item.slice, title: item.title });
+  }
+  return [...entries, ...added];
+}
+
 const runSchema = z.object({
   /** One record per factory agent or scout session the run's main session spawned. Empty in runs from before it was kept. */
   agents: z.array(agentRecordSchema).default([]),
   baseRef: text,
   /** Commit `baseRef` pointed at when the plan was approved; slice 01 branches from it. */
   baseSha: z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/).optional(),
-  /** Observations carried to a slice or the end queue, as `review:id`; factory_defer refuses them. factory_carry does not check this list, so a repeat carry is allowed. */
+  /** Legacy (see legacyObservations): observations carried to a slice or the end queue, as `review:id`, in a state file from before the ledger. Read once, never written. */
   carriedObservations: z.array(text).default([]),
   /** Check commands every slice must pass, fixed when the run starts. Empty in runs from before they were kept here. */
   checks: z.array(text).default([]),
@@ -310,6 +359,8 @@ const runSchema = z.object({
   models: modelsSchema.default({}),
   /** Whether the run asks the user at its gates or decides alone. Runs from before it was kept are interactive. */
   mode: z.enum(['headless', 'interactive']).default('interactive'),
+  /** Every observation the run has handled (carried, deferred, fixed or left), in order. Runs from before it was kept get its entries from `carriedObservations` and their deferred items. */
+  observations: z.array(observationEntrySchema).default([]),
   ownerSessionId: text,
   retroRecorded: z.boolean(),
   slices: z.array(legacySliceSchema),
@@ -322,7 +373,11 @@ const runSchema = z.object({
    */
   waiting: z.array(text).default([]),
   version: z.literal(1),
-}).transform(({ slices, ...run }) => ({ ...run, slices: slices.map(slice => legacySlice(slice, run.checks)) }));
+}).transform(({ carriedObservations, slices, ...run }) => ({
+  ...run,
+  observations: legacyObservations(run.observations, carriedObservations, run.deferred),
+  slices: slices.map(slice => legacySlice(slice, run.checks)),
+}));
 export type Run = z.infer<typeof runSchema>;
 
 export type Workspace = { config: FactoryConfig; root: string };

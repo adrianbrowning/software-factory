@@ -186,7 +186,6 @@ export async function startRun(ws: Workspace, input: { feature: string; mode?: R
   const run: Run = {
     agents: [],
     baseRef,
-    carriedObservations: [],
     checks,
     createdAt: new Date().toISOString(),
     decisions: [],
@@ -195,6 +194,7 @@ export async function startRun(ws: Workspace, input: { feature: string; mode?: R
     feature: input.feature,
     mode: input.mode ?? 'interactive',
     models: ws.config.models,
+    observations: [],
     ownerSessionId: input.sessionId,
     retroRecorded: false,
     slices: [],

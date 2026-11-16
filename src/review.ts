@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { evidence, evidenceLine, redact } from './evidence.ts';
 import { deferItems, draftOf, isRecordSlice, itemKey } from './deferred.ts';
+import { findingLocation, ledgerText, renderKnownObservations } from './ledger.ts';
 import { git, runShell, type CommandResult } from './exec.ts';
 import {
   activeSlice,
@@ -20,6 +21,7 @@ import {
   greenCommit,
   outdatedGreenCount,
   isAutonomous,
+  LEGACY_LOCATION,
   type Decision,
   type Domain,
   type Finding,
@@ -287,6 +289,32 @@ function committedContent(root: string, range: string, sha: string) {
 }
 
 /**
+ * Fills the location, title and problem of ledger entries migrated from a state file that kept none (see
+ * legacyObservations), from the entry's kept finding in the validation and domain files of its review. The slice's
+ * recorded review is read through its recorded hashes, so a file that changed throws, as everywhere else. An earlier
+ * review's hashes are not kept in the run state, so its files are read as they are. An entry whose review files are
+ * gone keeps its placeholders.
+ */
+function fillLegacyEntries(ws: Workspace, run: Run) {
+  // LEGACY-STATE(carried-observations): see legacyObservations in run.ts.
+  for (const entry of run.observations.filter(held => held.location === LEGACY_LOCATION)) {
+    const recorded = run.slices.find(slice => slice.id === entry.slice)?.review;
+    const review = recorded?.id === entry.review ? recorded : undefined;
+    let found: { findings: Finding[]; validation: unknown } | undefined;
+    if (review?.validation !== undefined) {
+      found = { findings: recordedFindings(ws, run, review).findings, validation: readRecorded(validationFile(ws, run, review.id), review.validation) };
+    } else if (existsSync(validationFile(ws, run, entry.review))) {
+      const read = (path: string) => JSON.parse(readFileSync(path, 'utf8')) as unknown;
+      const files = REVIEW_DOMAINS.map(domain => domainFile(ws, run, entry.review, domain)).filter(path => existsSync(path));
+      found = { findings: files.flatMap(path => findingListSchema.parse(read(path))), validation: read(validationFile(ws, run, entry.review)) };
+    }
+    if (found === undefined) continue;
+    const kept = keptFindings(found.findings, validationSchema.parse(found.validation)).find(finding => finding.id === entry.id);
+    if (kept !== undefined) Object.assign(entry, ledgerText(kept));
+  }
+}
+
+/**
  * Opens a review of the slice diff. Domains the changed paths rule out are skipped by the factory unless `keep`
  * names them; `skip` leaves out further domains the diff gives nothing to review, each with a reason. The required
  * domains always run.
@@ -339,9 +367,10 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   const id = `${slice.id}-r${slice.reviews}`;
   rmSync(reviewDir(ws, run.feature, id), { force: true, recursive: true });
   const dataFile = join(reviewDir(ws, run.feature, id), 'data.md');
+  fillLegacyEntries(ws, run);
   writeAtomic(
     dataFile,
-    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n${renderLaterSlices(run, slice)}\n\n## CHECKS\n\nThe factory ran every configured check on \`${checked.sha}\` and all passed. Do not run them again.\n\n${checked.results.map(result => `- ${result}`).join('\n')}\n\n## FIX ITEMS\n\n${listed}\n\n## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files.join('\n')}\n`,
+    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n${renderLaterSlices(run, slice)}\n\n## CHECKS\n\nThe factory ran every configured check on \`${checked.sha}\` and all passed. Do not run them again.\n\n${checked.results.map(result => `- ${result}`).join('\n')}\n\n## KNOWN OBSERVATIONS\n\nObservations this run has already placed (carried, deferred, fixed or left). A finding that matches an entry by location and problem, under any id, is not new: the validator drops it with the reason \`same as <key>\`. ${UNTRUSTED_NOTE}\n\n${renderKnownObservations(run)}\n\n## FIX ITEMS\n\n${listed}\n\n## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files.join('\n')}\n`,
   );
   const lines = changedLines(diff, files);
   slice.review = { decisions: run.decisions.length, id, lines, sha: checked.sha, skipped, snapshot: await snapshot(ws.root), submissions: {} };
@@ -661,11 +690,6 @@ function countBy(findings: Finding[], key: 'domain' | 'severity') {
   return Object.entries(counts)
     .map(([name, count]) => `${name}=${count}`)
     .join(' ');
-}
-
-/** Where a finding points: `path:line`, or `path` when it names no line. */
-function findingLocation(finding: Finding) {
-  return `${finding.path}${finding.line === undefined ? '' : `:${finding.line}`}`;
 }
 
 /** A finding as a markdown section under a `heading` of the given level (`##` by default). */
