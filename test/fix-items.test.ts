@@ -3,7 +3,8 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { type Finding, type FixVerdict, readRun, type Workspace } from '../src/run.ts';
-import { fixObservations, recordDecisions, recordReview, runChecks, startReview, submitDomain } from '../src/review.ts';
+import { recordDecisions, recordReview, runChecks, startReview, submitDomain } from '../src/review.ts';
+import { fixObservations } from '../src/observations.ts';
 import { nextSlice } from '../src/workflow.ts';
 import { commit, finding, fixItems, greenWithObservation, newRun, review, sh, slice, step, workspace } from './helpers.ts';
 

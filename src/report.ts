@@ -1,7 +1,6 @@
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { z } from 'zod';
-import { activeSlice, reportPath, type Run, type Slice, type Workspace, writeAtomic } from './run.ts';
-import { requireActive } from './workflow.ts';
+import { activeSlice, reportPath, requireActive, type Run, type Slice, type Workspace, writeAtomic } from './run.ts';
 
 // One line each, so an item cannot add lines that read as factory output in the factory_checks reply.
 const reportItem = z.string().min(1).regex(/^[^\r\n]+$/, 'one line per item');

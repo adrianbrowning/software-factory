@@ -1,7 +1,7 @@
 import { evidenceLine } from './evidence.ts';
-import { addEvent, readRun, type Run, type Slice, withRun, type Workspace } from './run.ts';
+import { addEvent, readRun, type Run, type Slice, stallNotice, withRun, type Workspace } from './run.ts';
 import { doneBelow, type Stop, submitStack } from './submit.ts';
-import { pauseRun, stallNotice } from './workflow.ts';
+import { pauseRun } from './workflow.ts';
 
 /** Saves `detail` as a `kind` event unless the run already has it, so a repeated submission records its choice once. */
 function addOnce(ws: Workspace, feature: string, kind: string, detail: string) {

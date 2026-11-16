@@ -432,6 +432,29 @@ export function activeSlice(run: Run) {
   return run.slices.find(slice => slice.status === 'active');
 }
 
+/** The one explanation every reply gives for a slice that used up its fix budget. */
+export function stallNotice(run: Run, slice: Slice) {
+  if (run.mode === 'headless') return `The fix budget of slice ${slice.id} "${slice.title}" is used up after ${slice.roundLimit} fix rounds. A headless run cannot raise it, so the run does not continue past this slice.`;
+  return `The fix budget of slice ${slice.id} "${slice.title}" is used up after ${slice.roundLimit} fix rounds. Tell the user that /factory resume ${run.feature} asks whether to raise it and resume.`;
+}
+
+/** Throws the stall notice when the active slice used up its fix budget. */
+export function requireNotStalled(run: Run) {
+  const slice = activeSlice(run);
+  if (slice?.stalled) throw new Error(stallNotice(run, slice));
+}
+
+export function requireActive(run: Run) {
+  const slice = activeSlice(run);
+  if (slice === undefined) {
+    throw new Error(
+      'No active slice. Call factory_next. To change a slice that is done, ask the user: factory_reopen fixes a bug in that slice, factory_follow_up adds a slice on top of the stack.',
+    );
+  }
+  requireNotStalled(run);
+  return slice;
+}
+
 /**
  * The decision count a green slice's review covered, when decisions landed after it; otherwise undefined. Since
  * factory_decide reopens such a slice at once, only a state file written before it did keeps this state; one from

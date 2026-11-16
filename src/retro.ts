@@ -3,8 +3,8 @@ import { z } from 'zod';
 import { retroDraft, retroKey } from './deferred.ts';
 import { evidence } from './evidence.ts';
 import { gh } from './exec.ts';
-import { activeSlice, addEvent, runDir, type Run, type Slice, type Workspace, writeAtomic } from './run.ts';
-import { planAppend, pushSlice, settle, stallNotice, waitingNotice } from './workflow.ts';
+import { activeSlice, addEvent, runDir, type Run, type Slice, stallNotice, type Workspace, writeAtomic } from './run.ts';
+import { planAppend, pushSlice, settle, waitingNotice } from './workflow.ts';
 
 export const RETRO_CATEGORIES = [
   'navigation',

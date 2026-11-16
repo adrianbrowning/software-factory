@@ -4,8 +4,9 @@ import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { type Finding, readRun, REVIEW_DOMAINS, ticketPath, type Workspace } from '../src/run.ts';
-import { completeSlice, fixObservations, pathSkips, recordDecisions, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
-import { addFollowUp, applyReslice, approvePlan, carryObservations, nextAction, nextSlice, pauseRun, planFollowUp, planReslice, planSlices, reopenSlice, resolveBase, resolveStall, resumeRun, saveChecks, startRun } from '../src/workflow.ts';
+import { completeSlice, pathSkips, recordDecisions, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
+import { carryObservations, fixObservations } from '../src/observations.ts';
+import { addFollowUp, applyReslice, approvePlan, nextAction, nextSlice, pauseRun, planFollowUp, planReslice, planSlices, reopenSlice, resolveBase, resolveStall, resumeRun, saveChecks, startRun } from '../src/workflow.ts';
 import { parseRetro, recordRetro } from '../src/retro.ts';
 import { checkRuns, commit, countedCheck, finding, fixItems, green, greenWithObservation, newRun, noFixItems, review, sh, slice, start, step, tempDir, workspace } from './helpers.ts';
 
