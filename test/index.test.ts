@@ -446,6 +446,7 @@ describe('used-up fix budget', () => {
     const asked: string[] = [];
     let selects = 0;
     const fixed = await call('factory_fix', { observations: ['thermo-naming'], reason: 'tidy' }, { confirm: async (title: string, body: string) => (asked.push(`${title}\n${body}`), true), select: async () => (selects++, 'Pause the run') });
+    assert.equal(asked.length, 1);
     assert.doesNotMatch(asked[0] ?? '', /fix budget/);
     assert.doesNotMatch(fixed.content[0]?.text ?? '', /fix budget|used up/);
     assert.equal(selects, 0);

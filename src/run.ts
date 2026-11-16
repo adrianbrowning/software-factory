@@ -163,7 +163,7 @@ const sliceSchema = sliceInputSchema.extend({
   fixFromSha: sha.optional(),
   /** Fix items from every fix round since the slice's last recorded review; recording a review clears them, and its fix file asks again for the blocking findings and open items. */
   fixItems: z.array(fixItemSchema).default([]),
-  /** Fix files written for the slice, counted or not; the next fix file is `<id>-f<fixFiles + 1>`. `fixRounds` is only the fix budget count. A slice saved without it starts from `fixRounds`, since every old round counted (see legacySlice). */
+  /** Fix files written for the slice, counted or not; the next fix file is `<id>-f<fixFiles + 1>`. `fixRounds` is only the fix budget count. A slice saved without it starts from the higher of `fixRounds` and the N in its retained `fixPath` (`<id>-f<N>.md`); see legacySlice. */
   fixFiles: z.number().int().nonnegative(),
   fixRounds: z.number().int().nonnegative(),
   /**
