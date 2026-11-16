@@ -35,7 +35,7 @@ describe('slice loop gates: fixes', { concurrency: 4 }, () => {
     assert.doesNotMatch(fix, /comments-stale/);
     const state = readRun(ws, 'demo').slices[0];
     assert.equal(state?.phase, 'fix');
-    assert.equal(state?.fixRounds, 1);
+    assert.equal(state?.fixRounds, 0);
     assert.equal(state?.green, undefined);
     assert.match(nextAction(readRun(ws, 'demo')), new RegExp(`fix mode with ${fixed.fixPath}`));
     await assert.rejects(step(ws, run => completeSlice(ws, run)), /no green review yet/);
@@ -46,7 +46,7 @@ describe('slice loop gates: fixes', { concurrency: 4 }, () => {
     assert.equal((await step(ws, run => completeSlice(ws, run))).status, 'done');
   });
 
-  it('counts a fix round for observations toward the fix budget', async () => {
+  it('does not count a fix round for observations toward the fix budget, even at the round limit', async () => {
     using ws = workspace({ maxRounds: 1 });
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
@@ -55,12 +55,23 @@ describe('slice loop gates: fixes', { concurrency: 4 }, () => {
     commit(ws, 'ok');
     await step(ws, run => runChecks(ws, run));
     const opened = await step(ws, run => startReview(ws, run));
-    await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming')]);
+    await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming'), finding('comments', 'observation', 'stale')]);
     await step(ws, run => recordReview(ws, run));
 
     const fixed = await step(ws, run => fixObservations(ws, run, { observations: ['thermo-naming'] }, 'tidy'));
-    assert.equal(fixed.stalled, true);
-    assert.equal(readRun(ws, 'demo').slices[0]?.stalled, true);
+    assert.equal(fixed.stalled, false);
+    const state = readRun(ws, 'demo').slices[0];
+    assert.deepEqual([state?.stalled, state?.fixRounds, state?.phase], [false, 1, 'fix']);
+
+    commit(ws, 'ok', 'renamed\n');
+    await step(ws, run => runChecks(ws, run));
+    const reopened = await step(ws, run => startReview(ws, run));
+    await review(ws, reopened.reviewId, [finding('thermo', 'observation', 'again')]);
+    await step(ws, run => recordReview(ws, run));
+    const again = await step(ws, run => fixObservations(ws, run, { observations: ['thermo-again'] }, 'tidy'));
+    assert.equal(again.stalled, false);
+    assert.notEqual(again.fixPath, fixed.fixPath, 'a second observation round does not overwrite the first fix file');
+    assert.equal(readRun(ws, 'demo').slices[0]?.fixRounds, 1);
   });
 
   it('fixes a bug the user found after a green review in a tracked round that needs new checks and a new review', async () => {

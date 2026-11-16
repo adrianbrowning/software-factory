@@ -357,7 +357,7 @@ describe('used-up fix budget', () => {
     const { call, ws } = await budgetRun(repo.root, ['Feature']);
     await greenWithObservation(ws, 2);
 
-    const fixed = await call('factory_fix', { observations: ['thermo-naming'], reason: 'tidy' }, { confirm: async () => true, select: async () => 'Pause the run' });
+    const fixed = await call('factory_fix', { bug: 'Crash.', reason: 'tidy' }, { confirm: async () => true, select: async () => 'Pause the run' });
     assert.doesNotMatch(fixed.content[0]?.text ?? '', /The run is (paused|stalled)/);
     assert.match(
       fixed.content[0]?.text ?? '',
@@ -413,7 +413,7 @@ describe('used-up fix budget', () => {
     const { call, ws } = await budgetRun(repo.root, ['Feature']);
     await greenWithObservation(ws, 1);
     const interrupted = { confirm: async () => true, select: async () => Promise.reject(new Error('omp exited')) };
-    await assert.rejects(call('factory_fix', { observations: ['thermo-naming'], reason: 'tidy' }, interrupted));
+    await assert.rejects(call('factory_fix', { bug: 'Crash.', reason: 'tidy' }, interrupted));
     assert.deepEqual([readRun(ws, 'demo').status, readRun(ws, 'demo').slices[0]?.stalled], ['running', true]);
 
     const asked: string[] = [];

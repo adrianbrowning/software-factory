@@ -174,8 +174,8 @@ export function planFix(ws: Workspace, run: Run, request: FixRequest) {
 
 /**
  * Sends the active slice from its green review back to the fix loop for the bug the user found and the observations
- * the user chose to fix in this slice. The round counts against the round limit; the slice earns checks and a new
- * review before it completes.
+ * the user chose to fix in this slice. A round with a bug counts against the round limit; an observation-only round
+ * does not, and never stalls. The slice earns checks and a new review before it completes.
  */
 export function fixObservations(ws: Workspace, run: Run, request: FixRequest, reason: string) {
   const { bug, observations, review, slice } = planFix(ws, run, request);
@@ -193,5 +193,5 @@ export function fixObservations(ws: Workspace, run: Run, request: FixRequest, re
         ]),
     ...observations.map(finding => findingRecord(finding, `## Observations from green review ${review.id} the user chose to fix\n\n${why}`, run.decisions)),
   ];
-  return requestFix(ws, run, slice, review.sha, records);
+  return requestFix(ws, run, slice, review.sha, records, bug !== undefined);
 }
