@@ -7,7 +7,7 @@ You are a **runtime correctness specialist** reviewing a PR. Your job is NOT to 
 Your task gives you the review id and the data file (PR metadata, full diff, changed file list).
 
 1. Read the data file.
-   `## KNOWN OBSERVATIONS` lists the observations this run already placed. A problem that matches an entry by location and problem is not new, whatever id you would give it: leave it out. The validator drops a repeat with the reason `same as <key>`.
+   `## KNOWN OBSERVATIONS` lists the observations this run already placed. A problem that matches an entry by location and problem is not new, whatever id you would give it: leave it out. The validator drops a repeat with the reason `same as <key>`. An entry marked `carried to this slice: check it` is work this slice builds: a finding that it is unbuilt or wrong in this slice is not a repeat; report it.
 
 2. For any file with non-trivial logic changes, read the full file to understand context.
 

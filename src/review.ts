@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { evidence, evidenceLine, redact } from './evidence.ts';
 import { deferItems, draftOf, isRecordSlice, itemKey } from './deferred.ts';
-import { findingLocation, renderKnownObservations } from './ledger.ts';
+import { CARRIED_HERE, findingLocation, renderKnownObservations } from './ledger.ts';
 import { git, runShell, type CommandResult } from './exec.ts';
 import {
   activeSlice,
@@ -342,7 +342,7 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   const dataFile = join(reviewDir(ws, run.feature, id), 'data.md');
   writeAtomic(
     dataFile,
-    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n${renderLaterSlices(run, slice)}\n\n## CHECKS\n\nThe factory ran every configured check on \`${checked.sha}\` and all passed. Do not run them again.\n\n${checked.results.map(result => `- ${result}`).join('\n')}\n\n## KNOWN OBSERVATIONS\n\nObservations this run has already placed (carried, deferred, fixed or left). A finding that matches an entry by location and problem, under any id, is not new: the validator drops it with the reason \`same as <key>\`. ${UNTRUSTED_NOTE}\n\n${renderKnownObservations(run)}\n\n## FIX ITEMS\n\n${listed}\n\n## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files.join('\n')}\n`,
+    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n${renderLaterSlices(run, slice)}\n\n## CHECKS\n\nThe factory ran every configured check on \`${checked.sha}\` and all passed. Do not run them again.\n\n${checked.results.map(result => `- ${result}`).join('\n')}\n\n## KNOWN OBSERVATIONS\n\nObservations this run has already placed (carried, deferred, fixed or left). A finding that matches an entry by location and problem, under any id, is not new: the validator drops it with the reason \`same as <key>\`. An entry marked \`${CARRIED_HERE}\` is work this slice builds: a finding that it is unbuilt or wrong in this slice is not a repeat. ${UNTRUSTED_NOTE}\n\n${renderKnownObservations(run, slice)}\n\n## FIX ITEMS\n\n${listed}\n\n## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files.join('\n')}\n`,
   );
   const lines = changedLines(diff, files);
   slice.review = { decisions: run.decisions.length, id, lines, sha: checked.sha, skipped, snapshot: await snapshot(ws.root), submissions: {} };

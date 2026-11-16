@@ -44,10 +44,17 @@ export function placeObservations(run: Run, review: { id: string }, slice: Slice
   }
 }
 
-/** The ledger as a list for a review data file, one entry per item with its key, placement, location, title and problem, each text on one line and cut at 500 and 2000 characters; `None.` for an empty ledger. */
-export function renderKnownObservations(run: Run) {
+/** The mark after the placement of an entry in the list of a review data file, `(carried; carried to this slice: check it)`, for work carried to the slice under review, which that slice builds and its reviewers check. */
+export const CARRIED_HERE = 'carried to this slice: check it';
+
+/**
+ * The ledger as a list for the data file of the review of `slice`, one entry per item with its key, placement, location,
+ * title and problem, each text on one line and cut at 500 and 2000 characters; `None.` for an empty ledger. An entry
+ * carried to `slice` is marked `CARRIED_HERE`: a finding that it is unbuilt or wrong there is not a repeat.
+ */
+export function renderKnownObservations(run: Run, slice: Pick<Slice, 'id'>) {
   if (run.observations.length === 0) return 'None.';
-  return run.observations.map(entry => `- \`${entry.key}\` (${entry.placement}): ${entry.location} - ${evidenceLine(entry.title, 500)}\n  Problem: ${evidenceLine(entry.problem, 2_000)}`).join('\n');
+  return run.observations.map(entry => `- \`${entry.key}\` (${entry.placement === 'carried' && entry.to === slice.id ? `${entry.placement}; ${CARRIED_HERE}` : entry.placement}): ${entry.location} - ${evidenceLine(entry.title, 500)}\n  Problem: ${evidenceLine(entry.problem, 2_000)}`).join('\n');
 }
 
 /** What a rendered finding (`renderFinding`) says of itself: its location, title and problem. Undefined when `section` holds no such observation. */

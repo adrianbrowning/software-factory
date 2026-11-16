@@ -246,7 +246,9 @@ run asks once; a declined dialog records nothing, and a headless run records wit
 - The review data file of every review has a `## KNOWN OBSERVATIONS` section that lists the ledger entries with key,
   placement, location, title and problem. Reviewers leave out a problem that matches an entry by location and problem,
   and the validator drops a repeat under a new id with the reason `same as <key>`. A left observation is never raised
-  again in the run.
+  again in the run. An entry carried to the slice under review is marked `carried to this slice: check it` in that review's data
+  file: the slice builds it and its reviewers check it, so a finding that it is unbuilt or wrong is not a repeat and the
+  validator keeps it. Entries carried to other slices or the end queue stay plain `carried`.
 - A run saved before the ledger loads its carried and deferred observations as ledger entries, with the location,
   title and problem read from the finding that the carried-in section of a ticket or the end queue, or the deferred
   item's body, rendered. When that text is not found, or more than one carried-in section holds it, the entry gets a

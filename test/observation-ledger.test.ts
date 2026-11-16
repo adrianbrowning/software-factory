@@ -167,8 +167,24 @@ describe('observation ledger', () => {
     const opened = await call('factory_review_start', { skip: [] });
     const data = readFileSync(opened.details?.dataFile ?? assert.fail('no data file'), 'utf8');
     const known = /## KNOWN OBSERVATIONS\n\n([\s\S]*?)\n## /.exec(data)?.[1] ?? assert.fail('no KNOWN OBSERVATIONS section');
-    assert.match(known, /- `01-r1:thermo-naming` \(carried\): ok:1 - naming\n {2}Problem: naming misleads the reader/);
+    assert.match(known, /- `01-r1:thermo-naming` \(carried; carried to this slice: check it\): ok:1 - naming\n {2}Problem: naming misleads the reader/);
     assert.match(known, /- `01-r1:thermo-style` \(left\): ok:1 - style\n {2}Problem: style misleads the reader/);
+  });
+
+  it('marks an entry carried to the reviewed slice as work to check, and an entry carried to the end queue as an ordinary carried one', async () => {
+    using dir = repo();
+    const { call, ws } = await ledgerRun(dir.root, ['naming', 'order']);
+    await call('factory_carry', { observations: ['thermo-naming'], to: '02' });
+    await call('factory_carry', { observations: ['thermo-order'], to: 'end' });
+    await withRun(ws, 'demo', run => completeSlice(ws, run));
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    commit(ws, 'second.txt');
+    await call('factory_checks', {});
+    const opened = await call('factory_review_start', { skip: [] });
+    const data = readFileSync(opened.details?.dataFile ?? assert.fail('no data file'), 'utf8');
+    const known = /## KNOWN OBSERVATIONS\n\n([\s\S]*?)\n## /.exec(data)?.[1] ?? assert.fail('no KNOWN OBSERVATIONS section');
+    assert.match(known, /- `01-r1:thermo-naming` \(carried; carried to this slice: check it\): /);
+    assert.match(known, /- `01-r1:thermo-order` \(carried\): /);
   });
 
   it('keeps the whole problem of a finding, with a credential redacted, and lists it on one line in the next data file', async () => {

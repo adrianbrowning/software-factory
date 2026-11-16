@@ -11,7 +11,7 @@ Your task gives you the review id and the data file (PR metadata, full diff, cha
 1. Load the `test-validity-review` skill (`skill://test-validity-review`), then read its `references/REVIEW_CHECKLIST.md`. Read `references/EXAMPLES.md` as well before reviewing UI, async, validator, or type-level tests. If the skill is not installed, submit an empty `findings` list and say so in your final line.
 
 2. Read the data file.
-   `## KNOWN OBSERVATIONS` lists the observations this run already placed. A problem that matches an entry by location and problem is not new, whatever id you would give it: leave it out. The validator drops a repeat with the reason `same as <key>`.
+   `## KNOWN OBSERVATIONS` lists the observations this run already placed. A problem that matches an entry by location and problem is not new, whatever id you would give it: leave it out. The validator drops a repeat with the reason `same as <key>`. An entry marked `carried to this slice: check it` is work this slice builds: a finding that it is unbuilt or wrong in this slice is not a repeat; report it.
 
 3. From `## CHANGED FILES`, list the test surface: `*.test.*`, `*.spec.*`, `*.test-d.ts`, files under `__tests__/`, `test/`, `tests/`, `e2e/`, `cypress/`, `playwright/`, plus mocks, fixtures, test setup (`__mocks__/`, `fixtures/`, `setupTests.*`, `*.setup.*`) and test config (`vitest.config.*`, `jest.config.*`, `playwright.config.*`, `cypress.config.*`). If none changed, submit an empty `findings` list.
 
