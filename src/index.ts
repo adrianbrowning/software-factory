@@ -6,7 +6,7 @@ import { bindRun } from './active-run.ts';
 import { auditChild, IMPLEMENTER, REVIEWER, resetAudit, SPAWN_ROLES, VALIDATOR } from './agents.ts';
 import { CONFIG_PATH, describeModels, loadConfig, requireAvailableModels, requireOrchestrator, type RoleModels, routeSpawn } from './config.ts';
 import { evidenceHead } from './evidence.ts';
-import { deferItems, describeSink } from './deferred.ts';
+import { deferItems, describeSink, planDefer, requireSink } from './deferred.ts';
 import { chooseChecks, confirmInteractive, ensureChecks, gate, loadSource } from './gates.ts';
 import {
   activeSlice,
@@ -52,22 +52,15 @@ import {
   applyReslice,
   approvePlan,
   carryObservations,
-  fileFactoryIssues,
-  type FiledIssues,
   headlessTarget,
+  markPaused,
   nextAction,
   nextSlice,
-  parseRetro,
-  pauseHeadless,
   pauseRun,
-  requireSink,
   planCarry,
-  planDefer,
   planFollowUp,
   planReslice,
   planSlices,
-  recordRetro,
-  retroDrafts,
   reopenSlice,
   repoChecks,
   requireFeatureName,
@@ -76,14 +69,13 @@ import {
   requireNotStalled,
   stallNotice,
   resumeRun,
-  retroIssueBody,
-  retroSchema,
   saveChecks,
-  sourceInputSchema,
   startRun,
   summarize,
   HEADLESS_FIX_ROUNDS,
 } from './workflow.ts';
+import { fileFactoryIssues, type FiledIssues, parseRetro, recordRetro, retroDrafts, retroIssueBody, retroSchema } from './retro.ts';
+import { sourceInputSchema } from './source.ts';
 
 const DEFAULT_FACTORY_REPO = 'adrianbrowning/software-factory';
 /** Tools `factory_start` activates; they stay out of every other session's tool list. */
@@ -380,7 +372,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
       await withRun(ws, feature, run => {
         if (run.mode !== 'headless') throw new Error(`Run "${feature}" is interactive; factory_pause pauses headless runs only. The user pauses an interactive run with /factory pause.`);
         if (run.status !== 'intake' && run.status !== 'running') throw new Error(`Run "${feature}" is ${run.status}; factory_pause pauses a running or intake run.`);
-        pauseHeadless(run, params.reason);
+        markPaused(run, params.reason);
       });
       return reply(`Run "${feature}" is paused: ${params.reason}\n/factory resume ${feature} continues it. Stop now.`);
     },
@@ -442,8 +434,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         return reply('The user rejected the split. Ask what to change, then call factory_reslice again.');
       }
       return withRun(ws, feature, async current => {
-        const planned = planReslice(ws, current, params.slices);
-        const first = await applyReslice(ws, current, planned.slices, planned.renamed);
+        const first = await applyReslice(ws, current, planReslice(ws, current, params.slices));
         return reply(`Now on slice ${first.id} "${first.title}" (${first.branch}).\nNext: ${nextAction(current)}`);
       });
     },
@@ -584,7 +575,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
     schema: emptySchema,
     async run(_params, { feature, ws }, ctx) {
       const result = await withRun(ws, feature, run => recordReview(ws, run));
-      if (result.green) {
+      if (result.kind === 'green') {
         const [orLead, sinkTail] = ws.config.deferred === undefined ? ['or ', ''] : ['', ', or sent to the deferred sink (factory_defer with their ids)'];
         const notes =
           result.observations.length > 0
@@ -593,7 +584,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         const bug = '\nWhen the user finds a bug in this slice before it is done, call factory_fix with the bug (and any observation ids).';
         return reply(`Review is green.${notes}${bug}\nNext: ${nextAction(readRun(ws, feature))}`);
       }
-      if (result.unresolved !== undefined) {
+      if (result.kind === 'accepted-unresolved') {
         return reply(
           `Review is accepted unresolved: the fix budget is used up, and a headless run does not raise it. Open:\n${result.unresolved.join('\n')}\nThe slice counts as green with these items on record.\nNext: ${nextAction(readRun(ws, feature))}`,
         );

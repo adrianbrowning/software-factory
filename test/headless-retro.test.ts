@@ -365,7 +365,7 @@ describe('headless retro', () => {
     assert.equal(run.slices[1]?.unresolved, undefined, 'the first child is clean');
     assert.ok((run.slices[2]?.unresolved ?? []).length > 0, 'the second child is accepted unresolved');
     assert.equal(run.status, 'running');
-    assert.deepEqual(run.slices.map(item => item.title), ['Feature', 'Record part one', 'Record part two', 'Record deferred items 3']);
+    assert.deepEqual(run.slices.map(item => item.title), ['Feature', 'Record part one', 'Record part two', 'Record deferred items 2'], 'the split Record slice is one batch, so the next one is numbered 2');
     assert.equal(run.deferred[0]?.retried, true);
     assert.equal(run.deferred[0]?.recorded, run.slices[3]?.id);
     assert.match(readFileSync(ticketPath(ws, 'demo', run.slices[3] ?? assert.fail('no retry slice')), 'utf8'), /naming/);

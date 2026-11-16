@@ -3,9 +3,10 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { effectiveModels } from './config.ts';
 import { evidence, evidenceLine, redact } from './evidence.ts';
-import { gh, git } from './exec.ts';
-import { draftOf, isRecordSlice, itemKey, recordFailed, retroDraft, retroKey, waitsForRecord } from './deferred.ts';
+import { git } from './exec.ts';
+import { isRecordSlice, itemKey, recordFailed, requireNotDeferred, waitsForRecord } from './deferred.ts';
 import { resolveObservations, renderFinding } from './review.ts';
+import type { SourceInput } from './source.ts';
 import {
   activeSlice,
   addEvent,
@@ -155,72 +156,6 @@ export async function resolveBase(
     );
   }
   return { baseRef, baseSha, landOn, trunk };
-}
-
-/** What `factory_start` takes: GitHub and file issues by reference (the tool loads them), Jira and pasted text in full. */
-export const sourceInputSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('github'), ref: z.string().min(1).describe('Issue number or URL; the tool loads it with gh') }),
-  z.object({ kind: z.literal('file'), ref: z.string().min(1).describe('Path of the issue file: absolute, or relative to the repository root; the tool reads it') }),
-  sourceSchema.extend({ kind: z.enum(['jira', 'text']) }),
-]);
-export type SourceInput = z.infer<typeof sourceInputSchema>;
-
-const ghLogin = z
-  .object({ login: z.string() })
-  .nullable()
-  .transform(author => author?.login ?? 'ghost');
-const ghIssueSchema = z.object({
-  author: ghLogin,
-  body: z.string(),
-  comments: z.array(z.object({ author: ghLogin, authorAssociation: z.string(), body: z.string() })),
-  title: z.string().min(1),
-  url: z.string(),
-});
-export type GithubIssue = z.infer<typeof ghIssueSchema> & { authorAssociation: string };
-
-/** Associations whose text the run uses without asking: people who can already change the repository. */
-const TRUSTED_ASSOCIATIONS = new Set(['COLLABORATOR', 'MEMBER', 'OWNER']);
-
-/** Loads a GitHub issue with its comments, and the issue author's association with the repository. */
-export async function fetchGithubIssue(ws: Workspace, ref: string): Promise<GithubIssue> {
-  if (ref.startsWith('-')) throw new Error(`"${ref}" is not an issue number or URL.`);
-  const issue = ghIssueSchema.parse(JSON.parse(await gh(ws.root, 'issue', 'view', ref, '--json', 'author,body,comments,title,url')));
-  const match = /github\.com\/([^/]+\/[^/]+)\/(?:issues|pull)\/(\d+)/.exec(issue.url);
-  if (match === null) throw new Error(`gh returned an issue URL the factory cannot read: ${issue.url}`);
-  const authorAssociation = (await gh(ws.root, 'api', `repos/${match[1]}/issues/${match[2]}`, '--jq', '.author_association')).trim();
-  return { ...issue, authorAssociation };
-}
-
-type OutsidePart = { association: string; author: string; text: string };
-
-/**
- * The run source for a GitHub issue: its body and comments. Text by people outside the repository goes to `approve`
- * (the user's dialog) and stays out unless it returns true; `approve` runs only when there is such text.
- */
-export async function githubSource(ref: string, issue: GithubIssue, approve: (outside: OutsidePart[]) => Promise<boolean>): Promise<Source> {
-  const parts = [
-    { association: issue.authorAssociation, author: issue.author, text: `${issue.title}\n\n${issue.body}` },
-    ...issue.comments.map(comment => ({ association: comment.authorAssociation, author: comment.author, text: comment.body })),
-  ];
-  const outside = parts.filter(part => !TRUSTED_ASSOCIATIONS.has(part.association));
-  const include = outside.length > 0 && (await approve(outside));
-  const use = (association: string) => include || TRUSTED_ASSOCIATIONS.has(association);
-  const authored = use(issue.authorAssociation);
-  const body = authored ? issue.body : `(The issue title and text by @${issue.author}, who is not a repository collaborator, are left out.)`;
-  const comments = issue.comments
-    .filter(comment => use(comment.authorAssociation))
-    .map(comment => `### @${comment.author} (${comment.authorAssociation})\n\n${comment.body}`);
-  const title = authored ? issue.title : `GitHub issue ${ref}`;
-  return { body: comments.length === 0 ? body : `${body}\n\n## Comments\n\n${comments.join('\n\n')}`, kind: 'github', ref, title, url: issue.url };
-}
-
-/** The run source for an issue file; its title is the first `# ` heading, or the file name. */
-export function fileSource(ws: Workspace, ref: string): Source {
-  const path = resolve(ws.root, ref);
-  if (!existsSync(path)) throw new Error(`Issue file ${path} does not exist.`);
-  const body = readFileSync(path, 'utf8');
-  const title = /^#\s+(.+)$/m.exec(body)?.[1]?.trim() || basename(path);
-  return { body, kind: 'file', ref, title };
 }
 
 const checksSchema = z.array(z.string().trim().min(1)).min(1, 'Choose at least one check command.');
@@ -427,48 +362,6 @@ export function carryObservations(ws: Workspace, run: Run, request: CarryRequest
   return planned;
 }
 
-/** Throws for an observation already sent to the deferred sink. */
-export function requireNotDeferred(run: Run, reviewId: string, observations: { id: string }[]) {
-  const deferred = observations.filter(finding => run.deferred.some(item => item.key === itemKey(reviewId, finding.id)));
-  if (deferred.length > 0) throw new Error(`Observations already deferred: ${deferred.map(finding => finding.id).join(', ')}.`);
-}
-
-/** Throws for an observation already carried to a slice or the end queue, then for one already deferred. */
-export function requireNotCarriedOrDeferred(run: Run, reviewId: string, observations: { id: string }[]) {
-  const carried = observations.filter(finding => run.carriedObservations.includes(itemKey(reviewId, finding.id)));
-  if (carried.length > 0) throw new Error(`Observations already carried: ${carried.map(finding => finding.id).join(', ')}.`);
-  requireNotDeferred(run, reviewId, observations);
-}
-
-/** The configured deferred sink. Throws without one. */
-export function requireSink(ws: Workspace) {
-  if (ws.config.deferred === undefined) throw new Error('No deferred sink: set "deferred" ({ "kind": "file" } or { "kind": "github" }) in .omp/factory.json.');
-  return ws.config.deferred;
-}
-
-/** What factory_defer takes: observation ids from a green review (as for factory_carry), a free-text note, or both. */
-export type DeferRequest = { note?: string | undefined; observations?: string[] | undefined };
-
-/**
- * One draft per observation and note, from the green review that lists the ids. Throws without a deferred sink, for a
- * request with neither ids nor a note, and for ids that are unknown, already carried, or already deferred. Does not
- * change the run.
- */
-export function planDefer(ws: Workspace, run: Run, request: DeferRequest) {
-  requireSink(ws);
-  const note = request.note?.trim() ? request.note : undefined;
-  const chosen = new Set(z.array(z.string().min(1)).parse(request.observations ?? []));
-  if (note === undefined && chosen.size === 0) throw new Error('factory_defer needs observation ids, a note, or both.');
-  const { observations, review, slice } = resolveObservations(ws, run, chosen, 'defer observations or a note');
-  if (isRecordSlice(slice)) throw new Error(`Slice ${slice.id} "${slice.title}" writes the deferred sink file, so its review items are not deferred. They stay in the review itself (the green review observations, and for accepted-unresolved findings slice.unresolved and the accepted-unresolved event).`);
-  requireNotCarriedOrDeferred(run, review.id, observations);
-  const noted = run.deferred.filter(item => item.review === review.id && item.kind === 'note').length;
-  return [
-    ...(note === undefined ? [] : [draftOf(run, slice, review.id, { detail: redact(note), key: itemKey(review.id, `note:${noted + 1}`), kind: 'note', title: note })]),
-    ...observations.map(finding => draftOf(run, slice, review.id, { detail: renderFinding(finding, run.decisions, '###'), id: finding.id, key: itemKey(review.id, finding.id), kind: 'observation', title: finding.title })),
-  ];
-}
-
 export function writeTicket(ws: Workspace, run: Run, slice: Slice) {
   writeAtomic(ticketPath(ws, run.feature, slice), renderTicket(run, slice, ws.config.sliceTokenBudget));
 }
@@ -546,12 +439,15 @@ export function planSlices(ws: Workspace, run: Run, proposed: unknown, base?: Ba
   return checkOwnership(run, stack(ws, base === undefined ? run : { ...run, ...base }, [], orderInputs(ws, proposed, new Set(), new Set())));
 }
 
+/** A re-slice: the split slice's `children`, the whole new `slices` list, and each renumbered slice's `renamed` old id to new id. */
+export type ReslicePlan = { children: Slice[]; renamed: Map<string, string>; slices: Slice[] };
+
 /**
  * Splits the active slice into smaller vertical slices that each fit the budget. The first child takes over the
  * active branch (applyReslice renames it), so committed partial work carries over; later slices blocked by the
  * old slice wait for every child. Returns the new slice list without saving.
  */
-export function planReslice(ws: Workspace, run: Run, proposed: unknown) {
+export function planReslice(ws: Workspace, run: Run, proposed: unknown): ReslicePlan {
   const active = requireActive(run);
   const index = run.slices.indexOf(active);
   const done = run.slices.slice(0, index);
@@ -611,16 +507,24 @@ function renumbering(run: Run, active: Slice, slices: Slice[]) {
   return remap;
 }
 
-/** A batch label no slice of the run holds, counting up from the number of Record slices. */
+/**
+ * How many batches of Record slices the run holds. A resliced Record slice and its children are one batch; a slice
+ * from an older state file with no batch label is its own.
+ */
+function recordBatchCount(run: Run) {
+  return new Set(run.slices.filter(isRecordSlice).map(slice => slice.recordBatch ?? slice.id)).size;
+}
+
+/** A batch label no slice of the run holds, counting up from the number of Record batches. */
 function newRecordBatch(run: Run) {
   const held = new Set(run.slices.map(slice => slice.recordBatch));
-  let number = run.slices.filter(isRecordSlice).length + 1;
+  let number = recordBatchCount(run) + 1;
   while (held.has(`record-${number}`)) number += 1;
   return `record-${number}`;
 }
 
-/** Applies a plan from `planReslice`: its `slices`, and its `renamed` old-to-new slice ids. */
-export async function applyReslice(ws: Workspace, run: Run, slices: Slice[], renamed: Map<string, string>) {
+/** Applies a plan from `planReslice`: the `slices` and `renamed` of one plan cannot be mixed with another's. */
+export async function applyReslice(ws: Workspace, run: Run, { renamed, slices }: ReslicePlan) {
   const active = requireActive(run);
   await requireOnBranch(ws.root, active);
   await requireClean(ws.root, 'Commit the partial work before re-slicing');
@@ -672,10 +576,10 @@ export function amendSeams(ws: Workspace, run: Run, seams: string[]) {
 }
 
 /** A slice appended after the plan. It starts owning no decisions; factory_decide can name it later. */
-type AppendInput = Omit<SliceInput, 'blockedBy' | 'ownsDecisions'>;
+export type AppendInput = Omit<SliceInput, 'blockedBy' | 'ownsDecisions'>;
 
 /** Builds the slice `addFollowUp` or a retro adds on top of the stack, validated, without changing the run. */
-function planAppend(ws: Workspace, run: Run, proposed: AppendInput) {
+export function planAppend(ws: Workspace, run: Run, proposed: AppendInput) {
   const existing = run.slices.map(slice => slice.title);
   const [input] = orderInputs(ws, [{ ...proposed, blockedBy: existing }], new Set(existing), new Set());
   const slice = input === undefined ? undefined : stack(ws, run, run.slices, [input]).at(-1);
@@ -683,7 +587,7 @@ function planAppend(ws: Workspace, run: Run, proposed: AppendInput) {
   return slice;
 }
 
-function pushSlice(ws: Workspace, run: Run, slice: Slice) {
+export function pushSlice(ws: Workspace, run: Run, slice: Slice) {
   run.slices.push(slice);
   writeTicket(ws, run, slice);
   addEvent(run, 'plan', `slice ${slice.id} appended: ${slice.title}`, slice);
@@ -868,14 +772,14 @@ export function requireNotStalled(run: Run) {
 /** Only a running run pauses; intake, stalled, and done runs keep their status. */
 export function pauseRun(run: Run, reason: string) {
   if (run.status !== 'running') throw new Error(`Run "${run.feature}" is ${run.status}; only a running run pauses.`);
-  pauseHeadless(run, reason);
+  markPaused(run, reason);
 }
 
 /**
- * Pauses a run with a recorded reason, whatever its status: the headless pause, which a stop gate or factory_pause
- * makes from intake, running or done. `/factory pause` goes through `pauseRun`, which stays running-only.
+ * Pauses a run with a recorded reason, whatever its status. A stop gate pauses from intake, running or done;
+ * factory_pause from intake or running; `/factory pause` goes through `pauseRun`, which stays running-only.
  */
-export function pauseHeadless(run: Run, reason: string) {
+export function markPaused(run: Run, reason: string) {
   run.status = 'paused';
   addEvent(run, 'pause', reason);
 }
@@ -891,7 +795,7 @@ export async function resumeRun(ws: Workspace, run: Run, sessionId: string) {
   if (filled) run.checks = checksSchema.parse(repoChecks(ws));
   if (activeSlice(run)?.stalled) resolveStall(ws, run, 'continue');
   if (run.status === 'paused' || run.status === 'stalled') {
-    // A stop gate pauses a headless run in any status (intake, running or done), so only a headless run restores intake (no approved plan) or done (settle).
+    // A stop gate pauses a headless run in any status (intake, running or done) and factory_pause pauses it at intake, so only a headless run restores intake (no approved plan) or done (settle).
     if (run.mode === 'headless') {
       run.status = run.slices.length === 0 ? 'intake' : 'running';
       settle(ws, run);
@@ -904,137 +808,6 @@ export async function resumeRun(ws: Workspace, run: Run, sessionId: string) {
   }
   run.ownerSessionId = sessionId;
   addEvent(run, 'resume', `session ${sessionId}`);
-}
-
-export const RETRO_CATEGORIES = [
-  'navigation',
-  'automated-checks',
-  'coding-standards',
-  'agents-md',
-  'tool-economy',
-  'no-ops',
-  'information-access',
-] as const;
-
-const RETRO_SEVERITIES = ['high', 'medium', 'low'] as const;
-
-export const retroFindingSchema = z
-  .object({
-    action: z.enum(['apply', 'file-issue', 'skip']).describe('apply: repo change in a final slice; file-issue: factory issue'),
-    category: z.enum(RETRO_CATEGORIES),
-    detail: z.string().min(1),
-    severity: z.enum(RETRO_SEVERITIES),
-    target: z.enum(['repo', 'factory']).describe('repo: the repository worked on; factory: this plugin'),
-    title: z.string().min(1),
-  })
-  .refine(finding => finding.action !== 'apply' || finding.target === 'repo', 'only repo findings can be applied')
-  .refine(finding => finding.action !== 'file-issue' || finding.target === 'factory', 'only factory findings become issues');
-export type RetroFinding = z.infer<typeof retroFindingSchema>;
-export const retroSchema = z.object({ findings: z.array(retroFindingSchema) });
-
-function requireRetroOpen(run: Run) {
-  const finished = run.slices.length > 0 && run.slices.every(slice => slice.status === 'done');
-  if (run.waiting.length > 0) {
-    if (finished && (run.status === 'running' || run.status === 'done')) throw new Error(waitingNotice(run));
-    const slice = activeSlice(run);
-    const first =
-      run.status === 'running'
-        ? 'Finish the pending slices first.'
-        : slice?.stalled
-          ? stallNotice(run, slice)
-          : `Tell the user to /factory resume ${run.feature} first.`;
-    throw new Error(`Carried items wait for the end of the run (${run.waiting.length}), and the retro waits for them. ${first} factory_follow_up takes them once every slice is done.`);
-  }
-  if (!finished && run.status !== 'stalled') throw new Error('Retro runs when every slice is done or the run is stalled.');
-  if (run.retroRecorded) throw new Error('The retro for this run is already recorded.');
-}
-
-export type Retro = { apply: RetroFinding[]; file: RetroFinding[]; findings: RetroFinding[]; slice?: Slice | undefined };
-
-/**
- * Validates the retro, groups its actions, and builds the apply slice, all without changing the run, so the user
- * confirms and issues are filed only for a retro that `recordRetro` can record.
- */
-export function parseRetro(ws: Workspace, run: Run, proposed: unknown): Retro {
-  requireRetroOpen(run);
-  const findings = z
-    .array(retroFindingSchema)
-    .parse(proposed)
-    .toSorted((a, b) => RETRO_SEVERITIES.indexOf(a.severity) - RETRO_SEVERITIES.indexOf(b.severity));
-  // A headless retro defers every finding: no apply slice, no factory issues.
-  if (run.mode === 'headless') return { apply: [], file: [], findings, slice: undefined };
-  const apply = findings.filter(finding => finding.action === 'apply');
-  const slice =
-    apply.length === 0
-      ? undefined
-      : planAppend(ws, run, {
-          acceptance: apply.map(finding => finding.title),
-          estimateTokens: Math.floor(ws.config.sliceTokenBudget / 4),
-          noTestReason: 'Agent-environment changes. A new custom lint rule or script still needs its own test.',
-          seams: [],
-          title: 'Apply retro improvements',
-          whatToBuild: apply.map(finding => `${finding.title}: ${finding.detail}`).join('\n'),
-        });
-  return { apply, file: findings.filter(finding => finding.action === 'file-issue'), findings, slice };
-}
-
-/** One draft per finding of a headless retro, in the retro's order. */
-export function retroDrafts(run: Run, retro: Retro) {
-  return retro.findings.map((finding, index) => retroDraft(run, index + 1, finding));
-}
-
-/** The issue body a factory finding is filed with. Redacted: retro details come from a possibly private repository. */
-export function retroIssueBody(finding: RetroFinding) {
-  return `${evidence(finding.detail, 4_000)}\n\nCategory: ${finding.category}. Severity: ${finding.severity}. Filed by a software-factory retro.`;
-}
-
-export type FiledIssues = { error?: string | undefined; urls: Record<string, string> };
-
-/** Files each factory finding in order and stops at the first failure, keeping the URLs already filed. */
-export async function fileFactoryIssues(ws: Workspace, findings: RetroFinding[]): Promise<FiledIssues> {
-  const urls: Record<string, string> = {};
-  for (const finding of findings) {
-    try {
-      urls[finding.title] = (await gh(ws.root, 'issue', 'create', '-R', ws.config.factoryRepo, '--title', finding.title, '--body', retroIssueBody(finding))).trim();
-    } catch (error) {
-      return { error: error instanceof Error ? error.message : String(error), urls };
-    }
-  }
-  return { urls };
-}
-
-/**
- * Records the confirmed retro: writes retro.md (with the URL of each filed issue, or why it was not filed), adds
- * the apply findings as a final slice, and settles the run.
- */
-export function recordRetro(ws: Workspace, run: Run, retro: Retro, filed: FiledIssues = { urls: {} }) {
-  requireRetroOpen(run);
-  if (retro.slice !== undefined && retro.slice.parentBranch !== (run.slices.at(-1)?.branch ?? run.baseSha ?? run.baseRef)) {
-    throw new Error('The slices changed since the retro was parsed. Call factory_retro again.');
-  }
-  const status = (finding: RetroFinding) => {
-    if (run.mode === 'headless') {
-      const item = run.deferred.find(candidate => candidate.key === retroKey(run, retro.findings.indexOf(finding) + 1));
-      return item === undefined ? '\nNot deferred: no deferred sink is configured.\n' : `\nDeferred: ${item.location}\n`;
-    }
-    if (finding.action !== 'file-issue') return '';
-    const url = filed.urls[finding.title];
-    return url === undefined ? `\nNot filed${filed.error === undefined ? '' : `: ${filed.error}`}\n` : `\nFiled: ${url}\n`;
-  };
-  const section = (target: RetroFinding['target'], heading: string) => {
-    const items = retro.findings.filter(finding => finding.target === target);
-    if (items.length === 0) return `## ${heading}\n\nNone.\n`;
-    return `## ${heading}\n\n${items.map(finding => `### [${finding.severity}] ${finding.title} (${finding.category}, ${finding.action})\n\n${finding.detail}\n${status(finding)}`).join('\n')}`;
-  };
-  writeAtomic(
-    join(runDir(ws, run.feature), 'retro.md'),
-    `# Retro: ${run.source.title}\n\n${section('repo', 'Target repository')}\n${section('factory', 'Software factory')}`,
-  );
-  run.retroRecorded = true;
-  const repoCount = retro.findings.filter(finding => finding.target === 'repo').length;
-  addEvent(run, 'retro', `${retro.findings.length} findings: repo=${repoCount} factory=${retro.findings.length - repoCount}`);
-  const slice = retro.slice === undefined ? undefined : pushSlice(ws, run, retro.slice);
-  return slice ?? settle(ws, run);
 }
 
 /** `body` in a code fence longer than any backtick run inside it, so the body cannot close the fence. */
@@ -1053,8 +826,8 @@ function recordDeferredSlice(ws: Workspace, run: Run) {
   const sink = ws.config.deferred;
   const waiting = run.mode === 'headless' && sink?.kind === 'file' ? run.deferred.filter(item => waitsForRecord(run, item)) : [];
   if (sink?.kind !== 'file' || waiting.length === 0) return undefined;
-  // A slice already queued for an item covers it until it is done, so an item is listed once; a later retro's items get a numbered title.
-  const earlier = run.slices.filter(isRecordSlice).length;
+  // A slice already queued for an item covers it until it is done, so an item is listed once; a later batch's items get a numbered title.
+  const earlier = recordBatchCount(run);
   const planned = planAppend(ws, run, {
     acceptance: [`${sink.path} holds each of the ${waiting.length} deferred items below, with the run, slice and review it names`],
     estimateTokens: Math.floor(ws.config.sliceTokenBudget / 10),
@@ -1088,7 +861,7 @@ export function settle(ws: Workspace, run: Run) {
 }
 
 /** What to do about the items waiting on the run for the end-of-run follow-up slice. */
-function waitingNotice(run: Run) {
+export function waitingNotice(run: Run) {
   return `Carried items wait for the end of the run (${run.waiting.length}). Call factory_follow_up for them (title, what to build, acceptance, seams or noTestReason, estimate); its slice takes every waiting item. The retro waits until then.`;
 }
 

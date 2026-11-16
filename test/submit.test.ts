@@ -8,7 +8,8 @@ import { resetModuleState } from '../src/index.ts';
 import { addEvent, greenCommit, readRun, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { fitDeferred, planSubmit, prBody, submitStack } from '../src/submit.ts';
-import { approvePlan, nextSlice, parseRetro, planSlices, recordRetro, resolveBase } from '../src/workflow.ts';
+import { approvePlan, nextSlice, planSlices, resolveBase } from '../src/workflow.ts';
+import { parseRetro, recordRetro } from '../src/retro.ts';
 import { commit, finding, green, newRun, review, sh, slice, start, step, tempDir, tempRepo, workspace } from './helpers.ts';
 
 beforeEach(() => resetModuleState());
@@ -469,19 +470,23 @@ describe('headless submit', () => {
     assert.deepEqual(gh.calls(), []);
   });
 
-  it('opens nothing and records no gate event when no done slice is below the slice a stopped run is red at', async () => {
-    using repo = tempRepo('factory-hsubmit-', HEADLESS_FILES);
-    const { branches, call, ws } = await headlessSubmitRun(repo.root, ['S1', 'S2']);
-    sh(repo.root, 'rm', '-q', 'ok');
-    sh(repo.root, 'commit', '-qm', 'break the check');
-    using gh = fakeGh({ stack: undefined, submitted: withPrs(branches.slice(0, 1)) });
-    let text = '';
-    for (let round = 0; round < 4; round++) text = (await call('factory_checks', {})).content[0]?.text ?? '';
-    assert.equal(readRun(ws, 'demo').status, 'paused');
-    assert.match(text, /No done slice is below slice 01, so no PRs were opened/);
-    assert.deepEqual(gh.calls(), []);
-    assert.ok(!readRun(ws, 'demo').events.some(event => /gate submission/.test(event.detail)), 'a submission that was never eligible leaves no gate event');
-  });
+  for (const policy of [{}, { submission: 'stop' }]) {
+    it(`opens nothing and records no gate event when no done slice is below the slice a stopped run is red at (policy ${JSON.stringify(policy)})`, async () => {
+      using repo = tempRepo('factory-hsubmit-', HEADLESS_FILES);
+      const { branches, call, ws } = await headlessSubmitRun(repo.root, ['S1', 'S2'], policy);
+      sh(repo.root, 'rm', '-q', 'ok');
+      sh(repo.root, 'commit', '-qm', 'break the check');
+      using gh = fakeGh({ stack: undefined, submitted: withPrs(branches.slice(0, 1)) });
+      let text = '';
+      for (let round = 0; round < 4; round++) text = (await call('factory_checks', {})).content[0]?.text ?? '';
+      assert.equal(readRun(ws, 'demo').status, 'paused');
+      assert.match(text, /No done slice is below slice 01, so no PRs were opened/);
+      assert.deepEqual(gh.calls(), []);
+      const { events } = readRun(ws, 'demo');
+      assert.ok(!events.some(event => /gate submission/.test(event.detail)), 'a submission that was never eligible leaves no gate event');
+      assert.ok(!events.some(event => event.kind === 'submission-stop'), 'the no-done-slice check comes before the submission policy');
+    });
+  }
 
   it('opens draft PRs when the stack becomes ready, with no /factory submit, and the reply names the PR URLs', async () => {
     using repo = tempRepo('factory-hsubmit-', HEADLESS_FILES);
