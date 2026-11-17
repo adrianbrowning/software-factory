@@ -141,7 +141,7 @@ with the whole team, set `checks` in `.omp/factory.json` instead; then the facto
 While a run is active, the session cannot end until the run is done, paused, or stalled. The third stop attempt in a
 row without progress pauses the run instead.
 
-When a slice uses up its fix budget (from checks, review, `factory_fix`, or `factory_reopen`), a dialog asks whether to
+When a slice uses up its fix budget (from red checks, a blocking review, `factory_fix` with a bug, or `factory_reopen`; a `factory_fix` round for observations only does not count), a dialog asks whether to
 continue with `maxRounds` more fix rounds or pause. A paused stall leaves the run stalled, and the tool reply and its
 `Next:` line say so. `/factory resume <feature>` on a stalled run names the slice and its used rounds and asks
 whether to raise the fix budget by `maxRounds` and resume; declining keeps the run stalled.
@@ -188,6 +188,8 @@ Then push your branch. You can delete the slice branches.
 
 ### Fix observations or a bug before a slice is done
 
+After a red review the next review is targeted: the factory runs only the domains that blocked, plus bug, scope and (with seams) testing, and reviewers report observations only on the lines the fix changed. A green targeted review is followed by a full review of the same commit, and `factory_complete_slice` refuses until the last green review is a full one (an observation-only `factory_fix` round after a full green needs only its own targeted review). A bug fix round always needs a full review.
+
 A green review can list non-blocking observations. When you want some of them fixed in the active slice, the
 orchestrator asks you which. When you find a bug in the active slice after its green review, tell the orchestrator.
 `factory_fix` (the observation ids, the bug as free text in `bug`, or both, and your `reason`) opens a dialog that
@@ -196,19 +198,17 @@ shows them. After you confirm:
 - The slice gets a fix file with those observations and a "Bug found after green review" section for the bug, and
   goes back to fix. The green review is dropped, so the slice goes through checks and a new review again before
   `factory_complete_slice`.
-- The round counts in the slice's fix rounds (`factory_status`) and against its round limit; a used-up budget stalls
-  like any other fix round.
+- A round with a bug counts in the slice's fix rounds (`factory_status`) and against its round limit; a used-up
+  budget stalls like any other fix round. A round for observations only does not count and never stalls the slice.
 - It refuses a call with neither a bug nor observation ids, an id that is not an observation of that green review,
-  and a slice without a green review. Observation ids that only a done slice's green review lists are refused too:
-  the message names the slice and its review, and says to use `factory_reopen` for that slice or `factory_follow_up`.
-  When the active slice's green review lists the ids, they are fixed there. A bug in a slice that is already done
-  goes through `factory_reopen` instead.
+  and a slice without a green review. The ids may be observations of any review of the active slice, red ones
+  too (the slice's unplaced list). A slice cannot complete with an unplaced observation, so a done slice has none to
+  fix; a bug in a slice that is already done goes through `factory_reopen`.
 
 ### Carry observations into a later slice
 
 When a green review lists observations that belong in a later slice, or you want extra work built there, the
-orchestrator asks you where they go. `factory_carry` (observation ids from the active slice's green review or, when
-it does not list them, from a done slice's, a
+orchestrator asks you where they go. `factory_carry` (observation ids from the active slice's green review, a
 free-text `note`, or both, and `to`: the id of a pending slice, or `"end"`) opens a dialog that shows them. After you
 confirm:
 
@@ -218,17 +218,52 @@ confirm:
   every existing slice is done, the next action is `factory_follow_up`: the slice it adds takes every waiting item into its
   ticket under "Carried-in work", and the queue empties. `factory_retro` refuses while items wait, and a run with
   waiting items is not ready to submit.
-- The active slice keeps its green review, and `factory_complete_slice` completes it without new checks or review.
-  When the ids are in a done slice's green review instead, the carry is recorded on that slice as if it had been sent
-  before `factory_complete_slice`.
+- The active slice keeps its green review, and `factory_complete_slice` completes it without new checks or review
+  once none of its observations is unplaced.
 - A re-slice keeps the items: the first child takes those of the split slice.
-- Precedence for observation ids: the active slice's green review wins when it lists them. Only when it does not,
-  the one done slice whose last green review lists them is used, found by the review, never by recency.
 - It refuses a call with neither observation ids nor a note, an id that is not an observation of that green review,
-  an id that no green review lists, an id that several done slices list (the message names the slices; build the
-  items in a `factory_follow_up` slice, which always works; a free-text `note` works only while the active slice has a
-  green review), a slice without a green review, and a
+  an id its green review does not list, a slice without a green review, and a
   target that is neither `"end"` nor a pending slice.
+
+### Place observations in one batch (`factory_place`)
+
+Every observation a reviewer reports has a category: correctness, missing-test, misleading-doc, naming, structure or
+style; `factory_review_submit` refuses an observation without one. The slice collects the kept observations of all its
+reviews, red ones too. The reply of the slice's final full green review lists them with their default placement:
+correctness, missing-test and misleading-doc to the end queue, naming, structure and style to leave. `factory_place`
+takes the exceptions (fix, carry to a pending slice, end, defer, leave; `placements: []` takes every default), asks one
+confirm in an interactive run, applies them all and records each in the ledger. `factory_complete_slice` refuses while
+the slice has an unplaced observation. A headless run places the defaults with no dialog when it completes the slice,
+and sends the leave items to the deferred sink when one is set. The observations of a headless follow-up slice or Record
+deferred items slice never go back to the end queue: they go to the sink when the slice may defer to it (a Record slice
+may not), else they are left.
+
+### Leave observations, and the observation ledger
+
+The run keeps one ledger of every observation it has handled: carried (`factory_carry`), deferred (`factory_defer`),
+fixed (`factory_fix`) or left (`factory_leave`). Each entry holds the review id and observation id (its key, for
+example `01-r1:thermo-naming`), the finding's location, title and problem, and the placement. `factory_status` lists
+it under `observations`.
+
+`factory_leave` (observation ids from the active slice's green review, after its full review) records them as left:
+no slice builds them and no sink gets them. An interactive
+run asks once; a declined dialog records nothing, and a headless run records with no dialog. `factory_carry`,
+`factory_defer` and `factory_leave` refuse observation ids until the slice's last green review is a full one; a
+note-only carry or defer works at any green review.
+
+- All four tools refuse an observation the ledger already holds and name its placement (`Observations already
+  carried: ...`), before any dialog.
+- The review data file of every review has a `## KNOWN OBSERVATIONS` section that lists the ledger entries with key,
+  placement, location, title and problem. Reviewers leave out a problem that matches an entry by location and problem,
+  and the validator drops a repeat under a new id with the reason `same as <key>`. A left observation is never raised
+  again in the run. An entry carried to the slice under review is marked `carried to this slice: check it` in that review's data
+  file: the slice builds it and its reviewers check it, so a finding that it is unbuilt or wrong is not a repeat and the
+  validator keeps it. An entry carried to the end queue is marked in the review of the `factory_follow_up` slice that takes it; a re-slice keeps the mark on the renumbered slice. Entries carried to other slices stay plain `carried`.
+- A run saved before the ledger loads its carried and deferred observations as ledger entries, with the location,
+  title and problem read from the finding that the carried-in section of a ticket or the end queue, or the deferred
+  item's body, rendered. When that text is not found, or more than one carried-in section holds it, the entry gets a
+  placeholder location (`unknown`) and problem, and is still refused by key. A key both carried and deferred is one
+  entry, carried.
 
 ### Reopen a done slice
 
@@ -270,12 +305,12 @@ working tree, and unknown keys are rejected.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `checks` | Asked on the first run | Check commands every slice must pass, in order. Unset: the first `factory_start` in the repository opens a dialog with the `lint`, `typecheck`, `test` scripts chosen, and other check-like `package.json` scripts and `.github/workflows` `run:` commands as commented suggestions. The choice is saved in `scratchDir`, and later runs reuse it with no dialog. `/factory checks` changes it for new runs; a run keeps the checks it started with |
+| `checks` | Asked on the first run | Check commands every slice must pass, in order. `factory_checks` runs them in full on the slice's commits; the implementer runs only the typecheck and the test files it touched. Unset: the first `factory_start` in the repository opens a dialog with the `lint`, `typecheck`, `test` scripts chosen, and other check-like `package.json` scripts and `.github/workflows` `run:` commands as commented suggestions. The choice is saved in `scratchDir`, and later runs reuse it with no dialog. `/factory checks` changes it for new runs; a run keeps the checks it started with |
 | `checkPath` | `[]` | Directories put before the omp process `PATH` when checks run. Each entry is an absolute path or starts with `~/`. Use it when a check command is not found (exit 127), for example `["~/Library/pnpm/bin"]`. Find the directory with `command -v <tool>` in your terminal |
 | `checkTimeoutMs` | `600000` | Per-check timeout; the whole process group is killed |
 | `maxRounds` | `3` | Fix rounds per slice before the user decides to continue or pause; each continue, and each yes to the `/factory resume` question on a stalled run, adds this many |
 | `headless.<gate>` | `auto` | Headless runs only (`/factory headless`); interactive runs never read it. One key per gate: `resume`, `plan`, `reslice`, `decide`, `seams`, `fix`, `carry`, `reopen`, `followUp`, `retro`, `checks`, `submission`. `auto` proceeds and records an `autonomous` run event naming the gate; `stop` pauses the run with a reason naming the gate and throws (except `submission`: `stop` opens no PRs and leaves the run with its status, see the paragraph on `headless.submission` above; `auto` opens draft PRs through `gh stack`) (`checks` has no run yet, so it refuses the start). The orchestrator can pause a headless run itself with `factory_pause`. Text from issue authors outside the repository is always left out of a headless run, and a headless start without configured checks saves the detected ones, else refuses. |
-| `deferred` | unset | Where `factory_defer` sends green-review observations and notes, and where a headless run's accepted-unresolved findings go by themselves: `{ "kind": "file", "path": "docs/factory-deferred.md" }` (path optional; items queue on the run for the file to be written) or `{ "kind": "github" }` (one `gh issue create` per item, the issue URL stored). Each item names the run, slice and review id, and `factory_status` lists them with their locations. An interactive run asks the user before `factory_defer` files or queues anything (a headless run does not ask). Ids already carried or deferred are refused. With no sink, `factory_defer` is refused and accepted-unresolved findings stay on the slice and in its event. |
+| `deferred` | unset | Where `factory_defer` sends green-review observations and notes, and where a headless run's accepted-unresolved findings go by themselves: `{ "kind": "file", "path": "docs/factory-deferred.md" }` (path optional; items queue on the run for the file to be written) or `{ "kind": "github" }` (one `gh issue create` per item, the issue URL stored). Each item names the run, slice and review id, and `factory_status` lists them with their locations. An interactive run asks the user before `factory_defer` files or queues anything (a headless run does not ask). Ids the observation ledger already holds (carried, deferred, fixed or left) are refused. With no sink, `factory_defer` is refused and accepted-unresolved findings stay on the slice and in its event. |
 | `sliceTokenBudget` | `400000` | Planned context per slice: 40% of a 1M window |
 | `baseRef` / `trunk` | `origin/HEAD`'s branch, else `origin/main` / `main` | Default base: slice 01 branches from the commit `baseRef` points at when the plan is approved. Unset, it is the remote default branch that `origin/HEAD` points at (`origin/master` in a repository whose trunk is master), else `origin/main`. The stack is based on `trunk`, which defaults to `baseRef` without its git remote (`origin/main` → `main`; a local `feature/auth` stays `feature/auth`). A run that builds on unmerged work names that branch as `baseRef` in `factory_plan`, and its PRs then target it. The plan event in `state.json` records the pinned base |
 | `branchPrefix` | `factory` | Branches are `<prefix>/<feature>/<NN>-<slug>` |
@@ -376,7 +411,7 @@ and factory-assigned ids for a bug (`bug-f<N>`), a reopen reason (`reopen-f<N>`)
 and a working tree the checks changed (`tree-f<N>`). The review data file lists the ticket, then a `## LATER SLICES`
 section with each not-done slice stacked after the reviewed one, in stack order (id, title, what to build, acceptance
 criteria), or says none follows; reviewers and the validator do not count work a later slice lists as a gap in this
-slice. Then come each check's result and duration on the reviewed commit, a `## FIX ITEMS` section with every fix item
+slice. Then come each check's result and duration on the reviewed commit, a `## KNOWN OBSERVATIONS` section with the observation ledger (None when empty), a `## FIX ITEMS` section with every fix item
 from the fix rounds since the last recorded review (id, fix file and round, summary; None when there are none), the
 diff, and the changed files. A decision can name the slice that builds it (`factory_decide` item `{ text, slice }`, or
 `ownsDecisions` on a `factory_plan` slice); that slice's state keeps the decision numbers it owns, and the tickets and

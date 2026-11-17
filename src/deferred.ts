@@ -94,19 +94,6 @@ export async function deferItems(ws: Workspace, run: Run, drafts: DeferredDraft[
   return undefined;
 }
 
-/** Throws for an observation already sent to the deferred sink. */
-export function requireNotDeferred(run: Run, reviewId: string, observations: { id: string }[]) {
-  const deferred = observations.filter(finding => run.deferred.some(item => item.key === itemKey(reviewId, finding.id)));
-  if (deferred.length > 0) throw new Error(`Observations already deferred: ${deferred.map(finding => finding.id).join(', ')}.`);
-}
-
-/** Throws for an observation already carried to a slice or the end queue, then for one already deferred. */
-export function requireNotCarriedOrDeferred(run: Run, reviewId: string, observations: { id: string }[]) {
-  const carried = observations.filter(finding => run.carriedObservations.includes(itemKey(reviewId, finding.id)));
-  if (carried.length > 0) throw new Error(`Observations already carried: ${carried.map(finding => finding.id).join(', ')}.`);
-  requireNotDeferred(run, reviewId, observations);
-}
-
 /** The configured deferred sink. Throws without one. */
 export function requireSink(ws: Workspace) {
   if (ws.config.deferred === undefined) throw new Error('No deferred sink: set "deferred" ({ "kind": "file" } or { "kind": "github" }) in .omp/factory.json.');

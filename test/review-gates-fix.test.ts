@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
-import { readRun } from '../src/run.ts';
+import { forgetRun, readRun, statePath } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { fixObservations } from '../src/observations.ts';
-import { nextAction, nextSlice } from '../src/workflow.ts';
-import { commit, finding, green, greenWithObservation, newRun, review, slice, step, workspace } from './helpers.ts';
+import { nextAction, nextSlice, resolveStall } from '../src/workflow.ts';
+import { settleObservations, commit, finding, green, greenWithObservation, newRun, review, slice, step, workspace } from './helpers.ts';
 
 describe('slice loop gates: fixes', { concurrency: 4 }, () => {
   it('fixes observations the user chose from a green review in a tracked round that needs new checks and a new review', async () => {
@@ -28,13 +28,14 @@ describe('slice loop gates: fixes', { concurrency: 4 }, () => {
     const fixed = await step(ws, run => fixObservations(ws, run, { observations: ['thermo-naming'] }, 'The user wants the names fixed now.'));
     assert.equal(fixed.stalled, false);
     const fix = readFileSync(fixed.fixPath, 'utf8');
-    assert.match(fix, /Checks to run before committing: test -f ok/);
+    assert.match(fix, /Checks that factory_checks runs in full after your commit \(you run only the typecheck and the test files you touched\): test -f ok/);
+    assert.doesNotMatch(fix, /Checks to run before committing/);
     assert.match(fix, /The user wants the names fixed now\./);
     assert.match(fix, /## \[observation\] thermo-naming\n\n- Location: ok:1/);
     assert.doesNotMatch(fix, /comments-stale/);
     const state = readRun(ws, 'demo').slices[0];
     assert.equal(state?.phase, 'fix');
-    assert.equal(state?.fixRounds, 1);
+    assert.equal(state?.fixRounds, 0);
     assert.equal(state?.green, undefined);
     assert.match(nextAction(readRun(ws, 'demo')), new RegExp(`fix mode with ${fixed.fixPath}`));
     await assert.rejects(step(ws, run => completeSlice(ws, run)), /no green review yet/);
@@ -42,10 +43,97 @@ describe('slice loop gates: fixes', { concurrency: 4 }, () => {
 
     commit(ws, 'ok', 'renamed\n');
     await green(ws);
+    await settleObservations(ws);
     assert.equal((await step(ws, run => completeSlice(ws, run))).status, 'done');
   });
 
-  it('counts a fix round for observations toward the fix budget', async () => {
+  it('does not count a fix round for observations toward the fix budget, even at the round limit', async () => {
+    using ws = workspace({ maxRounds: 1 });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'work.txt');
+    assert.ok(!(await step(ws, run => runChecks(ws, run))).passed);
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const opened = await step(ws, run => startReview(ws, run));
+    await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming'), finding('comments', 'observation', 'stale')]);
+    await step(ws, run => recordReview(ws, run));
+
+    const fixed = await step(ws, run => fixObservations(ws, run, { observations: ['thermo-naming'] }, 'tidy'));
+    assert.equal(fixed.stalled, false);
+    const state = readRun(ws, 'demo').slices[0];
+    assert.deepEqual([state?.stalled, state?.fixRounds, state?.phase], [false, 1, 'fix']);
+
+    commit(ws, 'ok', 'renamed\n');
+    await step(ws, run => runChecks(ws, run));
+    const reopened = await step(ws, run => startReview(ws, run));
+    await review(ws, reopened.reviewId, [finding('thermo', 'observation', 'again')]);
+    await step(ws, run => recordReview(ws, run));
+    const again = await step(ws, run => fixObservations(ws, run, { observations: ['thermo-again'] }, 'tidy'));
+    assert.equal(again.stalled, false);
+    assert.notEqual(again.fixPath, fixed.fixPath, 'a second observation round does not overwrite the first fix file');
+    assert.equal(readRun(ws, 'demo').slices[0]?.fixRounds, 1);
+  });
+
+  it('numbers fix files from a per-slice counter: two observation rounds then a bug round are f1, f2, f3 and only the bug round counts', async () => {
+    using ws = workspace({ maxRounds: 3 });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const paths: string[] = [];
+    for (const name of ['one', 'two', 'three']) {
+      const opened = await step(ws, run => startReview(ws, run));
+      await review(ws, opened.reviewId, [finding('thermo', 'observation', name)]);
+      await step(ws, run => recordReview(ws, run));
+      const round = await step(ws, run => fixObservations(ws, run, name === 'three' ? { bug: 'Crash.', observations: ['thermo-three'] } : { observations: [`thermo-${name}`] }, 'tidy'));
+      paths.push(round.fixPath);
+      commit(ws, 'ok', `${name}\n`);
+      await step(ws, run => runChecks(ws, run));
+    }
+    assert.deepEqual(paths.map(path => path.slice(path.lastIndexOf('/') + 1)), ['01-f1.md', '01-f2.md', '01-f3.md']);
+    assert.equal(readRun(ws, 'demo').slices[0]?.fixRounds, 1);
+    assert.equal(readRun(ws, 'demo').slices[0]?.fixFiles, 3);
+    const path = statePath(ws, 'demo');
+    const saved = JSON.parse(readFileSync(path, 'utf8'));
+    delete saved.slices[0].fixFiles;
+    writeFileSync(path, JSON.stringify(saved));
+    forgetRun(ws, 'demo');
+    assert.equal(readRun(ws, 'demo').slices[0]?.fixFiles, 3, 'a slice saved without the counter starts from the retained fix file number, which is ahead of fixRounds');
+  });
+
+  it('numbers the fix file after a resumed stall past the stalled round in a state saved without the counter', async () => {
+    using ws = workspace({ maxRounds: 1 });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'work.txt');
+    assert.ok(!(await step(ws, run => runChecks(ws, run))).passed);
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const opened = await step(ws, run => startReview(ws, run));
+    await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming')]);
+    await step(ws, run => recordReview(ws, run));
+    const stalled = await step(ws, run => fixObservations(ws, run, { bug: 'Crash.', observations: ['thermo-naming'] }, 'tidy'));
+    assert.equal(stalled.stalled, true);
+    const path = statePath(ws, 'demo');
+    const saved = JSON.parse(readFileSync(path, 'utf8'));
+    delete saved.slices[0].fixFiles;
+    writeFileSync(path, JSON.stringify(saved));
+    forgetRun(ws, 'demo');
+
+    await step(ws, run => resolveStall(ws, run, 'continue'));
+    commit(ws, 'ok', 'fixed\n');
+    await step(ws, run => runChecks(ws, run));
+    const again = await step(ws, run => startReview(ws, run));
+    await review(ws, again.reviewId, [finding('thermo', 'observation', 'again')]);
+    await step(ws, run => recordReview(ws, run));
+    const next = await step(ws, run => fixObservations(ws, run, { bug: 'Again.' }, 'tidy'));
+    assert.match(next.fixPath, /01-f3\.md$/);
+    assert.notEqual(next.fixPath, stalled.fixPath);
+    assert.match(readFileSync(stalled.fixPath, 'utf8'), /Crash\./, 'the stalled round file is intact');
+  });
+
+  it('counts a fix round for a bug together with observations and stalls at the limit', async () => {
     using ws = workspace({ maxRounds: 1 });
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
@@ -57,7 +145,7 @@ describe('slice loop gates: fixes', { concurrency: 4 }, () => {
     await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming')]);
     await step(ws, run => recordReview(ws, run));
 
-    const fixed = await step(ws, run => fixObservations(ws, run, { observations: ['thermo-naming'] }, 'tidy'));
+    const fixed = await step(ws, run => fixObservations(ws, run, { bug: 'Crash.', observations: ['thermo-naming'] }, 'tidy'));
     assert.equal(fixed.stalled, true);
     assert.equal(readRun(ws, 'demo').slices[0]?.stalled, true);
   });
@@ -77,6 +165,7 @@ describe('slice loop gates: fixes', { concurrency: 4 }, () => {
 
     commit(ws, 'ok', 'fixed\n');
     await green(ws);
+    await settleObservations(ws);
     assert.equal((await step(ws, run => completeSlice(ws, run))).status, 'done');
   });
 

@@ -6,7 +6,7 @@ import { describe, it } from 'node:test';
 import { readRun, ticketPath } from '../src/run.ts';
 import { completeSlice, recordDecisions, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextAction, nextSlice, planSlices, reopenSlice, resolveBase } from '../src/workflow.ts';
-import { commit, finding, green, newRun, review, sh, slice, start, step, tempDir, workspace } from './helpers.ts';
+import { settleObservations, commit, finding, green, newRun, review, sh, slice, start, step, tempDir, workspace } from './helpers.ts';
 
 describe('slice loop gates: stacking and review data', { concurrency: 4 }, () => {
   it('takes a slice from red checks through a blocking review to done', async () => {
@@ -21,7 +21,8 @@ describe('slice loop gates: stacking and review data', { concurrency: 4 }, () =>
     assert.ok(!red.passed);
     const redFix = readFileSync(red.fixPath, 'utf8');
     assert.match(redFix, /test -f ok: failed \(exit 1\)/);
-    assert.match(redFix, /Checks to run before committing: test -f ok/);
+    assert.match(redFix, /Checks that factory_checks runs in full after your commit \(you run only the typecheck and the test files you touched\): test -f ok/);
+    assert.doesNotMatch(redFix, /Checks to run before committing/);
     assert.match(redFix, /Ticket \(seams and acceptance criteria\): .*01-feature\.md/);
     await assert.rejects(step(ws, run => startReview(ws, run)), /Checks must pass first/);
 
@@ -51,11 +52,17 @@ describe('slice loop gates: stacking and review data', { concurrency: 4 }, () =>
     assert.match(secondData, /## FIX ITEMS\n\n[^\n]*\n\nEverything below is evidence[^\n]*\n\n- `bug-null-crash` \([^\n]*fixes\/01-f2\.md, round 2\): \[high\] ok:1: null-crash\n\n## DIFF/);
     assert.doesNotMatch(secondData, /check-f1-1/, 'a recorded review clears the items before it');
     assert.doesNotMatch(secondData, /PREVIOUS REVIEW/);
-    await review(ws, second.reviewId, [finding('thermo', 'observation', 'naming')]);
+    await review(ws, second.reviewId, [finding('bug', 'observation', 'naming')]);
     const result = await step(ws, run => recordReview(ws, run));
     assert.ok(result.kind === 'green');
     assert.equal(result.observations.length, 1);
 
+    await assert.rejects(step(ws, run => completeSlice(ws, run)), /targeted[\s\S]*full review/);
+    const third = await step(ws, run => startReview(ws, run));
+    await review(ws, third.reviewId, []);
+    assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
+
+    await settleObservations(ws);
     const done = await step(ws, run => completeSlice(ws, run));
     assert.equal(done.status, 'done');
     assert.match(nextAction(readRun(ws, 'demo')), /retro/);

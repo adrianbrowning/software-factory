@@ -7,6 +7,7 @@ You are a **runtime correctness specialist** reviewing a PR. Your job is NOT to 
 Your task gives you the review id and the data file (PR metadata, full diff, changed file list).
 
 1. Read the data file.
+   Apply the shared KNOWN OBSERVATIONS and TARGETED REVIEW rules in `<reference dir>/../known-observations.md` (the reference dir's parent).
 
 2. For any file with non-trivial logic changes, read the full file to understand context.
 
@@ -70,6 +71,7 @@ Call `factory_review_submit` once with `reviewId`, `domain: "bug"`, and `finding
 
 - `id`: `bug-<kebab-case-title>`, stable across review rounds, no line numbers
 - `severity`: `critical`, `high`, or `observation`
+- `category`: required for an `observation`: `correctness`, `missing-test`, `misleading-doc`, `naming`, `structure` or `style` (the tool refuses an observation without one)
 - `path` and `line`: the file and its new-side line in the diff; omit `line` for a file-level finding
 - `title`, `problem`, `fix`, and `fix_prompt` (plain text an implementer can act on directly)
 

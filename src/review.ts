@@ -9,17 +9,20 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { evidence, evidenceLine, redact } from './evidence.ts';
 import { deferItems, draftOf, isRecordSlice, itemKey } from './deferred.ts';
+import { CARRIED_HERE, findingLocation, renderKnownObservations } from './ledger.ts';
 import { git, runShell, type CommandResult } from './exec.ts';
 import {
   activeSlice,
   addEvent,
   builtBy,
+  clearFullGreen,
   clearGreen,
   discardReview,
   dropPass,
   greenCommit,
   outdatedGreenCount,
   isAutonomous,
+  OBSERVATION_CATEGORIES,
   type Decision,
   type Domain,
   type Finding,
@@ -40,9 +43,13 @@ import {
   type Workspace,
   writeAtomic,
 } from './run.ts';
+import { renderFinding } from './finding-text.ts';
+import { collectObservations, placeDefaults } from './place.ts';
+import { changedLines, changedPaths, targetedReview } from './targeted.ts';
 import { storedReport } from './report.ts';
 import { head, porcelain, requireOnBranchClean, snapshot } from './repo.ts';
 import {
+  needsFullReview,
   type FixRecord,
   pauseRun,
   renderTicket,
@@ -102,11 +109,11 @@ export function recordDecisions(ws: Workspace, run: Run, decisions: unknown) {
   return { decisions: run.decisions, discarded };
 }
 
-/** Sends a green slice back to review on its green commit, for decisions newer than the review; its checks, which passed on that commit, stand. */
-function reopenReview(run: Run, slice: Slice) {
+/** Sends a green slice back to review on its green commit for `reason` (default: decisions newer than the review; startReview also uses it for a full review after a targeted green); its checks, which passed on that commit, stand. */
+function reopenReview(run: Run, slice: Slice, reason = 'decisions recorded after the green review') {
   slice.phase = 'review';
   clearGreen(slice);
-  addEvent(run, 'review-invalidated', 'decisions recorded after the green review', slice);
+  addEvent(run, 'review-invalidated', reason, slice);
 }
 
 /** The shell's own diagnostic for a command it cannot find (bash and dash wording). */
@@ -273,10 +280,6 @@ export async function pathSkips(files: string[], contentOf: (file: string) => Pr
   return skips;
 }
 
-async function changedPaths(root: string, range: string, ...filter: string[]) {
-  return (await git(root, 'diff', '--name-only', '-z', ...filter, range)).split('\0').filter(Boolean);
-}
-
 /** Reads a changed file at `sha`; a file the range deletes has no content. */
 function committedContent(root: string, range: string, sha: string) {
   let present: Promise<Set<string>> | undefined;
@@ -296,16 +299,21 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   // factory_decide reopens a green review that newer decisions outdate; only a state file written before it did is
   // still ready here.
   const outdated = outdatedGreenCount(run, slice) !== undefined;
-  if (!outdated && (slice.phase !== 'review' || slice.checked === undefined)) throw new Error('Checks must pass first: call factory_checks.');
+  // A targeted green review allows a full review of the same commit; its checks stand.
+  const fullAfterTargeted = !outdated && slice.phase === 'ready' && slice.green?.targeted === true;
+  if (!outdated && !fullAfterTargeted && (slice.phase !== 'review' || slice.checked === undefined)) throw new Error('Checks must pass first: call factory_checks.');
   const guarded = await requireOnBranchClean(ws.root, slice, 'Review needs committed work');
   if (outdated) reopenReview(run, slice);
+  else if (fullAfterTargeted) reopenReview(run, slice, 'full review after the targeted green review');
+  const targeting = fullAfterTargeted ? undefined : slice.targeting;
   const checked = slice.checked;
   if (checked === undefined || guarded !== checked.sha) {
     dropPass(slice, 'checks');
     throw new Invalidated('HEAD moved after checks passed. Call factory_checks again.');
   }
-  const chosen = skippedDomainsSchema.parse(skip);
-  const kept = z.array(z.enum(REVIEW_DOMAINS)).parse(keep);
+  // The orchestrator's skip and keep lists apply only to a full review: the factory picks the domains of a targeted one.
+  const chosen = targeting === undefined ? skippedDomainsSchema.parse(skip) : [];
+  const kept = targeting === undefined ? z.array(z.enum(REVIEW_DOMAINS)).parse(keep) : [];
   const skippedNames = chosen.map(entry => entry.domain);
   const record = isRecordSlice(slice);
   // A Record slice's light review is exactly bug, scope and comments: its seams (a resliced child may carry some) do not bring testing back, and none of the three can be skipped.
@@ -326,25 +334,29 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
     fixItems.length === 0
       ? 'None.'
       : `The fix rounds since the last recorded review asked the implementer to fix these items, and the implementer has since committed. The scope reviewer gives each item a verdict in fixItems of factory_review_submit: fixed, not-a-defect, waived, or open. Check each item against the diff and the code, not the implementer's claims: not-a-defect needs evidence from the diff or code, waived needs a recorded decision, and an item left open blocks the slice and carries into the next round. Every other domain checks whether the code still has each problem in its domain, and reports one that remains as a finding under the same id.\n\n${UNTRUSTED_NOTE}\n\n${fixItems.join('\n')}`;
-  // A Record deferred items slice gets a light review: exactly bug, scope and comments.
-  const light = record
-    ? REVIEW_DOMAINS.filter(domain => !required.includes(domain)).map(domain => ({ domain, reason: 'Record deferred items slice: light review (scope and comments)' }))
-    : [];
+  // Light review: a targeted review runs only the blocking domains plus the required ones; a Record deferred items slice runs exactly bug, scope and comments.
+  const light =
+    targeting !== undefined
+      ? REVIEW_DOMAINS.filter(domain => !required.includes(domain) && !targeting.domains.includes(domain)).map(domain => ({ domain, reason: `Targeted review: ${domain} did not block review ${targeting.from}` }))
+      : record
+        ? REVIEW_DOMAINS.filter(domain => !required.includes(domain)).map(domain => ({ domain, reason: 'Record deferred items slice: light review (scope and comments)' }))
+        : [];
   const lightNames = light.map(entry => entry.domain);
-  const byPath = (await pathSkips(files, committedContent(ws.root, range, checked.sha))).filter(
+  const byPath = (targeting !== undefined ? [] : await pathSkips(files, committedContent(ws.root, range, checked.sha))).filter(
     entry => !kept.includes(entry.domain) && !skippedNames.includes(entry.domain) && !lightNames.includes(entry.domain),
   );
   const skipped = [...byPath, ...chosen.filter(entry => !lightNames.includes(entry.domain)), ...light];
+  const { section: targetedSection, targeted } = targeting === undefined ? { section: '', targeted: undefined } : await targetedReview(ws, targeting, checked.sha);
   slice.reviews += 1;
   const id = `${slice.id}-r${slice.reviews}`;
   rmSync(reviewDir(ws, run.feature, id), { force: true, recursive: true });
   const dataFile = join(reviewDir(ws, run.feature, id), 'data.md');
   writeAtomic(
     dataFile,
-    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n${renderLaterSlices(run, slice)}\n\n## CHECKS\n\nThe factory ran every configured check on \`${checked.sha}\` and all passed. Do not run them again.\n\n${checked.results.map(result => `- ${result}`).join('\n')}\n\n## FIX ITEMS\n\n${listed}\n\n## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files.join('\n')}\n`,
+    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n${renderLaterSlices(run, slice)}\n\n## CHECKS\n\nThe factory ran every configured check on \`${checked.sha}\` and all passed. Do not run them again.\n\n${checked.results.map(result => `- ${result}`).join('\n')}\n\n## KNOWN OBSERVATIONS\n\nObservations this run has already placed (carried, deferred, fixed or left), and observations of this slice's earlier reviews that are not placed yet, marked \`(unplaced)\`. A finding that matches an entry by location and problem, under any id, is not new: the validator drops it with the reason \`same as <key>\`. An entry marked \`${CARRIED_HERE}\` is work this slice builds: a finding that it is unbuilt or wrong in this slice is not a repeat. ${UNTRUSTED_NOTE}\n\n${renderKnownObservations(run, slice)}\n\n${targetedSection}## FIX ITEMS\n\n${listed}\n\n## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files.join('\n')}\n`,
   );
   const lines = changedLines(diff, files);
-  slice.review = { decisions: run.decisions.length, id, lines, sha: checked.sha, skipped, snapshot: await snapshot(ws.root), submissions: {} };
+  slice.review = { decisions: run.decisions.length, id, lines, sha: checked.sha, skipped, snapshot: await snapshot(ws.root), submissions: {}, targeted };
   const skippedDetail = skipped.map(entry => `${entry.domain} (${entry.reason})`).join('; ');
   addEvent(run, 'review-start', skipped.length === 0 ? id : `${id} skipped ${skippedDetail}`, slice);
   return {
@@ -365,34 +377,6 @@ function renderLaterSlices(run: Run, slice: Slice) {
     item => `### ${item.id}: ${item.title}\n\n**What to build:** ${item.whatToBuild}\n\n${item.acceptance.map(line => `- ${line}`).join('\n')}`,
   );
   return `## LATER SLICES\n\nLater slices of the plan build this work. Work a later slice lists is not a finding against this slice; this slice's own acceptance criteria, seams, and decisions still count in full, and code here that contradicts a later slice's plan is still a finding.\n\n${listed.join('\n\n')}`;
-}
-
-/**
- * Each changed path with the new-side line ranges of its hunks, context lines included. A path with no hunks (a
- * binary, mode-only, or deleted file) maps to no ranges, so a finding on it can only be file-level.
- */
-export function changedLines(diff: string, files: string[]) {
-  const lines: Record<string, [number, number][]> = Object.fromEntries(files.map(file => [file, []]));
-  let ranges: [number, number][] | undefined;
-  let header = false;
-  for (const line of diff.split('\n')) {
-    // Content lines start with ' ', '+', '-', or '\', so these prefixes only match headers.
-    if (line.startsWith('diff --git ')) {
-      header = true;
-      ranges = undefined;
-    } else if (header && line.startsWith('+++ ')) {
-      const name = line.slice(4).replace(/\t$/, '');
-      const path = (name.startsWith('"') ? (JSON.parse(name) as string) : name).replace(/^b\//, '');
-      ranges = name === '/dev/null' ? undefined : (lines[path] ??= []);
-    } else if (line.startsWith('@@ ')) {
-      header = false;
-      const match = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
-      const start = Number(match?.[1]);
-      const count = match?.[2] === undefined ? 1 : Number(match[2]);
-      if (ranges !== undefined && count > 0) ranges.push([start, start + count - 1]);
-    }
-  }
-  return lines;
 }
 
 /** The domains a review waits for: every domain it did not skip. */
@@ -462,6 +446,9 @@ export function submitDomain(
     if (ids.has(finding.id)) throw new Error(`Duplicate finding id "${finding.id}"`);
     ids.add(finding.id);
     requireInDiff(review.lines, finding);
+    if (finding.severity === 'observation' && finding.category === undefined) {
+      throw new Error(`Finding "${finding.id}" is an observation without a category. Give it one of: ${OBSERVATION_CATEGORIES.join(', ')}.`);
+    }
     if (finding.decision !== undefined) {
       if (finding.severity === 'observation') throw new Error(`Finding "${finding.id}" breaks a recorded decision, so it must be critical or high.`);
       if (finding.decision > review.decisions) {
@@ -540,7 +527,16 @@ export const validationSchema = z.object({
     )
     .describe('Findings removed, each with a reason'),
   downgrade: z
-    .array(z.object({ id: z.string().min(1), reason: z.string().min(1) }))
+    .array(
+      z.object({
+        category: z
+          .enum(OBSERVATION_CATEGORIES)
+          .optional()
+          .describe('Required when the reviewer gave the finding no category: what the observation is about (correctness, missing-test, misleading-doc, naming, structure or style); it sets where the observation goes by default'),
+        id: z.string().min(1),
+        reason: z.string().min(1),
+      }),
+    )
     .default([])
     .describe('critical/high findings the diff supports but that fail the correctness-or-requirements bar; kept as observations'),
   escalate: z
@@ -558,16 +554,16 @@ export const validationSchema = z.object({
 type Validation = z.infer<typeof validationSchema>;
 
 /**
- * Kept findings at the severity the gate uses: downgraded findings count as observations, escalated ones as high and
- * carry the decision the validator cited.
+ * Kept findings at the severity the gate uses: downgraded findings count as observations (with the category the
+ * validator gave one that had none), escalated ones as high and carry the decision the validator cited.
  */
 export function keptFindings(findings: Finding[], validation: Validation) {
-  const downgraded = new Set(validation.downgrade.map(entry => entry.id));
+  const downgraded = new Map(validation.downgrade.map(entry => [entry.id, entry.category]));
   const escalated = new Map(validation.escalate.map(entry => [entry.id, entry.decision]));
   return findings
     .filter(finding => validation.keep.includes(finding.id) || downgraded.has(finding.id) || escalated.has(finding.id))
     .map(finding => {
-      if (downgraded.has(finding.id)) return { ...finding, severity: 'observation' as const };
+      if (downgraded.has(finding.id)) return { ...finding, category: finding.category ?? downgraded.get(finding.id), severity: 'observation' as const };
       const decision = escalated.get(finding.id);
       if (decision !== undefined) return { ...finding, decision, severity: 'high' as const };
       return finding;
@@ -581,7 +577,7 @@ export function keptFindings(findings: Finding[], validation: Validation) {
  * dropped in favour of a kept, downgraded, or escalated finding of the same or higher severity (original severity,
  * except that an escalated finding counts as high).
  */
-function checkCoverage(findings: Finding[], validation: Validation, decisionCount: number, decisions: Decision[]) {
+function checkCoverage(findings: Finding[], validation: Validation, decisionCount: number, decisions: Decision[], fixLines?: Record<string, [number, number][]>) {
   const downgraded = validation.downgrade.map(entry => entry.id);
   const escalated = validation.escalate.map(entry => entry.id);
   const retained = [...validation.keep, ...downgraded, ...escalated];
@@ -592,6 +588,22 @@ function checkCoverage(findings: Finding[], validation: Validation, decisionCoun
   if (new Set(decided).size !== decided.length) throw new Error('A finding id appears twice across keep, downgrade, escalate, and dropped.');
   const undecided = [...byId.keys()].filter(id => !decided.includes(id));
   if (undecided.length > 0) throw new Error(`Keep, downgrade, escalate, or drop every finding. Undecided: ${undecided.join(', ')}`);
+  if (fixLines !== undefined) {
+    // A targeted review keeps observations only on the lines the fix changed; a downgraded finding becomes one.
+    const outside = [...validation.keep, ...downgraded].filter(id => {
+      const finding = byId.get(id);
+      if (finding === undefined || (finding.severity !== 'observation' && !downgraded.includes(id))) return false;
+      const { line } = finding;
+      const ranges = Object.hasOwn(fixLines, finding.path) ? fixLines[finding.path] : undefined;
+      if (line === undefined) return ranges === undefined || ranges.length > 0;
+      return !(ranges ?? []).some(([start, end]) => line >= start && line <= end);
+    });
+    if (outside.length > 0) throw new Error(`Observations outside the fix diff are dropped in a targeted review (blocking findings stay): ${outside.join(', ')}`);
+  }
+  const uncategorised = validation.downgrade.filter(entry => entry.category === undefined && byId.get(entry.id)?.category === undefined).map(entry => entry.id);
+  if (uncategorised.length > 0) {
+    throw new Error(`A downgraded finding becomes an observation, which needs a category: set \`category\` on the downgrade entry of ${uncategorised.join(', ')}.`);
+  }
   const notBlocking = downgraded.filter(id => byId.get(id)?.severity === 'observation');
   if (notBlocking.length > 0) throw new Error(`Only critical or high findings can be downgraded: ${notBlocking.join(', ')}`);
   const breaksDecision = downgraded.filter(id => byId.get(id)?.decision !== undefined);
@@ -642,7 +654,7 @@ export function submitValidation(
   const { findings, missing } = readDomainFindings(ws, run, input.reviewId);
   if (missing.length > 0) throw new Error(`Domains not submitted yet: ${missing.join(', ')}`);
   const validation = validationSchema.parse({ downgrade: input.downgrade, dropped: input.dropped, escalate: input.escalate, keep: input.keep });
-  checkCoverage(findings, validation, review.decisions, run.decisions);
+  checkCoverage(findings, validation, review.decisions, run.decisions, review.targeted?.lines);
   const content = `${JSON.stringify(validation, null, 2)}\n`;
   writeAtomic(validationFile(ws, run, input.reviewId), content);
   review.validation = { agentId: input.agentId, ...(previous === undefined ? {} : { amended: true }), hash: sha256(content) };
@@ -663,31 +675,27 @@ function countBy(findings: Finding[], key: 'domain' | 'severity') {
     .join(' ');
 }
 
-/** Where a finding points: `path:line`, or `path` when it names no line. */
-function findingLocation(finding: Finding) {
-  return `${finding.path}${finding.line === undefined ? '' : `:${finding.line}`}`;
-}
-
-/** A finding as a markdown section under a `heading` of the given level (`##` by default). */
-export function renderFinding(finding: Finding, decisions: Decision[], heading = '##') {
-  const decision = finding.decision === undefined ? '' : `\n- Breaks decision ${finding.decision}: ${redact(decisions[finding.decision - 1]?.text ?? '')}`;
-  return `${heading} [${finding.severity}] ${finding.id}\n\n- Location: ${findingLocation(finding)}\n- Title: ${evidence(finding.title, 500)}\n- Problem: ${evidence(finding.problem, 2_000)}\n- Fix: ${evidence(finding.fix, 2_000)}\n- Fix prompt: ${evidence(finding.fix_prompt, 2_000)}${decision}`;
-}
-
 /**
  * What `recordReview` decided: `green` (with the observations to place), `accepted-unresolved` (a headless slice with no
  * fix rounds left, counted as green with its open items on record), or `fix` (a fix file written for the blocking
  * findings and open fix items, `stalled` when the round limit is used up).
  */
 export type RecordedReview =
-  | { kind: 'green'; observations: string[] }
+  | { final: boolean; kind: 'green'; observations: string[] }
   | { kind: 'accepted-unresolved'; unresolved: string[] }
   | { blocking: number; fixPath: string; kind: 'fix'; open: number; stalled: boolean };
 
+/** The targeting a fix round after `review` leaves for the next review: the domains that need another look. */
+export function targetingAfter(review: { id: string; sha: string }, domains: readonly Domain[]) {
+  return { base: review.sha, domains: [...new Set(domains)], from: review.id };
+}
+
 /** Marks the slice's review green over `decisions`; `unresolved` are the items it is accepted with, if any. */
-function markGreen(slice: Slice, decisions: number, unresolved?: string[]) {
+function markGreen(slice: Slice, decisions: number, { full = false, targeted = false, unresolved }: { full?: boolean; targeted?: boolean; unresolved?: string[] }) {
   slice.phase = 'ready';
-  slice.green = { decisions };
+  slice.targeting = undefined;
+  if (full) slice.fullGreen = true;
+  slice.green = { decisions, ...(targeted ? { targeted: true } : {}) };
   slice.unresolved = unresolved;
 }
 
@@ -700,7 +708,7 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
   const raw = readRecorded(validationFile(ws, run, review.id), review.validation);
   if (raw === undefined) throw new Error('The validator has not submitted. Spawn factory-review-validator.');
   const validation = validationSchema.parse(raw);
-  checkCoverage(findings, validation, review.decisions, run.decisions);
+  checkCoverage(findings, validation, review.decisions, run.decisions, review.targeted?.lines);
   if ((await snapshot(ws.root)) !== review.snapshot) {
     dropPass(slice, 'checks');
     addEvent(run, 'review-invalidated', `${review.id}: repository changed during review`, slice);
@@ -716,6 +724,7 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
   const kept = keptFindings(findings, validation);
   const blocking = kept.filter(finding => finding.severity !== 'observation');
   const observations = kept.filter(finding => finding.severity === 'observation');
+  collectObservations(run, slice, review.id, observations);
   const verdicts = review.fixVerdicts ?? [];
   const verdictOf = new Map(verdicts.map(entry => [entry.id, entry]));
   // An item without a closing verdict stays open, so no item passes unchecked; a blocking finding under its id already carries it.
@@ -732,10 +741,13 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
   slice.fixItems = [];
 
   if (verdict === 'APPROVED') {
-    markGreen(slice, review.decisions);
-    addEvent(run, 'review-green', detail, slice);
-    return { kind: 'green', observations: observations.map(finding => renderFinding(finding, run.decisions)) };
+    const full = review.targeted === undefined;
+    markGreen(slice, review.decisions, full ? { full } : { targeted: true });
+    addEvent(run, 'review-green', `${full ? '' : 'targeted '}${detail}`, slice);
+    return { final: !needsFullReview(slice), kind: 'green', observations: observations.map(finding => renderFinding(finding, run.decisions)) };
   }
+  clearFullGreen(slice);
+  slice.targeting = targetingAfter(review, [...blocking.map(finding => finding.domain), ...(open.length > 0 ? (['scope'] as const) : [])]);
   const blockingIds = [...blocking.map(finding => finding.id), ...open.map(item => `${item.id} (open fix item)`)];
   const blockingDetail = `${detail}; blocking ${blockingIds.join(', ')}`;
   const records: FixRecord[] = [
@@ -763,7 +775,8 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
     }
     // Added only now that the deferred sink succeeded, so a retry after a failed sink does not log it twice.
     addEvent(run, 'review-blocking', blockingDetail, slice);
-    markGreen(slice, review.decisions, unresolved);
+    // An accepted-unresolved targeted review still needs a full review before completion.
+    markGreen(slice, review.decisions, { targeted: review.targeted !== undefined, unresolved });
     const sunk = ws.config.deferred === undefined ? 'no deferred sink configured' : isRecordSlice(slice) ? 'not deferred: a Record deferred items slice' : `sent to the ${ws.config.deferred.kind} sink`;
     addEvent(run, 'accepted-unresolved', `${review.id} after ${slice.fixRounds} fix rounds (${sunk}); open: ${unresolved.join('; ')}`, slice);
     return { kind: 'accepted-unresolved', unresolved };
@@ -857,6 +870,9 @@ export async function completeSlice(ws: Workspace, run: Run) {
   if (slice.unresolved !== undefined && run.mode !== 'headless') {
     throw new Error(`Slice ${slice.id} was accepted unresolved by a headless run, and only a headless run completes it. Open: ${slice.unresolved.join('; ')}`);
   }
+  if (needsFullReview(slice)) {
+    throw new Error(`The last green review of slice ${slice.id} was targeted. Call factory_review_start for a full review of the same commit, then factory_complete_slice.`);
+  }
   const sha = await requireOnBranchClean(ws.root, slice, 'Cannot complete the slice');
   if (sha !== green) {
     dropPass(slice, 'checks');
@@ -869,17 +885,28 @@ export async function completeSlice(ws: Workspace, run: Run) {
     reopenReview(run, slice);
     throw new Invalidated(`${newerDecisions(run, covered)} newer than the green review, so its reviewers did not check the code against them. Call factory_review_start for a new review.`);
   }
-  if (slice.doneSha !== undefined) {
-    await restack(ws, run, slice, slice.doneSha);
-    slice.doneSha = undefined;
+  const placedHere = await placeDefaults(ws, run);
+  if (slice.unplaced.length > 0) {
+    throw new Error(`Slice ${slice.id} has unplaced observations: ${slice.unplaced.map(entry => entry.finding.id).join(', ')}. Place them with factory_place (placements [] takes every default), then call factory_complete_slice. A headless run places them by default in factory_complete_slice.`);
   }
-  slice.status = 'done';
-  writeTicket(ws, run, slice);
-  if (slice.peakContextTokens > ws.config.sliceTokenBudget || slice.compactions > 0) {
-    addEvent(run, 'budget-exceeded', `peak ${slice.peakContextTokens} tokens, ${slice.compactions} compactions`, slice);
+  try {
+    if (slice.doneSha !== undefined) {
+      await restack(ws, run, slice, slice.doneSha);
+      slice.doneSha = undefined;
+    }
+    slice.status = 'done';
+    writeTicket(ws, run, slice);
+    if (slice.peakContextTokens > ws.config.sliceTokenBudget || slice.compactions > 0) {
+      addEvent(run, 'budget-exceeded', `peak ${slice.peakContextTokens} tokens, ${slice.compactions} compactions`, slice);
+    }
+    addEvent(run, 'slice-done', `${slice.fixRounds} fix rounds, ${slice.reviews} reviews`, slice);
+    settle(ws, run);
+  } catch (error) {
+    // Only observations the headless defaults placed in this call are saved instead of rolled back. Otherwise the state rolls back.
+    if (!placedHere || error instanceof Invalidated) throw error;
+    slice.status = 'active';
+    throw new Invalidated(`Completing slice ${slice.id} failed after its default observations were placed: ${error instanceof Error ? error.message : String(error)}. Call factory_complete_slice again.`);
   }
-  addEvent(run, 'slice-done', `${slice.fixRounds} fix rounds, ${slice.reviews} reviews`, slice);
-  settle(ws, run);
   return slice;
 }
 

@@ -147,7 +147,7 @@ describe('fix item verdicts', { concurrency: 4 }, () => {
     using ws = workspace({ maxRounds: 3 });
     const { dataFile, reviewId } = await reviewOfFixItems(ws);
     const open = { id: 'bug-b', reason: 'Unreachable is claimed, but parse still passes null', status: 'open' } as const;
-    await review(ws, reviewId, [finding('thermo', 'observation', 'naming')], ['thermo-naming'], [fixed('bug-a'), open]);
+    await review(ws, reviewId, [finding('bug', 'observation', 'naming')], ['bug-naming'], [fixed('bug-a'), open]);
     const recorded = await step(ws, run => recordReview(ws, run));
     assert.equal(recorded.kind, 'fix');
     const stored = JSON.parse(readFileSync(join(dataFile, '..', 'review.json'), 'utf8'));

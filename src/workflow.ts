@@ -11,6 +11,7 @@ import {
   addEvent,
   builtBy,
   discardReview,
+  clearFullGreen,
   dropPass,
   greenCommit,
   hasPass,
@@ -186,7 +187,6 @@ export async function startRun(ws: Workspace, input: { feature: string; mode?: R
   const run: Run = {
     agents: [],
     baseRef,
-    carriedObservations: [],
     checks,
     createdAt: new Date().toISOString(),
     decisions: [],
@@ -195,6 +195,7 @@ export async function startRun(ws: Workspace, input: { feature: string; mode?: R
     feature: input.feature,
     mode: input.mode ?? 'interactive',
     models: ws.config.models,
+    observations: [],
     ownerSessionId: input.sessionId,
     retroRecorded: false,
     slices: [],
@@ -234,6 +235,7 @@ function makeSlice(ws: Workspace, run: Run, input: SliceInput, index: number, pa
     carried: [],
     compactions: 0,
     fixItems: [],
+    fixFiles: 0,
     fixRounds: 0,
     id,
     ownsDecisions: input.ownsDecisions ?? [],
@@ -244,6 +246,7 @@ function makeSlice(ws: Workspace, run: Run, input: SliceInput, index: number, pa
     roundLimit: run.mode === 'headless' ? HEADLESS_FIX_ROUNDS : ws.config.maxRounds,
     stalled: false,
     status: 'pending',
+    unplaced: [],
   };
 }
 
@@ -284,6 +287,12 @@ export function renderTicket(run: Run, slice: Slice, budget: number) {
 ## Test seams (agreed at plan approval)
 
 ${seams}
+
+## Checks
+
+factory_checks runs these in full after the implementer commits; the implementer runs only the typecheck and the test files it touched.
+
+${run.checks.map(check => `- ${check}`).join('\n')}
 
 ## Acceptance criteria
 
@@ -409,6 +418,8 @@ export function planReslice(ws: Workspace, run: Run, proposed: unknown): Reslice
   first.status = 'active';
   // Carried-in work goes with the split slice to its first child, and stays on each later slice.
   first.carried = active.carried;
+  // Unplaced observations of the split slice (red reviews' too) go with its work to the first child.
+  first.unplaced = active.unplaced;
   const remap = renumbering(run, active, slices);
   pending.forEach(slice => {
     const remade = remap.get(slice);
@@ -417,24 +428,25 @@ export function planReslice(ws: Workspace, run: Run, proposed: unknown): Reslice
   // Review ids are `<slice id>-r<n>` and the first child keeps the slice id: continue the count so a new review
   // never reuses an old review directory.
   first.reviews = active.reviews;
-  // A Record deferred items slice stays one through a split, and its children share one batch (an older state file's slice has none yet).
-  if (active.record === true) {
-    const batch = active.recordBatch ?? newRecordBatch(run);
-    for (const child of slices.slice(index, index + children.length)) {
-      child.record = true;
-      child.recordBatch = batch;
-    }
-  }
+  // A slice's kind (Record deferred items with its batch, follow-up) stays through a split and a renumbering; an older state file's Record slice has no batch yet.
+  const batch = active.record === true ? (active.recordBatch ?? newRecordBatch(run)) : undefined;
+  for (const child of slices.slice(index, index + children.length)) copySliceKind(active, child, batch);
   pending.forEach(slice => {
     const remade = remap.get(slice);
-    if (remade !== undefined && slice.record === true) {
-      remade.record = true;
-      remade.recordBatch = slice.recordBatch;
-    }
+    if (remade !== undefined) copySliceKind(slice, remade);
   });
   // The decisions the split slice builds go to its last child, which finishes its work; later slices keep theirs.
   slices[index + children.length - 1]?.ownsDecisions.push(...active.ownsDecisions);
   return { children: slices.slice(index, index + children.length), renamed: new Map([...remap].map(([old, remade]) => [old.id, remade.id])), slices };
+}
+
+/** Copies the fields that make a slice a Record slice or a follow-up slice from `from` to `to`: the one place a rebuilt slice takes its kind. */
+function copySliceKind(from: Slice, to: Slice, batch = from.recordBatch) {
+  if (from.record === true) {
+    to.record = true;
+    to.recordBatch = batch;
+  }
+  if (from.fromEndQueue === true) to.fromEndQueue = true;
 }
 
 /**
@@ -554,6 +566,7 @@ export function planFollowUp(ws: Workspace, run: Run, proposed: AppendInput) {
 export function addFollowUp(ws: Workspace, run: Run, proposed: AppendInput) {
   const planned = planFollowUp(ws, run, proposed);
   planned.carried = run.waiting;
+  if (planned.carried.length > 0) planned.fromEndQueue = true;
   run.waiting = [];
   const slice = pushSlice(ws, run, planned);
   if (run.status === 'done') run.status = 'running';
@@ -595,13 +608,20 @@ export type FixItemInput = { id: string; summary: string } | { kind: 'bug' | 'ch
  */
 export type FixRecord = { group?: string; item: FixItemInput; section: string };
 
+/** True while the slice's last green review was targeted and no full green stands (`slice.fullGreen`); a full green survives an observation-only fix round and is cleared by a red review or a counted fix round. */
+export function needsFullReview(slice: Slice) {
+  return slice.green?.targeted === true && slice.fullGreen !== true;
+}
+
 /**
  * Writes the fix file and moves the slice to `fix`. `sha` is the commit the fix file describes. `records` are what the
  * fix file asks the implementer to fix: the fix file lists their items under `## Fix items`, then their sections, and
- * the slice gathers the items for its next review.
+ * the slice gathers the items for its next review. A round counts toward the fix budget and can stall the slice unless
+ * `counted` is false (observation-only rounds from factory_fix).
  */
-export function requestFix(ws: Workspace, run: Run, slice: Slice, sha: string, records: FixRecord[]) {
-  const round = slice.fixRounds + 1;
+export function requestFix(ws: Workspace, run: Run, slice: Slice, sha: string, records: FixRecord[], counted = true) {
+  slice.fixFiles += 1;
+  const round = slice.fixFiles;
   let checks = 0;
   const items = records.map(({ item }) => {
     if ('id' in item) return item;
@@ -618,7 +638,7 @@ export function requestFix(ws: Workspace, run: Run, slice: Slice, sha: string, r
   const context = [
     `- Ticket (seams and acceptance criteria): ${ticketPath(ws, run.feature, slice)}`,
     `- Branch: ${slice.branch}`,
-    `- Checks to run before committing: ${run.checks.join('; ')}`,
+    `- Checks that factory_checks runs in full after your commit (you run only the typecheck and the test files you touched): ${run.checks.join('; ')}`,
   ].join('\n');
   const listed = items.map(item => `- \`${item.id}\`: ${item.summary}`).join('\n');
   writeAtomic(fixPath, `# Fix slice ${slice.id}: ${slice.title}\n\n${context}\n\n${UNTRUSTED_NOTE}\n\n## Fix items\n\n${listed}\n\n${parts.join('\n\n')}\n`);
@@ -626,6 +646,8 @@ export function requestFix(ws: Workspace, run: Run, slice: Slice, sha: string, r
   slice.fixPath = fixPath;
   slice.fixFromSha = sha;
   dropPass(slice, 'fix');
+  if (!counted) return { fixPath, stalled: false };
+  clearFullGreen(slice);
   if (slice.fixRounds >= slice.roundLimit) {
     slice.stalled = true;
     addEvent(run, 'stall', `fix budget of ${slice.roundLimit} rounds used`, slice);
@@ -643,6 +665,7 @@ export async function restartSlice(ws: Workspace, run: Run, slice: Slice) {
   const own = (await git(ws.root, 'rev-list', '--count', `${slice.parentBranch}..refs/heads/${slice.branch}`)).trim();
   slice.status = 'pending';
   dropPass(slice, own === '0' ? 'implement' : 'checks');
+  slice.targeting = undefined;
   slice.fixPath = undefined;
   slice.fixFromSha = undefined;
   writeTicket(ws, run, slice);
@@ -675,6 +698,7 @@ export async function reopenSlice(ws: Workspace, run: Run, id: string, reason: s
   await git(ws.root, 'switch', slice.branch);
   if (active !== undefined) await restartSlice(ws, run, active);
   slice.doneSha = doneSha;
+  slice.targeting = undefined;
   slice.status = 'active';
   writeTicket(ws, run, slice);
   if (run.status === 'done') run.status = 'running';
@@ -831,10 +855,15 @@ export function nextAction(run: Run): string {
     case 'checks':
       return `Call factory_checks for ${where}.`;
     case 'review':
+      if (slice.review === undefined && slice.targeting !== undefined) return `The review of ${where} is a targeted review after ${slice.targeting.from}: call factory_review_start with no skips; the factory picks the domains.`;
       return slice.review === undefined
         ? `Pick the review domains for ${where} from its changed files, then call factory_review_start with the domains to skip.`
         : `Finish review ${slice.review.id}: every domain reviewer and the validator must submit, then call factory_review_record.`;
     case 'ready':
+      if (needsFullReview(slice)) return `The last green review of ${where} was targeted: call factory_review_start for a full review of the same commit (no new checks), then factory_complete_slice.`;
+      if (run.mode !== 'headless' && slice.unplaced.length > 0) {
+        return `Place the ${slice.unplaced.length} unplaced observations of ${where}: show the user their defaults, then call factory_place (placements [] takes every default), then factory_complete_slice.`;
+      }
       // LEGACY-STATE(decision-before-reset): only a state file written before factory_decide reset reviews keeps
       // decisions newer than a green review; remove with the matching branches in review.ts.
       return outdatedGreenCount(run, slice) === undefined
@@ -863,6 +892,8 @@ export function summarize(ws: Workspace, run: Run) {
     feature: run.feature,
     /** Each role's model from the run snapshot, or `inherit`. */
     models: effectiveModels(run.models),
+    /** The observation ledger: every observation the run carried, deferred, fixed or left, with its placement. */
+    observations: run.observations,
     mode: run.mode,
     nextAction: nextAction(run),
     runDir: runDir(ws, run.feature),
