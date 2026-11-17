@@ -276,7 +276,7 @@ export function registerReviewTools(tool: RunTool) {
   tool({
     caller: 'main',
     description:
-      'Send green-review observations (observations), a free-text note (note), or both to the deferred sink set in .omp/factory.json: one GitHub issue per item (filed at once, URL stored), or the sink file, written later from the items queued on the run. Each item names the run, slice and review. Ids the run already placed (carried, deferred, fixed or left) are refused. The slice keeps its green review. Accepted-unresolved findings go to the sink by themselves.',
+      'Send green-review observations (observations), a free-text note (note), or both to the deferred sink set in .omp/factory.json: one GitHub issue per item (filed at once, URL stored), or the sink file, written later from the items queued on the run. Each item names the run, slice and review. Ids the run already placed (carried, deferred, fixed or left) are refused, and so are all ids until the slice\'s last green review is a full one (a note alone is not). The slice keeps its green review. Accepted-unresolved findings go to the sink by themselves.',
     label: 'Factory: defer to the sink',
     name: 'factory_defer',
     schema: deferSchema,
@@ -308,7 +308,7 @@ export function registerReviewTools(tool: RunTool) {
   tool({
     caller: 'main',
     description:
-      'Record green-review observations the user chose to leave as they are (observations), after the user agreed. Nothing builds them and no sink gets them, and no later review of the run raises them again: the validator drops a finding that repeats one. Observation ids come from the active slice\'s green review. Ids the run already placed (carried, deferred, fixed or left) are refused. The slice keeps its green review.',
+      'Record green-review observations the user chose to leave as they are (observations), after the user agreed. Nothing builds them and no sink gets them, and no later review of the run raises them again: the validator drops a finding that repeats one. Observation ids come from the active slice\'s green review and are refused until its last green review is a full one. Ids the run already placed (carried, deferred, fixed or left) are refused. The slice keeps its green review.',
     label: 'Factory: leave observations',
     name: 'factory_leave',
     schema: leaveSchema,

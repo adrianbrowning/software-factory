@@ -176,6 +176,8 @@ describe('batched observation placement', () => {
     assert.equal(readRun(ws, 'demo').observations.length, 0);
     await call('factory_carry', { note: 'build the thing', to: '02' });
     assert.equal(readRun(ws, 'demo').slices[1]?.carried.length, 1);
+    await call('factory_defer', { note: 'look at this later' });
+    assert.equal(readRun(ws, 'demo').deferred.length, 1);
     await full([]);
     await call('factory_place', { placements: [{ id: 'bug-extra', placement: 'leave' }] });
     assert.equal(readRun(ws, 'demo').observations[0]?.placement, 'left');
