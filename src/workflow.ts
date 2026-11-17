@@ -429,8 +429,8 @@ export function planReslice(ws: Workspace, run: Run, proposed: unknown): Reslice
   // never reuses an old review directory.
   first.reviews = active.reviews;
   // A slice's kind (Record deferred items with its batch, follow-up) stays through a split and a renumbering; an older state file's Record slice has no batch yet.
-  if (active.record === true) active.recordBatch ??= newRecordBatch(run);
-  for (const child of slices.slice(index, index + children.length)) copySliceKind(active, child);
+  const batch = active.record === true ? (active.recordBatch ?? newRecordBatch(run)) : undefined;
+  for (const child of slices.slice(index, index + children.length)) copySliceKind(active, child, batch);
   pending.forEach(slice => {
     const remade = remap.get(slice);
     if (remade !== undefined) copySliceKind(slice, remade);
@@ -441,10 +441,10 @@ export function planReslice(ws: Workspace, run: Run, proposed: unknown): Reslice
 }
 
 /** Copies the fields that make a slice a Record slice or a follow-up slice from `from` to `to`: the one place a rebuilt slice takes its kind. */
-function copySliceKind(from: Slice, to: Slice) {
+function copySliceKind(from: Slice, to: Slice, batch = from.recordBatch) {
   if (from.record === true) {
     to.record = true;
-    to.recordBatch = from.recordBatch;
+    to.recordBatch = batch;
   }
   if (from.fromEndQueue === true) to.fromEndQueue = true;
 }
