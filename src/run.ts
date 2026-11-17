@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node
 import { dirname, join } from 'node:path';
 import { z } from 'zod';
 import { type FactoryConfig, modelsSchema, SPAWN_MODEL_ROLES } from './config.ts';
+import { legacyObservations } from './legacy-observations.ts';
 import { withFileLock } from './state-lock.ts';
 
 /** The cc-pr-review domains. Each has a vendored reference under skills/software-factory/references/review/. */
@@ -284,13 +285,36 @@ const deferredItemSchema = z.object({
 });
 export type DeferredItem = z.infer<typeof deferredItemSchema>;
 
+/** Where a handled observation went. */
+export const PLACEMENTS = ['carried', 'deferred', 'fixed', 'left'] as const;
+
+/**
+ * One observation the run has handled, kept so a repeat is refused and a later review can tell it is not new. `key` is
+ * `review:id`, the key of a deferred item. `location`, `title` and `problem` are the kept finding's text, for matching a
+ * repeat under a new id. `to` is where a carried observation went when it was carried: a pending slice id, or `end`. It
+ * is written once and not kept in step when the carried text moves (reslice, follow-up); the review data file reads where
+ * the text sits instead.
+ */
+const observationEntrySchema = z.object({
+  id: text,
+  key: text,
+  location: text,
+  placement: z.enum(PLACEMENTS),
+  problem: text,
+  review: text,
+  slice: text,
+  title: text,
+  to: text.optional(),
+});
+export type ObservationEntry = z.infer<typeof observationEntrySchema>;
+
 const runSchema = z.object({
   /** One record per factory agent or scout session the run's main session spawned. Empty in runs from before it was kept. */
   agents: z.array(agentRecordSchema).default([]),
   baseRef: text,
   /** Commit `baseRef` pointed at when the plan was approved; slice 01 branches from it. */
   baseSha: z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/).optional(),
-  /** Observations carried to a slice or the end queue, as `review:id`; factory_defer refuses them. factory_carry does not check this list, so a repeat carry is allowed. */
+  /** Legacy (see legacyObservations): observations carried to a slice or the end queue, as `review:id`, in a state file from before the ledger. Read once, never written. */
   carriedObservations: z.array(text).default([]),
   /** Check commands every slice must pass, fixed when the run starts. Empty in runs from before they were kept here. */
   checks: z.array(text).default([]),
@@ -310,6 +334,8 @@ const runSchema = z.object({
   models: modelsSchema.default({}),
   /** Whether the run asks the user at its gates or decides alone. Runs from before it was kept are interactive. */
   mode: z.enum(['headless', 'interactive']).default('interactive'),
+  /** Every observation the run has handled (carried, deferred, fixed or left), in order. A state file from before it was kept has none: its entries come from `carriedObservations` and its deferred items (see legacyObservations). */
+  observations: z.array(observationEntrySchema).optional(),
   ownerSessionId: text,
   retroRecorded: z.boolean(),
   slices: z.array(legacySliceSchema),
@@ -322,7 +348,12 @@ const runSchema = z.object({
    */
   waiting: z.array(text).default([]),
   version: z.literal(1),
-}).transform(({ slices, ...run }) => ({ ...run, slices: slices.map(slice => legacySlice(slice, run.checks)) }));
+}).transform(({ carriedObservations, slices, ...run }) => {
+  const sections = [...run.waiting.map(section => ({ text: section, to: 'end' })), ...slices.flatMap(slice => slice.carried.map(section => ({ text: section, to: slice.id })))];
+  // A state file with an `observations` list is current: its deferred items are not read as observations.
+  const observations = run.observations ?? legacyObservations(carriedObservations, run.deferred, sections);
+  return { ...run, observations, slices: slices.map(slice => legacySlice(slice, run.checks)) };
+});
 export type Run = z.infer<typeof runSchema>;
 
 export type Workspace = { config: FactoryConfig; root: string };

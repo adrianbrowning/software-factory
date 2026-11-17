@@ -230,6 +230,31 @@ confirm:
   green review), a slice without a green review, and a
   target that is neither `"end"` nor a pending slice.
 
+### Leave observations, and the observation ledger
+
+The run keeps one ledger of every observation it has handled: carried (`factory_carry`), deferred (`factory_defer`),
+fixed (`factory_fix`) or left (`factory_leave`). Each entry holds the review id and observation id (its key, for
+example `01-r1:thermo-naming`), the finding's location, title and problem, and the placement. `factory_status` lists
+it under `observations`.
+
+`factory_leave` (observation ids from the active slice's green review or, when it does not list them, from the one done
+slice whose last green review does) records them as left: no slice builds them and no sink gets them. An interactive
+run asks once; a declined dialog records nothing, and a headless run records with no dialog.
+
+- All four tools refuse an observation the ledger already holds and name its placement (`Observations already
+  carried: ...`), before any dialog.
+- The review data file of every review has a `## KNOWN OBSERVATIONS` section that lists the ledger entries with key,
+  placement, location, title and problem. Reviewers leave out a problem that matches an entry by location and problem,
+  and the validator drops a repeat under a new id with the reason `same as <key>`. A left observation is never raised
+  again in the run. An entry carried to the slice under review is marked `carried to this slice: check it` in that review's data
+  file: the slice builds it and its reviewers check it, so a finding that it is unbuilt or wrong is not a repeat and the
+  validator keeps it. An entry carried to the end queue is marked in the review of the `factory_follow_up` slice that takes it; a re-slice keeps the mark on the renumbered slice. Entries carried to other slices stay plain `carried`.
+- A run saved before the ledger loads its carried and deferred observations as ledger entries, with the location,
+  title and problem read from the finding that the carried-in section of a ticket or the end queue, or the deferred
+  item's body, rendered. When that text is not found, or more than one carried-in section holds it, the entry gets a
+  placeholder location (`unknown`) and problem, and is still refused by key. A key both carried and deferred is one
+  entry, carried.
+
 ### Reopen a done slice
 
 When the orchestrator finds a bug in a slice that is done, it asks you. When you agree, `factory_reopen` (slice id
@@ -275,7 +300,7 @@ working tree, and unknown keys are rejected.
 | `checkTimeoutMs` | `600000` | Per-check timeout; the whole process group is killed |
 | `maxRounds` | `3` | Fix rounds per slice before the user decides to continue or pause; each continue, and each yes to the `/factory resume` question on a stalled run, adds this many |
 | `headless.<gate>` | `auto` | Headless runs only (`/factory headless`); interactive runs never read it. One key per gate: `resume`, `plan`, `reslice`, `decide`, `seams`, `fix`, `carry`, `reopen`, `followUp`, `retro`, `checks`, `submission`. `auto` proceeds and records an `autonomous` run event naming the gate; `stop` pauses the run with a reason naming the gate and throws (except `submission`: `stop` opens no PRs and leaves the run with its status, see the paragraph on `headless.submission` above; `auto` opens draft PRs through `gh stack`) (`checks` has no run yet, so it refuses the start). The orchestrator can pause a headless run itself with `factory_pause`. Text from issue authors outside the repository is always left out of a headless run, and a headless start without configured checks saves the detected ones, else refuses. |
-| `deferred` | unset | Where `factory_defer` sends green-review observations and notes, and where a headless run's accepted-unresolved findings go by themselves: `{ "kind": "file", "path": "docs/factory-deferred.md" }` (path optional; items queue on the run for the file to be written) or `{ "kind": "github" }` (one `gh issue create` per item, the issue URL stored). Each item names the run, slice and review id, and `factory_status` lists them with their locations. An interactive run asks the user before `factory_defer` files or queues anything (a headless run does not ask). Ids already carried or deferred are refused. With no sink, `factory_defer` is refused and accepted-unresolved findings stay on the slice and in its event. |
+| `deferred` | unset | Where `factory_defer` sends green-review observations and notes, and where a headless run's accepted-unresolved findings go by themselves: `{ "kind": "file", "path": "docs/factory-deferred.md" }` (path optional; items queue on the run for the file to be written) or `{ "kind": "github" }` (one `gh issue create` per item, the issue URL stored). Each item names the run, slice and review id, and `factory_status` lists them with their locations. An interactive run asks the user before `factory_defer` files or queues anything (a headless run does not ask). Ids the observation ledger already holds (carried, deferred, fixed or left) are refused. With no sink, `factory_defer` is refused and accepted-unresolved findings stay on the slice and in its event. |
 | `sliceTokenBudget` | `400000` | Planned context per slice: 40% of a 1M window |
 | `baseRef` / `trunk` | `origin/HEAD`'s branch, else `origin/main` / `main` | Default base: slice 01 branches from the commit `baseRef` points at when the plan is approved. Unset, it is the remote default branch that `origin/HEAD` points at (`origin/master` in a repository whose trunk is master), else `origin/main`. The stack is based on `trunk`, which defaults to `baseRef` without its git remote (`origin/main` → `main`; a local `feature/auth` stays `feature/auth`). A run that builds on unmerged work names that branch as `baseRef` in `factory_plan`, and its PRs then target it. The plan event in `state.json` records the pinned base |
 | `branchPrefix` | `factory` | Branches are `<prefix>/<feature>/<NN>-<slug>` |
@@ -376,7 +401,7 @@ and factory-assigned ids for a bug (`bug-f<N>`), a reopen reason (`reopen-f<N>`)
 and a working tree the checks changed (`tree-f<N>`). The review data file lists the ticket, then a `## LATER SLICES`
 section with each not-done slice stacked after the reviewed one, in stack order (id, title, what to build, acceptance
 criteria), or says none follows; reviewers and the validator do not count work a later slice lists as a gap in this
-slice. Then come each check's result and duration on the reviewed commit, a `## FIX ITEMS` section with every fix item
+slice. Then come each check's result and duration on the reviewed commit, a `## KNOWN OBSERVATIONS` section with the observation ledger (None when empty), a `## FIX ITEMS` section with every fix item
 from the fix rounds since the last recorded review (id, fix file and round, summary; None when there are none), the
 diff, and the changed files. A decision can name the slice that builds it (`factory_decide` item `{ text, slice }`, or
 `ownsDecisions` on a `factory_plan` slice); that slice's state keeps the decision numbers it owns, and the tickets and

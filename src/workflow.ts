@@ -186,7 +186,6 @@ export async function startRun(ws: Workspace, input: { feature: string; mode?: R
   const run: Run = {
     agents: [],
     baseRef,
-    carriedObservations: [],
     checks,
     createdAt: new Date().toISOString(),
     decisions: [],
@@ -195,6 +194,7 @@ export async function startRun(ws: Workspace, input: { feature: string; mode?: R
     feature: input.feature,
     mode: input.mode ?? 'interactive',
     models: ws.config.models,
+    observations: [],
     ownerSessionId: input.sessionId,
     retroRecorded: false,
     slices: [],
@@ -873,6 +873,8 @@ export function summarize(ws: Workspace, run: Run) {
     feature: run.feature,
     /** Each role's model from the run snapshot, or `inherit`. */
     models: effectiveModels(run.models),
+    /** The observation ledger: every observation the run carried, deferred, fixed or left, with its placement. */
+    observations: run.observations,
     mode: run.mode,
     nextAction: nextAction(run),
     runDir: runDir(ws, run.feature),

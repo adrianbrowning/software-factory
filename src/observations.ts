@@ -1,10 +1,12 @@
 /**
  * What the user does with the observations of a green review: carry them to a later slice or the end of the run, defer
- * them to the sink, or fix them in the active slice. Each resolves the observations from the review that lists them.
+ * them to the sink, fix them in the active slice, or leave them. Each resolves the observations from the review that
+ * lists them, refuses one the run's ledger already holds, and adds a ledger entry for each it places.
  */
 import { z } from 'zod';
 import { evidence, evidenceLine, redact } from './evidence.ts';
-import { draftOf, isRecordSlice, itemKey, requireNotCarriedOrDeferred, requireNotDeferred, requireSink } from './deferred.ts';
+import { draftOf, isRecordSlice, itemKey, requireSink } from './deferred.ts';
+import { placeObservations, requireUnplaced } from './ledger.ts';
 import { findingRecord, keptFindings, readRecorded, recordedFindings, renderFinding, type Review, validationFile, validationSchema } from './review.ts';
 import { addEvent, greenCommit, requireActive, type Finding, type Run, type Slice, type Workspace } from './run.ts';
 import { type FixRecord, requestFix, writeTicket } from './workflow.ts';
@@ -93,15 +95,15 @@ export type CarryRequest = { note?: string | undefined; observations?: string[] 
 /**
  * The target of `request.to` (a pending slice, or undefined for "end"), the observations chosen from the green review
  * that lists them (the active slice's first, else one done slice's), and the note. Throws for a request with neither,
- * for a slice without a green review, for ids no review lists or several done slices list, and for a target that is
- * neither "end" nor a pending slice. Does not change the run.
+ * for a slice without a green review, for ids no review lists or several done slices list, for ids the ledger already
+ * holds, and for a target that is neither "end" nor a pending slice. Does not change the run.
  */
 export function planCarry(ws: Workspace, run: Run, request: CarryRequest) {
   const note = request.note?.trim() ? request.note : undefined;
   const chosen = new Set(z.array(z.string().min(1)).parse(request.observations ?? []));
   if (note === undefined && chosen.size === 0) throw new Error('factory_carry needs observation ids, a note, or both.');
   const green = resolveObservations(ws, run, chosen, 'carry observations or a note');
-  requireNotDeferred(run, green.review.id, green.observations);
+  requireUnplaced(run, green.review.id, green.observations);
   if (request.to === 'end') return { note, ...green, target: undefined };
   const target = run.slices.find(candidate => candidate.id === request.to);
   if (target === undefined) throw new Error(`No slice ${request.to}. Slices: ${run.slices.map(candidate => candidate.id).join(', ')}.`);
@@ -119,7 +121,7 @@ export function carryObservations(ws: Workspace, run: Run, request: CarryRequest
   const { note, observations, review, slice, target } = planned;
   const items = [...(note === undefined ? [] : [redact(note)]), ...observations.map(finding => renderFinding(finding, run.decisions, '####'))];
   const section = `### From green review ${review.id} of slice ${slice.id} "${slice.title}"\n\n${items.join('\n\n')}`;
-  run.carriedObservations.push(...observations.map(finding => itemKey(review.id, finding.id)));
+  placeObservations(run, review, slice, observations, 'carried', target?.id ?? 'end');
   if (target === undefined) run.waiting.push(section);
   else {
     target.carried.push(section);
@@ -133,9 +135,9 @@ export function carryObservations(ws: Workspace, run: Run, request: CarryRequest
 export type DeferRequest = { note?: string | undefined; observations?: string[] | undefined };
 
 /**
- * One draft per observation and note, from the green review that lists the ids. Throws without a deferred sink, for a
- * request with neither ids nor a note, and for ids that are unknown, already carried, or already deferred. Does not
- * change the run.
+ * One draft per observation and note, with the observations and the green review and slice that list them. Throws
+ * without a deferred sink, for a request with neither ids nor a note, and for ids that are unknown or already placed.
+ * Does not change the run.
  */
 export function planDefer(ws: Workspace, run: Run, request: DeferRequest) {
   requireSink(ws);
@@ -144,12 +146,17 @@ export function planDefer(ws: Workspace, run: Run, request: DeferRequest) {
   if (note === undefined && chosen.size === 0) throw new Error('factory_defer needs observation ids, a note, or both.');
   const { observations, review, slice } = resolveObservations(ws, run, chosen, 'defer observations or a note');
   if (isRecordSlice(slice)) throw new Error(`Slice ${slice.id} "${slice.title}" writes the deferred sink file, so its review items are not deferred. They stay in the review itself (the green review observations, and for accepted-unresolved findings slice.unresolved and the accepted-unresolved event).`);
-  requireNotCarriedOrDeferred(run, review.id, observations);
+  requireUnplaced(run, review.id, observations);
   const noted = run.deferred.filter(item => item.review === review.id && item.kind === 'note').length;
-  return [
-    ...(note === undefined ? [] : [draftOf(run, slice, review.id, { detail: redact(note), key: itemKey(review.id, `note:${noted + 1}`), kind: 'note', title: note })]),
-    ...observations.map(finding => draftOf(run, slice, review.id, { detail: renderFinding(finding, run.decisions, '###'), id: finding.id, key: itemKey(review.id, finding.id), kind: 'observation', title: finding.title })),
-  ];
+  return {
+    drafts: [
+      ...(note === undefined ? [] : [draftOf(run, slice, review.id, { detail: redact(note), key: itemKey(review.id, `note:${noted + 1}`), kind: 'note', title: note })]),
+      ...observations.map(finding => draftOf(run, slice, review.id, { detail: renderFinding(finding, run.decisions, '###'), id: finding.id, key: itemKey(review.id, finding.id), kind: 'observation', title: finding.title })),
+    ],
+    observations,
+    review,
+    slice,
+  };
 }
 
 /**
@@ -168,7 +175,7 @@ export function planFix(ws: Workspace, run: Run, request: FixRequest) {
       `Slice ${found.slice.id} is done (green review ${found.review.id}); factory_complete_slice already ran. Ask the user: factory_reopen fixes these in slice ${found.slice.id}, factory_follow_up builds them in a new slice on top of the stack.`,
     );
   }
-  requireNotCarriedOrDeferred(run, found.review.id, found.observations);
+  requireUnplaced(run, found.review.id, found.observations);
   return { bug, ...found };
 }
 
@@ -181,6 +188,7 @@ export function fixObservations(ws: Workspace, run: Run, request: FixRequest, re
   const { bug, observations, review, slice } = planFix(ws, run, request);
   const ids = observations.map(finding => finding.id);
   addEvent(run, 'fix-observations', `${review.id}: ${[...(bug === undefined ? [] : ['bug']), ...ids].join(', ')}`, slice);
+  placeObservations(run, review, slice, observations, 'fixed');
   const why = evidence(reason, 4_000);
   const records: FixRecord[] = [
     ...(bug === undefined
@@ -194,4 +202,28 @@ export function fixObservations(ws: Workspace, run: Run, request: FixRequest, re
     ...observations.map(finding => findingRecord(finding, `## Observations from green review ${review.id} the user chose to fix\n\n${why}`, run.decisions)),
   ];
   return requestFix(ws, run, slice, review.sha, records, bug !== undefined);
+}
+
+/** What factory_leave takes: observation ids from a green review (as for factory_carry). */
+export type LeaveRequest = { observations: string[] };
+
+/**
+ * The observations the user chose to leave, with the green review that lists them (as for factory_carry). Throws for a
+ * request with no ids, for ids that are unknown or already placed, and for a slice without a green review. Does not
+ * change the run.
+ */
+export function planLeave(ws: Workspace, run: Run, request: LeaveRequest) {
+  const chosen = new Set(z.array(z.string().min(1)).parse(request.observations));
+  if (chosen.size === 0) throw new Error('factory_leave needs observation ids.');
+  const found = resolveObservations(ws, run, chosen, 'leave observations');
+  requireUnplaced(run, found.review.id, found.observations);
+  return found;
+}
+
+/** Records the chosen observations as left: no slice builds them and no sink gets them, and no later review of the run raises them again. The slice keeps its green review. */
+export function leaveObservations(ws: Workspace, run: Run, request: LeaveRequest) {
+  const planned = planLeave(ws, run, request);
+  placeObservations(run, planned.review, planned.slice, planned.observations, 'left');
+  addEvent(run, 'leave', `${planned.review.id}: ${planned.observations.map(finding => finding.id).join(', ')}`, planned.slice);
+  return planned;
 }

@@ -1,8 +1,9 @@
 import { REVIEWER, VALIDATOR } from './agents.ts';
-import { deferItems, describeSink, requireSink } from './deferred.ts';
+import { deferItems, describeSink, itemKey, requireSink } from './deferred.ts';
 import { evidenceHead } from './evidence.ts';
 import { confirmInteractive, gate } from './gates.ts';
-import { carryObservations, fixObservations, planCarry, planDefer, planFix } from './observations.ts';
+import { placeObservations } from './ledger.ts';
+import { carryObservations, fixObservations, leaveObservations, planCarry, planDefer, planFix, planLeave } from './observations.ts';
 import { completeSlice, recordReview, startReview, submitDomain, submitValidation, validationSchema } from './review.ts';
 import { activeSlice, addEvent, findingSchema, fixVerdictSchema, readRun, REQUIRED_REVIEW_DOMAINS, REVIEW_DOMAINS, skippedDomainsSchema, ticketPath, withRun } from './run.ts';
 import { submitHeadless } from './headless-submit.ts';
@@ -61,7 +62,13 @@ const deferSchema = z.object({
   observations: z
     .array(z.string().min(1))
     .optional()
-    .describe('Ids of observations from the active slice\'s green review, else from the one done slice whose last green review lists them, to send to the deferred sink, for example "thermo-naming". Ids already carried or deferred are refused'),
+    .describe('Ids of observations from the active slice\'s green review, else from the one done slice whose last green review lists them, to send to the deferred sink, for example "thermo-naming". Ids the run already placed (carried, deferred, fixed or left) are refused'),
+});
+const leaveSchema = z.object({
+  observations: z
+    .array(z.string().min(1))
+    .min(1)
+    .describe('Ids of observations from the active slice\'s green review, else from the one done slice whose last green review lists them, that the user chose to leave as they are, for example "thermo-naming". Ids the run already placed (carried, deferred, fixed or left) are refused'),
 });
 
 /** Registers the review, completion and observation-placement tools. */
@@ -126,7 +133,7 @@ export function registerReviewTools(tool: RunTool) {
         const [orLead, sinkTail] = ws.config.deferred === undefined ? ['or ', ''] : ['', ', or sent to the deferred sink (factory_defer with their ids)'];
         const notes =
           result.observations.length > 0
-            ? `\nObservations (non-blocking):\n${result.observations.join('\n\n')}\nAsk the user where each goes: fixed in this slice (factory_fix with their ids), carried into the ticket of a pending slice (factory_carry with their ids and that slice id), ${orLead}queued for one follow-up slice at the end of the run (factory_carry with their ids and to "end")${sinkTail}. This slice stays green when they are carried.`
+            ? `\nObservations (non-blocking):\n${result.observations.join('\n\n')}\nAsk the user where each goes: fixed in this slice (factory_fix with their ids), carried into the ticket of a pending slice (factory_carry with their ids and that slice id), ${orLead}queued for one follow-up slice at the end of the run (factory_carry with their ids and to "end")${sinkTail}; or left as they are (factory_leave with their ids). Each id can be placed once. This slice stays green when they are carried, deferred or left.`
             : '';
         const bug = '\nWhen the user finds a bug in this slice before it is done, call factory_fix with the bug (and any observation ids).';
         return reply(`Review is green.${notes}${bug}\nNext: ${nextAction(readRun(ws, feature))}`);
@@ -222,30 +229,28 @@ export function registerReviewTools(tool: RunTool) {
       });
     },
   });
-}
 
-/** Registers factory_defer. Separate so index.ts keeps the tool's original place in the registration order. */
-export function registerDeferTool(tool: RunTool) {
   tool({
     caller: 'main',
     description:
-      'Send green-review observations (observations), a free-text note (note), or both to the deferred sink set in .omp/factory.json: one GitHub issue per item (filed at once, URL stored), or the sink file, written later from the items queued on the run. Each item names the run, slice and review. Ids already carried or deferred are refused. The slice keeps its green review. Accepted-unresolved findings go to the sink by themselves.',
+      'Send green-review observations (observations), a free-text note (note), or both to the deferred sink set in .omp/factory.json: one GitHub issue per item (filed at once, URL stored), or the sink file, written later from the items queued on the run. Each item names the run, slice and review. Ids the run already placed (carried, deferred, fixed or left) are refused. The slice keeps its green review. Accepted-unresolved findings go to the sink by themselves.',
     label: 'Factory: defer to the sink',
     name: 'factory_defer',
     schema: deferSchema,
     async run(params, { feature, ws }, ctx) {
-      // Refuses a project without a sink, empty input, unknown ids, and ids already carried or deferred, without a dialog.
+      // Refuses a project without a sink, empty input, unknown ids, and ids the run already placed, without a dialog.
       const planned = planDefer(ws, readRun(ws, feature), params);
       const sink = describeSink(requireSink(ws));
-      const items = planned.map(draft => `- ${draft.id ?? 'Note'}: ${evidenceHead(draft.title, 200)}`);
-      if (!(await confirmInteractive(ctx, ws, feature, `Defer ${planned.length} items to ${sink.name}?`, `${items.join('\n')}\n\nSink: ${sink.line}.`))) {
+      const items = planned.drafts.map(draft => `- ${draft.id ?? 'Note'}: ${evidenceHead(draft.title, 200)}`);
+      if (!(await confirmInteractive(ctx, ws, feature, `Defer ${planned.drafts.length} items to ${sink.name}?`, `${items.join('\n')}\n\nSink: ${sink.line}.`))) {
         return reply(`The user did not defer the work. Ask how to handle the observations or the note.\nNext: ${nextAction(readRun(ws, feature))}`);
       }
       const { failure, lines, rest } = await withRun(ws, feature, async run => {
-        const drafts = planDefer(ws, run, params);
+        const { drafts, observations, review, slice } = planDefer(ws, run, params);
         const before = run.deferred.length;
         const failed = await deferItems(ws, run, drafts);
         const filed = run.deferred.slice(before);
+        placeObservations(run, review, slice, observations.filter(finding => filed.some(item => item.key === itemKey(review.id, finding.id))), 'deferred');
         if (filed.length > 0) addEvent(run, 'defer', `${filed[0]?.review}: ${filed.map(item => item.id ?? 'note').join(', ')}`);
         const rest = drafts.filter(draft => !filed.some(item => item.key === draft.key)).map(draft => draft.id ?? 'the note');
         return { failure: failed, lines: [...filed.map(item => `${item.id ?? 'note'}: ${item.location}`), `Next: ${nextAction(run)}`], rest };
@@ -254,6 +259,28 @@ export function registerDeferTool(tool: RunTool) {
         throw new Error(`The deferred sink failed: ${failure.message}. Filed items stay recorded and are refused if sent again; call factory_defer again with only the rest: ${rest.join(', ')}.\n${lines.join('\n')}`);
       }
       return reply(`Deferred:\n${lines.join('\n')}`);
+    },
+  });
+
+  tool({
+    caller: 'main',
+    description:
+      'Record green-review observations the user chose to leave as they are (observations), after the user agreed. Nothing builds them and no sink gets them, and no later review of the run raises them again: the validator drops a finding that repeats one. Observation ids come from the active slice\'s green review; when it does not list them, from the one done slice whose last green review does. Ids the run already placed (carried, deferred, fixed or left) are refused. The slice keeps its green review.',
+    label: 'Factory: leave observations',
+    name: 'factory_leave',
+    schema: leaveSchema,
+    async run(params, { feature, ws }, ctx) {
+      // Refuses empty input, unknown ids, and ids the run already placed, without a dialog.
+      const planned = planLeave(ws, readRun(ws, feature), params);
+      const items = planned.observations.map(finding => `- ${finding.id}: ${evidenceHead(finding.title, 200)}`);
+      const body = `${items.join('\n')}\n\nNo slice builds these and no sink gets them, and no later review of the run raises them again. Slice ${planned.slice.id} keeps its green review.`;
+      if (!(await confirmInteractive(ctx, ws, feature, `Leave ${planned.observations.length} observations?`, body))) {
+        return reply(`The user did not leave the observations. Ask how to handle them.\nNext: ${nextAction(readRun(ws, feature))}`);
+      }
+      return withRun(ws, feature, run => {
+        const left = leaveObservations(ws, run, params);
+        return reply(`Left ${left.observations.map(finding => finding.id).join(', ')}.\nNext: ${nextAction(run)}`);
+      });
     },
   });
 }
