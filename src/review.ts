@@ -716,9 +716,11 @@ export function targetingAfter(review: { id: string; sha: string }, domains: rea
 }
 
 /** Marks the slice's review green over `decisions`; `unresolved` are the items it is accepted with, if any. */
-function markGreen(slice: Slice, decisions: number, unresolved?: string[], targeted?: true) {
+function markGreen(slice: Slice, decisions: number, kind: 'full' | 'targeted' | 'unresolved', unresolved?: string[]) {
   slice.phase = 'ready';
-  slice.green = { decisions, ...(targeted === undefined ? {} : { targeted }) };
+  slice.targeting = undefined;
+  if (kind === 'full') slice.fullGreen = true;
+  slice.green = { decisions, ...(kind === 'targeted' ? { targeted: true } : {}) };
   slice.unresolved = unresolved;
 }
 
@@ -763,10 +765,9 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
   slice.fixItems = [];
 
   if (verdict === 'APPROVED') {
-    slice.targeting = undefined;
-    if (review.targeted === undefined) slice.fullGreen = true;
-    markGreen(slice, review.decisions, undefined, review.targeted === undefined ? undefined : true);
-    addEvent(run, 'review-green', `${review.targeted === undefined ? '' : 'targeted '}${detail}`, slice);
+    const full = review.targeted === undefined;
+    markGreen(slice, review.decisions, full ? 'full' : 'targeted');
+    addEvent(run, 'review-green', `${full ? '' : 'targeted '}${detail}`, slice);
     return { kind: 'green', observations: observations.map(finding => renderFinding(finding, run.decisions)) };
   }
   slice.fullGreen = false;
@@ -798,8 +799,7 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
     }
     // Added only now that the deferred sink succeeded, so a retry after a failed sink does not log it twice.
     addEvent(run, 'review-blocking', blockingDetail, slice);
-    slice.targeting = undefined;
-    markGreen(slice, review.decisions, unresolved);
+    markGreen(slice, review.decisions, 'unresolved', unresolved);
     const sunk = ws.config.deferred === undefined ? 'no deferred sink configured' : isRecordSlice(slice) ? 'not deferred: a Record deferred items slice' : `sent to the ${ws.config.deferred.kind} sink`;
     addEvent(run, 'accepted-unresolved', `${review.id} after ${slice.fixRounds} fix rounds (${sunk}); open: ${unresolved.join('; ')}`, slice);
     return { kind: 'accepted-unresolved', unresolved };

@@ -602,7 +602,7 @@ export type FixItemInput = { id: string; summary: string } | { kind: 'bug' | 'ch
  */
 export type FixRecord = { group?: string; item: FixItemInput; section: string };
 
-/** True while the slice's last green review was targeted and no full review of that commit has gone green. */
+/** True while the slice's last green review was targeted and no full green stands (`slice.fullGreen`); a full green survives an observation-only fix round and is cleared by a red review or a counted fix round. */
 export function needsFullReview(slice: Slice) {
   return slice.green?.targeted === true && slice.fullGreen !== true;
 }
