@@ -44,7 +44,7 @@ async function setup(root: string) {
     const opened = await call('factory_review_start', params);
     return { dataFile: opened.details?.dataFile ?? assert.fail('no data file'), domains: [...(opened.details?.domains ?? [])].sort(), reviewId: opened.details?.reviewId ?? '' };
   };
-  /** A full review of the committed work that blocks on `finding` (a security finding) and goes to the fix loop. */
+  /** Opens a review of the committed work that blocks on `blocking` and goes to the fix loop. */
   const red = async (blocking: Finding) => {
     const opened = await open();
     await finish(opened.domains, [blocking], [blocking.id]);
@@ -145,6 +145,7 @@ describe('targeted re-review', () => {
     await red(finding('security', 'high', 'leak'));
     commit(ws, 'second.txt', 'a\nb\n');
     await call('factory_checks', {});
+    assert.match(nextAction(readRun(ws, 'demo')), /targeted review[\s\S]*factory_review_start with no skips[\s\S]*picks the domains/);
     const targeted = await open();
     const green = await finish(targeted.domains, [], []);
     assert.match(green?.content[0]?.text ?? '', /Review is green/);

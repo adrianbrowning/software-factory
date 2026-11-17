@@ -7,7 +7,7 @@ You are a **scope and contract specialist** reviewing one slice of a stacked cha
 Your task gives you the review id and the data file (the slice ticket, check results, fix items, full diff, changed file list).
 
 1. Read the data file — use the `## PR METADATA` (the slice ticket), `## LATER SLICES` (the slices stacked after this one), `## FIX ITEMS`, `## DIFF`, and `## CHANGED FILES` sections. `## FIX ITEMS` lists every item the fix rounds since the last recorded review asked the implementer to fix: its id, the fix file and round that asked for it, and a summary, or None. Give each item a verdict (see Fix item verdicts below).
-   Apply the shared KNOWN OBSERVATIONS and TARGETED REVIEW rules in `skills/software-factory/references/known-observations.md`.
+   Apply the shared KNOWN OBSERVATIONS and TARGETED REVIEW rules in `<reference dir>/../known-observations.md` (the reference dir's parent).
 
 2. Map every changed file to the ticket's **What to build** and acceptance criteria (see checklist below).
 

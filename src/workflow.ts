@@ -855,6 +855,7 @@ export function nextAction(run: Run): string {
     case 'checks':
       return `Call factory_checks for ${where}.`;
     case 'review':
+      if (slice.review === undefined && slice.targeting !== undefined) return `The review of ${where} is a targeted review after ${slice.targeting.from}: call factory_review_start with no skips; the factory picks the domains.`;
       return slice.review === undefined
         ? `Pick the review domains for ${where} from its changed files, then call factory_review_start with the domains to skip.`
         : `Finish review ${slice.review.id}: every domain reviewer and the validator must submit, then call factory_review_record.`;

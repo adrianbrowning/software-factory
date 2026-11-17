@@ -82,7 +82,7 @@ const leaveSchema = z.object({
 export function registerReviewTools(tool: RunTool) {
   tool({
     caller: 'main',
-    description: `Freeze the reviewed state and write the review data file. Then spawn one factory-reviewer per domain. The factory skips react-ts, test-validity, and devops by changed paths unless kept; skip any other domain the diff gives nothing to review, with a reason. ${REQUIRED_REVIEW_DOMAINS.join(' and ')} always review, and testing does too for a slice with test seams.`,
+    description: `Freeze the reviewed state and write the review data file. Then spawn one factory-reviewer per domain. The factory skips react-ts, test-validity, and devops by changed paths unless kept; skip any other domain the diff gives nothing to review, with a reason. ${REQUIRED_REVIEW_DOMAINS.join(' and ')} always review, and testing does too for a slice with test seams. After a red review the review is targeted: the factory picks the domains, call it with no skips; skip and keep apply to a full review only.`,
     label: 'Factory: start review',
     name: 'factory_review_start',
     schema: reviewStartSchema,
@@ -179,13 +179,14 @@ export function registerReviewTools(tool: RunTool) {
         return reply(`The user did not place the observations. Ask how to handle them.\nNext: ${nextAction(readRun(ws, feature))}`);
       }
       const { failure, fixed, lines, rest } = await withRun(ws, feature, async run => {
-        const chosen = planPlace(ws, run, params).items.filter(item => item.choice === 'fix').map(item => itemKey(item.entry.review, item.entry.finding.id));
+        const plan = planPlace(ws, run, params);
+        const chosen = plan.items.filter(item => item.choice === 'fix').map(item => itemKey(item.entry.review, item.entry.finding.id));
         // Validate the fix round before anything is filed: a refusal after a deferral would roll the state back and keep the issue.
         if (chosen.length > 0) planFix(ws, run, { observations: chosen });
-        const placed = await placeObservationBatch(ws, run, params);
+        const placed = await placeObservationBatch(ws, run, plan);
         const fixed = placed.fixes.length === 0 ? undefined : fixObservations(ws, run, { observations: placed.fixes }, 'Chosen in the batched placement after the slice\'s final review.');
         // Only what the ledger holds now was placed: a failed deferral and the fix round that waits on it are not.
-        const done = planned.items.filter(item => run.observations.some(entry => entry.key === itemKey(item.entry.review, item.entry.finding.id)));
+        const done = plan.items.filter(item => run.observations.some(entry => entry.key === itemKey(item.entry.review, item.entry.finding.id)));
         return { failure: placed.failure, fixed, lines: done.map(item => `${item.entry.finding.id}: ${describeChoice(item.choice, item.target?.id)}`), rest: placed.slice.unplaced.map(entry => entry.finding.id) };
       });
       if (failure !== undefined) {

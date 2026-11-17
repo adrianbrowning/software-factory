@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { type FactoryConfig, parseConfig, loadConfig } from '../src/config.ts';
 import { type Finding, type FixVerdict, readRun, REVIEW_DOMAINS, type SliceInput, type Workspace, withRun } from '../src/run.ts';
 import { recordReview, runChecks, startReview, submitDomain, submitValidation, completeSlice } from '../src/review.ts';
-import { placeObservationBatch } from '../src/place.ts';
+import { placeObservationBatch, planPlace } from '../src/place.ts';
 import { approvePlan, nextSlice, planSlices, startRun } from '../src/workflow.ts';
 import { type Command, ctx, load } from './extension.ts';
 import { parseRetro, recordRetro } from '../src/retro.ts';
@@ -162,7 +162,7 @@ export async function greenWithObservation(ws: Workspace) {
 
 /** Places the active slice's unplaced observations by their defaults, as factory_place with no exceptions does. */
 export async function settleObservations(ws: Workspace) {
-  await step(ws, run => placeObservationBatch(ws, run, { placements: [] }));
+  await step(ws, run => placeObservationBatch(ws, run, planPlace(ws, run, { placements: [] })));
 }
 
 /** Takes the active slice from committed work to green. */
@@ -335,7 +335,7 @@ export async function acceptUnresolved(ws: Workspace, call: (name: string, param
   await acceptFullUnresolved(ws, call);
 }
 
-/** The fourth review follows a red one, so it is targeted: a full review of the same commit, red again with the budget spent, is accepted unresolved and completes. */
+/** After a targeted review accepted unresolved, runs the full review the slice still needs, red again with the budget spent, so it is accepted unresolved and the slice can complete. */
 export async function acceptFullUnresolved(ws: Workspace, call: (name: string, params: unknown) => Promise<Reply>, findings = [finding('scope', 'high', 'a'), finding('bug', 'high', 'b')]) {
   const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
   await review(ws, reviewId, findings);

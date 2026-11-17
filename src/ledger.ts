@@ -9,6 +9,11 @@ import { carriesKey, isCarriedSectionOf, renderedObservation } from './legacy-ob
 import { PLACEMENTS } from './run.ts';
 import type { Finding, ObservationEntry, Run, Slice } from './run.ts';
 
+/** The entries of `slice.unplaced` that `id` names: an observation id, or `<review>:<id>` for one. More than one is ambiguous between reviews. */
+export function findUnplaced(slice: Slice, id: string) {
+  return slice.unplaced.filter(entry => entry.finding.id === id || itemKey(entry.review, entry.finding.id) === id);
+}
+
 /** Where a finding points: `path:line`, or `path` when it names no line. */
 export function findingLocation(finding: Finding) {
   return `${finding.path}${finding.line === undefined ? '' : `:${finding.line}`}`;

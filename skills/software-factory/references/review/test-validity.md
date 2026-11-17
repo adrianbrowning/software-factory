@@ -11,7 +11,7 @@ Your task gives you the review id and the data file (PR metadata, full diff, cha
 1. Load the `test-validity-review` skill (`skill://test-validity-review`), then read its `references/REVIEW_CHECKLIST.md`. Read `references/EXAMPLES.md` as well before reviewing UI, async, validator, or type-level tests. If the skill is not installed, submit an empty `findings` list and say so in your final line.
 
 2. Read the data file.
-   Apply the shared KNOWN OBSERVATIONS and TARGETED REVIEW rules in `skills/software-factory/references/known-observations.md`.
+   Apply the shared KNOWN OBSERVATIONS and TARGETED REVIEW rules in `<reference dir>/../known-observations.md` (the reference dir's parent).
 
 3. From `## CHANGED FILES`, list the test surface: `*.test.*`, `*.spec.*`, `*.test-d.ts`, files under `__tests__/`, `test/`, `tests/`, `e2e/`, `cypress/`, `playwright/`, plus mocks, fixtures, test setup (`__mocks__/`, `fixtures/`, `setupTests.*`, `*.setup.*`) and test config (`vitest.config.*`, `jest.config.*`, `playwright.config.*`, `cypress.config.*`). If none changed, submit an empty `findings` list.
 

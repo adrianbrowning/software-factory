@@ -9,7 +9,7 @@ You are a **comment specialist** reviewing a PR. Every comment the PR adds or ch
 Your task gives you the review id and the data file (PR metadata, full diff, changed file list).
 
 1. Read the data file.
-   Apply the shared KNOWN OBSERVATIONS and TARGETED REVIEW rules in `skills/software-factory/references/known-observations.md`.
+   Apply the shared KNOWN OBSERVATIONS and TARGETED REVIEW rules in `<reference dir>/../known-observations.md` (the reference dir's parent).
 
 2. List every comment on a `+` line: `//`, `/* */`, `#`, `<!-- -->`, JSDoc/TSDoc, docstrings, and commented-out code. Also list existing comments next to changed code, in case the change made them false.
 
