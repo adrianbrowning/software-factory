@@ -1,11 +1,13 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, realpathSync } from 'node:fs';
+import { accessSync, constants, existsSync, realpathSync, statSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 
 export type GitArchHost = {
   /** Describes a binary, as `file -b` does. */
   describe: (path: string) => string;
   exists: (path: string) => boolean;
+  /** True for a regular file the process may execute, as execFile's lookup requires. */
+  isExecutable: (path: string) => boolean;
   /** Resolves symlinks so the binary that actually runs is described. */
   realpath: (path: string) => string;
   arch: string;
@@ -20,6 +22,14 @@ export function defaultGitArchHost(): GitArchHost {
     arch: process.arch,
     describe: path => execFileSync('file', ['-b', path], { encoding: 'utf8', timeout: 5000 }),
     exists: existsSync,
+    isExecutable: path => {
+      try {
+        accessSync(path, constants.X_OK);
+        return statSync(path).isFile();
+      } catch {
+        return false;
+      }
+    },
     realpath: realpathSync,
     path: process.env.PATH,
     platform: process.platform,
@@ -30,7 +40,7 @@ function firstExecutable(name: string, host: GitArchHost): string | undefined {
   for (const dir of (host.path ?? '').split(delimiter)) {
     if (dir === '') continue;
     const candidate = join(dir, name);
-    if (host.exists(candidate)) return candidate;
+    if (host.isExecutable(candidate)) return candidate;
   }
   return undefined;
 }

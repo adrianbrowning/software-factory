@@ -8,6 +8,7 @@ const host = (over: Partial<GitArchHost> = {}): GitArchHost => ({
   exists: p => p === '/opt/x/git' || p === '/usr/bin/git',
   path: '/nope:/opt/x:/usr/bin',
   realpath: p => p,
+  isExecutable: p => p === '/opt/x/git',
   platform: 'darwin',
   ...over,
 });
@@ -31,7 +32,7 @@ test('other hosts never call describe', () => {
 });
 
 test('no git or throwing describe gives no warning', () => {
-  assert.equal(gitArchWarning(host({ exists: () => false })), undefined);
+  assert.equal(gitArchWarning(host({ isExecutable: () => false })), undefined);
   assert.equal(gitArchWarning(host({ describe: () => { throw new Error('x'); } })), undefined);
 });
 
@@ -40,5 +41,15 @@ test('a symlinked git is described by its target', () => {
     describe: p => (p === '/cellar/git' ? 'Mach-O 64-bit executable x86_64' : `symbolic link to ${p}`),
     realpath: p => (p === '/opt/x/git' ? '/cellar/git' : p),
   }));
+  assert.match(w ?? '', /\/opt\/x\/git/);
+});
+
+test('a non-executable git earlier on PATH is skipped', () => {
+  const seen: string[] = [];
+  const w = gitArchWarning(host({
+    describe: p => { seen.push(p); return 'Mach-O 64-bit executable x86_64'; },
+    path: '/early:/opt/x',
+  }));
+  assert.deepEqual(seen, ['/opt/x/git']);
   assert.match(w ?? '', /\/opt\/x\/git/);
 });
