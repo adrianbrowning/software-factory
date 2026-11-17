@@ -246,6 +246,7 @@ function makeSlice(ws: Workspace, run: Run, input: SliceInput, index: number, pa
     roundLimit: run.mode === 'headless' ? HEADLESS_FIX_ROUNDS : ws.config.maxRounds,
     stalled: false,
     status: 'pending',
+    unplaced: [],
   };
 }
 
@@ -417,6 +418,8 @@ export function planReslice(ws: Workspace, run: Run, proposed: unknown): Reslice
   first.status = 'active';
   // Carried-in work goes with the split slice to its first child, and stays on each later slice.
   first.carried = active.carried;
+  // Unplaced observations of the split slice (red reviews' too) go with its work to the first child.
+  first.unplaced = active.unplaced;
   const remap = renumbering(run, active, slices);
   pending.forEach(slice => {
     const remade = remap.get(slice);
@@ -425,24 +428,25 @@ export function planReslice(ws: Workspace, run: Run, proposed: unknown): Reslice
   // Review ids are `<slice id>-r<n>` and the first child keeps the slice id: continue the count so a new review
   // never reuses an old review directory.
   first.reviews = active.reviews;
-  // A Record deferred items slice stays one through a split, and its children share one batch (an older state file's slice has none yet).
-  if (active.record === true) {
-    const batch = active.recordBatch ?? newRecordBatch(run);
-    for (const child of slices.slice(index, index + children.length)) {
-      child.record = true;
-      child.recordBatch = batch;
-    }
-  }
+  // A slice's kind (Record deferred items with its batch, follow-up) stays through a split and a renumbering; an older state file's Record slice has no batch yet.
+  const batch = active.record === true ? (active.recordBatch ?? newRecordBatch(run)) : undefined;
+  for (const child of slices.slice(index, index + children.length)) copySliceKind(active, child, batch);
   pending.forEach(slice => {
     const remade = remap.get(slice);
-    if (remade !== undefined && slice.record === true) {
-      remade.record = true;
-      remade.recordBatch = slice.recordBatch;
-    }
+    if (remade !== undefined) copySliceKind(slice, remade);
   });
   // The decisions the split slice builds go to its last child, which finishes its work; later slices keep theirs.
   slices[index + children.length - 1]?.ownsDecisions.push(...active.ownsDecisions);
   return { children: slices.slice(index, index + children.length), renamed: new Map([...remap].map(([old, remade]) => [old.id, remade.id])), slices };
+}
+
+/** Copies the fields that make a slice a Record slice or a follow-up slice from `from` to `to`: the one place a rebuilt slice takes its kind. */
+function copySliceKind(from: Slice, to: Slice, batch = from.recordBatch) {
+  if (from.record === true) {
+    to.record = true;
+    to.recordBatch = batch;
+  }
+  if (from.fromEndQueue === true) to.fromEndQueue = true;
 }
 
 /**
@@ -562,6 +566,7 @@ export function planFollowUp(ws: Workspace, run: Run, proposed: AppendInput) {
 export function addFollowUp(ws: Workspace, run: Run, proposed: AppendInput) {
   const planned = planFollowUp(ws, run, proposed);
   planned.carried = run.waiting;
+  if (planned.carried.length > 0) planned.fromEndQueue = true;
   run.waiting = [];
   const slice = pushSlice(ws, run, planned);
   if (run.status === 'done') run.status = 'running';
@@ -855,6 +860,9 @@ export function nextAction(run: Run): string {
         : `Finish review ${slice.review.id}: every domain reviewer and the validator must submit, then call factory_review_record.`;
     case 'ready':
       if (needsFullReview(slice)) return `The last green review of ${where} was targeted: call factory_review_start for a full review of the same commit (no new checks), then factory_complete_slice.`;
+      if (run.mode !== 'headless' && slice.unplaced.length > 0) {
+        return `Place the ${slice.unplaced.length} unplaced observations of ${where}: show the user their defaults, then call factory_place (placements [] takes every default), then factory_complete_slice.`;
+      }
       // LEGACY-STATE(decision-before-reset): only a state file written before factory_decide reset reviews keeps
       // decisions newer than a green review; remove with the matching branches in review.ts.
       return outdatedGreenCount(run, slice) === undefined

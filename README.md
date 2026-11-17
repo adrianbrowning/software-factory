@@ -201,16 +201,14 @@ shows them. After you confirm:
 - A round with a bug counts in the slice's fix rounds (`factory_status`) and against its round limit; a used-up
   budget stalls like any other fix round. A round for observations only does not count and never stalls the slice.
 - It refuses a call with neither a bug nor observation ids, an id that is not an observation of that green review,
-  and a slice without a green review. Observation ids that only a done slice's green review lists are refused too:
-  the message names the slice and its review, and says to use `factory_reopen` for that slice or `factory_follow_up`.
-  When the active slice's green review lists the ids, they are fixed there. A bug in a slice that is already done
-  goes through `factory_reopen` instead.
+  and a slice without a green review. The ids may be observations of any review of the active slice, red ones
+  too (the slice's unplaced list). A slice cannot complete with an unplaced observation, so a done slice has none to
+  fix; a bug in a slice that is already done goes through `factory_reopen`.
 
 ### Carry observations into a later slice
 
 When a green review lists observations that belong in a later slice, or you want extra work built there, the
-orchestrator asks you where they go. `factory_carry` (observation ids from the active slice's green review or, when
-it does not list them, from a done slice's, a
+orchestrator asks you where they go. `factory_carry` (observation ids from the active slice's green review, a
 free-text `note`, or both, and `to`: the id of a pending slice, or `"end"`) opens a dialog that shows them. After you
 confirm:
 
@@ -220,17 +218,25 @@ confirm:
   every existing slice is done, the next action is `factory_follow_up`: the slice it adds takes every waiting item into its
   ticket under "Carried-in work", and the queue empties. `factory_retro` refuses while items wait, and a run with
   waiting items is not ready to submit.
-- The active slice keeps its green review, and `factory_complete_slice` completes it without new checks or review.
-  When the ids are in a done slice's green review instead, the carry is recorded on that slice as if it had been sent
-  before `factory_complete_slice`.
+- The active slice keeps its green review, and `factory_complete_slice` completes it without new checks or review
+  once none of its observations is unplaced.
 - A re-slice keeps the items: the first child takes those of the split slice.
-- Precedence for observation ids: the active slice's green review wins when it lists them. Only when it does not,
-  the one done slice whose last green review lists them is used, found by the review, never by recency.
 - It refuses a call with neither observation ids nor a note, an id that is not an observation of that green review,
-  an id that no green review lists, an id that several done slices list (the message names the slices; build the
-  items in a `factory_follow_up` slice, which always works; a free-text `note` works only while the active slice has a
-  green review), a slice without a green review, and a
+  an id its green review does not list, a slice without a green review, and a
   target that is neither `"end"` nor a pending slice.
+
+### Place observations in one batch (`factory_place`)
+
+Every observation a reviewer reports has a category: correctness, missing-test, misleading-doc, naming, structure or
+style; `factory_review_submit` refuses an observation without one. The slice collects the kept observations of all its
+reviews, red ones too. The reply of the slice's final full green review lists them with their default placement:
+correctness, missing-test and misleading-doc to the end queue, naming, structure and style to leave. `factory_place`
+takes the exceptions (fix, carry to a pending slice, end, defer, leave; `placements: []` takes every default), asks one
+confirm in an interactive run, applies them all and records each in the ledger. `factory_complete_slice` refuses while
+the slice has an unplaced observation. A headless run places the defaults with no dialog when it completes the slice,
+and sends the leave items to the deferred sink when one is set. The observations of a headless follow-up slice or Record
+deferred items slice never go back to the end queue: they go to the sink when the slice may defer to it (a Record slice
+may not), else they are left.
 
 ### Leave observations, and the observation ledger
 
@@ -239,9 +245,11 @@ fixed (`factory_fix`) or left (`factory_leave`). Each entry holds the review id 
 example `01-r1:thermo-naming`), the finding's location, title and problem, and the placement. `factory_status` lists
 it under `observations`.
 
-`factory_leave` (observation ids from the active slice's green review or, when it does not list them, from the one done
-slice whose last green review does) records them as left: no slice builds them and no sink gets them. An interactive
-run asks once; a declined dialog records nothing, and a headless run records with no dialog.
+`factory_leave` (observation ids from the active slice's green review, after its full review) records them as left:
+no slice builds them and no sink gets them. An interactive
+run asks once; a declined dialog records nothing, and a headless run records with no dialog. `factory_carry`,
+`factory_defer` and `factory_leave` refuse observation ids until the slice's last green review is a full one; a
+note-only carry or defer works at any green review.
 
 - All four tools refuse an observation the ledger already holds and name its placement (`Observations already
   carried: ...`), before any dialog.

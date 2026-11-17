@@ -6,6 +6,29 @@ import type { ObservationEntry } from './run.ts';
 
 type LegacyDeferred = { body: string; id?: string | undefined; key: string; kind: string; review: string; slice: string };
 
+/** The header of a carried-in section made from the observations of review `reviewId` of `slice`; a green review's carries say so. The only place the header is written. */
+export function carriedHeader(reviewId: string, slice: { id: string; title: string }, green = true) {
+  return `### From ${green ? 'green ' : ''}review ${reviewId} of slice ${slice.id} "${slice.title}"`;
+}
+
+/** Whether `section` is a carried-in section made from review `reviewId`, read from its header. Only for sections from before they listed their keys (see `carriedKeysLine`). */
+export function isCarriedSectionOf(section: string, reviewId: string) {
+  return section.startsWith(`### From green review ${reviewId} of slice `) || section.startsWith(`### From review ${reviewId} of slice `);
+}
+
+const KEYS_PREFIX = 'Carried keys: ';
+
+/** The last line of a carried-in section: the ledger keys it carries, which `carriesKey` reads whatever the header says. */
+export function carriedKeysLine(keys: string[]) {
+  return `${KEYS_PREFIX}${keys.map(key => `\`${key}\``).join(', ')}`;
+}
+
+/** Whether `section` lists `key` in its carried keys line. `undefined` for a section without one (from before they were written). */
+export function carriesKey(section: string, key: string) {
+  const line = section.split('\n').findLast(candidate => candidate.startsWith(KEYS_PREFIX));
+  return line === undefined ? undefined : line.slice(KEYS_PREFIX.length).split(', ').includes(`\`${key}\``);
+}
+
 /** What a rendered finding (`renderFinding`) says of itself: its location, title and problem. Undefined when `section` holds no such observation. */
 export function renderedObservation(section: string, id: string) {
   const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
@@ -28,7 +51,7 @@ export function legacyObservations(carried: string[], deferred: LegacyDeferred[]
     const at = key.indexOf(':');
     const review = at < 1 ? key : key.slice(0, at);
     const id = at < 1 || at === key.length - 1 ? key : key.slice(at + 1);
-    const matching = sections.filter(candidate => candidate.text.startsWith(`### From green review ${review} of slice `) && renderedObservation(candidate.text, id) !== undefined);
+    const matching = sections.filter(candidate => isCarriedSectionOf(candidate.text, review) && renderedObservation(candidate.text, id) !== undefined);
     const [section, ...others] = matching;
     const rendered = section === undefined || others.length > 0 ? undefined : renderedObservation(section.text, id);
     const base = { id, key, placement: 'carried' as const, review, slice: review.split('-')[0] ?? review };

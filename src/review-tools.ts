@@ -1,9 +1,11 @@
 import { REVIEWER, VALIDATOR } from './agents.ts';
 import { deferItems, describeSink, itemKey, requireSink } from './deferred.ts';
-import { evidenceHead } from './evidence.ts';
+import { evidenceHead, evidenceLine } from './evidence.ts';
 import { confirmInteractive, gate } from './gates.ts';
 import { placeObservations } from './ledger.ts';
+import { defaultChoice, describeChoice, describePlan, placeObservationBatch, placementSchema, planPlace } from './place.ts';
 import { carryObservations, fixObservations, leaveObservations, planCarry, planDefer, planFix, planLeave } from './observations.ts';
+import { renderFinding } from './finding-text.ts';
 import { completeSlice, recordReview, startReview, submitDomain, submitValidation, validationSchema } from './review.ts';
 import { activeSlice, addEvent, findingSchema, fixVerdictSchema, readRun, REQUIRED_REVIEW_DOMAINS, REVIEW_DOMAINS, skippedDomainsSchema, ticketPath, withRun } from './run.ts';
 import { submitHeadless } from './headless-submit.ts';
@@ -41,7 +43,7 @@ const fixSchema = z.object({
   observations: z
     .array(z.string().min(1))
     .optional()
-    .describe('Ids of observations from the green review of the active slice that the user chose to fix in this slice, for example "thermo-naming". Ids only a done slice\'s green review lists are refused: use factory_reopen for that slice, or factory_follow_up'),
+    .describe('Ids of unplaced observations of any review of the active slice, red ones too, that the user chose to fix in this slice, for example "thermo-naming" (or "<review>:<id>" when two reviews kept the same id)'),
   reason: z.string().min(1).describe('Why the user wants them fixed before the slice is done, for the fix file'),
 });
 const carrySchema = z.object({
@@ -52,23 +54,28 @@ const carrySchema = z.object({
   observations: z
     .array(z.string().min(1))
     .optional()
-    .describe('Ids of observations from the active slice\'s green review, else from the one done slice whose last green review lists them, that the user chose to carry, for example "thermo-naming". Refused when several done slices list them: build them in a factory_follow_up slice'),
+    .describe('Ids of observations from the active slice\'s green review, that the user chose to carry, for example "thermo-naming". Refused until the slice\'s last green review is a full one; a note alone is not'),
   to: z
     .union([z.string().regex(/^\d{2}$/), z.literal('end')])
     .describe('Id of the pending slice whose ticket takes the work, for example "03"; or "end": the work waits on the run for the next factory_follow_up slice'),
+});
+const placeSchema = z.object({
+  placements: z
+    .array(placementSchema)
+    .describe('The exceptions: a placement for each observation the user wants placed other than by default. Every unplaced observation not listed gets its default; [] accepts all defaults'),
 });
 const deferSchema = z.object({
   note: z.string().optional().describe('Work to send to the deferred sink in full. Give it, observations, or both'),
   observations: z
     .array(z.string().min(1))
     .optional()
-    .describe('Ids of observations from the active slice\'s green review, else from the one done slice whose last green review lists them, to send to the deferred sink, for example "thermo-naming". Ids the run already placed (carried, deferred, fixed or left) are refused'),
+    .describe('Ids of observations from the active slice\'s green review, to send to the deferred sink, for example "thermo-naming". Ids the run already placed (carried, deferred, fixed or left) are refused, and so are all ids until the slice\'s last green review is a full one'),
 });
 const leaveSchema = z.object({
   observations: z
     .array(z.string().min(1))
     .min(1)
-    .describe('Ids of observations from the active slice\'s green review, else from the one done slice whose last green review lists them, that the user chose to leave as they are, for example "thermo-naming". Ids the run already placed (carried, deferred, fixed or left) are refused'),
+    .describe('Ids of observations from the active slice\'s green review, that the user chose to leave as they are, for example "thermo-naming". Ids the run already placed (carried, deferred, fixed or left) are refused, and so are all ids until the slice\'s last green review is a full one'),
 });
 
 /** Registers the review, completion and observation-placement tools. */
@@ -130,13 +137,22 @@ export function registerReviewTools(tool: RunTool) {
     async run(_params, { feature, ws }, ctx) {
       const result = await withRun(ws, feature, run => recordReview(ws, run));
       if (result.kind === 'green') {
-        const [orLead, sinkTail] = ws.config.deferred === undefined ? ['or ', ''] : ['', ', or sent to the deferred sink (factory_defer with their ids)'];
-        const notes =
-          result.observations.length > 0
-            ? `\nObservations (non-blocking):\n${result.observations.join('\n\n')}\nAsk the user where each goes: fixed in this slice (factory_fix with their ids), carried into the ticket of a pending slice (factory_carry with their ids and that slice id), ${orLead}queued for one follow-up slice at the end of the run (factory_carry with their ids and to "end")${sinkTail}; or left as they are (factory_leave with their ids). Each id can be placed once. This slice stays green when they are carried, deferred or left.`
-            : '';
         const bug = '\nWhen the user finds a bug in this slice before it is done, call factory_fix with the bug (and any observation ids).';
-        return reply(`Review is green.${notes}${bug}\nNext: ${nextAction(readRun(ws, feature))}`);
+        const run = readRun(ws, feature);
+        const slice = activeSlice(run);
+        if (result.final && slice !== undefined && slice.unplaced.length > 0) {
+          const listed = slice.unplaced.map(entry => `${renderFinding(entry.finding, run.decisions)}\n- Category: ${entry.category}\n- Review: ${entry.review}\n- Default placement: ${describeChoice(defaultChoice(ws, run, slice, entry))}`).join('\n\n');
+          if (run.mode === 'headless') {
+            return reply(
+              `Review is green, and it is the slice's final review.\nUnplaced observations of slice ${slice.id} (every review's, with the default placement of each); factory_complete_slice places them by default, so there is nothing to ask the user:\n${listed}${bug}\nNext: ${nextAction(run)}`,
+            );
+          }
+          return reply(
+            `Review is green, and it is the slice's final review.\nUnplaced observations of slice ${slice.id} (every review's, with the default placement of each):\n${listed}\nShow the user one ask with these defaults preselected, then call factory_place once with only the exceptions (placements [] takes every default): fix in this slice, carry to a pending slice (to), end (the queue for one follow-up slice), defer to the sink, or leave. factory_complete_slice refuses while any is unplaced.${bug}\nNext: ${nextAction(run)}`,
+          );
+        }
+        const notes = result.observations.length > 0 ? `\nObservations (non-blocking), placed after the slice's final full review:\n${result.observations.join('\n\n')}` : '';
+        return reply(`Review is green.${notes}${bug}\nNext: ${nextAction(run)}`);
       }
       if (result.kind === 'accepted-unresolved') {
         return reply(
@@ -150,7 +166,39 @@ export function registerReviewTools(tool: RunTool) {
 
   tool({
     caller: 'main',
-    description: 'Mark the green slice done. HEAD must be the reviewed commit. A reopened slice rebases every later slice branch onto its fix.',
+    description:
+      'After the slice\'s final full green review, place every unplaced observation of the slice in one batch, after the user agreed to the defaults and exceptions: fix (back to the fix loop, no fix budget used), carry to a pending slice (to), end (the queue for the next factory_follow_up slice), defer (the deferred sink) or leave. List only the exceptions; each other unplaced observation gets its default by category (correctness, missing-test, misleading-doc to end; naming, structure, style to leave). One confirm asks in an interactive run. Refuses an id already placed or not unplaced on the slice.',
+    label: 'Factory: place observations',
+    name: 'factory_place',
+    schema: placeSchema,
+    async run(params, { feature, ws }, ctx) {
+      // Refuses a slice without a final green review, unknown or already placed ids, without a dialog.
+      const planned = planPlace(ws, readRun(ws, feature), params);
+      if (planned.items.length === 0) return reply(`Slice ${planned.slice.id} has no unplaced observations.\nNext: ${nextAction(readRun(ws, feature))}`);
+      if (!(await confirmInteractive(ctx, ws, feature, `Place ${planned.items.length} observations of slice ${planned.slice.id}?`, `${describePlan(planned.items)}\n\nSlice ${planned.slice.id} keeps its green review unless a fix is chosen, which sends it back to the fix loop.`))) {
+        return reply(`The user did not place the observations. Ask how to handle them.\nNext: ${nextAction(readRun(ws, feature))}`);
+      }
+      const { failure, fixed, lines, rest } = await withRun(ws, feature, async run => {
+        const chosen = planPlace(ws, run, params).items.filter(item => item.choice === 'fix').map(item => itemKey(item.entry.review, item.entry.finding.id));
+        // Validate the fix round before anything is filed: a refusal after a deferral would roll the state back and keep the issue.
+        if (chosen.length > 0) planFix(ws, run, { observations: chosen });
+        const placed = await placeObservationBatch(ws, run, params);
+        const fixed = placed.fixes.length === 0 ? undefined : fixObservations(ws, run, { observations: placed.fixes }, 'Chosen in the batched placement after the slice\'s final review.');
+        // Only what the ledger holds now was placed: a failed deferral and the fix round that waits on it are not.
+        const done = planned.items.filter(item => run.observations.some(entry => entry.key === itemKey(item.entry.review, item.entry.finding.id)));
+        return { failure: placed.failure, fixed, lines: done.map(item => `${item.entry.finding.id}: ${describeChoice(item.choice, item.target?.id)}`), rest: placed.slice.unplaced.map(entry => entry.finding.id) };
+      });
+      if (failure !== undefined) {
+        throw new Error(`The deferred sink failed: ${evidenceLine(failure.message, 500)}. Placed so far:\n${lines.join('\n')}\nStill unplaced: ${rest.join(', ')}. No fix round started; call factory_place again for them.`);
+      }
+      const back = fixed === undefined ? '' : `\nSlice ${planned.slice.id} is back in fix. Fix file: ${fixed.fixPath}`;
+      return reply(`Placed:\n${lines.join('\n')}${back}\nNext: ${nextAction(readRun(ws, feature))}`);
+    },
+  });
+
+  tool({
+    caller: 'main',
+    description: 'Mark the green slice done. Refuses while the slice has unplaced observations (factory_place); a headless run places them by default first. HEAD must be the reviewed commit. A reopened slice rebases every later slice branch onto its fix.',
     label: 'Factory: complete slice',
     name: 'factory_complete_slice',
     schema: emptySchema,
@@ -169,13 +217,13 @@ export function registerReviewTools(tool: RunTool) {
   tool({
     caller: 'main',
     description:
-      `After a green review, send the active slice back to the fix loop for a bug the user found in it (bug), review observations the user chose to fix in this slice (observations), or both, after the user agreed. Observation ids must be in the active slice's green review; ids only a done slice's review lists are refused (use factory_reopen or factory_follow_up). Writes a tracked fix file; a round with a bug counts toward the fix budget, an observation-only round does not and never stalls the slice. The slice earns checks and a new review before factory_complete_slice. ${STALL_DESCRIPTION}`,
+      `After a green review, send the active slice back to the fix loop for a bug the user found in it (bug), review observations the user chose to fix in this slice (observations), or both, after the user agreed. Observation ids are unplaced observations of any review of the active slice, red ones too (\`<review>:<id>\` when two reviews kept the same id). Writes a tracked fix file; a round with a bug counts toward the fix budget, an observation-only round does not and never stalls the slice. The slice earns checks and a new review before factory_complete_slice. ${STALL_DESCRIPTION}`,
     label: 'Factory: fix observations or a bug',
     name: 'factory_fix',
     schema: fixSchema,
     async run(params, { feature, ws }, ctx) {
       // Refuses a call with neither a bug nor observations, a slice without a green review, an id that is not one of
-      // its observations, or ids only a done slice's review lists (use factory_reopen or factory_follow_up), without a dialog.
+      // its observations, without a dialog.
       const planned = planFix(ws, readRun(ws, feature), params);
       const items = [
         ...(planned.bug === undefined ? [] : [`- Bug: ${evidenceHead(planned.bug, 1_000)}`]),
@@ -196,12 +244,12 @@ export function registerReviewTools(tool: RunTool) {
   tool({
     caller: 'main',
     description:
-      'After a green review, carry review observations the user chose (observations), a free-text note (note), or both into the ticket of a pending slice (to), or with to "end" onto the run\'s queue for the next factory_follow_up slice, after the user agreed. Observation ids come from the active slice\'s green review; when it does not list them, from the one done slice whose last green review does. That slice builds them and its reviewers check them; the slice they come from keeps its green review. The retro waits until the queue is empty.',
+      'After a green review, carry review observations the user chose (observations), a free-text note (note), or both into the ticket of a pending slice (to), or with to "end" onto the run\'s queue for the next factory_follow_up slice, after the user agreed. Observation ids come from the active slice\'s green review and are refused until its last green review is a full one (a note alone is not). The target slice builds them and its reviewers check them; the slice they come from keeps its green review. The retro waits until the queue is empty.',
     label: 'Factory: carry work into a pending slice',
     name: 'factory_carry',
     schema: carrySchema,
     async run(params, { feature, ws }, ctx) {
-      // Refuses empty input, a slice without a green review, an id no green review lists or several done slices list,
+      // Refuses empty input, a slice without a green review, an id its green review does not list,
       // or a target that is neither "end" nor a pending slice, without a dialog.
       const planned = planCarry(ws, readRun(ws, feature), params);
       const items = [
@@ -233,7 +281,7 @@ export function registerReviewTools(tool: RunTool) {
   tool({
     caller: 'main',
     description:
-      'Send green-review observations (observations), a free-text note (note), or both to the deferred sink set in .omp/factory.json: one GitHub issue per item (filed at once, URL stored), or the sink file, written later from the items queued on the run. Each item names the run, slice and review. Ids the run already placed (carried, deferred, fixed or left) are refused. The slice keeps its green review. Accepted-unresolved findings go to the sink by themselves.',
+      'Send green-review observations (observations), a free-text note (note), or both to the deferred sink set in .omp/factory.json: one GitHub issue per item (filed at once, URL stored), or the sink file, written later from the items queued on the run. Each item names the run, slice and review. Ids the run already placed (carried, deferred, fixed or left) are refused, and so are all ids until the slice\'s last green review is a full one (a note alone is not). The slice keeps its green review. Accepted-unresolved findings go to the sink by themselves.',
     label: 'Factory: defer to the sink',
     name: 'factory_defer',
     schema: deferSchema,
@@ -256,7 +304,7 @@ export function registerReviewTools(tool: RunTool) {
         return { failure: failed, lines: [...filed.map(item => `${item.id ?? 'note'}: ${item.location}`), `Next: ${nextAction(run)}`], rest };
       });
       if (failure !== undefined) {
-        throw new Error(`The deferred sink failed: ${failure.message}. Filed items stay recorded and are refused if sent again; call factory_defer again with only the rest: ${rest.join(', ')}.\n${lines.join('\n')}`);
+        throw new Error(`The deferred sink failed: ${evidenceLine(failure.message, 500)}. Filed items stay recorded and are refused if sent again; call factory_defer again with only the rest: ${rest.join(', ')}.\n${lines.join('\n')}`);
       }
       return reply(`Deferred:\n${lines.join('\n')}`);
     },
@@ -265,7 +313,7 @@ export function registerReviewTools(tool: RunTool) {
   tool({
     caller: 'main',
     description:
-      'Record green-review observations the user chose to leave as they are (observations), after the user agreed. Nothing builds them and no sink gets them, and no later review of the run raises them again: the validator drops a finding that repeats one. Observation ids come from the active slice\'s green review; when it does not list them, from the one done slice whose last green review does. Ids the run already placed (carried, deferred, fixed or left) are refused. The slice keeps its green review.',
+      'Record green-review observations the user chose to leave as they are (observations), after the user agreed. Nothing builds them and no sink gets them, and no later review of the run raises them again: the validator drops a finding that repeats one. Observation ids come from the active slice\'s green review and are refused until its last green review is a full one. Ids the run already placed (carried, deferred, fixed or left) are refused. The slice keeps its green review.',
     label: 'Factory: leave observations',
     name: 'factory_leave',
     schema: leaveSchema,

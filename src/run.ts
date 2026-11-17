@@ -31,10 +31,29 @@ export const REQUIRED_REVIEW_DOMAINS = ['bug', 'scope'] as const satisfies reado
 const text = z.string().min(1);
 
 export const SEVERITIES = ['critical', 'high', 'observation'] as const;
+
+/** What an observation is about, which decides its default placement (see `DEFAULT_PLACEMENT`). */
+export const OBSERVATION_CATEGORIES = ['correctness', 'missing-test', 'misleading-doc', 'naming', 'structure', 'style'] as const;
+export type ObservationCategory = (typeof OBSERVATION_CATEGORIES)[number];
+
+/** Where a slice's batch of observations puts one by default: work that is wrong or unproven waits in the end queue, taste is left. */
+export const DEFAULT_PLACEMENT = {
+  correctness: 'end',
+  'misleading-doc': 'end',
+  'missing-test': 'end',
+  naming: 'leave',
+  structure: 'leave',
+  style: 'leave',
+} as const satisfies Record<ObservationCategory, 'end' | 'leave'>;
 export const SOURCE_KINDS = ['github', 'jira', 'file', 'text'] as const;
 
 /** One finding in the cc-pr-review-ci review.json shape. */
 export const findingSchema = z.object({
+  /** Required on an observation (submitDomain refuses one without it). A critical or high finding needs none; the validator gives it on a downgrade. */
+  category: z
+    .enum(OBSERVATION_CATEGORIES)
+    .optional()
+    .describe('Required for an observation: correctness, missing-test, misleading-doc, naming, structure or style. It sets where the observation goes by default'),
   decision: z
     .number()
     .int()
@@ -113,6 +132,10 @@ const phaseSchema = z.enum(['checks', 'fix', 'implement', 'ready', 'review']);
 /** SHA-1 or SHA-256 object name. */
 const sha = z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/);
 
+/** An observation waiting for placement: the finding, the category that sets its default, and the review it came from. */
+const unplacedSchema = z.object({ category: z.enum(OBSERVATION_CATEGORIES), finding: findingSchema, review: text });
+export type Unplaced = z.infer<typeof unplacedSchema>;
+
 /**
  * Who wrote a review artifact and the sha256 of what the tool wrote, so a later edit is detected. `amended` marks a
  * validator that has used its one correction.
@@ -185,12 +208,16 @@ const sliceSchema = sliceInputSchema.extend({
   review: reviewSchema.optional(),
   reviews: z.number().int().nonnegative(),
   roundLimit: z.number().int().positive(),
+  /** Set by addFollowUp on the slice that builds the end queue: a headless run never puts its own observations back into the end queue (defaultChoice), or the run would never reach its retro. */
+  fromEndQueue: z.literal(true).optional(),
   /** Set on the Record deferred items slice the factory adds to write file-sink items. Its own reviews defer nothing to the sink. */
   record: z.literal(true).optional(),
   /** Shared by every Record slice of one batch, so a split Record slice's children fail or succeed together (recordFailed). Absent on a Record slice from an older state file. */
   recordBatch: text.optional(),
   /** Set while the slice waits for the user to decide on an exhausted fix budget. */
   stalled: z.boolean(),
+  /** Kept observations of the slice's reviews, red ones too, that no placement has handled yet; factory_place and factory_complete_slice drain it. Each placement removes its observation (placeObservations). restartSlice keeps them: the slice's commits stay and the ledger keeps its entries too, so they still wait for the slice's batch placement. */
+  unplaced: z.array(unplacedSchema).default([]),
   /** Set by a red review, and by an observation-only fix round: the next review is targeted, over `domains` (plus the required ones), on the changes since `base`, the commit of the review `from`. Cleared when a review is recorded. */
   targeting: z.object({ base: sha, domains: z.array(z.enum(REVIEW_DOMAINS)), from: text }).optional(),
   status: z.enum(['active', 'done', 'pending']),

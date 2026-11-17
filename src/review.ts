@@ -22,6 +22,7 @@ import {
   greenCommit,
   outdatedGreenCount,
   isAutonomous,
+  OBSERVATION_CATEGORIES,
   type Decision,
   type Domain,
   type Finding,
@@ -42,6 +43,8 @@ import {
   type Workspace,
   writeAtomic,
 } from './run.ts';
+import { renderFinding } from './finding-text.ts';
+import { placeDefaults } from './place.ts';
 import { storedReport } from './report.ts';
 import { head, porcelain, requireOnBranchClean, snapshot } from './repo.ts';
 import {
@@ -363,7 +366,7 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   const dataFile = join(reviewDir(ws, run.feature, id), 'data.md');
   writeAtomic(
     dataFile,
-    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n${renderLaterSlices(run, slice)}\n\n## CHECKS\n\nThe factory ran every configured check on \`${checked.sha}\` and all passed. Do not run them again.\n\n${checked.results.map(result => `- ${result}`).join('\n')}\n\n## KNOWN OBSERVATIONS\n\nObservations this run has already placed (carried, deferred, fixed or left). A finding that matches an entry by location and problem, under any id, is not new: the validator drops it with the reason \`same as <key>\`. An entry marked \`${CARRIED_HERE}\` is work this slice builds: a finding that it is unbuilt or wrong in this slice is not a repeat. ${UNTRUSTED_NOTE}\n\n${renderKnownObservations(run, slice)}\n\n${targetedSection}## FIX ITEMS\n\n${listed}\n\n## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files.join('\n')}\n`,
+    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n${renderLaterSlices(run, slice)}\n\n## CHECKS\n\nThe factory ran every configured check on \`${checked.sha}\` and all passed. Do not run them again.\n\n${checked.results.map(result => `- ${result}`).join('\n')}\n\n## KNOWN OBSERVATIONS\n\nObservations this run has already placed (carried, deferred, fixed or left), and observations of this slice's earlier reviews that are not placed yet, marked \`(unplaced)\`. A finding that matches an entry by location and problem, under any id, is not new: the validator drops it with the reason \`same as <key>\`. An entry marked \`${CARRIED_HERE}\` is work this slice builds: a finding that it is unbuilt or wrong in this slice is not a repeat. ${UNTRUSTED_NOTE}\n\n${renderKnownObservations(run, slice)}\n\n${targetedSection}## FIX ITEMS\n\n${listed}\n\n## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files.join('\n')}\n`,
   );
   const lines = changedLines(diff, files);
   slice.review = { decisions: run.decisions.length, id, lines, sha: checked.sha, skipped, snapshot: await snapshot(ws.root), submissions: {}, targeted };
@@ -484,6 +487,9 @@ export function submitDomain(
     if (ids.has(finding.id)) throw new Error(`Duplicate finding id "${finding.id}"`);
     ids.add(finding.id);
     requireInDiff(review.lines, finding);
+    if (finding.severity === 'observation' && finding.category === undefined) {
+      throw new Error(`Finding "${finding.id}" is an observation without a category. Give it one of: ${OBSERVATION_CATEGORIES.join(', ')}.`);
+    }
     if (finding.decision !== undefined) {
       if (finding.severity === 'observation') throw new Error(`Finding "${finding.id}" breaks a recorded decision, so it must be critical or high.`);
       if (finding.decision > review.decisions) {
@@ -562,7 +568,16 @@ export const validationSchema = z.object({
     )
     .describe('Findings removed, each with a reason'),
   downgrade: z
-    .array(z.object({ id: z.string().min(1), reason: z.string().min(1) }))
+    .array(
+      z.object({
+        category: z
+          .enum(OBSERVATION_CATEGORIES)
+          .optional()
+          .describe('Required when the reviewer gave the finding no category: what the observation is about (correctness, missing-test, misleading-doc, naming, structure or style); it sets where the observation goes by default'),
+        id: z.string().min(1),
+        reason: z.string().min(1),
+      }),
+    )
     .default([])
     .describe('critical/high findings the diff supports but that fail the correctness-or-requirements bar; kept as observations'),
   escalate: z
@@ -580,16 +595,16 @@ export const validationSchema = z.object({
 type Validation = z.infer<typeof validationSchema>;
 
 /**
- * Kept findings at the severity the gate uses: downgraded findings count as observations, escalated ones as high and
- * carry the decision the validator cited.
+ * Kept findings at the severity the gate uses: downgraded findings count as observations (with the category the
+ * validator gave one that had none), escalated ones as high and carry the decision the validator cited.
  */
 export function keptFindings(findings: Finding[], validation: Validation) {
-  const downgraded = new Set(validation.downgrade.map(entry => entry.id));
+  const downgraded = new Map(validation.downgrade.map(entry => [entry.id, entry.category]));
   const escalated = new Map(validation.escalate.map(entry => [entry.id, entry.decision]));
   return findings
     .filter(finding => validation.keep.includes(finding.id) || downgraded.has(finding.id) || escalated.has(finding.id))
     .map(finding => {
-      if (downgraded.has(finding.id)) return { ...finding, severity: 'observation' as const };
+      if (downgraded.has(finding.id)) return { ...finding, category: finding.category ?? downgraded.get(finding.id), severity: 'observation' as const };
       const decision = escalated.get(finding.id);
       if (decision !== undefined) return { ...finding, decision, severity: 'high' as const };
       return finding;
@@ -625,6 +640,10 @@ function checkCoverage(findings: Finding[], validation: Validation, decisionCoun
       return !(ranges ?? []).some(([start, end]) => line >= start && line <= end);
     });
     if (outside.length > 0) throw new Error(`Observations outside the fix diff are dropped in a targeted review (blocking findings stay): ${outside.join(', ')}`);
+  }
+  const uncategorised = validation.downgrade.filter(entry => entry.category === undefined && byId.get(entry.id)?.category === undefined).map(entry => entry.id);
+  if (uncategorised.length > 0) {
+    throw new Error(`A downgraded finding becomes an observation, which needs a category: set \`category\` on the downgrade entry of ${uncategorised.join(', ')}.`);
   }
   const notBlocking = downgraded.filter(id => byId.get(id)?.severity === 'observation');
   if (notBlocking.length > 0) throw new Error(`Only critical or high findings can be downgraded: ${notBlocking.join(', ')}`);
@@ -697,25 +716,40 @@ function countBy(findings: Finding[], key: 'domain' | 'severity') {
     .join(' ');
 }
 
-/** A finding as a markdown section under a `heading` of the given level (`##` by default). */
-export function renderFinding(finding: Finding, decisions: Decision[], heading = '##') {
-  const decision = finding.decision === undefined ? '' : `\n- Breaks decision ${finding.decision}: ${redact(decisions[finding.decision - 1]?.text ?? '')}`;
-  return `${heading} [${finding.severity}] ${finding.id}\n\n- Location: ${findingLocation(finding)}\n- Title: ${evidence(finding.title, 500)}\n- Problem: ${evidence(finding.problem, 2_000)}\n- Fix: ${evidence(finding.fix, 2_000)}\n- Fix prompt: ${evidence(finding.fix_prompt, 2_000)}${decision}`;
-}
-
 /**
  * What `recordReview` decided: `green` (with the observations to place), `accepted-unresolved` (a headless slice with no
  * fix rounds left, counted as green with its open items on record), or `fix` (a fix file written for the blocking
  * findings and open fix items, `stalled` when the round limit is used up).
  */
 export type RecordedReview =
-  | { kind: 'green'; observations: string[] }
+  | { final: boolean; kind: 'green'; observations: string[] }
   | { kind: 'accepted-unresolved'; unresolved: string[] }
   | { blocking: number; fixPath: string; kind: 'fix'; open: number; stalled: boolean };
 
 /** The targeting a fix round after `review` leaves for the next review: the domains that need another look. */
 export function targetingAfter(review: { id: string; sha: string }, domains: readonly Domain[]) {
   return { base: review.sha, domains: [...new Set(domains)], from: review.id };
+}
+
+/**
+ * Adds the kept observations of review `reviewId`, green or red, to the slice's unplaced list, in place of any it already
+ * holds from that review (so recording a review again adds nothing twice). One the ledger already holds is not added.
+ * Every kept observation has a category: submitDomain refuses one without it, and a downgrade needs one.
+ */
+function collectObservations(run: Run, slice: Slice, reviewId: string, observations: Finding[]) {
+  const others = slice.unplaced.filter(entry => entry.review !== reviewId);
+  const fresh = observations.filter(
+    finding =>
+      !run.observations.some(entry => entry.key === itemKey(reviewId, finding.id)) &&
+      !others.some(entry => findingLocation(entry.finding) === findingLocation(finding) && entry.finding.problem === finding.problem),
+  );
+  slice.unplaced = [
+    ...others,
+    ...fresh.map(finding => {
+      if (finding.category === undefined) throw new Error(`Observation "${finding.id}" has no category.`);
+      return { category: finding.category, finding, review: reviewId };
+    }),
+  ];
 }
 
 /** Marks the slice's review green over `decisions`; `unresolved` are the items it is accepted with, if any. */
@@ -752,6 +786,7 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
   const kept = keptFindings(findings, validation);
   const blocking = kept.filter(finding => finding.severity !== 'observation');
   const observations = kept.filter(finding => finding.severity === 'observation');
+  collectObservations(run, slice, review.id, observations);
   const verdicts = review.fixVerdicts ?? [];
   const verdictOf = new Map(verdicts.map(entry => [entry.id, entry]));
   // An item without a closing verdict stays open, so no item passes unchecked; a blocking finding under its id already carries it.
@@ -771,7 +806,7 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
     const full = review.targeted === undefined;
     markGreen(slice, review.decisions, full ? 'full' : 'targeted');
     addEvent(run, 'review-green', `${full ? '' : 'targeted '}${detail}`, slice);
-    return { kind: 'green', observations: observations.map(finding => renderFinding(finding, run.decisions)) };
+    return { final: !needsFullReview(slice), kind: 'green', observations: observations.map(finding => renderFinding(finding, run.decisions)) };
   }
   clearFullGreen(slice);
   slice.targeting = targetingAfter(review, [...blocking.map(finding => finding.domain), ...(open.length > 0 ? (['scope'] as const) : [])]);
@@ -912,17 +947,28 @@ export async function completeSlice(ws: Workspace, run: Run) {
     reopenReview(run, slice);
     throw new Invalidated(`${newerDecisions(run, covered)} newer than the green review, so its reviewers did not check the code against them. Call factory_review_start for a new review.`);
   }
-  if (slice.doneSha !== undefined) {
-    await restack(ws, run, slice, slice.doneSha);
-    slice.doneSha = undefined;
+  const placedHere = await placeDefaults(ws, run);
+  if (slice.unplaced.length > 0) {
+    throw new Error(`Slice ${slice.id} has unplaced observations: ${slice.unplaced.map(entry => entry.finding.id).join(', ')}. Place them with factory_place (placements [] takes every default), then call factory_complete_slice. A headless run places them by default in factory_complete_slice.`);
   }
-  slice.status = 'done';
-  writeTicket(ws, run, slice);
-  if (slice.peakContextTokens > ws.config.sliceTokenBudget || slice.compactions > 0) {
-    addEvent(run, 'budget-exceeded', `peak ${slice.peakContextTokens} tokens, ${slice.compactions} compactions`, slice);
+  try {
+    if (slice.doneSha !== undefined) {
+      await restack(ws, run, slice, slice.doneSha);
+      slice.doneSha = undefined;
+    }
+    slice.status = 'done';
+    writeTicket(ws, run, slice);
+    if (slice.peakContextTokens > ws.config.sliceTokenBudget || slice.compactions > 0) {
+      addEvent(run, 'budget-exceeded', `peak ${slice.peakContextTokens} tokens, ${slice.compactions} compactions`, slice);
+    }
+    addEvent(run, 'slice-done', `${slice.fixRounds} fix rounds, ${slice.reviews} reviews`, slice);
+    settle(ws, run);
+  } catch (error) {
+    // Only observations the headless defaults placed in this call are saved instead of rolled back. Otherwise the state rolls back.
+    if (!placedHere || error instanceof Invalidated) throw error;
+    slice.status = 'active';
+    throw new Invalidated(`Completing slice ${slice.id} failed after its default observations were placed: ${error instanceof Error ? error.message : String(error)}. Call factory_complete_slice again.`);
   }
-  addEvent(run, 'slice-done', `${slice.fixRounds} fix rounds, ${slice.reviews} reviews`, slice);
-  settle(ws, run);
   return slice;
 }
 

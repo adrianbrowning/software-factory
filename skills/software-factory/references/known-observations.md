@@ -4,7 +4,7 @@ The rule for `## KNOWN OBSERVATIONS` and `## TARGETED REVIEW` in a review data f
 
 ## KNOWN OBSERVATIONS
 
-The section lists the observations this run already placed (carried, deferred, fixed or left), each with its key, location and problem.
+The section lists the observations this run already placed (carried, deferred, fixed or left), each with its key, location and problem. It also lists observations of this slice's earlier reviews that wait for the slice's batch placement, marked `(unplaced)`; a finding repeating one is dropped as `same as <key>` like any other entry.
 
 - Reviewer: a problem that matches an entry by location and problem is not new, whatever id you would give it. Leave it out, at any severity.
 - Validator: drop a finding, of any severity, that matches an entry by location and problem, under any id, with the reason `same as <key>` (the entry's key, for example `01-r1:thermo-naming`). Match by what the finding says, not by its id. A left observation is never raised again in the run.

@@ -7,9 +7,10 @@ import { z } from 'zod';
 import { evidence, evidenceLine, redact } from './evidence.ts';
 import { draftOf, isRecordSlice, itemKey, requireSink } from './deferred.ts';
 import { placeObservations, requireUnplaced } from './ledger.ts';
-import { findingRecord, keptFindings, readRecorded, recordedFindings, renderFinding, type Review, targetingAfter, validationFile, validationSchema } from './review.ts';
+import { carriedSection, renderFinding } from './finding-text.ts';
+import { findingRecord, keptFindings, readRecorded, recordedFindings, type Review, targetingAfter, validationFile, validationSchema } from './review.ts';
 import { addEvent, greenCommit, requireActive, type Finding, type Run, type Slice, type Workspace } from './run.ts';
-import { type FixRecord, requestFix, writeTicket } from './workflow.ts';
+import { type FixRecord, needsFullReview, requestFix, writeTicket } from './workflow.ts';
 
 function noGreenReview(sliceId: string, purpose: string): Error {
   return new Error(`Slice ${sliceId} has no green review to ${purpose} from.`);
@@ -31,15 +32,6 @@ function reviewObservations(ws: Workspace, run: Run, slice: Slice, purpose: stri
   return { observations, review, slice };
 }
 
-/** The done slices, with the observations of their last green review, whose review lists every id in `chosen`. */
-function doneSlicesListing(ws: Workspace, run: Run, chosen: Set<string>, purpose: string) {
-  if (chosen.size === 0) return [];
-  return run.slices
-    .filter(slice => slice.status === 'done' && slice.phase === 'ready' && greenCommit(slice) !== undefined && slice.review !== undefined)
-    .map(slice => reviewObservations(ws, run, slice, purpose))
-    .filter(found => [...chosen].every(id => found.observations.some(finding => finding.id === id)));
-}
-
 function unknownObservations(review: Review, observations: Finding[], unknown: string[]) {
   const listed = observations.map(finding => finding.id).join(', ') || 'none';
   return new Error(`Not observations of green review ${review.id}: ${unknown.join(', ')}. Its observations: ${listed}.`);
@@ -57,52 +49,32 @@ function greenObservations(ws: Workspace, run: Run, chosen: Set<string>, purpose
   return { observations: observations.filter(finding => chosen.has(finding.id)), review, slice };
 }
 
-/**
- * The slice whose last green review lists the observations in `chosen`, for factory_carry and factory_fix. The active
- * slice wins: when its green review lists every id, that is the result. Done slices' last green reviews are looked up
- * only when it does not, found by the review that lists the ids, never by recency; the result's slice is then a done
- * slice. Throws when no review lists the ids and when more than one done slice does. Does not change the run.
- */
-function resolveObservations(ws: Workspace, run: Run, chosen: Set<string>, purpose: string) {
-  if (chosen.size === 0) return greenObservations(ws, run, chosen, purpose);
-  const active = run.slices.find(slice => slice.status === 'active');
-  const own = active !== undefined && active.phase === 'ready' && greenCommit(active) !== undefined ? reviewObservations(ws, run, active, purpose) : undefined;
-  if (own !== undefined && [...chosen].every(id => own.observations.some(finding => finding.id === id))) {
-    return { observations: own.observations.filter(finding => chosen.has(finding.id)), review: own.review, slice: own.slice };
+/** Throws when `chosen` has ids and the active slice's last green review was targeted: ids are placed after its full review, by factory_place or these tools. */
+function requireFullForIds(run: Run, chosen: Set<string>, tool: string) {
+  const slice = requireActive(run);
+  if (chosen.size > 0 && needsFullReview(slice)) {
+    throw new Error(`The last green review of slice ${slice.id} was targeted: ${tool} takes observation ids only after its full review.`);
   }
-  const found = doneSlicesListing(ws, run, chosen, purpose);
-  if (found.length > 1) {
-    const next = own === undefined ? 'Build them in a factory_follow_up slice.' : 'Build them in a factory_follow_up slice, or carry the items as a free-text note.';
-    throw new Error(`Slices ${found.map(entry => entry.slice.id).join(', ')} all have green reviews that list these observations (${[...chosen].join(', ')}), and the active slice's review does not. ${next}`);
-  }
-  const only = found[0];
-  if (only !== undefined) return { observations: only.observations.filter(finding => chosen.has(finding.id)), review: only.review, slice: only.slice };
-  if (own !== undefined) {
-    throw unknownObservations(own.review, own.observations, [...chosen].filter(id => !own.observations.some(finding => finding.id === id)));
-  }
-  const done = run.slices.filter(slice => slice.status === 'done' && slice.review !== undefined);
-  if (done.length === 0) throw noGreenReview(requireActive(run).id, purpose);
-  throw new Error(`No green review lists these observations: ${[...chosen].join(', ')}. Done slices checked: ${done.map(slice => `${slice.id} (${slice.review?.id})`).join(', ')}.`);
 }
 
 /**
- * What factory_carry takes: observation ids from a green review (the active slice's, else the one done slice's that
- * lists them), a free-text note, or both, and where they go: a pending slice id, or "end" to wait on the run for the
+ * What factory_carry takes: observation ids from the active slice's green review, a free-text note, or both, and where they go: a pending slice id, or "end" to wait on the run for the
  * next follow-up slice.
  */
 export type CarryRequest = { note?: string | undefined; observations?: string[] | undefined; to: string };
 
 /**
  * The target of `request.to` (a pending slice, or undefined for "end"), the observations chosen from the green review
- * that lists them (the active slice's first, else one done slice's), and the note. Throws for a request with neither,
- * for a slice without a green review, for ids no review lists or several done slices list, for ids the ledger already
+ * that lists them of the active slice, and the note. Throws for a request with neither,
+ * for a slice without a green review, for ids its review does not list, for ids the ledger already
  * holds, and for a target that is neither "end" nor a pending slice. Does not change the run.
  */
 export function planCarry(ws: Workspace, run: Run, request: CarryRequest) {
   const note = request.note?.trim() ? request.note : undefined;
   const chosen = new Set(z.array(z.string().min(1)).parse(request.observations ?? []));
   if (note === undefined && chosen.size === 0) throw new Error('factory_carry needs observation ids, a note, or both.');
-  const green = resolveObservations(ws, run, chosen, 'carry observations or a note');
+  requireFullForIds(run, chosen, 'factory_carry');
+  const green = greenObservations(ws, run, chosen, 'carry observations or a note');
   requireUnplaced(run, green.review.id, green.observations);
   if (request.to === 'end') return { note, ...green, target: undefined };
   const target = run.slices.find(candidate => candidate.id === request.to);
@@ -119,8 +91,7 @@ export function planCarry(ws: Workspace, run: Run, request: CarryRequest) {
 export function carryObservations(ws: Workspace, run: Run, request: CarryRequest) {
   const planned = planCarry(ws, run, request);
   const { note, observations, review, slice, target } = planned;
-  const items = [...(note === undefined ? [] : [redact(note)]), ...observations.map(finding => renderFinding(finding, run.decisions, '####'))];
-  const section = `### From green review ${review.id} of slice ${slice.id} "${slice.title}"\n\n${items.join('\n\n')}`;
+  const section = carriedSection(run, review, slice, observations, note);
   placeObservations(run, review, slice, observations, 'carried', target?.id ?? 'end');
   if (target === undefined) run.waiting.push(section);
   else {
@@ -144,7 +115,8 @@ export function planDefer(ws: Workspace, run: Run, request: DeferRequest) {
   const note = request.note?.trim() ? request.note : undefined;
   const chosen = new Set(z.array(z.string().min(1)).parse(request.observations ?? []));
   if (note === undefined && chosen.size === 0) throw new Error('factory_defer needs observation ids, a note, or both.');
-  const { observations, review, slice } = resolveObservations(ws, run, chosen, 'defer observations or a note');
+  requireFullForIds(run, chosen, 'factory_defer');
+  const { observations, review, slice } = greenObservations(ws, run, chosen, 'defer observations or a note');
   if (isRecordSlice(slice)) throw new Error(`Slice ${slice.id} "${slice.title}" writes the deferred sink file, so its review items are not deferred. They stay in the review itself (the green review observations, and for accepted-unresolved findings slice.unresolved and the accepted-unresolved event).`);
   requireUnplaced(run, review.id, observations);
   const noted = run.deferred.filter(item => item.review === review.id && item.kind === 'note').length;
@@ -160,23 +132,35 @@ export function planDefer(ws: Workspace, run: Run, request: DeferRequest) {
 }
 
 /**
- * The bug the user found and the observations the user chose to fix, with the green review they come from. The active
- * slice wins when its green review lists the ids; ids only a done slice's review lists are refused (factory_complete_slice
- * already ran). Throws for a request with neither bug nor ids, for a slice without a green review, and for an id no
+ * The bug the user found and the observations the user chose to fix, with the green review they come from. The ids
+ * may also be unplaced observations of any of the active slice's reviews, red ones too. Throws for a request with neither bug nor ids, for a slice without a green review, and for an id no
  * review lists. Does not change the run.
  */
 export function planFix(ws: Workspace, run: Run, request: FixRequest) {
   const bug = request.bug?.trim() ? request.bug : undefined;
   const chosen = new Set(z.array(z.string().min(1)).parse(request.observations ?? []));
   if (bug === undefined && chosen.size === 0) throw new Error('factory_fix needs a bug, observation ids, or both.');
-  const found = resolveObservations(ws, run, chosen, 'fix observations or a bug');
-  if (found.slice.status === 'done') {
-    throw new Error(
-      `Slice ${found.slice.id} is done (green review ${found.review.id}); factory_complete_slice already ran. Ask the user: factory_reopen fixes these in slice ${found.slice.id}, factory_follow_up builds them in a new slice on top of the stack.`,
-    );
-  }
+  const found = unplacedObservations(run, chosen) ?? { ...greenObservations(ws, run, chosen, 'fix observations or a bug'), groups: undefined };
   requireUnplaced(run, found.review.id, found.observations);
-  return { bug, ...found };
+  return { bug, ...found, groups: found.groups ?? [{ observations: found.observations, review: found.review }] };
+}
+
+/**
+ * The observations in `chosen` when every id is still unplaced on the active slice, whichever of its reviews (red ones
+ * too) kept it, with the slice's last review (the one the fix follows) and the observations grouped by their review.
+ * An id is an observation id, or `<review>:<id>` for one two reviews kept. Undefined when the slice is not ready on a review, or some id is not unplaced on it.
+ */
+function unplacedObservations(run: Run, chosen: Set<string>) {
+  const slice = run.slices.find(candidate => candidate.status === 'active');
+  const review = slice?.review;
+  if (slice === undefined || review === undefined || slice.phase !== 'ready' || greenCommit(slice) === undefined || chosen.size === 0) return undefined;
+  const entries = [...chosen].map(id => slice.unplaced.filter(entry => entry.finding.id === id || itemKey(entry.review, entry.finding.id) === id));
+  if (entries.some(found => found.length === 0)) return undefined;
+  const ambiguous = [...chosen].filter((_, index) => (entries[index]?.length ?? 0) > 1);
+  if (ambiguous.length > 0) throw new Error(`Observation ids unplaced under more than one review of slice ${slice.id}: ${ambiguous.join(', ')}.`);
+  const picked = entries.flat();
+  const groups = [...new Set(picked.map(entry => entry.review))].map(id => ({ observations: picked.filter(entry => entry.review === id).map(entry => entry.finding), review: { id } }));
+  return { groups, observations: picked.map(entry => entry.finding), review, slice };
 }
 
 /**
@@ -185,10 +169,10 @@ export function planFix(ws: Workspace, run: Run, request: FixRequest) {
  * does not, and never stalls. The slice earns checks and a new review before it completes.
  */
 export function fixObservations(ws: Workspace, run: Run, request: FixRequest, reason: string) {
-  const { bug, observations, review, slice } = planFix(ws, run, request);
+  const { bug, groups, observations, review, slice } = planFix(ws, run, request);
   const ids = observations.map(finding => finding.id);
-  addEvent(run, 'fix-observations', `${review.id}: ${[...(bug === undefined ? [] : ['bug']), ...ids].join(', ')}`, slice);
-  placeObservations(run, review, slice, observations, 'fixed');
+  addEvent(run, 'fix-observations', `${groups.map(group => group.review.id).join(', ')}: ${[...(bug === undefined ? [] : ['bug']), ...ids].join(', ')}`, slice);
+  for (const group of groups) placeObservations(run, group.review, slice, group.observations, 'fixed');
   const why = evidence(reason, 4_000);
   const records: FixRecord[] = [
     ...(bug === undefined
@@ -199,7 +183,9 @@ export function fixObservations(ws: Workspace, run: Run, request: FixRequest, re
             section: `## Bug found after green review ${review.id}\n\n${why}\n\n${redact(bug)}`,
           },
         ]),
-    ...observations.map(finding => findingRecord(finding, `## Observations from green review ${review.id} the user chose to fix\n\n${why}`, run.decisions)),
+    ...groups.flatMap(group =>
+      group.observations.map(finding => findingRecord(finding, `## Observations from ${group.review.id === review.id ? 'green review' : 'review'} ${group.review.id} the user chose to fix\n\n${why}`, run.decisions)),
+    ),
   ];
   // A bug round needs a full review; an observation-only round is reviewed only where it changed things (a targeted review).
   slice.targeting = bug === undefined ? targetingAfter(review, observations.map(finding => finding.domain)) : undefined;
@@ -217,7 +203,8 @@ export type LeaveRequest = { observations: string[] };
 export function planLeave(ws: Workspace, run: Run, request: LeaveRequest) {
   const chosen = new Set(z.array(z.string().min(1)).parse(request.observations));
   if (chosen.size === 0) throw new Error('factory_leave needs observation ids.');
-  const found = resolveObservations(ws, run, chosen, 'leave observations');
+  requireFullForIds(run, chosen, 'factory_leave');
+  const found = greenObservations(ws, run, chosen, 'leave observations');
   requireUnplaced(run, found.review.id, found.observations);
   return found;
 }

@@ -6,6 +6,7 @@ import { dirname, join } from 'node:path';
 import { type FactoryConfig, parseConfig, loadConfig } from '../src/config.ts';
 import { type Finding, type FixVerdict, readRun, REVIEW_DOMAINS, type SliceInput, type Workspace, withRun } from '../src/run.ts';
 import { recordReview, runChecks, startReview, submitDomain, submitValidation, completeSlice } from '../src/review.ts';
+import { placeObservationBatch } from '../src/place.ts';
 import { approvePlan, nextSlice, planSlices, startRun } from '../src/workflow.ts';
 import { type Command, ctx, load } from './extension.ts';
 import { parseRetro, recordRetro } from '../src/retro.ts';
@@ -108,7 +109,7 @@ export function commit(ws: Workspace, file: string, content = 'x\n') {
 }
 
 export function finding(domain: Finding['domain'], severity: Finding['severity'], name: string): Finding {
-  return { domain, fix: 'fix it', fix_prompt: 'fix it', id: `${domain}-${name}`, line: 1, path: 'ok', problem: 'wrong', severity, title: name };
+  return { domain, fix: 'fix it', fix_prompt: 'fix it', id: `${domain}-${name}`, line: 1, path: 'ok', problem: 'wrong', severity, title: name, category: 'naming' as const };
 }
 
 export function start(ws: Workspace) {
@@ -157,6 +158,11 @@ export async function greenWithObservation(ws: Workspace) {
   const opened = await step(ws, run => startReview(ws, run));
   await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming')]);
   assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
+}
+
+/** Places the active slice's unplaced observations by their defaults, as factory_place with no exceptions does. */
+export async function settleObservations(ws: Workspace) {
+  await step(ws, run => placeObservationBatch(ws, run, { placements: [] }));
 }
 
 /** Takes the active slice from committed work to green. */
@@ -349,8 +355,8 @@ export const reviewActive = async (ws: Workspace, file: string, findings: Return
 export const HEADLESS_FILES = { 'demo.md': '# Demo\n\nDo it.\n', '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) };
 
 /** A headless run planned with `titles` (each blocked by the one before), whose UI throws on any dialog; slice 01 is active with `ok` committed. */
-export async function headlessSubmitRun(root: string, titles: string[], policy: Record<string, string> = {}) {
-  writeFileSync(join(root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], headless: policy }));
+export async function headlessSubmitRun(root: string, titles: string[], policy: Record<string, string> = {}, config: Record<string, unknown> = {}) {
+  writeFileSync(join(root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], headless: policy, ...config }));
   sh(root, 'commit', '-qam', 'policy');
   const commands = new Map<string, Command>();
   const tools = load({ commands, sent: [] });
