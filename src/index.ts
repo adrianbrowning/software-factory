@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { bindRun } from './active-run.ts';
 import { auditChild, IMPLEMENTER, REVIEWER, resetAudit, SPAWN_ROLES, VALIDATOR } from './agents.ts';
 import { CONFIG_PATH, describeModels, loadConfig, requireAvailableModels, requireOrchestrator, type RoleModels, routeSpawn } from './config.ts';
+import { gitArchWarning } from './git-arch.ts';
 import { evidenceHead } from './evidence.ts';
 import { deferItems, describeSink, requireSink } from './deferred.ts';
 import { chooseChecks, confirmInteractive, ensureChecks, gate, loadSource } from './gates.ts';
@@ -340,10 +341,11 @@ export default function softwareFactory(pi: ExtensionAPI) {
         });
       }
     }
+    const gitWarning = gitArchWarning();
     bindRun(entry.pointer, { feature: run.feature, mainId: ctx.agent.id, ws });
     await pi.setActiveTools([...new Set([...pi.getActiveTools(), ...ORCHESTRATION_TOOLS])]);
     return reply(
-      `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${run.mode === 'headless' ? HEADLESS_FIX_ROUNDS : ws.config.maxRounds}.\nNext: ${nextAction(run)}`,
+      `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${run.mode === 'headless' ? HEADLESS_FIX_ROUNDS : ws.config.maxRounds}.\nNext: ${nextAction(run)}${gitWarning === undefined ? '' : `\n${gitWarning}`}`,
       summarize(ws, run),
     );
   }
