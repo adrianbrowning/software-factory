@@ -9,7 +9,7 @@ Your task gives you the review id and the data file (PR metadata, full diff, cha
 1. Load the `testing-best-practice` skill (`skill://testing-best-practice`). If it is not installed, say so in your final line and continue with the checklist below.
 
 2. Read the data file.
-   `## KNOWN OBSERVATIONS` lists the observations this run already placed. A problem that matches an entry by location and problem is not new, whatever id you would give it: leave it out. The validator drops a repeat with the reason `same as <key>`. An entry marked `carried to this slice: check it` is work this slice builds: a finding that it is unbuilt or wrong in this slice is not a repeat; report it.
+   Apply the shared KNOWN OBSERVATIONS and TARGETED REVIEW rules in `skills/software-factory/references/known-observations.md`.
 
 3. Review the diff against the checklist below.
 

@@ -11,6 +11,7 @@ import {
   addEvent,
   builtBy,
   discardReview,
+  clearFullGreen,
   dropPass,
   greenCommit,
   hasPass,
@@ -602,6 +603,11 @@ export type FixItemInput = { id: string; summary: string } | { kind: 'bug' | 'ch
  */
 export type FixRecord = { group?: string; item: FixItemInput; section: string };
 
+/** True while the slice's last green review was targeted and no full green stands (`slice.fullGreen`); a full green survives an observation-only fix round and is cleared by a red review or a counted fix round. */
+export function needsFullReview(slice: Slice) {
+  return slice.green?.targeted === true && slice.fullGreen !== true;
+}
+
 /**
  * Writes the fix file and moves the slice to `fix`. `sha` is the commit the fix file describes. `records` are what the
  * fix file asks the implementer to fix: the fix file lists their items under `## Fix items`, then their sections, and
@@ -636,6 +642,7 @@ export function requestFix(ws: Workspace, run: Run, slice: Slice, sha: string, r
   slice.fixFromSha = sha;
   dropPass(slice, 'fix');
   if (!counted) return { fixPath, stalled: false };
+  clearFullGreen(slice);
   if (slice.fixRounds >= slice.roundLimit) {
     slice.stalled = true;
     addEvent(run, 'stall', `fix budget of ${slice.roundLimit} rounds used`, slice);
@@ -653,6 +660,7 @@ export async function restartSlice(ws: Workspace, run: Run, slice: Slice) {
   const own = (await git(ws.root, 'rev-list', '--count', `${slice.parentBranch}..refs/heads/${slice.branch}`)).trim();
   slice.status = 'pending';
   dropPass(slice, own === '0' ? 'implement' : 'checks');
+  slice.targeting = undefined;
   slice.fixPath = undefined;
   slice.fixFromSha = undefined;
   writeTicket(ws, run, slice);
@@ -685,6 +693,7 @@ export async function reopenSlice(ws: Workspace, run: Run, id: string, reason: s
   await git(ws.root, 'switch', slice.branch);
   if (active !== undefined) await restartSlice(ws, run, active);
   slice.doneSha = doneSha;
+  slice.targeting = undefined;
   slice.status = 'active';
   writeTicket(ws, run, slice);
   if (run.status === 'done') run.status = 'running';
@@ -845,6 +854,7 @@ export function nextAction(run: Run): string {
         ? `Pick the review domains for ${where} from its changed files, then call factory_review_start with the domains to skip.`
         : `Finish review ${slice.review.id}: every domain reviewer and the validator must submit, then call factory_review_record.`;
     case 'ready':
+      if (needsFullReview(slice)) return `The last green review of ${where} was targeted: call factory_review_start for a full review of the same commit (no new checks), then factory_complete_slice.`;
       // LEGACY-STATE(decision-before-reset): only a state file written before factory_decide reset reviews keeps
       // decisions newer than a green review; remove with the matching branches in review.ts.
       return outdatedGreenCount(run, slice) === undefined

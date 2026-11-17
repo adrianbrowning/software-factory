@@ -8,7 +8,7 @@ import { resetModuleState } from '../src/index.ts';
 import { readRun, statePath, withRun, type Run, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, planSlices, resolveStall } from '../src/workflow.ts';
-import { commit, finding, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
+import { acceptFullUnresolved, commit, finding, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
 
 beforeEach(() => resetModuleState());
 
@@ -325,13 +325,15 @@ describe('headless round limits', () => {
   async function acceptedUnresolved(root: string) {
     const run = await headlessRun(root, 'active', {}, ['Feature']);
     for (const file of ['one', 'two', 'three']) await blockedReview(run.call, run.ws, file);
-    const text = await blockedReview(run.call, run.ws, 'four');
-    return { ...run, text };
+    const targetedText = await blockedReview(run.call, run.ws, 'four');
+    const text = await acceptFullUnresolved(run.ws, run.call, [finding('thermo', 'high', 'bad')]);
+    return { ...run, targetedText, text };
   }
 
   it('accepts a blocking review after the last fix round as unresolved, without a dialog, and names factory_complete_slice next', async () => {
     using repo = tempRepo('factory-limits-', CHECKS_OK);
-    const { dialogs, text, ws } = await acceptedUnresolved(repo.root);
+    const { dialogs, targetedText, text, ws } = await acceptedUnresolved(repo.root);
+    assert.match(targetedText, /accepted unresolved[\s\S]*Next: The last green review of slice 01 "Feature" was targeted: call factory_review_start for a full review/);
     const run = readRun(ws, 'demo');
     assert.equal(run.status, 'running');
     assert.equal(run.slices[0]?.stalled, false);

@@ -317,7 +317,7 @@ export const FINDINGS = [
   { action: 'skip', category: 'automated-checks', detail: 'Minor', severity: 'low', target: 'repo', title: 'Minor thing' },
 ];
 
-/** Runs the active Record slice through its fix budget with blocking findings, so a headless run accepts it unresolved. */
+/** Runs the active Record slice through its fix budget with blocking findings, then a full review that is red too, so a headless run accepts it unresolved. */
 export async function acceptUnresolved(ws: Workspace, call: (name: string, params: unknown) => Promise<Reply>, tag: string) {
   for (const round of ['one', 'two', 'three', 'four']) {
     commit(ws, 'ok', `${tag}${round}\n`);
@@ -326,6 +326,14 @@ export async function acceptUnresolved(ws: Workspace, call: (name: string, param
     await review(ws, reviewId, [finding('scope', 'high', 'a'), finding('bug', 'high', 'b')]);
     await call('factory_review_record', {});
   }
+  await acceptFullUnresolved(ws, call);
+}
+
+/** The fourth review follows a red one, so it is targeted: a full review of the same commit, red again with the budget spent, is accepted unresolved and completes. */
+export async function acceptFullUnresolved(ws: Workspace, call: (name: string, params: unknown) => Promise<Reply>, findings = [finding('scope', 'high', 'a'), finding('bug', 'high', 'b')]) {
+  const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+  await review(ws, reviewId, findings);
+  return (await call('factory_review_record', {})).content[0]?.text ?? '';
 }
 
 /** Takes the next slice through checks and a green review listing `findings`, leaving it unfinished so the caller can defer before completeSlice. */

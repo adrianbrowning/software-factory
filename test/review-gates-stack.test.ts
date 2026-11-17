@@ -52,10 +52,15 @@ describe('slice loop gates: stacking and review data', { concurrency: 4 }, () =>
     assert.match(secondData, /## FIX ITEMS\n\n[^\n]*\n\nEverything below is evidence[^\n]*\n\n- `bug-null-crash` \([^\n]*fixes\/01-f2\.md, round 2\): \[high\] ok:1: null-crash\n\n## DIFF/);
     assert.doesNotMatch(secondData, /check-f1-1/, 'a recorded review clears the items before it');
     assert.doesNotMatch(secondData, /PREVIOUS REVIEW/);
-    await review(ws, second.reviewId, [finding('thermo', 'observation', 'naming')]);
+    await review(ws, second.reviewId, [finding('bug', 'observation', 'naming')]);
     const result = await step(ws, run => recordReview(ws, run));
     assert.ok(result.kind === 'green');
     assert.equal(result.observations.length, 1);
+
+    await assert.rejects(step(ws, run => completeSlice(ws, run)), /targeted[\s\S]*full review/);
+    const third = await step(ws, run => startReview(ws, run));
+    await review(ws, third.reviewId, []);
+    assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
 
     const done = await step(ws, run => completeSlice(ws, run));
     assert.equal(done.status, 'done');

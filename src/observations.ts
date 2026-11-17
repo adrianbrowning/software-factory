@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { evidence, evidenceLine, redact } from './evidence.ts';
 import { draftOf, isRecordSlice, itemKey, requireSink } from './deferred.ts';
 import { placeObservations, requireUnplaced } from './ledger.ts';
-import { findingRecord, keptFindings, readRecorded, recordedFindings, renderFinding, type Review, validationFile, validationSchema } from './review.ts';
+import { findingRecord, keptFindings, readRecorded, recordedFindings, renderFinding, type Review, targetingAfter, validationFile, validationSchema } from './review.ts';
 import { addEvent, greenCommit, requireActive, type Finding, type Run, type Slice, type Workspace } from './run.ts';
 import { type FixRecord, requestFix, writeTicket } from './workflow.ts';
 
@@ -201,6 +201,8 @@ export function fixObservations(ws: Workspace, run: Run, request: FixRequest, re
         ]),
     ...observations.map(finding => findingRecord(finding, `## Observations from green review ${review.id} the user chose to fix\n\n${why}`, run.decisions)),
   ];
+  // A bug round needs a full review; an observation-only round is reviewed only where it changed things (a targeted review).
+  slice.targeting = bug === undefined ? targetingAfter(review, observations.map(finding => finding.domain)) : undefined;
   return requestFix(ws, run, slice, review.sha, records, bug !== undefined);
 }
 
