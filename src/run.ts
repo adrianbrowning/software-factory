@@ -534,7 +534,7 @@ export function clearGreen(slice: Slice) {
   slice.unresolved = undefined;
 }
 
-/** Drops the slice's full green. Not part of clearGreen: a full green survives an observation-only fix round. */
+/** Drops the slice's full green; it leaves `targeting` alone (the red branch replaces it, requestFix callers set it first). Not part of clearGreen: a full green survives an observation-only fix round. Called on a red review and a counted fix round. */
 export function clearFullGreen(slice: Slice) {
   slice.fullGreen = false;
 }
