@@ -8,7 +8,7 @@ import { resetModuleState } from '../src/index.ts';
 import { carriedKeysLine, carriesKey } from '../src/legacy-observations.ts';
 import { type Finding, readRun, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview, submitDomain } from '../src/review.ts';
-import { addFollowUp, approvePlan, nextAction, nextSlice, planSlices } from '../src/workflow.ts';
+import { addFollowUp, applyReslice, approvePlan, nextAction, nextSlice, planReslice, planSlices } from '../src/workflow.ts';
 import { commit, fakeGh, finding, headlessSubmitRun, review, slice, submitGreenWithObservation, tempRepo } from './helpers.ts';
 
 beforeEach(() => resetModuleState());
@@ -170,6 +170,50 @@ describe('batched observation placement', () => {
     assert.equal(run.waiting.length, 0);
     assert.match(nextAction(run), /Run the retro/);
     assert.equal(run.observations.find(entry => entry.id === 'thermo-again')?.placement, 'left');
+  });
+
+  it('a re-sliced headless follow-up slice keeps its children out of the end queue', async () => {
+    using dir = repo();
+    const { ws } = await headlessSubmitRun(dir.root, ['Feature']);
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const first = await withRun(ws, 'demo', run => startReview(ws, run));
+    await review(ws, first.reviewId, [observation('gap', 'correctness')]);
+    await withRun(ws, 'demo', run => recordReview(ws, run));
+    await withRun(ws, 'demo', run => completeSlice(ws, run));
+    await withRun(ws, 'demo', run => addFollowUp(ws, run, slice('Follow up', [])));
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    commit(ws, 'follow.txt');
+    await withRun(ws, 'demo', async run => {
+      const plan = planReslice(ws, run, [slice('Child one'), slice('Child two', ['Child one'])]);
+      await applyReslice(ws, run, plan);
+      assert.deepEqual(plan.children.map(child => child.fromEndQueue), [true, true]);
+    });
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const second = await withRun(ws, 'demo', run => startReview(ws, run));
+    await review(ws, second.reviewId, [{ ...observation('again', 'correctness'), path: 'follow.txt' }]);
+    await withRun(ws, 'demo', run => recordReview(ws, run));
+    await withRun(ws, 'demo', run => completeSlice(ws, run));
+    assert.equal(readRun(ws, 'demo').waiting.length, 0);
+  });
+
+  it('a re-slice after a red review moves the unplaced observation to the first child', async () => {
+    using dir = repo();
+    const { full, ws } = await interactive(dir.root);
+    await full([finding('security', 'high', 'leak'), observation('naming', 'correctness')]);
+    await withRun(ws, 'demo', async run => {
+      const plan = planReslice(ws, run, [slice('Child one'), slice('Child two', ['Child one'])]);
+      assert.deepEqual(plan.children[0]?.unplaced.map(entry => entry.finding.id), ['thermo-naming']);
+      assert.equal(plan.children[1]?.unplaced.length, 0);
+    });
+  });
+
+  it('names factory_place in the next action while observations are unplaced, and factory_complete_slice after', async () => {
+    using dir = repo();
+    const { call, full, ws } = await interactive(dir.root);
+    await full([observation('naming', 'naming')]);
+    assert.match(nextAction(readRun(ws, 'demo')), /factory_place/);
+    await call('factory_place', { placements: [] });
+    assert.match(nextAction(readRun(ws, 'demo')), /factory_complete_slice/);
   });
 
   it('a headless completion that is refused after the defaults would be filed files nothing, so the retry creates no duplicate issue', async () => {

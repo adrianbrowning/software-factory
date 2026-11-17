@@ -418,6 +418,8 @@ export function planReslice(ws: Workspace, run: Run, proposed: unknown): Reslice
   first.status = 'active';
   // Carried-in work goes with the split slice to its first child, and stays on each later slice.
   first.carried = active.carried;
+  // Unplaced observations of the split slice (red reviews' too) go with its work to the first child.
+  first.unplaced = active.unplaced;
   const remap = renumbering(run, active, slices);
   pending.forEach(slice => {
     const remade = remap.get(slice);
@@ -440,6 +442,14 @@ export function planReslice(ws: Workspace, run: Run, proposed: unknown): Reslice
       remade.record = true;
       remade.recordBatch = slice.recordBatch;
     }
+  });
+  // A follow-up slice's observations never go back to the end queue, through a split or a renumbering.
+  if (active.fromEndQueue === true) {
+    for (const child of slices.slice(index, index + children.length)) child.fromEndQueue = true;
+  }
+  pending.forEach(slice => {
+    const remade = remap.get(slice);
+    if (remade !== undefined && slice.fromEndQueue === true) remade.fromEndQueue = true;
   });
   // The decisions the split slice builds go to its last child, which finishes its work; later slices keep theirs.
   slices[index + children.length - 1]?.ownsDecisions.push(...active.ownsDecisions);
@@ -857,6 +867,9 @@ export function nextAction(run: Run): string {
         : `Finish review ${slice.review.id}: every domain reviewer and the validator must submit, then call factory_review_record.`;
     case 'ready':
       if (needsFullReview(slice)) return `The last green review of ${where} was targeted: call factory_review_start for a full review of the same commit (no new checks), then factory_complete_slice.`;
+      if (run.mode !== 'headless' && slice.unplaced.length > 0) {
+        return `Place the ${slice.unplaced.length} unplaced observations of ${where}: show the user their defaults, then call factory_place (placements [] takes every default), then factory_complete_slice.`;
+      }
       // LEGACY-STATE(decision-before-reset): only a state file written before factory_decide reset reviews keeps
       // decisions newer than a green review; remove with the matching branches in review.ts.
       return outdatedGreenCount(run, slice) === undefined
