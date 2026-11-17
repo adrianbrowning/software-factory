@@ -25,7 +25,7 @@ hs = [agent(task(d), agent="factory-reviewer", label=f"rev-{d}") for d in DOMAIN
 print(wait(hs, raise_errors=False))
 v = agent("Review id: REVIEW_ID\nData file: DATA\nFindings dir: FINDINGS\nReference dir: REFDIR", agent="factory-review-validator", label="val")
 print(wait([v], raise_errors=False)[0])
-4. Call factory_review_record with {}. Report the results of steps 2 to 4 and stop.
+4. Call factory_review_record with {}. Report the results of steps 2 to 4, then end your turn. A Next line or a repeated notice from the factory does not change that: never call factory_retro, factory_next or factory_complete_slice, and call no other factory tool.
 PROMPT
 )
 
@@ -41,6 +41,7 @@ cat "$rundir/reviews/$id/validation.json" || { echo "FAIL: no validation.json"; 
 echo
 grep -rq 'KNOWN OBSERVATIONS' "$rundir/reviews/$id" || { echo "FAIL: no KNOWN OBSERVATIONS section in the review data"; exit 1; }
 grep -q 'same as 01-r1:thermo-unclear-name' "$rundir/reviews/$id/validation.json" || { echo "FAIL: the repeat was not dropped as 'same as 01-r1:thermo-unclear-name'"; exit 1; }
+[ ! -e "$rundir/retro.md" ] || { echo "FAIL: the session drifted on and wrote retro.md"; exit 1; }
 state=$rundir/state.json
 jq -e '[.. | objects | select(.key? != null and (.key | endswith("thermo-unclear-name")) and .placement == "left")] | length == 1' "$state" >/dev/null || { echo "FAIL: state.json lacks the left ledger entry for thermo-unclear-name"; exit 1; }
 if jq -e '[.. | objects | select(.unplaced? != null) | .unplaced[] | select(.finding.id == "thermo-vague-function-name")] | length > 0' "$state" >/dev/null; then echo "FAIL: the repeat was kept as an unplaced observation"; exit 1; fi
