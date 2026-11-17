@@ -1,4 +1,9 @@
 import assert from 'node:assert/strict';
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
+import { chmodSync, existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { gitArchWarning, type GitArchHost } from '../src/git-arch.ts';
 
@@ -88,4 +93,50 @@ test('an empty PATH component means the working directory', () => {
     path: ':/opt/x',
   }));
   assert.deepEqual(seen, [cwdGit]);
+});
+
+function runProbes(scripts: Record<string, string>, body: string, check: (dir: string, r: SpawnSyncReturns<string>) => void): void {
+  const dir = mkdtempSync(join(tmpdir(), 'probe-'));
+  try {
+    for (const [name, content] of Object.entries(scripts)) {
+      writeFileSync(join(dir, name), `#!/bin/sh\n${content}`);
+      chmodSync(join(dir, name), 0o755);
+    }
+    const src = fileURLToPath(new URL('../src/git-arch.ts', import.meta.url));
+    const script = `import { defaultGitArchHost } from ${JSON.stringify(src)};
+const h = defaultGitArchHost();
+${body}`;
+    const r = spawnSync(process.execPath, ['--no-warnings', '--input-type=module', '-e', script], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: dir },
+    });
+    assert.equal(r.status, 0, String(r.stderr));
+    check(dir, r);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+test('a failing file or sysctl probe runs and writes nothing to the parent stderr', () => {
+  const dir0 = (name: string) => `: > "\${0%/*}/${name}.ran"\necho "probe noise" >&2\nexit 1\n`;
+  runProbes(
+    { file: dir0('file'), sysctl: dir0('sysctl') },
+    `for (const probe of [() => h.describe('/x'), () => h.sysctlArm64()]) { try { probe(); } catch {} }`,
+    (dir, r) => {
+      assert.ok(existsSync(join(dir, 'file.ran')), 'file probe did not run');
+      assert.ok(existsSync(join(dir, 'sysctl.ran')), 'sysctl probe did not run');
+      assert.doesNotMatch(String(r.stderr), /probe noise/);
+    },
+  );
+});
+
+test('a succeeding file or sysctl probe returns its stdout', () => {
+  runProbes(
+    { file: 'echo "Mach-O 64-bit executable x86_64"\n', sysctl: 'echo 1\n' },
+    `console.log('D=' + h.describe('/x').trim()); console.log('S=' + h.sysctlArm64().trim());`,
+    (_dir, r) => {
+      assert.match(String(r.stdout), /D=Mach-O 64-bit executable x86_64/);
+      assert.match(String(r.stdout), /S=1/);
+    },
+  );
 });
