@@ -348,7 +348,7 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   let targetedSection = '';
   if (targeting !== undefined) {
     const fixRange = `${targeting.base}..${checked.sha}`;
-    const fixDiff = await git(ws.root, '-c', 'core.quotePath=false', 'diff', '--no-ext-diff', fixRange);
+    const fixDiff = await git(ws.root, '-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--unified=0', fixRange);
     const lines = changedLines(fixDiff, await changedPaths(ws.root, fixRange));
     const commits = (await git(ws.root, 'log', '--oneline', fixRange)).trim();
     const listedLines = Object.entries(lines).map(([file, ranges]) => `- ${file}: ${ranges.length === 0 ? '(no hunk lines: file-level only)' : ranges.map(([start, end]) => `${start}-${end}`).join(', ')}`);

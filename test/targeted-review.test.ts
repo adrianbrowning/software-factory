@@ -119,6 +119,23 @@ describe('targeted re-review', () => {
     );
   });
 
+  it('lists only the changed line of a fix diff, and refuses keeping an observation on an unchanged line two lines away', async () => {
+    using dir = repo();
+    const { call, finish, open, ws } = await setup(dir.root);
+    const original = Array.from({ length: 12 }, (_, index) => `line${index + 1}`);
+    commit(ws, 'lines.txt', `${original.join('\n')}\n`);
+    await call('factory_checks', {});
+    const opened = await open();
+    await finish(opened.domains, [finding('security', 'high', 'leak')], [finding('security', 'high', 'leak').id]);
+    commit(ws, 'lines.txt', `${original.map((text, index) => (index === 5 ? 'changed' : text)).join('\n')}\n`);
+    await call('factory_checks', {});
+    const targeted = await open();
+    const data = readFileSync(targeted.dataFile, 'utf8');
+    assert.match(data, /- lines\.txt: 6(-6)?\n/, 'only the changed line is listed');
+    const near = { ...finding('bug', 'observation', 'near'), line: 8, path: 'lines.txt' };
+    await assert.rejects(finish(targeted.domains, [near], [near.id]), /outside the fix diff[\s\S]*bug-near/);
+  });
+
   it('allows a full review on the same commit after a targeted green, and completes only after the full one is green', async () => {
     using dir = repo();
     const { call, finish, open, red, ws } = await setup(dir.root);
