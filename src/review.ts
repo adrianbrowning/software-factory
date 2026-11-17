@@ -801,7 +801,7 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
     }
     // Added only now that the deferred sink succeeded, so a retry after a failed sink does not log it twice.
     addEvent(run, 'review-blocking', blockingDetail, slice);
-    // An accepted-unresolved targeted review still needs a full review before completion (decision 19).
+    // An accepted-unresolved targeted review still needs a full review before completion.
     markGreen(slice, review.decisions, 'unresolved', unresolved, review.targeted !== undefined);
     const sunk = ws.config.deferred === undefined ? 'no deferred sink configured' : isRecordSlice(slice) ? 'not deferred: a Record deferred items slice' : `sent to the ${ws.config.deferred.kind} sink`;
     addEvent(run, 'accepted-unresolved', `${review.id} after ${slice.fixRounds} fix rounds (${sunk}); open: ${unresolved.join('; ')}`, slice);
