@@ -44,7 +44,8 @@ import {
   writeAtomic,
 } from './run.ts';
 import { renderFinding } from './finding-text.ts';
-import { placeDefaults } from './place.ts';
+import { collectObservations, placeDefaults } from './place.ts';
+import { changedLines, changedPaths, targetedReview } from './targeted.ts';
 import { storedReport } from './report.ts';
 import { head, porcelain, requireOnBranchClean, snapshot } from './repo.ts';
 import {
@@ -108,7 +109,7 @@ export function recordDecisions(ws: Workspace, run: Run, decisions: unknown) {
   return { decisions: run.decisions, discarded };
 }
 
-/** Sends a green slice back to review on its green commit, for decisions newer than the review; its checks, which passed on that commit, stand. */
+/** Sends a green slice back to review on its green commit for `reason` (default: decisions newer than the review; startReview also uses it for a full review after a targeted green); its checks, which passed on that commit, stand. */
 function reopenReview(run: Run, slice: Slice, reason = 'decisions recorded after the green review') {
   slice.phase = 'review';
   clearGreen(slice);
@@ -279,10 +280,6 @@ export async function pathSkips(files: string[], contentOf: (file: string) => Pr
   return skips;
 }
 
-async function changedPaths(root: string, range: string, ...filter: string[]) {
-  return (await git(root, 'diff', '--name-only', '-z', ...filter, range)).split('\0').filter(Boolean);
-}
-
 /** Reads a changed file at `sha`; a file the range deletes has no content. */
 function committedContent(root: string, range: string, sha: string) {
   let present: Promise<Set<string>> | undefined;
@@ -337,7 +334,7 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
     fixItems.length === 0
       ? 'None.'
       : `The fix rounds since the last recorded review asked the implementer to fix these items, and the implementer has since committed. The scope reviewer gives each item a verdict in fixItems of factory_review_submit: fixed, not-a-defect, waived, or open. Check each item against the diff and the code, not the implementer's claims: not-a-defect needs evidence from the diff or code, waived needs a recorded decision, and an item left open blocks the slice and carries into the next round. Every other domain checks whether the code still has each problem in its domain, and reports one that remains as a finding under the same id.\n\n${UNTRUSTED_NOTE}\n\n${fixItems.join('\n')}`;
-  // A Record deferred items slice gets a light review: exactly bug, scope and comments.
+  // Light review: a targeted review runs only the blocking domains plus the required ones; a Record deferred items slice runs exactly bug, scope and comments.
   const light =
     targeting !== undefined
       ? REVIEW_DOMAINS.filter(domain => !required.includes(domain) && !targeting.domains.includes(domain)).map(domain => ({ domain, reason: `Targeted review: ${domain} did not block review ${targeting.from}` }))
@@ -349,17 +346,7 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
     entry => !kept.includes(entry.domain) && !skippedNames.includes(entry.domain) && !lightNames.includes(entry.domain),
   );
   const skipped = [...byPath, ...chosen.filter(entry => !lightNames.includes(entry.domain)), ...light];
-  let targeted: Review['targeted'];
-  let targetedSection = '';
-  if (targeting !== undefined) {
-    const fixRange = `${targeting.base}..${checked.sha}`;
-    const fixDiff = await git(ws.root, '-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--unified=0', fixRange);
-    const lines = changedLines(fixDiff, await changedPaths(ws.root, fixRange));
-    const commits = (await git(ws.root, 'log', '--oneline', fixRange)).trim();
-    const listedLines = Object.entries(lines).map(([file, ranges]) => `- ${file}: ${ranges.length === 0 ? '(no hunk lines: file-level only)' : ranges.map(([start, end]) => `${start}-${end}`).join(', ')}`);
-    targeted = { from: targeting.from, lines };
-    targetedSection = `## TARGETED REVIEW\n\nThis review follows review ${targeting.from}. It runs only the domains that blocked it (${targeting.domains.join(', ') || 'none'}) and the domains that always run. Report an observation only on a line the fix changed, listed below; the validator drops any other observation. Blocking findings anywhere in the slice diff still count. A full review of this commit follows once this one is green.\n\nFix diff: the commits since review ${targeting.from} (${targeting.base}):\n\n\`\`\`\n${evidence(commits === '' ? 'none' : commits, 2_000)}\n\`\`\`\n\nChanged lines (new side):\n\n${listedLines.join('\n') || 'None.'}\n\n`;
-  }
+  const { section: targetedSection, targeted } = targeting === undefined ? { section: '', targeted: undefined } : await targetedReview(ws, targeting, checked.sha);
   slice.reviews += 1;
   const id = `${slice.id}-r${slice.reviews}`;
   rmSync(reviewDir(ws, run.feature, id), { force: true, recursive: true });
@@ -390,34 +377,6 @@ function renderLaterSlices(run: Run, slice: Slice) {
     item => `### ${item.id}: ${item.title}\n\n**What to build:** ${item.whatToBuild}\n\n${item.acceptance.map(line => `- ${line}`).join('\n')}`,
   );
   return `## LATER SLICES\n\nLater slices of the plan build this work. Work a later slice lists is not a finding against this slice; this slice's own acceptance criteria, seams, and decisions still count in full, and code here that contradicts a later slice's plan is still a finding.\n\n${listed.join('\n\n')}`;
-}
-
-/**
- * Each changed path with the new-side line ranges of its hunks, context lines included. A path with no hunks (a
- * binary, mode-only, or deleted file) maps to no ranges, so a finding on it can only be file-level.
- */
-export function changedLines(diff: string, files: string[]) {
-  const lines: Record<string, [number, number][]> = Object.fromEntries(files.map(file => [file, []]));
-  let ranges: [number, number][] | undefined;
-  let header = false;
-  for (const line of diff.split('\n')) {
-    // Content lines start with ' ', '+', '-', or '\', so these prefixes only match headers.
-    if (line.startsWith('diff --git ')) {
-      header = true;
-      ranges = undefined;
-    } else if (header && line.startsWith('+++ ')) {
-      const name = line.slice(4).replace(/\t$/, '');
-      const path = (name.startsWith('"') ? (JSON.parse(name) as string) : name).replace(/^b\//, '');
-      ranges = name === '/dev/null' ? undefined : (lines[path] ??= []);
-    } else if (line.startsWith('@@ ')) {
-      header = false;
-      const match = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
-      const start = Number(match?.[1]);
-      const count = match?.[2] === undefined ? 1 : Number(match[2]);
-      if (ranges !== undefined && count > 0) ranges.push([start, start + count - 1]);
-    }
-  }
-  return lines;
 }
 
 /** The domains a review waits for: every domain it did not skip. */
@@ -731,32 +690,11 @@ export function targetingAfter(review: { id: string; sha: string }, domains: rea
   return { base: review.sha, domains: [...new Set(domains)], from: review.id };
 }
 
-/**
- * Adds the kept observations of review `reviewId`, green or red, to the slice's unplaced list, in place of any it already
- * holds from that review (so recording a review again adds nothing twice). One the ledger already holds is not added.
- * Every kept observation has a category: submitDomain refuses one without it, and a downgrade needs one.
- */
-function collectObservations(run: Run, slice: Slice, reviewId: string, observations: Finding[]) {
-  const others = slice.unplaced.filter(entry => entry.review !== reviewId);
-  const fresh = observations.filter(
-    finding =>
-      !run.observations.some(entry => entry.key === itemKey(reviewId, finding.id)) &&
-      !others.some(entry => findingLocation(entry.finding) === findingLocation(finding) && entry.finding.problem === finding.problem),
-  );
-  slice.unplaced = [
-    ...others,
-    ...fresh.map(finding => {
-      if (finding.category === undefined) throw new Error(`Observation "${finding.id}" has no category.`);
-      return { category: finding.category, finding, review: reviewId };
-    }),
-  ];
-}
-
 /** Marks the slice's review green over `decisions`; `unresolved` are the items it is accepted with, if any. */
-function markGreen(slice: Slice, decisions: number, kind: 'full' | 'targeted' | 'unresolved', unresolved?: string[], targeted = kind === 'targeted') {
+function markGreen(slice: Slice, decisions: number, { full = false, targeted = false, unresolved }: { full?: boolean; targeted?: boolean; unresolved?: string[] }) {
   slice.phase = 'ready';
   slice.targeting = undefined;
-  if (kind === 'full') slice.fullGreen = true;
+  if (full) slice.fullGreen = true;
   slice.green = { decisions, ...(targeted ? { targeted: true } : {}) };
   slice.unresolved = unresolved;
 }
@@ -804,7 +742,7 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
 
   if (verdict === 'APPROVED') {
     const full = review.targeted === undefined;
-    markGreen(slice, review.decisions, full ? 'full' : 'targeted');
+    markGreen(slice, review.decisions, full ? { full } : { targeted: true });
     addEvent(run, 'review-green', `${full ? '' : 'targeted '}${detail}`, slice);
     return { final: !needsFullReview(slice), kind: 'green', observations: observations.map(finding => renderFinding(finding, run.decisions)) };
   }
@@ -838,7 +776,7 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
     // Added only now that the deferred sink succeeded, so a retry after a failed sink does not log it twice.
     addEvent(run, 'review-blocking', blockingDetail, slice);
     // An accepted-unresolved targeted review still needs a full review before completion.
-    markGreen(slice, review.decisions, 'unresolved', unresolved, review.targeted !== undefined);
+    markGreen(slice, review.decisions, { targeted: review.targeted !== undefined, unresolved });
     const sunk = ws.config.deferred === undefined ? 'no deferred sink configured' : isRecordSlice(slice) ? 'not deferred: a Record deferred items slice' : `sent to the ${ws.config.deferred.kind} sink`;
     addEvent(run, 'accepted-unresolved', `${review.id} after ${slice.fixRounds} fix rounds (${sunk}); open: ${unresolved.join('; ')}`, slice);
     return { kind: 'accepted-unresolved', unresolved };

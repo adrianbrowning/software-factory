@@ -201,6 +201,25 @@ describe('batched observation placement', () => {
     assert.equal(slice0?.fixRounds, before);
     assert.equal(slice0?.unplaced.length, 0);
     assert.equal(readRun(ws, 'demo').observations[0]?.placement, 'fixed');
+    const fixFile = readFileSync(/Fix file: (\S+)/.exec(fixed)?.[1] ?? 'missing', 'utf8');
+    assert.match(fixFile, /## Observations from review 01-r1 the user chose to fix/);
+    assert.doesNotMatch(fixFile, /green review 01-r1/);
+  });
+
+  it('factory_place with a failing deferred sink keeps the placements made before the failure, leaves the rest unplaced and starts no fix round', async () => {
+    using gh = fakeGh();
+    using dir = repo({ deferred: { kind: 'github' } });
+    const { call, full, ws } = await interactive(dir.root);
+    await full([observation('first', 'naming'), observation('second', 'naming'), observation('gap', 'correctness')]);
+    gh.failOn(2);
+    await assert.rejects(
+      call('factory_place', { placements: [{ id: 'thermo-first', placement: 'defer' }, { id: 'thermo-second', placement: 'defer' }, { id: 'thermo-gap', placement: 'fix' }] }),
+      /The deferred sink failed[\s\S]*Placed so far:\nthermo-first: defer to the sink[\s\S]*Still unplaced: thermo-second, thermo-gap[\s\S]*No fix round started/,
+    );
+    const run = readRun(ws, 'demo');
+    assert.deepEqual(run.observations.map(entry => [entry.id, entry.placement]), [['thermo-first', 'deferred']]);
+    assert.deepEqual(run.slices[0]?.unplaced.map(entry => entry.finding.id), ['thermo-second', 'thermo-gap']);
+    assert.notEqual(run.slices[0]?.phase, 'fix');
   });
 
   it('factory_place fix sends the slice to an observation round that costs no fix budget', async () => {

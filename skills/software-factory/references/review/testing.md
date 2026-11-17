@@ -9,7 +9,7 @@ Your task gives you the review id and the data file (PR metadata, full diff, cha
 1. Load the `testing-best-practice` skill (`skill://testing-best-practice`). If it is not installed, say so in your final line and continue with the checklist below.
 
 2. Read the data file.
-   Apply the shared KNOWN OBSERVATIONS and TARGETED REVIEW rules in `skills/software-factory/references/known-observations.md`.
+   Apply the shared KNOWN OBSERVATIONS and TARGETED REVIEW rules in `<reference dir>/../known-observations.md` (the reference dir's parent).
 
 3. Review the diff against the checklist below.
 

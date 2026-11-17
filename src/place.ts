@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import { draftOf, deferItems, isRecordSlice, itemKey, requireSink } from './deferred.ts';
 import { evidenceHead, evidenceLine } from './evidence.ts';
-import { placeObservations } from './ledger.ts';
+import { findingLocation, findUnplaced, placeObservations } from './ledger.ts';
 import { carriedSection, renderFinding } from './finding-text.ts';
 import { addEvent, DEFAULT_PLACEMENT, greenCommit, Invalidated, requireActive, type Finding, type Run, type Slice, type Unplaced, type Workspace } from './run.ts';
 import { needsFullReview, writeTicket } from './workflow.ts';
@@ -52,7 +52,7 @@ export function planPlace(ws: Workspace, run: Run, request: PlaceRequest) {
   if (needsFullReview(slice)) throw new Error(`The last green review of slice ${slice.id} was targeted: place observations after its full review.`);
   const chosen = new Map<Unplaced, { choice: PlaceChoice; to?: string | undefined }>();
   for (const { id, placement, to } of request.placements) {
-    const found = slice.unplaced.filter(entry => entry.finding.id === id || itemKey(entry.review, entry.finding.id) === id);
+    const found = findUnplaced(slice, id);
     const [entry, ...others] = found;
     if (entry === undefined) {
       const held = run.observations.find(candidate => candidate.id === id || candidate.key === id);
@@ -90,13 +90,12 @@ export function describePlan(items: Planned[]) {
 const byReview = (items: Planned[]) => [...new Set(items.map(item => item.entry.review))].map(review => ({ findings: items.filter(item => item.entry.review === review).map(item => item.entry.finding), review: { id: review } }));
 
 /**
- * Applies `planPlace` to the run: carried and end-queued observations go into ticket sections or the waiting queue,
+ * Applies a `planPlace` result to the run: carried and end-queued observations go into ticket sections or the waiting queue,
  * left ones into the ledger, and deferred ones to the sink; each is then in the ledger and off the slice's unplaced list.
  * Returns the sink failure, if any, and `fixes`, the qualified ids chosen to fix (empty after a failure): the caller
  * sends them to factory_fix's observation round, which this module cannot, as review.ts imports it.
  */
-export async function placeObservationBatch(ws: Workspace, run: Run, request: PlaceRequest) {
-  const { items, slice } = planPlace(ws, run, request);
+export async function placeObservationBatch(ws: Workspace, run: Run, { items, slice }: ReturnType<typeof planPlace>) {
   const lastReview = slice.review?.id;
   const carried = items.filter(item => item.choice === 'carry' || item.choice === 'end');
   const targets = new Set<Slice>();
@@ -136,7 +135,28 @@ export async function placeObservationBatch(ws: Workspace, run: Run, request: Pl
 export async function placeDefaults(ws: Workspace, run: Run) {
   const slice = requireActive(run);
   if (run.mode !== 'headless' || slice.unplaced.length === 0) return false;
-  const { failure } = await placeObservationBatch(ws, run, { placements: [] });
+  const { failure } = await placeObservationBatch(ws, run, planPlace(ws, run, { placements: [] }));
   if (failure !== undefined) throw new Invalidated(`The deferred sink failed, so slice ${slice.id} is not complete: ${evidenceLine(failure.message, 500)}. Items already filed stay recorded; call factory_complete_slice again.`);
   return true;
+}
+
+/**
+ * Adds the kept observations of review `reviewId`, green or red, to the slice's unplaced list, in place of any it already
+ * holds from that review (so recording a review again adds nothing twice). One the ledger already holds is not added.
+ * Every kept observation has a category: submitDomain refuses one without it, and a downgrade needs one.
+ */
+export function collectObservations(run: Run, slice: Slice, reviewId: string, observations: Finding[]) {
+  const others = slice.unplaced.filter(entry => entry.review !== reviewId);
+  const fresh = observations.filter(
+    finding =>
+      !run.observations.some(entry => entry.key === itemKey(reviewId, finding.id)) &&
+      !others.some(entry => findingLocation(entry.finding) === findingLocation(finding) && entry.finding.problem === finding.problem),
+  );
+  slice.unplaced = [
+    ...others,
+    ...fresh.map(finding => {
+      if (finding.category === undefined) throw new Error(`Observation "${finding.id}" has no category.`);
+      return { category: finding.category, finding, review: reviewId };
+    }),
+  ];
 }

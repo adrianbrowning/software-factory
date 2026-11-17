@@ -14,7 +14,7 @@ Review as if responsible for next six months of changes. Best finding: "this who
 Your task gives you the review id and the data file (PR metadata, full diff, changed file list).
 
 1. Read the data file.
-   Apply the shared KNOWN OBSERVATIONS and TARGETED REVIEW rules in `skills/software-factory/references/known-observations.md`.
+   Apply the shared KNOWN OBSERVATIONS and TARGETED REVIEW rules in `<reference dir>/../known-observations.md` (the reference dir's parent).
 2. Apply all 8 lenses below line by line across the diff.
 3. For non-trivial logic, read the full source file to understand context beyond the diff.
 4. Ask the core questions for every changed file.

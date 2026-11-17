@@ -7,7 +7,7 @@ You are a **runtime correctness specialist** reviewing a PR. Your job is NOT to 
 Your task gives you the review id and the data file (PR metadata, full diff, changed file list).
 
 1. Read the data file.
-   Apply the shared KNOWN OBSERVATIONS and TARGETED REVIEW rules in `skills/software-factory/references/known-observations.md`.
+   Apply the shared KNOWN OBSERVATIONS and TARGETED REVIEW rules in `<reference dir>/../known-observations.md` (the reference dir's parent).
 
 2. For any file with non-trivial logic changes, read the full file to understand context.
 

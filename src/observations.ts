@@ -6,7 +6,7 @@
 import { z } from 'zod';
 import { evidence, evidenceLine, redact } from './evidence.ts';
 import { draftOf, isRecordSlice, itemKey, requireSink } from './deferred.ts';
-import { placeObservations, requireUnplaced } from './ledger.ts';
+import { findUnplaced, placeObservations, requireUnplaced } from './ledger.ts';
 import { carriedSection, renderFinding } from './finding-text.ts';
 import { findingRecord, keptFindings, readRecorded, recordedFindings, type Review, targetingAfter, validationFile, validationSchema } from './review.ts';
 import { addEvent, greenCommit, requireActive, type Finding, type Run, type Slice, type Workspace } from './run.ts';
@@ -132,8 +132,8 @@ export function planDefer(ws: Workspace, run: Run, request: DeferRequest) {
 }
 
 /**
- * The bug the user found and the observations the user chose to fix, with the green review they come from. The ids
- * may also be unplaced observations of any of the active slice's reviews, red ones too. Throws for a request with neither bug nor ids, for a slice without a green review, and for an id no
+ * The bug the user found and the observations the user chose to fix, with `groups` (each chosen observation under the review that kept it, red reviews included) and `review`, the slice's last review (the one the fix follows). The ids
+ * may be unplaced observations of any of the active slice's reviews. Throws for a request with neither bug nor ids, for a slice without a green review, and for an id no
  * review lists. Does not change the run.
  */
 export function planFix(ws: Workspace, run: Run, request: FixRequest) {
@@ -154,7 +154,7 @@ function unplacedObservations(run: Run, chosen: Set<string>) {
   const slice = run.slices.find(candidate => candidate.status === 'active');
   const review = slice?.review;
   if (slice === undefined || review === undefined || slice.phase !== 'ready' || greenCommit(slice) === undefined || chosen.size === 0) return undefined;
-  const entries = [...chosen].map(id => slice.unplaced.filter(entry => entry.finding.id === id || itemKey(entry.review, entry.finding.id) === id));
+  const entries = [...chosen].map(id => findUnplaced(slice, id));
   if (entries.some(found => found.length === 0)) return undefined;
   const ambiguous = [...chosen].filter((_, index) => (entries[index]?.length ?? 0) > 1);
   if (ambiguous.length > 0) throw new Error(`Observation ids unplaced under more than one review of slice ${slice.id}: ${ambiguous.join(', ')}.`);
