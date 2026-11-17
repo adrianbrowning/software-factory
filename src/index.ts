@@ -275,7 +275,8 @@ export function stopDecision(run: Run, sessionId: string, previous: { count: num
   return { action: 'block' as const, attempts: { count, events: run.events.length } };
 }
 
-export default function softwareFactory(pi: ExtensionAPI) {
+/** `checkGit` is the git-architecture check; tests replace it. */
+export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string | undefined = gitArchWarning) {
   // Under omp -p a bare sendUserMessage from a command handler is dropped before dispatch; an explicit steer starts the turn (smoke-tested: only it fires agent_start/turn_start).
   const sendContinuation = (text: string) => pi.sendUserMessage(text, { deliverAs: 'steer', attribution: 'agent' });
   pi.setLabel('Software Factory');
@@ -341,7 +342,12 @@ export default function softwareFactory(pi: ExtensionAPI) {
         });
       }
     }
-    const gitWarning = gitArchWarning();
+    let gitWarning: string | undefined;
+    try {
+      gitWarning = checkGit();
+    } catch {
+      gitWarning = undefined;
+    }
     bindRun(entry.pointer, { feature: run.feature, mainId: ctx.agent.id, ws });
     await pi.setActiveTools([...new Set([...pi.getActiveTools(), ...ORCHESTRATION_TOOLS])]);
     return reply(

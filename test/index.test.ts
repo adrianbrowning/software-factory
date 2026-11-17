@@ -777,3 +777,26 @@ describe('active run in a fresh extension copy', () => {
     assert.equal(existsSync(join(repo.root, '.moved')), false);
   });
 });
+
+describe('factory_start git architecture warning', () => {
+  const run = async (root: string, params: unknown, checkGit: () => string | undefined) => {
+    const main = { ...ctx('main', 'main'), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, notify() {} } };
+    return JSON.stringify(await load({ checkGit }).get('factory_start')?.execute('id', params, undefined, undefined, main));
+  };
+  const source = { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' };
+
+  it('adds the warning line to a new run reply and to a resume reply', async () => {
+    using repo = tempRepo('factory-gitwarn-', CHECKS_OK);
+    const started = await run(repo.root, { feature: 'demo', source }, () => 'WARN-GIT');
+    assert.match(started, /WARN-GIT/);
+    const resumed = await run(repo.root, { resume: 'demo' }, () => 'WARN-GIT');
+    assert.match(resumed, /WARN-GIT/);
+  });
+
+  it('leaves the reply without a warning when the check finds none, and never fails when it throws', async () => {
+    using repo = tempRepo('factory-gitwarn-none-', CHECKS_OK);
+    assert.doesNotMatch(await run(repo.root, { feature: 'demo', source }, () => undefined), /WARN-GIT/);
+    const resumed = await run(repo.root, { resume: 'demo' }, () => { throw new Error('boom'); });
+    assert.match(resumed, /Run \\"demo\\"/);
+  });
+});
