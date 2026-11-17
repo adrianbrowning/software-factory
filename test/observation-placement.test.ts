@@ -8,7 +8,7 @@ import { resetModuleState } from '../src/index.ts';
 import { carriedKeysLine, carriesKey } from '../src/legacy-observations.ts';
 import { type Finding, readRun, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview, submitDomain } from '../src/review.ts';
-import { addFollowUp, approvePlan, nextSlice, planSlices } from '../src/workflow.ts';
+import { addFollowUp, approvePlan, nextAction, nextSlice, planSlices } from '../src/workflow.ts';
 import { commit, fakeGh, finding, headlessSubmitRun, review, slice, submitGreenWithObservation, tempRepo } from './helpers.ts';
 
 beforeEach(() => resetModuleState());
@@ -168,6 +168,7 @@ describe('batched observation placement', () => {
     await withRun(ws, 'demo', run => completeSlice(ws, run));
     const run = readRun(ws, 'demo');
     assert.equal(run.waiting.length, 0);
+    assert.match(nextAction(run), /Run the retro/);
     assert.equal(run.observations.find(entry => entry.id === 'thermo-again')?.placement, 'left');
   });
 
