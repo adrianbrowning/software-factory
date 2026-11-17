@@ -428,32 +428,25 @@ export function planReslice(ws: Workspace, run: Run, proposed: unknown): Reslice
   // Review ids are `<slice id>-r<n>` and the first child keeps the slice id: continue the count so a new review
   // never reuses an old review directory.
   first.reviews = active.reviews;
-  // A Record deferred items slice stays one through a split, and its children share one batch (an older state file's slice has none yet).
-  if (active.record === true) {
-    const batch = active.recordBatch ?? newRecordBatch(run);
-    for (const child of slices.slice(index, index + children.length)) {
-      child.record = true;
-      child.recordBatch = batch;
-    }
-  }
+  // A slice's kind (Record deferred items with its batch, follow-up) stays through a split and a renumbering; an older state file's Record slice has no batch yet.
+  if (active.record === true) active.recordBatch ??= newRecordBatch(run);
+  for (const child of slices.slice(index, index + children.length)) copySliceKind(active, child);
   pending.forEach(slice => {
     const remade = remap.get(slice);
-    if (remade !== undefined && slice.record === true) {
-      remade.record = true;
-      remade.recordBatch = slice.recordBatch;
-    }
-  });
-  // A follow-up slice's observations never go back to the end queue, through a split or a renumbering.
-  if (active.fromEndQueue === true) {
-    for (const child of slices.slice(index, index + children.length)) child.fromEndQueue = true;
-  }
-  pending.forEach(slice => {
-    const remade = remap.get(slice);
-    if (remade !== undefined && slice.fromEndQueue === true) remade.fromEndQueue = true;
+    if (remade !== undefined) copySliceKind(slice, remade);
   });
   // The decisions the split slice builds go to its last child, which finishes its work; later slices keep theirs.
   slices[index + children.length - 1]?.ownsDecisions.push(...active.ownsDecisions);
   return { children: slices.slice(index, index + children.length), renamed: new Map([...remap].map(([old, remade]) => [old.id, remade.id])), slices };
+}
+
+/** Copies the fields that make a slice a Record slice or a follow-up slice from `from` to `to`: the one place a rebuilt slice takes its kind. */
+function copySliceKind(from: Slice, to: Slice) {
+  if (from.record === true) {
+    to.record = true;
+    to.recordBatch = from.recordBatch;
+  }
+  if (from.fromEndQueue === true) to.fromEndQueue = true;
 }
 
 /**

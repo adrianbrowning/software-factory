@@ -6,7 +6,7 @@
  */
 import { z } from 'zod';
 import { draftOf, deferItems, isRecordSlice, itemKey, requireSink } from './deferred.ts';
-import { evidenceHead } from './evidence.ts';
+import { evidenceHead, evidenceLine } from './evidence.ts';
 import { placeObservations } from './ledger.ts';
 import { carriedSection, renderFinding } from './finding-text.ts';
 import { addEvent, DEFAULT_PLACEMENT, greenCommit, Invalidated, requireActive, type Finding, type Run, type Slice, type Unplaced, type Workspace } from './run.ts';
@@ -137,6 +137,6 @@ export async function placeDefaults(ws: Workspace, run: Run) {
   const slice = requireActive(run);
   if (run.mode !== 'headless' || slice.unplaced.length === 0) return false;
   const { failure } = await placeObservationBatch(ws, run, { placements: [] });
-  if (failure !== undefined) throw new Invalidated(`The deferred sink failed, so slice ${slice.id} is not complete: ${failure.message}. Items already filed stay recorded; call factory_complete_slice again.`);
+  if (failure !== undefined) throw new Invalidated(`The deferred sink failed, so slice ${slice.id} is not complete: ${evidenceLine(failure.message, 500)}. Items already filed stay recorded; call factory_complete_slice again.`);
   return true;
 }

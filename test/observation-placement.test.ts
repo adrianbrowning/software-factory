@@ -18,7 +18,7 @@ type Reply = { content: { text: string }[] };
 
 const repo = (extra: Record<string, unknown> = {}) => tempRepo('factory-place-', { 'demo.md': '# Demo\n\nDo it.\n', '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], ...extra }) });
 
-/** An observation of the thermo domain with an explicit category. */
+/** An observation of `domain` (thermo by default) with an explicit category. */
 const observation = (name: string, category: NonNullable<Finding['category']>, domain = 'thermo'): Finding => ({ ...finding(domain as Finding['domain'], 'observation', name), category, problem: `${name} misleads the reader` });
 
 /** An interactive run of slices Feature and Second, driven through the registered tools; `dialogs` collects every confirm title (all answered yes). */
@@ -272,6 +272,45 @@ describe('batched observation placement', () => {
     assert.equal(run.observations.find(entry => entry.id === 'thermo-again')?.placement, 'left');
   });
 
+  it('a headless follow-up slice with a sink defers its own end-default observations, not the end queue', async () => {
+    using dir = repo();
+    const { ws } = await headlessSubmitRun(dir.root, ['Feature'], {}, { deferred: { kind: 'file' } });
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const first = await withRun(ws, 'demo', run => startReview(ws, run));
+    await review(ws, first.reviewId, [observation('gap', 'correctness')]);
+    await withRun(ws, 'demo', run => recordReview(ws, run));
+    await withRun(ws, 'demo', run => completeSlice(ws, run));
+    assert.equal(readRun(ws, 'demo').waiting.length, 1);
+    await withRun(ws, 'demo', run => addFollowUp(ws, run, slice('Follow up', [])));
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    commit(ws, 'follow.txt');
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const second = await withRun(ws, 'demo', run => startReview(ws, run));
+    await review(ws, second.reviewId, [{ ...observation('again', 'correctness'), path: 'follow.txt' }]);
+    await withRun(ws, 'demo', run => recordReview(ws, run));
+    await withRun(ws, 'demo', run => completeSlice(ws, run));
+    const run = readRun(ws, 'demo');
+    assert.equal(run.waiting.length, 0);
+    assert.match(nextAction(run), /Run the retro/);
+    assert.equal(run.observations.find(entry => entry.id === 'thermo-again')?.placement, 'deferred');
+  });
+
+  it('a headless final green review reply says the defaults apply on completion and does not ask for the ask or factory_place', async () => {
+    using dir = repo();
+    const { ws } = await headlessSubmitRun(dir.root, ['Feature']);
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+    await review(ws, reviewId, [observation('naming', 'naming')]);
+    const caller = { ...ctx('main', 'main'), cwd: dir.root, hasUI: false, sessionManager: { getSessionId: () => 'session' } };
+    const tool = load().get('factory_review_record');
+    if (tool === undefined) throw new Error('no tool factory_review_record');
+    const text = ((await tool.execute('id', {}, undefined, undefined, caller)) as Reply).content[0]?.text ?? '';
+    assert.match(text, /factory_complete_slice places them by default/);
+    assert.match(text, /Default placement/);
+    assert.doesNotMatch(text, /Show the user one ask/);
+    assert.doesNotMatch(text, /factory_place/);
+  });
+
   it('a re-sliced headless follow-up slice keeps its children out of the end queue', async () => {
     using dir = repo();
     const { ws } = await headlessSubmitRun(dir.root, ['Feature']);
@@ -344,7 +383,7 @@ describe('batched observation placement', () => {
     await call('factory_place', { placements: [] });
     const before = readRun(ws, 'demo');
     breakTicket(ws);
-    await assert.rejects(call('factory_complete_slice', {}), error => error instanceof Error && !/after its default observations were placed/.test(error.message));
+    await assert.rejects(call('factory_complete_slice', {}), error => error instanceof Error && /EISDIR/.test(error.message) && !/after its default observations were placed/.test(error.message));
     const after = readRun(ws, 'demo');
     assert.equal(after.slices[0]?.status, 'active');
     assert.deepEqual(after.events, before.events, 'no slice-done event is kept');

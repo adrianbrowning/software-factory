@@ -171,7 +171,7 @@ function unplacedObservations(run: Run, chosen: Set<string>) {
 export function fixObservations(ws: Workspace, run: Run, request: FixRequest, reason: string) {
   const { bug, groups, observations, review, slice } = planFix(ws, run, request);
   const ids = observations.map(finding => finding.id);
-  addEvent(run, 'fix-observations', `${review.id}: ${[...(bug === undefined ? [] : ['bug']), ...ids].join(', ')}`, slice);
+  addEvent(run, 'fix-observations', `${groups.map(group => group.review.id).join(', ')}: ${[...(bug === undefined ? [] : ['bug']), ...ids].join(', ')}`, slice);
   for (const group of groups) placeObservations(run, group.review, slice, group.observations, 'fixed');
   const why = evidence(reason, 4_000);
   const records: FixRecord[] = [
@@ -183,7 +183,9 @@ export function fixObservations(ws: Workspace, run: Run, request: FixRequest, re
             section: `## Bug found after green review ${review.id}\n\n${why}\n\n${redact(bug)}`,
           },
         ]),
-    ...observations.map(finding => findingRecord(finding, `## Observations from green review ${review.id} the user chose to fix\n\n${why}`, run.decisions)),
+    ...groups.flatMap(group =>
+      group.observations.map(finding => findingRecord(finding, `## Observations from ${group.review.id === review.id ? 'green review' : 'review'} ${group.review.id} the user chose to fix\n\n${why}`, run.decisions)),
+    ),
   ];
   // A bug round needs a full review; an observation-only round is reviewed only where it changed things (a targeted review).
   slice.targeting = bug === undefined ? targetingAfter(review, observations.map(finding => finding.domain)) : undefined;

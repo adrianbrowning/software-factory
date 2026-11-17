@@ -1,6 +1,6 @@
 import { REVIEWER, VALIDATOR } from './agents.ts';
 import { deferItems, describeSink, itemKey, requireSink } from './deferred.ts';
-import { evidenceHead } from './evidence.ts';
+import { evidenceHead, evidenceLine } from './evidence.ts';
 import { confirmInteractive, gate } from './gates.ts';
 import { placeObservations } from './ledger.ts';
 import { defaultChoice, describeChoice, describePlan, placeObservationBatch, placementSchema, planPlace } from './place.ts';
@@ -142,6 +142,11 @@ export function registerReviewTools(tool: RunTool) {
         const slice = activeSlice(run);
         if (result.final && slice !== undefined && slice.unplaced.length > 0) {
           const listed = slice.unplaced.map(entry => `${renderFinding(entry.finding, run.decisions)}\n- Category: ${entry.category}\n- Review: ${entry.review}\n- Default placement: ${describeChoice(defaultChoice(ws, run, slice, entry))}`).join('\n\n');
+          if (run.mode === 'headless') {
+            return reply(
+              `Review is green, and it is the slice's final review.\nUnplaced observations of slice ${slice.id} (every review's, with the default placement of each); factory_complete_slice places them by default, so there is nothing to ask the user:\n${listed}${bug}\nNext: ${nextAction(run)}`,
+            );
+          }
           return reply(
             `Review is green, and it is the slice's final review.\nUnplaced observations of slice ${slice.id} (every review's, with the default placement of each):\n${listed}\nShow the user one ask with these defaults preselected, then call factory_place once with only the exceptions (placements [] takes every default): fix in this slice, carry to a pending slice (to), end (the queue for one follow-up slice), defer to the sink, or leave. factory_complete_slice refuses while any is unplaced.${bug}\nNext: ${nextAction(run)}`,
           );
@@ -184,7 +189,7 @@ export function registerReviewTools(tool: RunTool) {
         return { failure: placed.failure, fixed, lines: done.map(item => `${item.entry.finding.id}: ${describeChoice(item.choice, item.target?.id)}`), rest: placed.slice.unplaced.map(entry => entry.finding.id) };
       });
       if (failure !== undefined) {
-        throw new Error(`The deferred sink failed: ${failure.message}. Placed so far:\n${lines.join('\n')}\nStill unplaced: ${rest.join(', ')}. No fix round started; call factory_place again for them.`);
+        throw new Error(`The deferred sink failed: ${evidenceLine(failure.message, 500)}. Placed so far:\n${lines.join('\n')}\nStill unplaced: ${rest.join(', ')}. No fix round started; call factory_place again for them.`);
       }
       const back = fixed === undefined ? '' : `\nSlice ${planned.slice.id} is back in fix. Fix file: ${fixed.fixPath}`;
       return reply(`Placed:\n${lines.join('\n')}${back}\nNext: ${nextAction(readRun(ws, feature))}`);
@@ -299,7 +304,7 @@ export function registerReviewTools(tool: RunTool) {
         return { failure: failed, lines: [...filed.map(item => `${item.id ?? 'note'}: ${item.location}`), `Next: ${nextAction(run)}`], rest };
       });
       if (failure !== undefined) {
-        throw new Error(`The deferred sink failed: ${failure.message}. Filed items stay recorded and are refused if sent again; call factory_defer again with only the rest: ${rest.join(', ')}.\n${lines.join('\n')}`);
+        throw new Error(`The deferred sink failed: ${evidenceLine(failure.message, 500)}. Filed items stay recorded and are refused if sent again; call factory_defer again with only the rest: ${rest.join(', ')}.\n${lines.join('\n')}`);
       }
       return reply(`Deferred:\n${lines.join('\n')}`);
     },
