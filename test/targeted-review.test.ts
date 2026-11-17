@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { beforeEach, describe, it } from 'node:test';
 import { ctx, load } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
 import { type Finding, readRun, withRun, type Workspace } from '../src/run.ts';
-import { approvePlan, nextSlice, planSlices } from '../src/workflow.ts';
+import { approvePlan, nextAction, nextSlice, planSlices } from '../src/workflow.ts';
 import { commit, finding, slice, tempRepo } from './helpers.ts';
 
 beforeEach(() => resetModuleState());
@@ -68,7 +69,7 @@ describe('targeted re-review', () => {
     assert.deepEqual(targeted.domains, sorted('security', 'bug', 'scope', 'testing'));
     const data = readFileSync(targeted.dataFile, 'utf8');
     assert.match(data, /## TARGETED REVIEW\n/);
-    assert.match(data, new RegExp(`${first.reviewId}[\\s\\S]*## TARGETED REVIEW|## TARGETED REVIEW[\\s\\S]*${first.reviewId}`));
+    assert.match(/## TARGETED REVIEW\n([\s\S]*?)\n## /.exec(data)?.[1] ?? '', new RegExp(`This review follows review ${first.reviewId}`));
     assert.match(data, /- second\.txt: 1-2\n/, 'the fix diff changed lines are listed');
     assert.doesNotMatch(/## TARGETED REVIEW\n([\s\S]*?)\n## /.exec(data)?.[1] ?? '', /- ok: /, 'lines of the slice outside the fix diff are not listed');
     assert.match(data, /add second\.txt/, 'the commits of the fix diff are listed');
@@ -134,6 +135,8 @@ describe('targeted re-review', () => {
     assert.match(data, /- lines\.txt: 6(-6)?\n/, 'only the changed line is listed');
     const near = { ...finding('bug', 'observation', 'near'), line: 8, path: 'lines.txt' };
     await assert.rejects(finish(targeted.domains, [near], [near.id]), /outside the fix diff[\s\S]*bug-near/);
+    const last = { ...finding('bug', 'observation', 'last'), line: 6, path: 'lines.txt' };
+    await finish(targeted.domains, [last], [last.id], false);
   });
 
   it('allows a full review on the same commit after a targeted green, and completes only after the full one is green', async () => {
@@ -145,6 +148,7 @@ describe('targeted re-review', () => {
     const targeted = await open();
     const green = await finish(targeted.domains, [], []);
     assert.match(green?.content[0]?.text ?? '', /Review is green/);
+    assert.match(nextAction(readRun(ws, 'demo')), /targeted[\s\S]*factory_review_start/);
 
     await assert.rejects(call('factory_complete_slice', {}), /full review/);
     const before = readRun(ws, 'demo').slices[0]?.checked?.sha;
@@ -211,5 +215,72 @@ describe('targeted re-review', () => {
     assert.ok(next.domains.length > 4);
     await finish(next.domains, [], []);
     assert.match((await call('factory_complete_slice', {})).content[0]?.text ?? '', /Slice 01 is done/);
+  });
+});
+
+describe('targeted re-review in other flows', () => {
+  it('needs a full review after a headless accepted-unresolved targeted review', async () => {
+    using dir = repo();
+    const { call, finish, open, red, ws } = await setup(dir.root);
+    await red(finding('security', 'high', 'leak'));
+    commit(ws, 'second.txt', 'a\nb\n');
+    await call('factory_checks', {});
+    await withRun(ws, 'demo', run => {
+      run.mode = 'headless';
+      const active = run.slices[0];
+      if (active !== undefined) active.fixRounds = active.roundLimit;
+    });
+    const targeted = await open();
+    const reply = await finish(targeted.domains, [finding('security', 'high', 'still')], ['security-still']);
+    assert.match(reply?.content[0]?.text ?? '', /unresolved/i);
+    assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'ready');
+    await assert.rejects(call('factory_complete_slice', {}), /full review/);
+  });
+
+  it('keeps a file-level observation on a file the fix deletes, because the data file lists it as having no hunk lines', async () => {
+    using dir = tempRepo('factory-targeted-', { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }), 'gone.txt': 'a\n' });
+    const { call, finish, open } = await setup(dir.root);
+    const first = await open();
+    await finish(first.domains, [finding('security', 'high', 'leak')], ['security-leak']);
+    execFileSync('git', ['rm', '-q', 'gone.txt'], { cwd: dir.root });
+    execFileSync('git', ['commit', '-qm', 'remove gone.txt'], { cwd: dir.root });
+    await call('factory_checks', {});
+    const targeted = await open();
+    assert.match(readFileSync(targeted.dataFile, 'utf8'), /- gone\.txt: \(no hunk lines/);
+    const { line: _line, ...base } = finding('bug', 'observation', 'deleted');
+    const fileLevel: Finding = { ...base, path: 'gone.txt' };
+    const recorded = await finish(targeted.domains, [fileLevel], [fileLevel.id]);
+    assert.match(recorded?.content[0]?.text ?? '', /Review is green/);
+  });
+
+  it('gives a restacked slice a full review, not one targeted over its pre-restack base', async () => {
+    using dir = repo();
+    const { call, finish, open, ws } = await setup(dir.root);
+    await finish((await open({ skip: [] })).domains, [], []);
+    await call('factory_complete_slice', {});
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    commit(ws, 'second.txt', 'a\n');
+    await call('factory_checks', {});
+    const second = await call('factory_review_start', { skip: [] });
+    const reviewId = second.details?.reviewId ?? assert.fail('no review');
+    const blocking = { ...finding('security', 'high', 'leak'), line: 1, path: 'second.txt' };
+    for (const domain of second.details?.domains ?? []) {
+      await call('factory_review_submit', { domain, findings: domain === 'security' ? [blocking] : [], reviewId, ...(domain === 'scope' ? { fixItems: [] } : {}) }, 'factory-reviewer');
+    }
+    await call('factory_review_validate', { dropped: [], keep: [blocking.id], reviewId }, 'factory-review-validator');
+    await call('factory_review_record', {});
+    assert.ok(readRun(ws, 'demo').slices[1]?.targeting !== undefined, 'the red review targets the next one');
+
+    await call('factory_reopen', { reason: 'bug', slice: '01' });
+    commit(ws, 'fix.txt');
+    await call('factory_checks', {});
+    await finish((await open({ skip: [] })).domains, [], []);
+    await call('factory_complete_slice', {});
+
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    assert.equal(readRun(ws, 'demo').slices[1]?.targeting, undefined);
+    await call('factory_checks', {});
+    const next = await call('factory_review_start', { skip: [] });
+    assert.doesNotMatch(readFileSync(next.details?.dataFile ?? assert.fail('no data file'), 'utf8'), /## TARGETED REVIEW/);
   });
 });

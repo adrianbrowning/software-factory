@@ -660,6 +660,7 @@ export async function restartSlice(ws: Workspace, run: Run, slice: Slice) {
   const own = (await git(ws.root, 'rev-list', '--count', `${slice.parentBranch}..refs/heads/${slice.branch}`)).trim();
   slice.status = 'pending';
   dropPass(slice, own === '0' ? 'implement' : 'checks');
+  slice.targeting = undefined;
   slice.fixPath = undefined;
   slice.fixFromSha = undefined;
   writeTicket(ws, run, slice);
@@ -853,9 +854,9 @@ export function nextAction(run: Run): string {
         ? `Pick the review domains for ${where} from its changed files, then call factory_review_start with the domains to skip.`
         : `Finish review ${slice.review.id}: every domain reviewer and the validator must submit, then call factory_review_record.`;
     case 'ready':
+      if (needsFullReview(slice)) return `The last green review of ${where} was targeted: call factory_review_start for a full review of the same commit (no new checks), then factory_complete_slice.`;
       // LEGACY-STATE(decision-before-reset): only a state file written before factory_decide reset reviews keeps
       // decisions newer than a green review; remove with the matching branches in review.ts.
-      if (needsFullReview(slice)) return `The last green review of ${where} was targeted: call factory_review_start for a full review of the same commit (no new checks), then factory_complete_slice.`;
       return outdatedGreenCount(run, slice) === undefined
         ? `Call factory_complete_slice for ${where}.`
         : `Decisions landed after the green review of ${where}: pick the review domains, then call factory_review_start for a new review of the same commit. The checks do not run again.`;
