@@ -9,7 +9,7 @@ import { join } from 'node:path';
 
 import { loadConfig } from '../src/config.ts';
 import { recordReview, runChecks, startReview, submitDomain, submitValidation, completeSlice } from '../src/review.ts';
-import { readRun, REVIEW_DOMAINS, withRun } from '../src/run.ts';
+import { type Finding, readRun, REVIEW_DOMAINS, type Run, withRun } from '../src/run.ts';
 import { approvePlan, nextSlice, planSlices } from '../src/workflow.ts';
 import { leaveObservations } from '../src/observations.ts';
 import { ctx, load } from '../test/extension.ts';
@@ -29,39 +29,40 @@ const main = { ...ctx('main', 'main'), cwd: root, hasUI: true, models: { resolve
 await load().get('factory_start')?.execute('id', { feature: 'demo', source: { body: 'Add greetings', kind: 'text', ref: 'pasted', title: 'Demo' } }, undefined, undefined, main);
 const ws = { config: loadConfig(root), root };
 const s = (title: string, blockedBy: string[]) => ({ acceptance: [`${title} works`], blockedBy, estimateTokens: 500, noTestReason: 'smoke: nothing to test', seams: [], title, whatToBuild: title });
-await withRun(ws, 'demo', (run: any) => approvePlan(ws, run, planSlices(ws, run, [s('Greeting', []), s('Loud greeting', ['Greeting'])])));
+await withRun(ws, 'demo', (run: Run) => approvePlan(ws, run, planSlices(ws, run, [s('Greeting', []), s('Loud greeting', ['Greeting'])])));
 
 const problem = "The exported function name `f` does not say what it does: a reader of a call site cannot tell that it returns a greeting.";
-const thermo = (id: string, title: string) => ({ category: 'naming', domain: 'thermo', fix: 'Rename f to greet.', fix_prompt: 'Rename f to greet in greet.ts and its callers.', id, line: 1, path: 'greet.ts', problem, severity: 'observation', title });
+const thermo = (id: string, title: string): Finding => ({ category: 'naming', domain: 'thermo', fix: 'Rename f to greet.', fix_prompt: 'Rename f to greet in greet.ts and its callers.', id, line: 1, path: 'greet.ts', problem, severity: 'observation' as const, title });
 
-async function reviewWith(findings: any[], validate: boolean) {
-  await withRun(ws, 'demo', (run: any) => runChecks(ws, run));
-  const { reviewId } = await withRun(ws, 'demo', (run: any) => startReview(ws, run));
-  const reviewed = readRun(ws, 'demo').slices.find((x: any) => x.review?.id === reviewId);
-  const skipped = reviewed.review.skipped.map((x: any) => x.domain);
-  const domains = REVIEW_DOMAINS.filter((d: string) => !skipped.includes(d));
+async function reviewWith(findings: Finding[], validate: boolean) {
+  await withRun(ws, 'demo', (run: Run) => runChecks(ws, run));
+  const { reviewId } = await withRun(ws, 'demo', (run: Run) => startReview(ws, run));
+  const reviewed = readRun(ws, 'demo').slices.find((x) => x.review?.id === reviewId);
+  if (reviewed?.review === undefined) throw new Error(`review ${reviewId} is not open on a slice`);
+  const skipped = reviewed.review.skipped.map((x) => x.domain);
+  const domains = REVIEW_DOMAINS.filter((d) => !skipped.includes(d));
   for (const domain of domains) {
-    await withRun(ws, 'demo', (run: any) => submitDomain(ws, run, { agentId: `r-${domain}`, domain, findings: findings.filter(f => f.domain === domain), reviewId, ...(domain === 'scope' ? { fixItems: [] } : {}) }));
+    await withRun(ws, 'demo', (run: Run) => submitDomain(ws, run, { agentId: `r-${domain}`, domain, findings: findings.filter(f => f.domain === domain), reviewId, ...(domain === 'scope' ? { fixItems: [] } : {}) }));
   }
-  if (validate) await withRun(ws, 'demo', (run: any) => submitValidation(ws, run, { agentId: 'validator', dropped: [], keep: findings.map(f => f.id), reviewId }));
+  if (validate) await withRun(ws, 'demo', (run: Run) => submitValidation(ws, run, { agentId: 'validator', dropped: [], keep: findings.map(f => f.id), reviewId }));
   return reviewId;
 }
 
 // Slice 01: f in greet.ts, green with the naming observation, which the user leaves.
-await withRun(ws, 'demo', (run: any) => nextSlice(ws, run));
+await withRun(ws, 'demo', (run: Run) => nextSlice(ws, run));
 writeFileSync(join(root, 'ok'), 'x\n');
 writeFileSync(join(root, 'greet.ts'), "export const f = (name: string) => `hello ${name}`;\n");
 git('add', '.');
 git('commit', '-qm', 'add f');
 await reviewWith([thermo('thermo-unclear-name', 'f is an unclear name')], true);
-console.error('slice 01 review:', (await withRun(ws, 'demo', (run: any) => recordReview(ws, run))).kind);
-await withRun(ws, 'demo', (run: any) => leaveObservations(ws, run, { observations: ['thermo-unclear-name'] }));
-await withRun(ws, 'demo', (run: any) => completeSlice(ws, run));
+console.error('slice 01 review:', (await withRun(ws, 'demo', (run: Run) => recordReview(ws, run))).kind);
+await withRun(ws, 'demo', (run: Run) => leaveObservations(ws, run, { observations: ['thermo-unclear-name'] }));
+await withRun(ws, 'demo', (run: Run) => completeSlice(ws, run));
 
 // Slice 02: greet.ts line 1 changes, f keeps its name; thermo reports the same problem under a new id.
-await withRun(ws, 'demo', (run: any) => nextSlice(ws, run));
+await withRun(ws, 'demo', (run: Run) => nextSlice(ws, run));
 writeFileSync(join(root, 'greet.ts'), "export const f = (name: string, loud = false) => (loud ? `HELLO ${name.toUpperCase()}` : `hello ${name}`);\n");
 git('add', '.');
 git('commit', '-qm', 'loud f');
-await withRun(ws, 'demo', (run: any) => runChecks(ws, run));
+await withRun(ws, 'demo', (run: Run) => runChecks(ws, run));
 console.log(JSON.stringify({ root, repeat: thermo('thermo-vague-function-name', 'Function name f is vague') }));

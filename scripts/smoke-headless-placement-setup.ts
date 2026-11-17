@@ -8,7 +8,7 @@ import { join } from 'node:path';
 
 import { loadConfig } from '../src/config.ts';
 import { runChecks } from '../src/review.ts';
-import { withRun } from '../src/run.ts';
+import { withRun, type Run } from '../src/run.ts';
 import { approvePlan, nextSlice, planSlices } from '../src/workflow.ts';
 import { ctx, load } from '../test/extension.ts';
 
@@ -34,11 +34,11 @@ const caller = { ...ctx('main', 'main'), cwd: root, hasUI: true, models: { resol
 await commands.get('factory')?.handler('headless demo.md', caller);
 const ws = { config: loadConfig(root), root };
 const s = (title: string, blockedBy: string[]) => ({ acceptance: [`${title} works`], blockedBy, estimateTokens: 500, noTestReason: 'smoke: nothing to test', seams: [], title, whatToBuild: title });
-await withRun(ws, 'demo', (run: { feature: string }) => approvePlan(ws, run, planSlices(ws, run, [s('Greeting', []), s('Loud greeting', ['Greeting'])])));
-await withRun(ws, 'demo', (run: { feature: string }) => nextSlice(ws, run));
+await withRun(ws, 'demo', (run: Run) => approvePlan(ws, run, planSlices(ws, run, [s('Greeting', []), s('Loud greeting', ['Greeting'])])));
+await withRun(ws, 'demo', (run: Run) => nextSlice(ws, run));
 writeFileSync(join(root, 'ok'), 'x\n');
 writeFileSync(join(root, 'greet.ts'), 'export const f = (name: string) => `hello ${name}`;\n');
 git('add', '.');
 git('commit', '-qm', 'add f');
-await withRun(ws, 'demo', (run: { feature: string }) => runChecks(ws, run));
+await withRun(ws, 'demo', (run: Run) => runChecks(ws, run));
 console.log(JSON.stringify({ root }));

@@ -1,6 +1,6 @@
 #!/bin/sh
 # Real-omp smoke: a real reviewer gives a category; headless factory_complete_slice places it by default. See docs/smoke-testing.md. Not part of `pnpm run test`.
-# Usage: scripts/smoke-headless-placement.sh <provider/model id>   (needs omp on PATH; spends up to --max-cost 5)
+# Usage: scripts/smoke-headless-placement.sh <provider/model id>   (needs omp and jq on PATH; spends up to --max-cost 5)
 set -eu
 model=${1:?usage: smoke-headless-placement.sh <provider/model id>}
 plugin=$(cd "$(dirname "$0")/.." && pwd)
@@ -8,6 +8,7 @@ repo=$(mktemp -d /tmp/factory-smoke-XXXX)
 trap 'rm -rf "$repo"' EXIT
 
 echo "omp $(omp --version)"
+command -v jq >/dev/null || { echo 'jq is required'; exit 1; }
 node "$plugin/scripts/smoke-headless-placement-setup.ts" "$repo" "$model"
 # The setup stops at passing checks and opens no review: factory_start with resume discards a review opened before it.
 prompt=$(cat <<'PROMPT'
@@ -19,7 +20,7 @@ import os
 def task(d):
     base = f"Review id: REVIEW_ID\nDomain: {d}\nData file: DATA\nReference file: {os.path.join('REFDIR', d + '.md')}\nThis is a smoke test; keep it short. "
     if d == "thermo":
-        return base + "Submit exactly one finding: an observation that the exported name `f` at greet.ts line 1 does not say what the function does. Fill every field your agent instructions require. Submit no other finding."
+        return base + "Submit exactly one finding: an observation that the exported name `f` at greet.ts line 1 does not say what the function does. Give it the category naming. Fill every field your agent instructions require. Submit no other finding."
     return base + "Submit an empty findings list" + (" and an empty fixItems list." if d == "scope" else ".")
 hs = [agent(task(d), agent="factory-reviewer", label=f"rev-{d}") for d in DOMAINS]
 print(wait(hs, raise_errors=False))
@@ -42,10 +43,10 @@ cat "$rundir/reviews/$id/validation.json" || { echo "FAIL: no validation.json"; 
 echo
 state=$rundir/state.json
 grep -q '"kind": *"review-green"' "$state" || { echo "FAIL: no review-green event"; exit 1; }
-# The thermo reviewer's one observation: its id and a naming, structure or style category, and the validator kept it.
+# The thermo reviewer's one observation: its id and a naming category, and the validator kept it.
 thermo=$rundir/reviews/$id/domains/thermo.json
-fid=$(jq -r '[.[] | select(.severity == "observation" and (.category | IN("naming", "structure", "style")))][0].id // empty' "$thermo")
-[ -n "$fid" ] || { echo "FAIL: the thermo reviewer gave no observation with a naming, structure or style category"; exit 1; }
+fid=$(jq -r '[.[] | select(.severity == "observation" and .category == "naming")][0].id // empty' "$thermo")
+[ -n "$fid" ] || { echo "FAIL: the thermo reviewer gave no observation with a naming category"; exit 1; }
 jq -e --arg id "$fid" '(.keep // []) | index($id) != null' "$rundir/reviews/$id/validation.json" >/dev/null || { echo "FAIL: the validator did not keep $fid"; exit 1; }
 # Headless factory_complete_slice placed that observation by default: the setup configures a file sink, so naming,
 # structure and style go to the sink ('deferred' in the ledger and a run.deferred item), and nothing stays unplaced.

@@ -1,6 +1,6 @@
 #!/bin/sh
-# Real-omp smoke: decision 15, a real validator drops a repeat observation under a new id as "same as <key>". See docs/smoke-testing.md. Not part of `pnpm run test`.
-# Usage: scripts/smoke-known-observations.sh <provider/model id>   (needs omp on PATH; spends up to --max-cost 5)
+# Real-omp smoke: a real validator drops a repeat observation under a new id as "same as <key>" (rule: skills/software-factory/references/known-observations.md). See docs/smoke-testing.md. Not part of `pnpm run test`.
+# Usage: scripts/smoke-known-observations.sh <provider/model id>   (needs omp and jq on PATH; spends up to --max-cost 5)
 set -eu
 model=${1:?usage: smoke-known-observations.sh <provider/model id>}
 plugin=$(cd "$(dirname "$0")/.." && pwd)
@@ -8,6 +8,7 @@ repo=$(mktemp -d /tmp/factory-smoke-XXXX)
 trap 'rm -rf "$repo"' EXIT
 
 echo "omp $(omp --version)"
+command -v jq >/dev/null || { echo 'jq is required'; exit 1; }
 node "$plugin/scripts/smoke-known-observations-setup.ts" "$repo" "$model"
 # The setup stops at passing checks and opens no review: factory_start with resume discards a review opened before it.
 prompt=$(cat <<'PROMPT'
