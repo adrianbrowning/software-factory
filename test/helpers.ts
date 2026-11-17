@@ -160,12 +160,12 @@ export async function greenWithObservation(ws: Workspace) {
   assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
 }
 
-/** Takes the active slice from committed work to green. */
 /** Places the active slice's unplaced observations by their defaults, as factory_place with no exceptions does. */
 export async function settleObservations(ws: Workspace) {
   await step(ws, run => placeObservationBatch(ws, run, { placements: [] }));
 }
 
+/** Takes the active slice from committed work to green. */
 export async function green(ws: Workspace) {
   await step(ws, run => runChecks(ws, run));
   const { reviewId } = await step(ws, run => startReview(ws, run));

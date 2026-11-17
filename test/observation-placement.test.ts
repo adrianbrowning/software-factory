@@ -6,10 +6,10 @@ import { ctx, load } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
 import { carriedKeysLine, carriesKey } from '../src/legacy-observations.ts';
-import { type Finding, readRun, withRun, type Workspace } from '../src/run.ts';
-import { completeSlice, recordReview, runChecks, startReview, submitDomain } from '../src/review.ts';
+import { type Finding, readRun, REVIEW_DOMAINS, withRun, type Workspace } from '../src/run.ts';
+import { completeSlice, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
 import { addFollowUp, applyReslice, approvePlan, nextAction, nextSlice, planReslice, planSlices } from '../src/workflow.ts';
-import { commit, fakeGh, finding, headlessSubmitRun, review, slice, submitGreenWithObservation, tempRepo } from './helpers.ts';
+import { commit, fakeGh, finding, headlessSubmitRun, noFixItems, review, slice, submitGreenWithObservation, tempRepo } from './helpers.ts';
 
 beforeEach(() => resetModuleState());
 
@@ -46,12 +46,31 @@ async function interactive(root: string) {
 }
 
 describe('batched observation placement', () => {
-  it('refuses an observation without a category at submission, and a downgrade of a finding without one', async () => {
+  it('refuses an observation without a category at submission', async () => {
     using dir = repo();
     const { ws } = await interactive(dir.root);
     const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
     const bare = { ...finding('thermo', 'observation', 'naming'), category: undefined };
     await assert.rejects(withRun(ws, 'demo', run => submitDomain(ws, run, { agentId: 'a', domain: 'thermo', findings: [bare], reviewId })), /observation without a category/);
+  });
+
+  it('refuses a downgrade of a finding without a category unless the validator gives a valid one, and places the downgraded finding by it', async () => {
+    using dir = repo();
+    const { call, ws } = await interactive(dir.root);
+    const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+    const bare = { ...finding('thermo', 'high', 'gap'), category: undefined };
+    const skipped = readRun(ws, 'demo').slices.find(item => item.review?.id === reviewId)?.review?.skipped ?? [];
+    for (const domain of REVIEW_DOMAINS.filter(name => !skipped.some(entry => entry.domain === name))) {
+      const findings = domain === 'thermo' ? [bare] : [];
+      await withRun(ws, 'demo', run => submitDomain(ws, run, { agentId: `r-${domain}`, domain, findings, reviewId, ...noFixItems(domain) }));
+    }
+    const downgrade = (category?: string) =>
+      withRun(ws, 'demo', run => submitValidation(ws, run, { agentId: 'validator', downgrade: [{ id: bare.id, reason: 'not a correctness or requirement gap', category }], dropped: [], keep: [], reviewId }));
+    await assert.rejects(downgrade(), /needs a category/);
+    await assert.rejects(downgrade('not-a-category'), /expected one of/);
+    await downgrade('correctness');
+    const text = (await call('factory_review_record', {})).content[0]?.text ?? '';
+    assert.match(text, /thermo-gap[\s\S]*Default placement: end queue/);
   });
 
   it('lists every unplaced observation with its default placement in the final green reply, and completion refuses until factory_place', async () => {

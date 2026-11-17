@@ -49,11 +49,11 @@ export const SOURCE_KINDS = ['github', 'jira', 'file', 'text'] as const;
 
 /** One finding in the cc-pr-review-ci review.json shape. */
 export const findingSchema = z.object({
-  /** Required on an observation (submitDomain refuses one without it), and on a finding the validator downgrades to one. */
+  /** Required on an observation (submitDomain refuses one without it). A critical or high finding needs none; the validator gives it on a downgrade. */
   category: z
     .enum(OBSERVATION_CATEGORIES)
     .optional()
-    .describe('Required for an observation, and for a critical or high finding the validator may downgrade to one: correctness, missing-test, misleading-doc, naming, structure or style. It sets where the observation goes by default'),
+    .describe('Required for an observation: correctness, missing-test, misleading-doc, naming, structure or style. It sets where the observation goes by default'),
   decision: z
     .number()
     .int()
@@ -132,13 +132,14 @@ const phaseSchema = z.enum(['checks', 'fix', 'implement', 'ready', 'review']);
 /** SHA-1 or SHA-256 object name. */
 const sha = z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/);
 
+/** An observation waiting for placement: the finding, the category that sets its default, and the review it came from. */
+const unplacedSchema = z.object({ category: z.enum(OBSERVATION_CATEGORIES), finding: findingSchema, review: text });
+export type Unplaced = z.infer<typeof unplacedSchema>;
+
 /**
  * Who wrote a review artifact and the sha256 of what the tool wrote, so a later edit is detected. `amended` marks a
  * validator that has used its one correction.
  */
-const unplacedSchema = z.object({ category: z.enum(OBSERVATION_CATEGORIES), finding: findingSchema, review: text });
-export type Unplaced = z.infer<typeof unplacedSchema>;
-
 const submissionSchema = z.object({ agentId: text, amended: z.boolean().optional(), hash: text });
 
 const skippedDomainSchema = z.object({ domain: z.enum(REVIEW_DOMAINS), reason: text.describe('Why the diff needs no review in this domain') });

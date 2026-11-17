@@ -568,7 +568,16 @@ export const validationSchema = z.object({
     )
     .describe('Findings removed, each with a reason'),
   downgrade: z
-    .array(z.object({ id: z.string().min(1), reason: z.string().min(1) }))
+    .array(
+      z.object({
+        category: z
+          .enum(OBSERVATION_CATEGORIES)
+          .optional()
+          .describe('Required when the reviewer gave the finding no category: what the observation is about (correctness, missing-test, misleading-doc, naming, structure or style); it sets where the observation goes by default'),
+        id: z.string().min(1),
+        reason: z.string().min(1),
+      }),
+    )
     .default([])
     .describe('critical/high findings the diff supports but that fail the correctness-or-requirements bar; kept as observations'),
   escalate: z
@@ -586,16 +595,16 @@ export const validationSchema = z.object({
 type Validation = z.infer<typeof validationSchema>;
 
 /**
- * Kept findings at the severity the gate uses: downgraded findings count as observations, escalated ones as high and
- * carry the decision the validator cited.
+ * Kept findings at the severity the gate uses: downgraded findings count as observations (with the category the
+ * validator gave one that had none), escalated ones as high and carry the decision the validator cited.
  */
 export function keptFindings(findings: Finding[], validation: Validation) {
-  const downgraded = new Set(validation.downgrade.map(entry => entry.id));
+  const downgraded = new Map(validation.downgrade.map(entry => [entry.id, entry.category]));
   const escalated = new Map(validation.escalate.map(entry => [entry.id, entry.decision]));
   return findings
     .filter(finding => validation.keep.includes(finding.id) || downgraded.has(finding.id) || escalated.has(finding.id))
     .map(finding => {
-      if (downgraded.has(finding.id)) return { ...finding, severity: 'observation' as const };
+      if (downgraded.has(finding.id)) return { ...finding, category: finding.category ?? downgraded.get(finding.id), severity: 'observation' as const };
       const decision = escalated.get(finding.id);
       if (decision !== undefined) return { ...finding, decision, severity: 'high' as const };
       return finding;
@@ -632,9 +641,9 @@ function checkCoverage(findings: Finding[], validation: Validation, decisionCoun
     });
     if (outside.length > 0) throw new Error(`Observations outside the fix diff are dropped in a targeted review (blocking findings stay): ${outside.join(', ')}`);
   }
-  const uncategorised = downgraded.filter(id => byId.get(id)?.category === undefined);
+  const uncategorised = validation.downgrade.filter(entry => entry.category === undefined && byId.get(entry.id)?.category === undefined).map(entry => entry.id);
   if (uncategorised.length > 0) {
-    throw new Error(`A downgraded finding becomes an observation, which needs a category: ${uncategorised.join(', ')}. Keep or drop them, or have the reviewer submit them with a category.`);
+    throw new Error(`A downgraded finding becomes an observation, which needs a category: set \`category\` on the downgrade entry of ${uncategorised.join(', ')}.`);
   }
   const notBlocking = downgraded.filter(id => byId.get(id)?.severity === 'observation');
   if (notBlocking.length > 0) throw new Error(`Only critical or high findings can be downgraded: ${notBlocking.join(', ')}`);
