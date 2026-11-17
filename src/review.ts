@@ -956,8 +956,8 @@ export async function completeSlice(ws: Workspace, run: Run) {
     settle(ws, run);
   } catch (error) {
     // The defaults may have filed items by now: save the placement instead of rolling it back.
-    slice.status = 'active';
     if (error instanceof Invalidated) throw error;
+    slice.status = 'active';
     throw new Invalidated(`Completing slice ${slice.id} failed after its observations were placed: ${error instanceof Error ? error.message : String(error)}. Call factory_complete_slice again.`);
   }
   return slice;
