@@ -44,6 +44,7 @@ import {
 import { storedReport } from './report.ts';
 import { head, porcelain, requireOnBranchClean, snapshot } from './repo.ts';
 import {
+  needsFullReview,
   type FixRecord,
   pauseRun,
   renderTicket,
@@ -709,6 +710,11 @@ export type RecordedReview =
   | { kind: 'accepted-unresolved'; unresolved: string[] }
   | { blocking: number; fixPath: string; kind: 'fix'; open: number; stalled: boolean };
 
+/** The targeting a fix round after `review` leaves for the next review: the domains that need another look. */
+export function targetingAfter(review: { id: string; sha: string }, domains: readonly Domain[]) {
+  return { base: review.sha, domains: [...new Set(domains)], from: review.id };
+}
+
 /** Marks the slice's review green over `decisions`; `unresolved` are the items it is accepted with, if any. */
 function markGreen(slice: Slice, decisions: number, unresolved?: string[], targeted?: true) {
   slice.phase = 'ready';
@@ -764,7 +770,7 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
     return { kind: 'green', observations: observations.map(finding => renderFinding(finding, run.decisions)) };
   }
   slice.fullGreen = false;
-  slice.targeting = { base: review.sha, domains: [...new Set([...blocking.map(finding => finding.domain), ...(open.length > 0 ? (['scope'] as const) : [])])], from: review.id };
+  slice.targeting = targetingAfter(review, [...blocking.map(finding => finding.domain), ...(open.length > 0 ? (['scope'] as const) : [])]);
   const blockingIds = [...blocking.map(finding => finding.id), ...open.map(item => `${item.id} (open fix item)`)];
   const blockingDetail = `${detail}; blocking ${blockingIds.join(', ')}`;
   const records: FixRecord[] = [
@@ -887,7 +893,7 @@ export async function completeSlice(ws: Workspace, run: Run) {
   if (slice.unresolved !== undefined && run.mode !== 'headless') {
     throw new Error(`Slice ${slice.id} was accepted unresolved by a headless run, and only a headless run completes it. Open: ${slice.unresolved.join('; ')}`);
   }
-  if (slice.green?.targeted === true && slice.fullGreen !== true) {
+  if (needsFullReview(slice)) {
     throw new Error(`The last green review of slice ${slice.id} was targeted. Call factory_review_start for a full review of the same commit, then factory_complete_slice.`);
   }
   const sha = await requireOnBranchClean(ws.root, slice, 'Cannot complete the slice');

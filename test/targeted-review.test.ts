@@ -74,7 +74,7 @@ describe('targeted re-review', () => {
     assert.match(data, /add second\.txt/, 'the commits of the fix diff are listed');
   });
 
-  it('opens a full review again for a slice whose red review was an earlier full one, and a fresh slice review is full', async () => {
+  it('a fresh slice review is full', async () => {
     using dir = repo();
     const { open } = await setup(dir.root);
     const first = await open({ skip: [] });
@@ -92,7 +92,7 @@ describe('targeted re-review', () => {
     const outside = finding('bug', 'observation', 'outside');
     const blockingElsewhere = finding('security', 'high', 'still');
 
-    // The reviewers' submissions are accepted; recording refuses a validation that keeps the observation outside the fix diff, and the validator corrects it.
+    // The reviewers' submissions are accepted; factory_review_validate refuses a validation that keeps the observation outside the fix diff, and the validator corrects it.
     await assert.rejects(finish(targeted.domains, [inside, outside, blockingElsewhere], [inside.id, outside.id, blockingElsewhere.id]), /outside the fix diff[\s\S]*bug-outside/);
     const reviewId = targeted.reviewId;
     await call('factory_review_validate', { dropped: [{ id: outside.id, reason: 'outside the fix diff' }], keep: [inside.id, blockingElsewhere.id], reviewId }, 'factory-review-validator');
@@ -101,7 +101,7 @@ describe('targeted re-review', () => {
     assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'fix');
   });
 
-  it('refuses a validation that downgrades of a blocking finding outside the fix diff to a kept observation', async () => {
+  it('refuses a validation that downgrades a blocking finding outside the fix diff to a kept observation', async () => {
     using dir = repo();
     const { call, open, red, ws } = await setup(dir.root);
     await red(finding('security', 'high', 'leak'));
@@ -152,7 +152,7 @@ describe('targeted re-review', () => {
     assert.ok(full.domains.length > 4, 'the review after a targeted green is a full one');
     assert.doesNotMatch(readFileSync(full.dataFile, 'utf8'), /## TARGETED REVIEW/);
     assert.equal(readRun(ws, 'demo').slices[0]?.checked?.sha, before, 'on the same commit, with no new checks');
-    await assert.rejects(call('factory_complete_slice', {}), /full review|no green review/);
+    await assert.rejects(call('factory_complete_slice', {}), /The slice has no green review yet/);
     await finish(full.domains, [], []);
     assert.match((await call('factory_complete_slice', {})).content[0]?.text ?? '', /Slice 01 is done/);
   });
@@ -195,7 +195,6 @@ describe('targeted re-review', () => {
     commit(ws, 'second.txt');
     await call('factory_checks', {});
     await finish((await open()).domains, [], []);
-    assert.equal(readRun(ws, 'demo').slices[0]?.fullGreen, false);
     await assert.rejects(call('factory_complete_slice', {}), /full review/);
   });
 

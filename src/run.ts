@@ -134,7 +134,7 @@ const reviewSchema = z.object({
   snapshot: text,
   /** Domains the orchestrator left out for this diff; every other domain must submit. */
   skipped: skippedDomainsSchema.default([]),
-  /** Set on a targeted review (see `Slice.targeting`): the review it follows and the new-side lines of the fix diff. Observations must be on these lines; blocking findings may be anywhere in `lines`. */
+  /** Set on a targeted review (see `Slice.targeting`): the review it follows and the new-side lines of the fix diff. Only observations are limited to these lines; blocking findings may be anywhere in the slice diff. */
   targeted: z.object({ from: text, lines: z.record(text, z.array(z.tuple([z.number().int().positive(), z.number().int().positive()]))) }).optional(),
   submissions: z.partialRecord(z.enum(REVIEW_DOMAINS), submissionSchema),
   validation: submissionSchema.optional(),

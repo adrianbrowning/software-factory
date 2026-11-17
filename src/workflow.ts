@@ -602,6 +602,11 @@ export type FixItemInput = { id: string; summary: string } | { kind: 'bug' | 'ch
  */
 export type FixRecord = { group?: string; item: FixItemInput; section: string };
 
+/** True while the slice's last green review was targeted and no full review of that commit has gone green. */
+export function needsFullReview(slice: Slice) {
+  return slice.green?.targeted === true && slice.fullGreen !== true;
+}
+
 /**
  * Writes the fix file and moves the slice to `fix`. `sha` is the commit the fix file describes. `records` are what the
  * fix file asks the implementer to fix: the fix file lists their items under `## Fix items`, then their sections, and
@@ -849,7 +854,7 @@ export function nextAction(run: Run): string {
     case 'ready':
       // LEGACY-STATE(decision-before-reset): only a state file written before factory_decide reset reviews keeps
       // decisions newer than a green review; remove with the matching branches in review.ts.
-      if (slice.green?.targeted === true && slice.fullGreen !== true) return `The last green review of ${where} was targeted: call factory_review_start for a full review of the same commit (no new checks), then factory_complete_slice.`;
+      if (needsFullReview(slice)) return `The last green review of ${where} was targeted: call factory_review_start for a full review of the same commit (no new checks), then factory_complete_slice.`;
       return outdatedGreenCount(run, slice) === undefined
         ? `Call factory_complete_slice for ${where}.`
         : `Decisions landed after the green review of ${where}: pick the review domains, then call factory_review_start for a new review of the same commit. The checks do not run again.`;
