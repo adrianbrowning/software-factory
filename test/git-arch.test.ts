@@ -1,4 +1,9 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { gitArchWarning, type GitArchHost } from '../src/git-arch.ts';
 
@@ -88,4 +93,26 @@ test('an empty PATH component means the working directory', () => {
     path: ':/opt/x',
   }));
   assert.deepEqual(seen, [cwdGit]);
+});
+
+test('a failing file or sysctl probe writes nothing to the parent stderr', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'probe-'));
+  try {
+    for (const name of ['file', 'sysctl']) {
+      writeFileSync(join(dir, name), '#!/bin/sh\necho "probe noise" >&2\nexit 1\n');
+      chmodSync(join(dir, name), 0o755);
+    }
+    const src = fileURLToPath(new URL('../src/git-arch.ts', import.meta.url));
+    const script = `import { defaultGitArchHost } from ${JSON.stringify(src)};
+const h = defaultGitArchHost();
+for (const probe of [() => h.describe('/x'), () => h.sysctlArm64()]) { try { probe(); } catch {} }`;
+    const r = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: dir },
+    });
+    assert.equal(r.status, 0, r.stderr);
+    assert.equal(r.stderr, '');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

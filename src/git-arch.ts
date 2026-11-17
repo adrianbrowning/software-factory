@@ -22,7 +22,7 @@ const SYSTEM_GIT = '/usr/bin/git';
 export function defaultGitArchHost(): GitArchHost {
   return {
     arch: process.arch,
-    describe: path => execFileSync('file', ['-b', path], { encoding: 'utf8', timeout: 5000 }),
+    describe: path => execFileSync('file', ['-b', path], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 }),
     exists: existsSync,
     isExecutable: path => {
       try {
@@ -33,7 +33,7 @@ export function defaultGitArchHost(): GitArchHost {
       }
     },
     realpath: realpathSync,
-    sysctlArm64: () => execFileSync('sysctl', ['-n', 'hw.optional.arm64'], { encoding: 'utf8', timeout: 2000 }),
+    sysctlArm64: () => execFileSync('sysctl', ['-n', 'hw.optional.arm64'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000 }),
     path: process.env.PATH,
     platform: process.platform,
   };
