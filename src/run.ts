@@ -534,6 +534,11 @@ export function clearGreen(slice: Slice) {
   slice.unresolved = undefined;
 }
 
+/** Drops the slice's full green. Not part of clearGreen: a full green survives an observation-only fix round. */
+export function clearFullGreen(slice: Slice) {
+  slice.fullGreen = false;
+}
+
 /** Drops the slice's passed checks and review and moves it to `phase`. */
 export function dropPass(slice: Slice, phase: Slice['phase']) {
   slice.phase = phase;

@@ -15,6 +15,7 @@ import {
   activeSlice,
   addEvent,
   builtBy,
+  clearFullGreen,
   clearGreen,
   discardReview,
   dropPass,
@@ -770,7 +771,7 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
     addEvent(run, 'review-green', `${full ? '' : 'targeted '}${detail}`, slice);
     return { kind: 'green', observations: observations.map(finding => renderFinding(finding, run.decisions)) };
   }
-  slice.fullGreen = false;
+  clearFullGreen(slice);
   slice.targeting = targetingAfter(review, [...blocking.map(finding => finding.domain), ...(open.length > 0 ? (['scope'] as const) : [])]);
   const blockingIds = [...blocking.map(finding => finding.id), ...open.map(item => `${item.id} (open fix item)`)];
   const blockingDetail = `${detail}; blocking ${blockingIds.join(', ')}`;

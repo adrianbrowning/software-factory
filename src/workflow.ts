@@ -11,6 +11,7 @@ import {
   addEvent,
   builtBy,
   discardReview,
+  clearFullGreen,
   dropPass,
   greenCommit,
   hasPass,
@@ -641,7 +642,7 @@ export function requestFix(ws: Workspace, run: Run, slice: Slice, sha: string, r
   slice.fixFromSha = sha;
   dropPass(slice, 'fix');
   if (!counted) return { fixPath, stalled: false };
-  slice.fullGreen = false;
+  clearFullGreen(slice);
   if (slice.fixRounds >= slice.roundLimit) {
     slice.stalled = true;
     addEvent(run, 'stall', `fix budget of ${slice.roundLimit} rounds used`, slice);
