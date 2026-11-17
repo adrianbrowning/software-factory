@@ -636,6 +636,7 @@ export function requestFix(ws: Workspace, run: Run, slice: Slice, sha: string, r
   slice.fixFromSha = sha;
   dropPass(slice, 'fix');
   if (!counted) return { fixPath, stalled: false };
+  slice.fullGreen = false;
   if (slice.fixRounds >= slice.roundLimit) {
     slice.stalled = true;
     addEvent(run, 'stall', `fix budget of ${slice.roundLimit} rounds used`, slice);
@@ -685,6 +686,7 @@ export async function reopenSlice(ws: Workspace, run: Run, id: string, reason: s
   await git(ws.root, 'switch', slice.branch);
   if (active !== undefined) await restartSlice(ws, run, active);
   slice.doneSha = doneSha;
+  slice.targeting = undefined;
   slice.status = 'active';
   writeTicket(ws, run, slice);
   if (run.status === 'done') run.status = 'running';
@@ -847,6 +849,7 @@ export function nextAction(run: Run): string {
     case 'ready':
       // LEGACY-STATE(decision-before-reset): only a state file written before factory_decide reset reviews keeps
       // decisions newer than a green review; remove with the matching branches in review.ts.
+      if (slice.green?.targeted === true && slice.fullGreen !== true) return `The last green review of ${where} was targeted: call factory_review_start for a full review of the same commit (no new checks), then factory_complete_slice.`;
       return outdatedGreenCount(run, slice) === undefined
         ? `Call factory_complete_slice for ${where}.`
         : `Decisions landed after the green review of ${where}: pick the review domains, then call factory_review_start for a new review of the same commit. The checks do not run again.`;

@@ -140,7 +140,7 @@ describe('observation ledger', () => {
   it('factory_leave refuses an empty list and an id the green review does not list', async () => {
     using dir = repo();
     const { call, ws } = await ledgerRun(dir.root, ['naming']);
-    await assert.rejects(call('factory_leave', { observations: [] }));
+    await assert.rejects(call('factory_leave', { observations: [] }), /too small|at least 1|factory_leave needs observation ids/i);
     await assert.rejects(call('factory_leave', { observations: ['bug-made-up'] }), /Not observations of green review 01-r1: bug-made-up\. Its observations: thermo-naming/);
     assert.deepEqual(readRun(ws, 'demo').observations, []);
   });

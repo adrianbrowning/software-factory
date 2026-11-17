@@ -201,6 +201,8 @@ export function fixObservations(ws: Workspace, run: Run, request: FixRequest, re
         ]),
     ...observations.map(finding => findingRecord(finding, `## Observations from green review ${review.id} the user chose to fix\n\n${why}`, run.decisions)),
   ];
+  // A bug round needs a full review; an observation-only round is reviewed only where it changed things (a targeted review).
+  slice.targeting = bug === undefined ? { base: review.sha, domains: [...new Set(observations.map(finding => finding.domain))], from: review.id } : undefined;
   return requestFix(ws, run, slice, review.sha, records, bug !== undefined);
 }
 

@@ -104,10 +104,10 @@ export function recordDecisions(ws: Workspace, run: Run, decisions: unknown) {
 }
 
 /** Sends a green slice back to review on its green commit, for decisions newer than the review; its checks, which passed on that commit, stand. */
-function reopenReview(run: Run, slice: Slice) {
+function reopenReview(run: Run, slice: Slice, reason = 'decisions recorded after the green review') {
   slice.phase = 'review';
   clearGreen(slice);
-  addEvent(run, 'review-invalidated', 'decisions recorded after the green review', slice);
+  addEvent(run, 'review-invalidated', reason, slice);
 }
 
 /** The shell's own diagnostic for a command it cannot find (bash and dash wording). */
@@ -297,16 +297,21 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   // factory_decide reopens a green review that newer decisions outdate; only a state file written before it did is
   // still ready here.
   const outdated = outdatedGreenCount(run, slice) !== undefined;
-  if (!outdated && (slice.phase !== 'review' || slice.checked === undefined)) throw new Error('Checks must pass first: call factory_checks.');
+  // A targeted green review allows a full review of the same commit; its checks stand.
+  const fullAfterTargeted = !outdated && slice.phase === 'ready' && slice.green?.targeted === true;
+  if (!outdated && !fullAfterTargeted && (slice.phase !== 'review' || slice.checked === undefined)) throw new Error('Checks must pass first: call factory_checks.');
   const guarded = await requireOnBranchClean(ws.root, slice, 'Review needs committed work');
   if (outdated) reopenReview(run, slice);
+  else if (fullAfterTargeted) reopenReview(run, slice, 'full review after the targeted green review');
+  const targeting = fullAfterTargeted ? undefined : slice.targeting;
   const checked = slice.checked;
   if (checked === undefined || guarded !== checked.sha) {
     dropPass(slice, 'checks');
     throw new Invalidated('HEAD moved after checks passed. Call factory_checks again.');
   }
-  const chosen = skippedDomainsSchema.parse(skip);
-  const kept = z.array(z.enum(REVIEW_DOMAINS)).parse(keep);
+  // The orchestrator's skip and keep lists apply only to a full review: the factory picks the domains of a targeted one.
+  const chosen = targeting === undefined ? skippedDomainsSchema.parse(skip) : [];
+  const kept = targeting === undefined ? z.array(z.enum(REVIEW_DOMAINS)).parse(keep) : [];
   const skippedNames = chosen.map(entry => entry.domain);
   const record = isRecordSlice(slice);
   // A Record slice's light review is exactly bug, scope and comments: its seams (a resliced child may carry some) do not bring testing back, and none of the three can be skipped.
@@ -328,24 +333,38 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
       ? 'None.'
       : `The fix rounds since the last recorded review asked the implementer to fix these items, and the implementer has since committed. The scope reviewer gives each item a verdict in fixItems of factory_review_submit: fixed, not-a-defect, waived, or open. Check each item against the diff and the code, not the implementer's claims: not-a-defect needs evidence from the diff or code, waived needs a recorded decision, and an item left open blocks the slice and carries into the next round. Every other domain checks whether the code still has each problem in its domain, and reports one that remains as a finding under the same id.\n\n${UNTRUSTED_NOTE}\n\n${fixItems.join('\n')}`;
   // A Record deferred items slice gets a light review: exactly bug, scope and comments.
-  const light = record
-    ? REVIEW_DOMAINS.filter(domain => !required.includes(domain)).map(domain => ({ domain, reason: 'Record deferred items slice: light review (scope and comments)' }))
-    : [];
+  const light =
+    targeting !== undefined
+      ? REVIEW_DOMAINS.filter(domain => !required.includes(domain) && !targeting.domains.includes(domain)).map(domain => ({ domain, reason: `Targeted review: ${domain} did not block review ${targeting.from}` }))
+      : record
+        ? REVIEW_DOMAINS.filter(domain => !required.includes(domain)).map(domain => ({ domain, reason: 'Record deferred items slice: light review (scope and comments)' }))
+        : [];
   const lightNames = light.map(entry => entry.domain);
-  const byPath = (await pathSkips(files, committedContent(ws.root, range, checked.sha))).filter(
+  const byPath = (targeting !== undefined ? [] : await pathSkips(files, committedContent(ws.root, range, checked.sha))).filter(
     entry => !kept.includes(entry.domain) && !skippedNames.includes(entry.domain) && !lightNames.includes(entry.domain),
   );
   const skipped = [...byPath, ...chosen.filter(entry => !lightNames.includes(entry.domain)), ...light];
+  let targeted: Review['targeted'];
+  let targetedSection = '';
+  if (targeting !== undefined) {
+    const fixRange = `${targeting.base}..${checked.sha}`;
+    const fixDiff = await git(ws.root, '-c', 'core.quotePath=false', 'diff', '--no-ext-diff', fixRange);
+    const lines = changedLines(fixDiff, await changedPaths(ws.root, fixRange));
+    const commits = (await git(ws.root, 'log', '--oneline', fixRange)).trim();
+    const listedLines = Object.entries(lines).map(([file, ranges]) => `- ${file}: ${ranges.length === 0 ? '(no hunk lines: file-level only)' : ranges.map(([start, end]) => `${start}-${end}`).join(', ')}`);
+    targeted = { from: targeting.from, lines };
+    targetedSection = `## TARGETED REVIEW\n\nThis review follows review ${targeting.from}. It runs only the domains that blocked it (${targeting.domains.join(', ') || 'none'}) and the domains that always run. Report an observation only on a line the fix changed, listed below; the validator drops any other observation. Blocking findings anywhere in the slice diff still count. A full review of this commit follows once this one is green.\n\nFix diff: the commits since review ${targeting.from} (${targeting.base}):\n\n\`\`\`\n${evidence(commits === '' ? 'none' : commits, 2_000)}\n\`\`\`\n\nChanged lines (new side):\n\n${listedLines.join('\n') || 'None.'}\n\n`;
+  }
   slice.reviews += 1;
   const id = `${slice.id}-r${slice.reviews}`;
   rmSync(reviewDir(ws, run.feature, id), { force: true, recursive: true });
   const dataFile = join(reviewDir(ws, run.feature, id), 'data.md');
   writeAtomic(
     dataFile,
-    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n${renderLaterSlices(run, slice)}\n\n## CHECKS\n\nThe factory ran every configured check on \`${checked.sha}\` and all passed. Do not run them again.\n\n${checked.results.map(result => `- ${result}`).join('\n')}\n\n## KNOWN OBSERVATIONS\n\nObservations this run has already placed (carried, deferred, fixed or left). A finding that matches an entry by location and problem, under any id, is not new: the validator drops it with the reason \`same as <key>\`. An entry marked \`${CARRIED_HERE}\` is work this slice builds: a finding that it is unbuilt or wrong in this slice is not a repeat. ${UNTRUSTED_NOTE}\n\n${renderKnownObservations(run, slice)}\n\n## FIX ITEMS\n\n${listed}\n\n## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files.join('\n')}\n`,
+    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n${renderLaterSlices(run, slice)}\n\n## CHECKS\n\nThe factory ran every configured check on \`${checked.sha}\` and all passed. Do not run them again.\n\n${checked.results.map(result => `- ${result}`).join('\n')}\n\n## KNOWN OBSERVATIONS\n\nObservations this run has already placed (carried, deferred, fixed or left). A finding that matches an entry by location and problem, under any id, is not new: the validator drops it with the reason \`same as <key>\`. An entry marked \`${CARRIED_HERE}\` is work this slice builds: a finding that it is unbuilt or wrong in this slice is not a repeat. ${UNTRUSTED_NOTE}\n\n${renderKnownObservations(run, slice)}\n\n${targetedSection}## FIX ITEMS\n\n${listed}\n\n## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files.join('\n')}\n`,
   );
   const lines = changedLines(diff, files);
-  slice.review = { decisions: run.decisions.length, id, lines, sha: checked.sha, skipped, snapshot: await snapshot(ws.root), submissions: {} };
+  slice.review = { decisions: run.decisions.length, id, lines, sha: checked.sha, skipped, snapshot: await snapshot(ws.root), submissions: {}, targeted };
   const skippedDetail = skipped.map(entry => `${entry.domain} (${entry.reason})`).join('; ');
   addEvent(run, 'review-start', skipped.length === 0 ? id : `${id} skipped ${skippedDetail}`, slice);
   return {
@@ -582,7 +601,7 @@ export function keptFindings(findings: Finding[], validation: Validation) {
  * dropped in favour of a kept, downgraded, or escalated finding of the same or higher severity (original severity,
  * except that an escalated finding counts as high).
  */
-function checkCoverage(findings: Finding[], validation: Validation, decisionCount: number, decisions: Decision[]) {
+function checkCoverage(findings: Finding[], validation: Validation, decisionCount: number, decisions: Decision[], fixLines?: Record<string, [number, number][]>) {
   const downgraded = validation.downgrade.map(entry => entry.id);
   const escalated = validation.escalate.map(entry => entry.id);
   const retained = [...validation.keep, ...downgraded, ...escalated];
@@ -593,6 +612,16 @@ function checkCoverage(findings: Finding[], validation: Validation, decisionCoun
   if (new Set(decided).size !== decided.length) throw new Error('A finding id appears twice across keep, downgrade, escalate, and dropped.');
   const undecided = [...byId.keys()].filter(id => !decided.includes(id));
   if (undecided.length > 0) throw new Error(`Keep, downgrade, escalate, or drop every finding. Undecided: ${undecided.join(', ')}`);
+  if (fixLines !== undefined) {
+    // A targeted review keeps observations only on the lines the fix changed; a downgraded finding becomes one.
+    const outside = [...validation.keep, ...downgraded].filter(id => {
+      const finding = byId.get(id);
+      if (finding === undefined || (finding.severity !== 'observation' && !downgraded.includes(id))) return false;
+      const { line } = finding;
+      return line === undefined || !(fixLines[finding.path] ?? []).some(([start, end]) => line >= start && line <= end);
+    });
+    if (outside.length > 0) throw new Error(`Observations outside the fix diff are dropped in a targeted review (blocking findings stay): ${outside.join(', ')}`);
+  }
   const notBlocking = downgraded.filter(id => byId.get(id)?.severity === 'observation');
   if (notBlocking.length > 0) throw new Error(`Only critical or high findings can be downgraded: ${notBlocking.join(', ')}`);
   const breaksDecision = downgraded.filter(id => byId.get(id)?.decision !== undefined);
@@ -643,7 +672,7 @@ export function submitValidation(
   const { findings, missing } = readDomainFindings(ws, run, input.reviewId);
   if (missing.length > 0) throw new Error(`Domains not submitted yet: ${missing.join(', ')}`);
   const validation = validationSchema.parse({ downgrade: input.downgrade, dropped: input.dropped, escalate: input.escalate, keep: input.keep });
-  checkCoverage(findings, validation, review.decisions, run.decisions);
+  checkCoverage(findings, validation, review.decisions, run.decisions, review.targeted?.lines);
   const content = `${JSON.stringify(validation, null, 2)}\n`;
   writeAtomic(validationFile(ws, run, input.reviewId), content);
   review.validation = { agentId: input.agentId, ...(previous === undefined ? {} : { amended: true }), hash: sha256(content) };
@@ -681,9 +710,9 @@ export type RecordedReview =
   | { blocking: number; fixPath: string; kind: 'fix'; open: number; stalled: boolean };
 
 /** Marks the slice's review green over `decisions`; `unresolved` are the items it is accepted with, if any. */
-function markGreen(slice: Slice, decisions: number, unresolved?: string[]) {
+function markGreen(slice: Slice, decisions: number, unresolved?: string[], targeted?: true) {
   slice.phase = 'ready';
-  slice.green = { decisions };
+  slice.green = { decisions, ...(targeted === undefined ? {} : { targeted }) };
   slice.unresolved = unresolved;
 }
 
@@ -696,7 +725,7 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
   const raw = readRecorded(validationFile(ws, run, review.id), review.validation);
   if (raw === undefined) throw new Error('The validator has not submitted. Spawn factory-review-validator.');
   const validation = validationSchema.parse(raw);
-  checkCoverage(findings, validation, review.decisions, run.decisions);
+  checkCoverage(findings, validation, review.decisions, run.decisions, review.targeted?.lines);
   if ((await snapshot(ws.root)) !== review.snapshot) {
     dropPass(slice, 'checks');
     addEvent(run, 'review-invalidated', `${review.id}: repository changed during review`, slice);
@@ -728,10 +757,13 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
   slice.fixItems = [];
 
   if (verdict === 'APPROVED') {
-    markGreen(slice, review.decisions);
-    addEvent(run, 'review-green', detail, slice);
+    slice.targeting = undefined;
+    if (review.targeted === undefined) slice.fullGreen = true;
+    markGreen(slice, review.decisions, undefined, review.targeted === undefined ? undefined : true);
+    addEvent(run, 'review-green', `${review.targeted === undefined ? '' : 'targeted '}${detail}`, slice);
     return { kind: 'green', observations: observations.map(finding => renderFinding(finding, run.decisions)) };
   }
+  slice.targeting = { base: review.sha, domains: [...new Set([...blocking.map(finding => finding.domain), ...(open.length > 0 ? (['scope'] as const) : [])])], from: review.id };
   const blockingIds = [...blocking.map(finding => finding.id), ...open.map(item => `${item.id} (open fix item)`)];
   const blockingDetail = `${detail}; blocking ${blockingIds.join(', ')}`;
   const records: FixRecord[] = [
@@ -759,6 +791,7 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
     }
     // Added only now that the deferred sink succeeded, so a retry after a failed sink does not log it twice.
     addEvent(run, 'review-blocking', blockingDetail, slice);
+    slice.targeting = undefined;
     markGreen(slice, review.decisions, unresolved);
     const sunk = ws.config.deferred === undefined ? 'no deferred sink configured' : isRecordSlice(slice) ? 'not deferred: a Record deferred items slice' : `sent to the ${ws.config.deferred.kind} sink`;
     addEvent(run, 'accepted-unresolved', `${review.id} after ${slice.fixRounds} fix rounds (${sunk}); open: ${unresolved.join('; ')}`, slice);
@@ -852,6 +885,9 @@ export async function completeSlice(ws: Workspace, run: Run) {
   if (slice.phase !== 'ready' || green === undefined) throw new Error('The slice has no green review yet.');
   if (slice.unresolved !== undefined && run.mode !== 'headless') {
     throw new Error(`Slice ${slice.id} was accepted unresolved by a headless run, and only a headless run completes it. Open: ${slice.unresolved.join('; ')}`);
+  }
+  if (slice.green?.targeted === true && slice.fullGreen !== true) {
+    throw new Error(`The last green review of slice ${slice.id} was targeted. Call factory_review_start for a full review of the same commit, then factory_complete_slice.`);
   }
   const sha = await requireOnBranchClean(ws.root, slice, 'Cannot complete the slice');
   if (sha !== green) {

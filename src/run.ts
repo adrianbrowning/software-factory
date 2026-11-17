@@ -134,6 +134,8 @@ const reviewSchema = z.object({
   snapshot: text,
   /** Domains the orchestrator left out for this diff; every other domain must submit. */
   skipped: skippedDomainsSchema.default([]),
+  /** Set on a targeted review (see `Slice.targeting`): the review it follows and the new-side lines of the fix diff. Observations must be on these lines; blocking findings may be anywhere in `lines`. */
+  targeted: z.object({ from: text, lines: z.record(text, z.array(z.tuple([z.number().int().positive(), z.number().int().positive()]))) }).optional(),
   submissions: z.partialRecord(z.enum(REVIEW_DOMAINS), submissionSchema),
   validation: submissionSchema.optional(),
 });
@@ -171,7 +173,9 @@ const sliceSchema = sliceInputSchema.extend({
    * The green review of the checked commit (`checked.sha`, see `greenCommit`): how many recorded decisions it covered,
    * so a newer decision needs a new review. A green review from a state file that predates the count has none.
    */
-  green: z.object({ decisions: z.number().int().nonnegative().optional() }).optional(),
+  green: z.object({ decisions: z.number().int().nonnegative().optional(), targeted: z.literal(true).optional() }).optional(),
+  /** Whether the slice's last full green review stands: set by a full green, cleared by a red review and by a fix round that counts. A targeted green completes the slice only while it holds. */
+  fullGreen: z.boolean().optional(),
   id: z.string().regex(/^\d{2}$/),
   /** Decision numbers (1-based) the slice builds; a state file from before ownership owns none. */
   ownsDecisions: z.array(z.number().int().positive()).default([]),
@@ -187,6 +191,8 @@ const sliceSchema = sliceInputSchema.extend({
   recordBatch: text.optional(),
   /** Set while the slice waits for the user to decide on an exhausted fix budget. */
   stalled: z.boolean(),
+  /** Set by a red review, and by an observation-only fix round: the next review is targeted, over `domains` (plus the required ones), on the changes since `base`, the commit of the review `from`. Cleared when a review is recorded. */
+  targeting: z.object({ base: sha, domains: z.array(z.enum(REVIEW_DOMAINS)), from: text }).optional(),
   status: z.enum(['active', 'done', 'pending']),
   /** Set when a headless run accepted the slice with blocking findings or open fix items left after its last fix round: one line per item, prefixed `blocking finding` or `open fix item`, then `id: summary` when it has an id. Green stands in for them; an interactive run never completes such a slice. */
   unresolved: z.array(text).optional(),

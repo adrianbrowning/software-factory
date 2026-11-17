@@ -204,9 +204,13 @@ describe('factory_defer', () => {
     gh.failOn(2);
     await assert.rejects(call('factory_defer', { observations: ['thermo-naming', 'thermo-style'] }), /HTTP 502[\s\S]*only the rest: thermo-style/);
     assert.deepEqual(readRun(ws, 'demo').deferred.map(item => item.id), ['thermo-naming']);
+    const entry = (name: string) => ({ id: `thermo-${name}`, key: `01-r1:thermo-${name}`, location: 'ok:1', placement: 'deferred', problem: 'wrong', review: '01-r1', slice: '01', title: name });
+    assert.deepEqual(readRun(ws, 'demo').observations, [entry('naming')], 'only the observation whose issue was filed is in the ledger');
+    await assert.rejects(call('factory_defer', { observations: ['thermo-naming'] }), /Observations already deferred: thermo-naming/);
     gh.healed();
     await call('factory_defer', { observations: ['thermo-style'] });
     assert.deepEqual(readRun(ws, 'demo').deferred.map(item => item.id), ['thermo-naming', 'thermo-style']);
+    assert.deepEqual(readRun(ws, 'demo').observations, [entry('naming'), entry('style')]);
     assert.equal(gh.calls().length, 3);
   });
 
