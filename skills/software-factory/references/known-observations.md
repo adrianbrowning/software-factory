@@ -16,5 +16,5 @@ The section lists the observations this run already placed (carried, deferred, f
 A review after a red review (or after an observation-only fix round) has a `## TARGETED REVIEW` section. It runs only the domains that blocked, plus bug, scope and (with seams) testing, and lists the fix diff: the commits since the earlier review and their changed new-side lines.
 
 - Reviewer: report an observation only on a line the section lists. Report blocking findings (`critical` or `high`) anywhere in the slice diff.
-- Validator: drop every observation whose line is not listed, with the reason `outside the fix diff`; never downgrade a blocking finding into one. The tool refuses a validation that keeps one. Blocking findings anywhere are kept as usual.
+- Validator: drop every observation whose line is not listed, with the reason `outside the fix diff`; never downgrade a blocking finding into one. An observation with no line counts as inside only on a file the section lists as `(no hunk lines: file-level only)` (for example a deleted file); on a file with changed lines it is outside. The tool refuses a validation that keeps one outside. Blocking findings anywhere are kept as usual.
 - A green targeted review is followed by a full review of the same commit.

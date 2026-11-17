@@ -253,6 +253,19 @@ describe('targeted re-review in other flows', () => {
     assert.match(recorded?.content[0]?.text ?? '', /Review is green/);
   });
 
+  it('refuses a file-level observation on a file whose fix changed lines', async () => {
+    using dir = repo();
+    const { call, finish, open, ws } = await setup(dir.root);
+    await finish((await open()).domains, [finding('security', 'high', 'leak')], ['security-leak']);
+    commit(ws, 'second.txt', 'a\nb\n');
+    await call('factory_checks', {});
+    const targeted = await open();
+    assert.match(readFileSync(targeted.dataFile, 'utf8'), /- second\.txt: 1-2/);
+    const { line: _line, ...base } = finding('bug', 'observation', 'long');
+    const fileLevel: Finding = { ...base, path: 'second.txt' };
+    await assert.rejects(finish(targeted.domains, [fileLevel], [fileLevel.id]), /outside the fix diff/);
+  });
+
   it('gives a restacked slice a full review, not one targeted over its pre-restack base', async () => {
     using dir = repo();
     const { call, finish, open, ws } = await setup(dir.root);

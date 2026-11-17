@@ -620,8 +620,9 @@ function checkCoverage(findings: Finding[], validation: Validation, decisionCoun
       const finding = byId.get(id);
       if (finding === undefined || (finding.severity !== 'observation' && !downgraded.includes(id))) return false;
       const { line } = finding;
-      if (line === undefined) return !(finding.path in fixLines);
-      return !(fixLines[finding.path] ?? []).some(([start, end]) => line >= start && line <= end);
+      const ranges = Object.hasOwn(fixLines, finding.path) ? fixLines[finding.path] : undefined;
+      if (line === undefined) return ranges === undefined || ranges.length > 0;
+      return !(ranges ?? []).some(([start, end]) => line >= start && line <= end);
     });
     if (outside.length > 0) throw new Error(`Observations outside the fix diff are dropped in a targeted review (blocking findings stay): ${outside.join(', ')}`);
   }
