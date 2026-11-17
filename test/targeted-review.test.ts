@@ -168,6 +168,20 @@ describe('targeted re-review', () => {
     assert.match((await call('factory_complete_slice', {})).content[0]?.text ?? '', /Slice 01 is done/);
   });
 
+  it('does not let an earlier full green excuse a targeted green that follows a red review', async () => {
+    using dir = repo();
+    const { call, finish, open, ws } = await setup(dir.root);
+    await finish((await open({ skip: [] })).domains, [], []);
+    await call('factory_decide', { decisions: ['Later decision.'] });
+    const again = await open({ skip: [] });
+    await finish(again.domains, [finding('thermo', 'high', 'naming')], ['thermo-naming']);
+    commit(ws, 'second.txt');
+    await call('factory_checks', {});
+    await finish((await open()).domains, [], []);
+    assert.equal(readRun(ws, 'demo').slices[0]?.fullGreen, false);
+    await assert.rejects(call('factory_complete_slice', {}), /full review/);
+  });
+
   it('needs a full review after a bug fix round that follows a full green, even with observations in the round', async () => {
     using dir = repo();
     const { call, finish, open, ws } = await setup(dir.root);

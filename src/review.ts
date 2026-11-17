@@ -763,6 +763,7 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
     addEvent(run, 'review-green', `${review.targeted === undefined ? '' : 'targeted '}${detail}`, slice);
     return { kind: 'green', observations: observations.map(finding => renderFinding(finding, run.decisions)) };
   }
+  slice.fullGreen = false;
   slice.targeting = { base: review.sha, domains: [...new Set([...blocking.map(finding => finding.domain), ...(open.length > 0 ? (['scope'] as const) : [])])], from: review.id };
   const blockingIds = [...blocking.map(finding => finding.id), ...open.map(item => `${item.id} (open fix item)`)];
   const blockingDetail = `${detail}; blocking ${blockingIds.join(', ')}`;
