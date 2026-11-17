@@ -4,6 +4,7 @@ import { beforeEach, describe, it } from 'node:test';
 import { ctx, load } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
+import { carriedKeysLine, carriesKey } from '../src/legacy-observations.ts';
 import { type Finding, readRun, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview, submitDomain } from '../src/review.ts';
 import { approvePlan, nextSlice, planSlices } from '../src/workflow.ts';
@@ -182,5 +183,12 @@ describe('batched observation placement', () => {
     const { call, full } = await interactive(dir.root);
     await full([observation('gap', 'correctness')]);
     await assert.rejects(call('factory_place', { placements: [{ id: 'thermo-gap', placement: 'defer' }] }), /No deferred sink/);
+  });
+
+  it('reads the carried keys line by exact key, not by substring, and reports a section without one', () => {
+    const section = `### From review 01-r1 of slice 01 "Feature"\n\nx\n\n${carriedKeysLine(['01-r1:thermo-naming-long'])}`;
+    assert.equal(carriesKey(section, '01-r1:thermo-naming-long'), true);
+    assert.equal(carriesKey(section, '01-r1:thermo-naming'), false);
+    assert.equal(carriesKey('### From green review 01-r1 of slice 01 "Feature"\n\nx', '01-r1:thermo-naming'), undefined);
   });
 });

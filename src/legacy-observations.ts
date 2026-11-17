@@ -26,7 +26,7 @@ export function carriedKeysLine(keys: string[]) {
 /** Whether `section` lists `key` in its carried keys line. `undefined` for a section without one (from before they were written). */
 export function carriesKey(section: string, key: string) {
   const line = section.split('\n').findLast(candidate => candidate.startsWith(KEYS_PREFIX));
-  return line === undefined ? undefined : line.includes(`\`${key}\``);
+  return line === undefined ? undefined : line.slice(KEYS_PREFIX.length).split(', ').includes(`\`${key}\``);
 }
 
 /** What a rendered finding (`renderFinding`) says of itself: its location, title and problem. Undefined when `section` holds no such observation. */
