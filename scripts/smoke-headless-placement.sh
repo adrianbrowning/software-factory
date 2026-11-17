@@ -45,7 +45,9 @@ grep -q '"kind": *"review-green"' "$state" || { echo "FAIL: no review-green even
 # The reviewer gave the observation a category (in its domain file) and the validator kept it.
 grep -rqE '"category": *"(naming|structure|style)"' "$rundir/reviews/$id/domains" || { echo "FAIL: the thermo reviewer gave no naming, structure or style category"; exit 1; }
 grep -q '"keep"' "$rundir/reviews/$id/validation.json" || { echo "FAIL: validation.json has no keep list"; exit 1; }
-# Headless factory_complete_slice placed it by default: naming, structure and style go to 'left', and nothing stays unplaced.
-jq -e '[.. | objects | select(.placement? == "left" and .review? != null)] | length >= 1' "$state" >/dev/null || { echo "FAIL: state.json has no left ledger entry (default placement)"; exit 1; }
+# Headless factory_complete_slice placed it by default: the setup configures a file sink, so naming, structure and style
+# go to the sink ('deferred' in the ledger and a run.deferred item), and nothing stays unplaced.
+jq -e '[.observations[] | select(.placement == "deferred")] | length >= 1' "$state" >/dev/null || { echo "FAIL: state.json has no deferred ledger entry (default placement)"; exit 1; }
+jq -e '[.deferred[] | select(.kind == "observation")] | length >= 1' "$state" >/dev/null || { echo "FAIL: state.json has no deferred observation item"; exit 1; }
 jq -e '[.. | objects | select(.unplaced? != null) | .unplaced | length] | all(. == 0)' "$state" >/dev/null || { echo "FAIL: observations are still unplaced after factory_complete_slice"; exit 1; }
-echo "OK: a real reviewer gave a category and the headless factory_complete_slice placed it by default (left, none unplaced)"
+echo "OK: a real reviewer gave a category and the headless factory_complete_slice placed it by default (deferred to the sink, none unplaced)"

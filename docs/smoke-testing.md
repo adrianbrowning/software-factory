@@ -16,11 +16,11 @@ Unit tests fake omp. To prove what omp itself does with a hook or a child sessio
    { "baseRef": "main", "checks": ["true"], "models": { "explorer": { "model": "<provider/id>" } } }
    ```
 
-3. Run omp in print mode from inside the throwaway repo, with only this plugin loaded. omp must start there: the factory reads `.omp/factory.json` and keeps its run state in the repo of omp's cwd. `--wait-async` keeps omp alive until background children finish. `--max-cost 2` caps the spend:
+3. Run omp in print mode from inside the throwaway repo, with only this plugin loaded. omp must start there: the factory reads `.omp/factory.json` and keeps its run state in the repo of omp's cwd. `--wait-async` keeps omp alive until background children finish. `--max-cost 5` caps the spend. Set the provider environment on the command (see the traps below):
 
    ```sh
    cd "$repo"
-   omp -p --wait-async --no-extensions -e <absolute path of this plugin checkout> --model <id> --thinking <level> --max-cost 2 '<prompt>'
+   AWS_PROFILE=<profile> omp -p --wait-async --no-extensions -e <absolute path of this plugin checkout> --model <id> --thinking <level> --max-cost 5 '<prompt>'
    ```
 
 4. In the prompt, spawn children with the `task` tool, or with `agent()` inside `eval`.
@@ -46,4 +46,4 @@ It builds the throwaway repo (`scripts/smoke-worker-submissions-setup.ts` starts
 Both scripts take a `<provider/model id>`, build a throwaway repo with a setup `.ts` file, run real omp, and assert on `validation.json` and `state.json`. They are not part of `pnpm run test` and spend up to `--max-cost 5`.
 
 - `scripts/smoke-known-observations.sh`: a real validator drops a repeat observation (same location and problem, new id) as `same as <key>`, and the review data has a `KNOWN OBSERVATIONS` section (setup: `scripts/smoke-known-observations-setup.ts`).
-- `scripts/smoke-headless-placement.sh`: a real reviewer gives an observation a category, and headless `factory_complete_slice` places it by default (setup: `scripts/smoke-headless-placement-setup.ts`).
+- `scripts/smoke-headless-placement.sh`: a real reviewer gives an observation a category, and headless `factory_complete_slice` places it by default, to the file sink the setup configures (setup: `scripts/smoke-headless-placement-setup.ts`).

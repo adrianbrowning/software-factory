@@ -40,8 +40,8 @@ echo "--- validation.json"
 cat "$rundir/reviews/$id/validation.json" || { echo "FAIL: no validation.json"; exit 1; }
 echo
 grep -rq 'KNOWN OBSERVATIONS' "$rundir/reviews/$id" || { echo "FAIL: no KNOWN OBSERVATIONS section in the review data"; exit 1; }
-grep -q 'same as thermo-unclear-name' "$rundir/reviews/$id/validation.json" || { echo "FAIL: the repeat was not dropped as 'same as thermo-unclear-name'"; exit 1; }
+grep -q 'same as 01-r1:thermo-unclear-name' "$rundir/reviews/$id/validation.json" || { echo "FAIL: the repeat was not dropped as 'same as 01-r1:thermo-unclear-name'"; exit 1; }
 state=$rundir/state.json
 jq -e '[.. | objects | select(.key? != null and (.key | endswith("thermo-unclear-name")) and .placement == "left")] | length == 1' "$state" >/dev/null || { echo "FAIL: state.json lacks the left ledger entry for thermo-unclear-name"; exit 1; }
 if jq -e '[.. | objects | select(.unplaced? != null) | .unplaced[] | select(.finding.id == "thermo-vague-function-name")] | length > 0' "$state" >/dev/null; then echo "FAIL: the repeat was kept as an unplaced observation"; exit 1; fi
-echo "OK: the validator dropped the repeat under a new id as 'same as thermo-unclear-name'"
+echo "OK: the validator dropped the repeat under a new id as 'same as 01-r1:thermo-unclear-name'"
