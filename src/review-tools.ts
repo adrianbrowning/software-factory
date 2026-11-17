@@ -43,7 +43,7 @@ const fixSchema = z.object({
   observations: z
     .array(z.string().min(1))
     .optional()
-    .describe('Ids of observations from the green review of the active slice that the user chose to fix in this slice, for example "thermo-naming"'),
+    .describe('Ids of unplaced observations of any review of the active slice, red ones too, that the user chose to fix in this slice, for example "thermo-naming" (or "<review>:<id>" when two reviews kept the same id)'),
   reason: z.string().min(1).describe('Why the user wants them fixed before the slice is done, for the fix file'),
 });
 const carrySchema = z.object({
@@ -54,7 +54,7 @@ const carrySchema = z.object({
   observations: z
     .array(z.string().min(1))
     .optional()
-    .describe('Ids of observations from the active slice\'s green review, that the user chose to carry, for example "thermo-naming"'),
+    .describe('Ids of observations from the active slice\'s green review, that the user chose to carry, for example "thermo-naming". Refused until the slice\'s last green review is a full one; a note alone is not'),
   to: z
     .union([z.string().regex(/^\d{2}$/), z.literal('end')])
     .describe('Id of the pending slice whose ticket takes the work, for example "03"; or "end": the work waits on the run for the next factory_follow_up slice'),
@@ -69,13 +69,13 @@ const deferSchema = z.object({
   observations: z
     .array(z.string().min(1))
     .optional()
-    .describe('Ids of observations from the active slice\'s green review, to send to the deferred sink, for example "thermo-naming". Ids the run already placed (carried, deferred, fixed or left) are refused'),
+    .describe('Ids of observations from the active slice\'s green review, to send to the deferred sink, for example "thermo-naming". Ids the run already placed (carried, deferred, fixed or left) are refused, and so are all ids until the slice\'s last green review is a full one'),
 });
 const leaveSchema = z.object({
   observations: z
     .array(z.string().min(1))
     .min(1)
-    .describe('Ids of observations from the active slice\'s green review, that the user chose to leave as they are, for example "thermo-naming". Ids the run already placed (carried, deferred, fixed or left) are refused'),
+    .describe('Ids of observations from the active slice\'s green review, that the user chose to leave as they are, for example "thermo-naming". Ids the run already placed (carried, deferred, fixed or left) are refused, and so are all ids until the slice\'s last green review is a full one'),
 });
 
 /** Registers the review, completion and observation-placement tools. */
@@ -212,7 +212,7 @@ export function registerReviewTools(tool: RunTool) {
   tool({
     caller: 'main',
     description:
-      `After a green review, send the active slice back to the fix loop for a bug the user found in it (bug), review observations the user chose to fix in this slice (observations), or both, after the user agreed. Observation ids must be in the active slice's green review. Writes a tracked fix file; a round with a bug counts toward the fix budget, an observation-only round does not and never stalls the slice. The slice earns checks and a new review before factory_complete_slice. ${STALL_DESCRIPTION}`,
+      `After a green review, send the active slice back to the fix loop for a bug the user found in it (bug), review observations the user chose to fix in this slice (observations), or both, after the user agreed. Observation ids are unplaced observations of any review of the active slice, red ones too (\`<review>:<id>\` when two reviews kept the same id). Writes a tracked fix file; a round with a bug counts toward the fix budget, an observation-only round does not and never stalls the slice. The slice earns checks and a new review before factory_complete_slice. ${STALL_DESCRIPTION}`,
     label: 'Factory: fix observations or a bug',
     name: 'factory_fix',
     schema: fixSchema,
@@ -239,7 +239,7 @@ export function registerReviewTools(tool: RunTool) {
   tool({
     caller: 'main',
     description:
-      'After a green review, carry review observations the user chose (observations), a free-text note (note), or both into the ticket of a pending slice (to), or with to "end" onto the run\'s queue for the next factory_follow_up slice, after the user agreed. Observation ids come from the active slice\'s green review. The target slice builds them and its reviewers check them; the slice they come from keeps its green review. The retro waits until the queue is empty.',
+      'After a green review, carry review observations the user chose (observations), a free-text note (note), or both into the ticket of a pending slice (to), or with to "end" onto the run\'s queue for the next factory_follow_up slice, after the user agreed. Observation ids come from the active slice\'s green review and are refused until its last green review is a full one (a note alone is not). The target slice builds them and its reviewers check them; the slice they come from keeps its green review. The retro waits until the queue is empty.',
     label: 'Factory: carry work into a pending slice',
     name: 'factory_carry',
     schema: carrySchema,

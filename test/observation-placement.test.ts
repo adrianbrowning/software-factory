@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+
 import { beforeEach, describe, it } from 'node:test';
 import { ctx, load } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
 import { carriedKeysLine, carriesKey } from '../src/legacy-observations.ts';
-import { type Finding, readRun, REVIEW_DOMAINS, withRun, type Workspace } from '../src/run.ts';
+import { type Finding, readRun, REVIEW_DOMAINS, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, keptFindings, recordReview, runChecks, startReview, submitDomain, submitValidation, validationSchema } from '../src/review.ts';
 import { addFollowUp, applyReslice, approvePlan, nextAction, nextSlice, planReslice, planSlices } from '../src/workflow.ts';
 import { commit, fakeGh, finding, headlessSubmitRun, noFixItems, review, slice, submitGreenWithObservation, tempRepo } from './helpers.ts';
@@ -18,14 +19,14 @@ type Reply = { content: { text: string }[] };
 const repo = (extra: Record<string, unknown> = {}) => tempRepo('factory-place-', { 'demo.md': '# Demo\n\nDo it.\n', '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], ...extra }) });
 
 /** An observation of the thermo domain with an explicit category. */
-const observation = (name: string, category: NonNullable<Finding['category']>): Finding => ({ ...finding('thermo', 'observation', name), category, problem: `${name} misleads the reader` });
+const observation = (name: string, category: NonNullable<Finding['category']>, domain = 'thermo'): Finding => ({ ...finding(domain as Finding['domain'], 'observation', name), category, problem: `${name} misleads the reader` });
 
 /** An interactive run of slices Feature and Second, driven through the registered tools; `dialogs` collects every confirm title (all answered yes). */
 async function interactive(root: string) {
   const tools = load();
   const dialogs: string[] = [];
-  const call = async (name: string, params: unknown) => {
-    const caller = { ...ctx('main', 'main'), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async (title: string) => (dialogs.push(title), true), notify() {} } };
+  const call = async (name: string, params: unknown, confirm: (title: string) => Promise<boolean> = async () => true) => {
+    const caller = { ...ctx('main', 'main'), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async (title: string) => (dialogs.push(title), confirm(title)), notify() {} } };
     const tool = tools.get(name);
     if (tool === undefined) throw new Error(`no tool ${name}`);
     return (await tool.execute('id', params, undefined, undefined, caller)) as Reply;
@@ -119,6 +120,65 @@ describe('batched observation placement', () => {
     await call('factory_place', { placements: [] });
     await assert.rejects(call('factory_place', { placements: [{ id: 'thermo-naming', placement: 'leave' }] }), /already left/);
     assert.equal(dialogs.length, 1);
+  });
+
+  it('a declined factory_place confirm places nothing', async () => {
+    using dir = repo();
+    const { call, dialogs, full, ws } = await interactive(dir.root);
+    await full([observation('naming', 'naming'), observation('gap', 'correctness')]);
+    const before = readRun(ws, 'demo');
+    const text = (await call('factory_place', { placements: [] }, async () => false)).content[0]?.text ?? '';
+    assert.match(text, /did not place the observations/);
+    assert.equal(dialogs.length, 1);
+    const after = readRun(ws, 'demo');
+    assert.deepEqual(after.slices[0]?.unplaced, before.slices[0]?.unplaced);
+    assert.equal(after.slices[0]?.unplaced.length, 2);
+    assert.deepEqual(after.observations, before.observations);
+    assert.equal(after.observations.length, 0);
+  });
+
+  it('factory_place refuses each malformed placement before any dialog', async () => {
+    using dir = repo();
+    const { call, dialogs, full } = await interactive(dir.root);
+    await full([observation('naming', 'naming'), observation('gap', 'correctness')]);
+    const place = (placements: unknown[]) => call('factory_place', { placements });
+    await assert.rejects(place([{ id: 'thermo-gap', placement: 'leave' }, { id: 'thermo-gap', placement: 'end' }]), /placed twice/);
+    await assert.rejects(place([{ id: 'thermo-gap', placement: 'leave', to: '02' }]), /"to" belongs to carry only/);
+    await assert.rejects(place([{ id: 'thermo-gap', placement: 'carry' }]), /carry needs "to"/);
+    await assert.rejects(place([{ id: 'thermo-gap', placement: 'carry', to: '01' }]), /Slice 01 is active; carry takes a pending slice/);
+    assert.equal(dialogs.length, 0);
+  });
+
+  it('factory_place refuses an id unplaced under two reviews, and a targeted green awaiting its full review', async () => {
+    using dir = repo();
+    const { call, dialogs, full, ws } = await interactive(dir.root);
+    await full([finding('security', 'high', 'leak'), observation('naming', 'naming', 'bug')]);
+    commit(ws, 'more.txt');
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    // The targeted green keeps the same observation id under a second review; its full review is still to come.
+    await full([{ ...observation('naming', 'style', 'bug'), path: 'more.txt' }]);
+    await assert.rejects(call('factory_place', { placements: [] }), /was targeted: place observations after its full review/);
+    await full([]);
+    await assert.rejects(call('factory_place', { placements: [{ id: 'bug-naming', placement: 'leave' }] }), /unplaced under reviews[\s\S]*name it as <review>:bug-naming/);
+    assert.equal(dialogs.length, 0);
+  });
+
+  it('factory_carry, factory_defer and factory_leave refuse observation ids after a targeted green, and a note alone still carries; factory_place takes them after the full review', async () => {
+    using dir = repo({ deferred: { kind: 'file' } });
+    const { call, full, ws } = await interactive(dir.root);
+    await full([finding('security', 'high', 'leak'), observation('naming', 'naming')]);
+    commit(ws, 'more.txt');
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    await full([{ ...observation('extra', 'style', 'bug'), path: 'more.txt' }]);
+    await assert.rejects(call('factory_leave', { observations: ['bug-extra'] }), /targeted: factory_leave takes observation ids only after its full review/);
+    await assert.rejects(call('factory_carry', { observations: ['bug-extra'], to: '02' }), /factory_carry takes observation ids only after/);
+    await assert.rejects(call('factory_defer', { observations: ['bug-extra'] }), /factory_defer takes observation ids only after/);
+    assert.equal(readRun(ws, 'demo').observations.length, 0);
+    await call('factory_carry', { note: 'build the thing', to: '02' });
+    assert.equal(readRun(ws, 'demo').slices[1]?.carried.length, 1);
+    await full([]);
+    await call('factory_place', { placements: [{ id: 'bug-extra', placement: 'leave' }] });
+    assert.equal(readRun(ws, 'demo').observations[0]?.placement, 'left');
   });
 
   it('places the observation of a red review: it is listed with the final green review and factory_fix takes it without using the fix budget', async () => {
@@ -260,12 +320,45 @@ describe('batched observation placement', () => {
     const { ws } = await headlessSubmitRun(dir.root, ['Feature'], {}, { deferred: { kind: 'github' } });
     await submitGreenWithObservation(ws);
     writeFileSync(join(ws.root, 'ok'), 'dirty\n');
-    await assert.rejects(withRun(ws, 'demo', run => completeSlice(ws, run)));
+    await assert.rejects(withRun(ws, 'demo', run => completeSlice(ws, run)), /Cannot complete the slice: commit or remove these changes first/);
     assert.equal(gh.calls().length, 0);
     writeFileSync(join(ws.root, 'ok'), 'x\n');
     await withRun(ws, 'demo', run => completeSlice(ws, run));
     assert.equal(gh.calls().length, 1);
     assert.equal(readRun(ws, 'demo').slices[0]?.status, 'done');
+  });
+
+  /** Makes the ticket write of completeSlice fail, after the observations were placed. */
+  const breakTicket = (ws: Workspace) => {
+    const path = ticketPath(ws, 'demo', readRun(ws, 'demo').slices[0]!);
+    rmSync(path, { force: true });
+    mkdirSync(path);
+  };
+
+  it('an interactive completion that fails after its steps starts rolls the state back and rethrows the error', async () => {
+    using dir = repo();
+    const { call, full, ws } = await interactive(dir.root);
+    await full([observation('naming', 'naming')]);
+    await call('factory_place', { placements: [] });
+    const before = readRun(ws, 'demo');
+    breakTicket(ws);
+    await assert.rejects(call('factory_complete_slice', {}), error => error instanceof Error && !/after its default observations were placed/.test(error.message));
+    const after = readRun(ws, 'demo');
+    assert.equal(after.slices[0]?.status, 'active');
+    assert.deepEqual(after.events, before.events, 'no slice-done event is kept');
+  });
+
+  it('a headless completion that fails after the defaults were placed keeps the placement and says so', async () => {
+    using dir = repo();
+    const { ws } = await headlessSubmitRun(dir.root, ['Feature'], {}, { deferred: { kind: 'file' } });
+    await submitGreenWithObservation(ws);
+    breakTicket(ws);
+    await assert.rejects(withRun(ws, 'demo', run => completeSlice(ws, run)), /failed after its default observations were placed/);
+    const run = readRun(ws, 'demo');
+    assert.equal(run.slices[0]?.status, 'active');
+    assert.equal(run.slices[0]?.unplaced.length, 0);
+    assert.equal(run.observations.length, 1);
+    assert.equal(run.events.some(event => event.kind === 'slice-done'), false);
   });
 
   it('a headless run places the defaults with no dialog when the slice completes: end queue, and leave items to the deferred sink', async () => {

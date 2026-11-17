@@ -10,7 +10,7 @@ import { placeObservations, requireUnplaced } from './ledger.ts';
 import { carriedSection, renderFinding } from './finding-text.ts';
 import { findingRecord, keptFindings, readRecorded, recordedFindings, type Review, targetingAfter, validationFile, validationSchema } from './review.ts';
 import { addEvent, greenCommit, requireActive, type Finding, type Run, type Slice, type Workspace } from './run.ts';
-import { type FixRecord, requestFix, writeTicket } from './workflow.ts';
+import { type FixRecord, needsFullReview, requestFix, writeTicket } from './workflow.ts';
 
 function noGreenReview(sliceId: string, purpose: string): Error {
   return new Error(`Slice ${sliceId} has no green review to ${purpose} from.`);
@@ -49,6 +49,14 @@ function greenObservations(ws: Workspace, run: Run, chosen: Set<string>, purpose
   return { observations: observations.filter(finding => chosen.has(finding.id)), review, slice };
 }
 
+/** Throws when `chosen` has ids and the active slice's last green review was targeted: ids are placed after its full review, by factory_place or these tools. */
+function requireFullForIds(run: Run, chosen: Set<string>, tool: string) {
+  const slice = requireActive(run);
+  if (chosen.size > 0 && needsFullReview(slice)) {
+    throw new Error(`The last green review of slice ${slice.id} was targeted: ${tool} takes observation ids only after its full review.`);
+  }
+}
+
 /**
  * What factory_carry takes: observation ids from the active slice's green review, a free-text note, or both, and where they go: a pending slice id, or "end" to wait on the run for the
  * next follow-up slice.
@@ -65,6 +73,7 @@ export function planCarry(ws: Workspace, run: Run, request: CarryRequest) {
   const note = request.note?.trim() ? request.note : undefined;
   const chosen = new Set(z.array(z.string().min(1)).parse(request.observations ?? []));
   if (note === undefined && chosen.size === 0) throw new Error('factory_carry needs observation ids, a note, or both.');
+  requireFullForIds(run, chosen, 'factory_carry');
   const green = greenObservations(ws, run, chosen, 'carry observations or a note');
   requireUnplaced(run, green.review.id, green.observations);
   if (request.to === 'end') return { note, ...green, target: undefined };
@@ -106,6 +115,7 @@ export function planDefer(ws: Workspace, run: Run, request: DeferRequest) {
   const note = request.note?.trim() ? request.note : undefined;
   const chosen = new Set(z.array(z.string().min(1)).parse(request.observations ?? []));
   if (note === undefined && chosen.size === 0) throw new Error('factory_defer needs observation ids, a note, or both.');
+  requireFullForIds(run, chosen, 'factory_defer');
   const { observations, review, slice } = greenObservations(ws, run, chosen, 'defer observations or a note');
   if (isRecordSlice(slice)) throw new Error(`Slice ${slice.id} "${slice.title}" writes the deferred sink file, so its review items are not deferred. They stay in the review itself (the green review observations, and for accepted-unresolved findings slice.unresolved and the accepted-unresolved event).`);
   requireUnplaced(run, review.id, observations);
@@ -191,6 +201,7 @@ export type LeaveRequest = { observations: string[] };
 export function planLeave(ws: Workspace, run: Run, request: LeaveRequest) {
   const chosen = new Set(z.array(z.string().min(1)).parse(request.observations));
   if (chosen.size === 0) throw new Error('factory_leave needs observation ids.');
+  requireFullForIds(run, chosen, 'factory_leave');
   const found = greenObservations(ws, run, chosen, 'leave observations');
   requireUnplaced(run, found.review.id, found.observations);
   return found;

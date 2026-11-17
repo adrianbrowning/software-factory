@@ -216,7 +216,7 @@ const sliceSchema = sliceInputSchema.extend({
   recordBatch: text.optional(),
   /** Set while the slice waits for the user to decide on an exhausted fix budget. */
   stalled: z.boolean(),
-  /** Kept observations of the slice's reviews, red ones too, that no placement has handled yet; factory_place and factory_complete_slice drain it. Each placement removes its observation (placeObservations). */
+  /** Kept observations of the slice's reviews, red ones too, that no placement has handled yet; factory_place and factory_complete_slice drain it. Each placement removes its observation (placeObservations). restartSlice keeps them: the slice's commits stay and the ledger keeps its entries too, so they still wait for the slice's batch placement. */
   unplaced: z.array(unplacedSchema).default([]),
   /** Set by a red review, and by an observation-only fix round: the next review is targeted, over `domains` (plus the required ones), on the changes since `base`, the commit of the review `from`. Cleared when a review is recorded. */
   targeting: z.object({ base: sha, domains: z.array(z.enum(REVIEW_DOMAINS)), from: text }).optional(),

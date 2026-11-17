@@ -366,7 +366,7 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   const dataFile = join(reviewDir(ws, run.feature, id), 'data.md');
   writeAtomic(
     dataFile,
-    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n${renderLaterSlices(run, slice)}\n\n## CHECKS\n\nThe factory ran every configured check on \`${checked.sha}\` and all passed. Do not run them again.\n\n${checked.results.map(result => `- ${result}`).join('\n')}\n\n## KNOWN OBSERVATIONS\n\nObservations this run has already placed (carried, deferred, fixed or left). A finding that matches an entry by location and problem, under any id, is not new: the validator drops it with the reason \`same as <key>\`. An entry marked \`${CARRIED_HERE}\` is work this slice builds: a finding that it is unbuilt or wrong in this slice is not a repeat. ${UNTRUSTED_NOTE}\n\n${renderKnownObservations(run, slice)}\n\n${targetedSection}## FIX ITEMS\n\n${listed}\n\n## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files.join('\n')}\n`,
+    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n${renderLaterSlices(run, slice)}\n\n## CHECKS\n\nThe factory ran every configured check on \`${checked.sha}\` and all passed. Do not run them again.\n\n${checked.results.map(result => `- ${result}`).join('\n')}\n\n## KNOWN OBSERVATIONS\n\nObservations this run has already placed (carried, deferred, fixed or left), and observations of this slice's earlier reviews that are not placed yet, marked \`(unplaced)\`. A finding that matches an entry by location and problem, under any id, is not new: the validator drops it with the reason \`same as <key>\`. An entry marked \`${CARRIED_HERE}\` is work this slice builds: a finding that it is unbuilt or wrong in this slice is not a repeat. ${UNTRUSTED_NOTE}\n\n${renderKnownObservations(run, slice)}\n\n${targetedSection}## FIX ITEMS\n\n${listed}\n\n## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files.join('\n')}\n`,
   );
   const lines = changedLines(diff, files);
   slice.review = { decisions: run.decisions.length, id, lines, sha: checked.sha, skipped, snapshot: await snapshot(ws.root), submissions: {}, targeted };
@@ -947,7 +947,8 @@ export async function completeSlice(ws: Workspace, run: Run) {
     reopenReview(run, slice);
     throw new Invalidated(`${newerDecisions(run, covered)} newer than the green review, so its reviewers did not check the code against them. Call factory_review_start for a new review.`);
   }
-  if (run.mode === 'headless') await placeDefaults(ws, run);
+  const placedHere = run.mode === 'headless';
+  if (placedHere) await placeDefaults(ws, run);
   if (slice.unplaced.length > 0) {
     throw new Error(`Slice ${slice.id} has unplaced observations: ${slice.unplaced.map(entry => entry.finding.id).join(', ')}. Place them with factory_place (placements [] takes every default), then call factory_complete_slice. A headless run places them by default in factory_complete_slice.`);
   }
@@ -964,10 +965,10 @@ export async function completeSlice(ws: Workspace, run: Run) {
     addEvent(run, 'slice-done', `${slice.fixRounds} fix rounds, ${slice.reviews} reviews`, slice);
     settle(ws, run);
   } catch (error) {
-    // The defaults may have filed items by now: save the placement instead of rolling it back.
-    if (error instanceof Invalidated) throw error;
+    // Only the headless defaults file items in this call: save that placement instead of rolling it back. Otherwise the state rolls back.
+    if (!placedHere || error instanceof Invalidated) throw error;
     slice.status = 'active';
-    throw new Invalidated(`Completing slice ${slice.id} failed after its observations were placed: ${error instanceof Error ? error.message : String(error)}. Call factory_complete_slice again.`);
+    throw new Invalidated(`Completing slice ${slice.id} failed after its default observations were placed: ${error instanceof Error ? error.message : String(error)}. Call factory_complete_slice again.`);
   }
   return slice;
 }

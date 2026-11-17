@@ -245,7 +245,9 @@ it under `observations`.
 
 `factory_leave` (observation ids from the active slice's green review or, when it does not list them, from the one done
 slice whose last green review does) records them as left: no slice builds them and no sink gets them. An interactive
-run asks once; a declined dialog records nothing, and a headless run records with no dialog.
+run asks once; a declined dialog records nothing, and a headless run records with no dialog. `factory_carry`,
+`factory_defer` and `factory_leave` refuse observation ids until the slice's last green review is a full one; a
+note-only carry or defer works at any green review.
 
 - All four tools refuse an observation the ledger already holds and name its placement (`Observations already
   carried: ...`), before any dialog.
