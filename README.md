@@ -141,7 +141,7 @@ with the whole team, set `checks` in `.omp/factory.json` instead; then the facto
 While a run is active, the session cannot end until the run is done, paused, or stalled. The third stop attempt in a
 row without progress pauses the run instead.
 
-When a slice uses up its fix budget (from checks, review, `factory_fix`, or `factory_reopen`), a dialog asks whether to
+When a slice uses up its fix budget (from red checks, a blocking review, `factory_fix` with a bug, or `factory_reopen`; a `factory_fix` round for observations only does not count), a dialog asks whether to
 continue with `maxRounds` more fix rounds or pause. A paused stall leaves the run stalled, and the tool reply and its
 `Next:` line say so. `/factory resume <feature>` on a stalled run names the slice and its used rounds and asks
 whether to raise the fix budget by `maxRounds` and resume; declining keeps the run stalled.
@@ -196,8 +196,8 @@ shows them. After you confirm:
 - The slice gets a fix file with those observations and a "Bug found after green review" section for the bug, and
   goes back to fix. The green review is dropped, so the slice goes through checks and a new review again before
   `factory_complete_slice`.
-- The round counts in the slice's fix rounds (`factory_status`) and against its round limit; a used-up budget stalls
-  like any other fix round.
+- A round with a bug counts in the slice's fix rounds (`factory_status`) and against its round limit; a used-up
+  budget stalls like any other fix round. A round for observations only does not count and never stalls the slice.
 - It refuses a call with neither a bug nor observation ids, an id that is not an observation of that green review,
   and a slice without a green review. Observation ids that only a done slice's green review lists are refused too:
   the message names the slice and its review, and says to use `factory_reopen` for that slice or `factory_follow_up`.

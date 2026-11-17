@@ -612,7 +612,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
   tool({
     caller: 'main',
     description:
-      `After a green review, send the active slice back to the fix loop for a bug the user found in it (bug), review observations the user chose to fix in this slice (observations), or both, after the user agreed. Observation ids must be in the active slice's green review; ids only a done slice's review lists are refused (use factory_reopen or factory_follow_up). Writes a tracked fix file; the round counts toward the fix budget, and the slice earns checks and a new review before factory_complete_slice. ${STALL_DESCRIPTION}`,
+      `After a green review, send the active slice back to the fix loop for a bug the user found in it (bug), review observations the user chose to fix in this slice (observations), or both, after the user agreed. Observation ids must be in the active slice's green review; ids only a done slice's review lists are refused (use factory_reopen or factory_follow_up). Writes a tracked fix file; a round with a bug counts toward the fix budget, an observation-only round does not and never stalls the slice. The slice earns checks and a new review before factory_complete_slice. ${STALL_DESCRIPTION}`,
     label: 'Factory: fix observations or a bug',
     name: 'factory_fix',
     schema: fixSchema,
@@ -625,7 +625,7 @@ export default function softwareFactory(pi: ExtensionAPI) {
         ...planned.observations.map(finding => `- ${finding.id}: ${finding.title}`),
       ];
       const what = [...(planned.bug === undefined ? [] : ['the bug']), ...planned.observations.map(finding => finding.id)].join(', ');
-      const body = `${params.reason}\n\n${items.join('\n')}\n\nThe green review ${planned.review.id} is dropped. The implementer fixes these in fix mode, then the slice gets checks and a new review again. The round counts toward the fix budget.`;
+      const body = `${params.reason}\n\n${items.join('\n')}\n\nThe green review ${planned.review.id} is dropped. The implementer fixes these in fix mode, then the slice gets checks and a new review again.${planned.bug === undefined ? '' : ' The round counts toward the fix budget.'}`;
       const title = planned.observations.length === 0 ? 'Fix a bug' : planned.bug === undefined ? 'Fix observations' : 'Fix a bug and observations';
       if (!(await gate(ctx, ws, feature, 'fix', `${title} in slice ${planned.slice.id} "${planned.slice.title}"?`, body))) {
         return reply(`The user kept the green review. Ask how to handle the observations or the bug, or call factory_complete_slice.\nNext: ${nextAction(readRun(ws, feature))}`);

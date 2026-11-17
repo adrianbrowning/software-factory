@@ -163,6 +163,8 @@ const sliceSchema = sliceInputSchema.extend({
   fixFromSha: sha.optional(),
   /** Fix items from every fix round since the slice's last recorded review; recording a review clears them, and its fix file asks again for the blocking findings and open items. */
   fixItems: z.array(fixItemSchema).default([]),
+  /** Fix files written for the slice, counted or not; the next fix file is `<id>-f<fixFiles + 1>`. `fixRounds` is only the fix budget count. A slice saved without it starts from the higher of `fixRounds` and the N in its retained `fixPath` (`<id>-f<N>.md`); see legacySlice. */
+  fixFiles: z.number().int().nonnegative(),
   fixRounds: z.number().int().nonnegative(),
   /**
    * The green review of the checked commit (`checked.sha`, see `greenCommit`): how many recorded decisions it covered,
@@ -200,6 +202,7 @@ export function builtBy(slice: Slice, start: 'built' | 'Built' = 'built') {
  * review as greenSha and greenDecisions. Read by `legacySlice`.
  */
 const legacySliceSchema = sliceSchema.extend({
+  fixFiles: z.number().int().nonnegative().optional(),
   checkedSha: sha.optional(),
   checkResults: z.array(text).optional(),
   greenDecisions: z.number().int().nonnegative().optional(),
@@ -222,7 +225,9 @@ function legacySlice({ checkedSha, checkResults, greenDecisions, greenSha, ...sl
   // LEGACY-STATE(green-sha): a green review was greenSha; it carries over as `green` only when greenSha is the checked commit, so a slice not done whose checkedSha moved past it loses its green review. Remove with checked-pass.
   let green = slice.green;
   if (green === undefined && greenSha !== undefined && checked?.sha === greenSha) green = greenDecisions === undefined ? {} : { decisions: greenDecisions };
-  return { ...slice, checked, green };
+  // LEGACY-STATE(fix-files): an old state file counted every fix round in fixRounds, so fixFiles starts from it. A slice saved while stalled had already written its f<fixRounds+1> file without raising fixRounds, so fixFiles starts from the higher of fixRounds and the N in the retained fixPath (`<id>-f<N>.md`); otherwise the round after a resumed stall would overwrite that file. Remove with checked-pass, once no run paused before the release that ships fixFiles is left to resume.
+  const pathRound = Number(/-f(\d+)\.md$/.exec(slice.fixPath ?? '')?.[1] ?? 0);
+  return { ...slice, checked, fixFiles: slice.fixFiles ?? Math.max(slice.fixRounds, pathRound), green };
 }
 
 /**

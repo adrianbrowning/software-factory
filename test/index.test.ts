@@ -357,7 +357,7 @@ describe('used-up fix budget', () => {
     const { call, ws } = await budgetRun(repo.root, ['Feature']);
     await greenWithObservation(ws, 2);
 
-    const fixed = await call('factory_fix', { observations: ['thermo-naming'], reason: 'tidy' }, { confirm: async () => true, select: async () => 'Pause the run' });
+    const fixed = await call('factory_fix', { bug: 'Crash.', reason: 'tidy' }, { confirm: async () => true, select: async () => 'Pause the run' });
     assert.doesNotMatch(fixed.content[0]?.text ?? '', /The run is (paused|stalled)/);
     assert.match(
       fixed.content[0]?.text ?? '',
@@ -413,7 +413,7 @@ describe('used-up fix budget', () => {
     const { call, ws } = await budgetRun(repo.root, ['Feature']);
     await greenWithObservation(ws, 1);
     const interrupted = { confirm: async () => true, select: async () => Promise.reject(new Error('omp exited')) };
-    await assert.rejects(call('factory_fix', { observations: ['thermo-naming'], reason: 'tidy' }, interrupted));
+    await assert.rejects(call('factory_fix', { bug: 'Crash.', reason: 'tidy' }, interrupted));
     assert.deepEqual([readRun(ws, 'demo').status, readRun(ws, 'demo').slices[0]?.stalled], ['running', true]);
 
     const asked: string[] = [];
@@ -437,6 +437,21 @@ describe('used-up fix budget', () => {
     assert.match(asked[0] ?? '', /^Fix a bug in slice 01 "Feature"\?\nFound while demoing\.\n\n- Bug: Empty input crashes the parser\./);
     assert.match(fixed.content[0]?.text ?? '', /Slice 01 is back in fix for the bug\. Fix file: .*01-f1\.md/);
     assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'fix');
+  });
+
+  it('factory_fix for observations only never stalls or mentions the fix budget, even at the round limit', async () => {
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature']);
+    await greenWithObservation(ws, 2);
+    const asked: string[] = [];
+    let selects = 0;
+    const fixed = await call('factory_fix', { observations: ['thermo-naming'], reason: 'tidy' }, { confirm: async (title: string, body: string) => (asked.push(`${title}\n${body}`), true), select: async () => (selects++, 'Pause the run') });
+    assert.equal(asked.length, 1);
+    assert.doesNotMatch(asked[0] ?? '', /fix budget/);
+    assert.doesNotMatch(fixed.content[0]?.text ?? '', /fix budget|used up/);
+    assert.equal(selects, 0);
+    const slice = readRun(ws, 'demo').slices[0];
+    assert.deepEqual([slice?.stalled, slice?.fixRounds, slice?.phase], [false, 2, 'fix']);
   });
 
   it('shows the start of a long bug in the factory_fix dialog', async () => {

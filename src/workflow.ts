@@ -234,6 +234,7 @@ function makeSlice(ws: Workspace, run: Run, input: SliceInput, index: number, pa
     carried: [],
     compactions: 0,
     fixItems: [],
+    fixFiles: 0,
     fixRounds: 0,
     id,
     ownsDecisions: input.ownsDecisions ?? [],
@@ -604,10 +605,12 @@ export type FixRecord = { group?: string; item: FixItemInput; section: string };
 /**
  * Writes the fix file and moves the slice to `fix`. `sha` is the commit the fix file describes. `records` are what the
  * fix file asks the implementer to fix: the fix file lists their items under `## Fix items`, then their sections, and
- * the slice gathers the items for its next review.
+ * the slice gathers the items for its next review. A round counts toward the fix budget and can stall the slice unless
+ * `counted` is false (observation-only rounds from factory_fix).
  */
-export function requestFix(ws: Workspace, run: Run, slice: Slice, sha: string, records: FixRecord[]) {
-  const round = slice.fixRounds + 1;
+export function requestFix(ws: Workspace, run: Run, slice: Slice, sha: string, records: FixRecord[], counted = true) {
+  slice.fixFiles += 1;
+  const round = slice.fixFiles;
   let checks = 0;
   const items = records.map(({ item }) => {
     if ('id' in item) return item;
@@ -632,6 +635,7 @@ export function requestFix(ws: Workspace, run: Run, slice: Slice, sha: string, r
   slice.fixPath = fixPath;
   slice.fixFromSha = sha;
   dropPass(slice, 'fix');
+  if (!counted) return { fixPath, stalled: false };
   if (slice.fixRounds >= slice.roundLimit) {
     slice.stalled = true;
     addEvent(run, 'stall', `fix budget of ${slice.roundLimit} rounds used`, slice);

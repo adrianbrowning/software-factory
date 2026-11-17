@@ -56,7 +56,7 @@ const GATED: { effect: (run: Run) => boolean; gate: (typeof GATES)[number]; para
   { effect: run => run.slices.length === 2, gate: 'reslice', params: { slices: [slice('Part one'), slice('Part two')] }, stage: 'active', tool: 'factory_reslice' },
   { effect: run => run.decisions.some(decision => decision.text === 'Accepted tradeoff.'), gate: 'decide', params: { decisions: ['Accepted tradeoff.'] }, stage: 'active', tool: 'factory_decide' },
   { effect: run => run.slices[0]?.seams.includes('new seam') === true, gate: 'seams', params: { seams: ['new seam'] }, stage: 'active', tool: 'factory_amend_seams' },
-  { effect: run => run.slices[0]?.fixRounds === 1, gate: 'fix', params: { observations: ['thermo-naming'], reason: 'tidy' }, stage: 'green', tool: 'factory_fix' },
+  { effect: run => run.slices[0]?.phase === 'fix' && run.slices[0].fixRounds === 0, gate: 'fix', params: { observations: ['thermo-naming'], reason: 'tidy' }, stage: 'green', tool: 'factory_fix' },
   { effect: run => run.waiting.length === 1, gate: 'carry', params: { observations: ['thermo-naming'], to: 'end' }, stage: 'green', tool: 'factory_carry' },
   { effect: run => run.slices[0]?.status === 'active' && run.slices[0].doneSha !== undefined, gate: 'reopen', params: { reason: 'bug', slice: '01' }, stage: 'done', tool: 'factory_reopen' },
   { effect: run => run.slices.some(item => item.title === 'Polish'), gate: 'followUp', params: { acceptance: ['logged'], estimateTokens: 500, seams: ['cli'], title: 'Polish', whatToBuild: 'Polish' }, stage: 'done', tool: 'factory_follow_up' },
