@@ -26,9 +26,11 @@ test('universal or arm64 git gives no warning', () => {
 });
 
 test('other hosts never call describe', () => {
-  const describe = () => { throw new Error('called'); };
+  const calls: string[] = [];
+  const describe = (p: string) => { calls.push(p); return 'Mach-O 64-bit executable x86_64'; };
   assert.equal(gitArchWarning(host({ describe, platform: 'linux' })), undefined);
   assert.equal(gitArchWarning(host({ arch: 'x64', describe })), undefined);
+  assert.deepEqual(calls, []);
 });
 
 test('no git or throwing describe gives no warning', () => {
