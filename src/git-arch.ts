@@ -10,6 +10,8 @@ export type GitArchHost = {
   isExecutable: (path: string) => boolean;
   /** Resolves symlinks so the binary that actually runs is described. */
   realpath: (path: string) => string;
+  /** Prints `sysctl -n hw.optional.arm64`: "1" on Apple Silicon even for a Rosetta-run Node. */
+  sysctlArm64: () => string;
   arch: string;
   path: string | undefined;
   platform: string;
@@ -31,6 +33,7 @@ export function defaultGitArchHost(): GitArchHost {
       }
     },
     realpath: realpathSync,
+    sysctlArm64: () => execFileSync('sysctl', ['-n', 'hw.optional.arm64'], { encoding: 'utf8', timeout: 2000 }),
     path: process.env.PATH,
     platform: process.platform,
   };
@@ -46,8 +49,9 @@ function firstExecutable(name: string, host: GitArchHost): string | undefined {
 
 /** Warns when the first git on PATH is x86_64-only on Apple Silicon; undefined otherwise or when detection fails. */
 export function gitArchWarning(host: GitArchHost = defaultGitArchHost()): string | undefined {
-  if (host.platform !== 'darwin' || host.arch !== 'arm64') return undefined;
+  if (host.platform !== 'darwin') return undefined;
   try {
+    if (host.arch !== 'arm64' && host.sysctlArm64().trim() !== '1') return undefined;
     const git = firstExecutable('git', host);
     if (git === undefined) return undefined;
     const info = host.describe(host.realpath(git));

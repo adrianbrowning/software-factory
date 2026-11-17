@@ -9,6 +9,7 @@ const host = (over: Partial<GitArchHost> = {}): GitArchHost => ({
   path: '/nope:/opt/x:/usr/bin',
   realpath: p => p,
   isExecutable: p => p === '/opt/x/git',
+  sysctlArm64: () => '0\n',
   platform: 'darwin',
   ...over,
 });
@@ -36,6 +37,22 @@ test('other hosts never call describe', () => {
 test('no git or throwing describe gives no warning', () => {
   assert.equal(gitArchWarning(host({ isExecutable: () => false })), undefined);
   assert.equal(gitArchWarning(host({ describe: () => { throw new Error('x'); } })), undefined);
+});
+
+test('a Rosetta-run Node on Apple Silicon hardware still warns', () => {
+  assert.match(gitArchWarning(host({ arch: 'x64', sysctlArm64: () => '1\n' })) ?? '', /\/opt\/x\/git/);
+});
+
+test('sysctl failing or not printing 1 gives no warning', () => {
+  assert.equal(gitArchWarning(host({ arch: 'x64', sysctlArm64: () => '0\n' })), undefined);
+  assert.equal(gitArchWarning(host({ arch: 'x64', sysctlArm64: () => { throw new Error('x'); } })), undefined);
+});
+
+test('off darwin sysctl is never called', () => {
+  let called = false;
+  const sysctlArm64 = () => { called = true; return '1'; };
+  assert.equal(gitArchWarning(host({ arch: 'x64', platform: 'linux', sysctlArm64 })), undefined);
+  assert.equal(called, false);
 });
 
 test('a symlinked git is described by its target', () => {
