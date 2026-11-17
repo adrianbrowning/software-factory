@@ -7,7 +7,7 @@ import { loadConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
 import { carriedKeysLine, carriesKey } from '../src/legacy-observations.ts';
 import { type Finding, readRun, REVIEW_DOMAINS, withRun, type Workspace } from '../src/run.ts';
-import { completeSlice, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
+import { completeSlice, keptFindings, recordReview, runChecks, startReview, submitDomain, submitValidation, validationSchema } from '../src/review.ts';
 import { addFollowUp, applyReslice, approvePlan, nextAction, nextSlice, planReslice, planSlices } from '../src/workflow.ts';
 import { commit, fakeGh, finding, headlessSubmitRun, noFixItems, review, slice, submitGreenWithObservation, tempRepo } from './helpers.ts';
 
@@ -71,6 +71,25 @@ describe('batched observation placement', () => {
     await downgrade('correctness');
     const text = (await call('factory_review_record', {})).content[0]?.text ?? '';
     assert.match(text, /thermo-gap[\s\S]*Default placement: end queue/);
+  });
+
+  it('a downgrade category fills in only the downgraded finding that has none, and never replaces a reviewer\'s own', () => {
+    const bare = { ...finding('thermo', 'high', 'bare'), category: undefined };
+    const own = { ...finding('thermo', 'high', 'own'), category: 'style' as const };
+    const kept = { ...finding('thermo', 'high', 'kept'), category: undefined };
+    const validation = validationSchema.parse({
+      downgrade: [
+        { category: 'correctness', id: bare.id, reason: 'r' },
+        { category: 'correctness', id: own.id, reason: 'r' },
+      ],
+      dropped: [],
+      keep: [kept.id],
+    });
+    const byId = new Map(keptFindings([bare, own, kept], validation).map(item => [item.id, item]));
+    assert.equal(byId.get(bare.id)?.category, 'correctness');
+    assert.equal(byId.get(own.id)?.category, 'style');
+    assert.equal(byId.get(kept.id)?.category, undefined);
+    assert.equal(byId.get(kept.id)?.severity, 'high');
   });
 
   it('lists every unplaced observation with its default placement in the final green reply, and completion refuses until factory_place', async () => {
