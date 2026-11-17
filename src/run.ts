@@ -207,6 +207,8 @@ const sliceSchema = sliceInputSchema.extend({
   review: reviewSchema.optional(),
   reviews: z.number().int().nonnegative(),
   roundLimit: z.number().int().positive(),
+  /** Set by addFollowUp on the slice that builds the end queue: a headless run never puts its own observations back into the end queue (defaultChoice), or the run would never reach its retro. */
+  fromEndQueue: z.literal(true).optional(),
   /** Set on the Record deferred items slice the factory adds to write file-sink items. Its own reviews defer nothing to the sink. */
   record: z.literal(true).optional(),
   /** Shared by every Record slice of one batch, so a split Record slice's children fail or succeed together (recordFailed). Absent on a Record slice from an older state file. */

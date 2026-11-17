@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { beforeEach, describe, it } from 'node:test';
 import { ctx, load } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
@@ -7,7 +8,7 @@ import { resetModuleState } from '../src/index.ts';
 import { carriedKeysLine, carriesKey } from '../src/legacy-observations.ts';
 import { type Finding, readRun, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview, submitDomain } from '../src/review.ts';
-import { approvePlan, nextSlice, planSlices } from '../src/workflow.ts';
+import { addFollowUp, approvePlan, nextSlice, planSlices } from '../src/workflow.ts';
 import { commit, fakeGh, finding, headlessSubmitRun, review, slice, submitGreenWithObservation, tempRepo } from './helpers.ts';
 
 beforeEach(() => resetModuleState());
@@ -131,6 +132,57 @@ describe('batched observation placement', () => {
     await withRun(ws, 'demo', run => runChecks(ws, run));
     const { dataFile } = await withRun(ws, 'demo', run => startReview(ws, run));
     assert.match(readFileSync(dataFile, 'utf8'), /01-r1:thermo-gap` \(carried; carried to this slice: check it\)/);
+  });
+
+  it('lists a red review\'s unplaced observation as known, and a full review that raises it again adds nothing', async () => {
+    using dir = repo();
+    const { full, ws } = await interactive(dir.root);
+    await full([finding('security', 'high', 'leak'), observation('naming', 'correctness')]);
+    commit(ws, 'more.txt');
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const targeted = await withRun(ws, 'demo', run => startReview(ws, run));
+    assert.match(readFileSync(targeted.dataFile, 'utf8'), /`01-r1:thermo-naming` \(unplaced\): ok:1 - naming/);
+    await review(ws, targeted.reviewId, []);
+    await withRun(ws, 'demo', run => recordReview(ws, run));
+    const final = (await full([{ ...observation('naming', 'correctness'), id: 'thermo-again' }])).content[0]?.text ?? '';
+    assert.equal(final.match(/Default placement/g)?.length, 1, 'listed once');
+    assert.deepEqual(readRun(ws, 'demo').slices[0]?.unplaced.map(entry => entry.finding.id), ['thermo-naming']);
+  });
+
+  it('a headless follow-up slice never puts its own observations back into the end queue', async () => {
+    using dir = repo();
+    const { ws } = await headlessSubmitRun(dir.root, ['Feature']);
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const first = await withRun(ws, 'demo', run => startReview(ws, run));
+    await review(ws, first.reviewId, [observation('gap', 'correctness')]);
+    await withRun(ws, 'demo', run => recordReview(ws, run));
+    await withRun(ws, 'demo', run => completeSlice(ws, run));
+    assert.equal(readRun(ws, 'demo').waiting.length, 1);
+    await withRun(ws, 'demo', run => addFollowUp(ws, run, slice('Follow up', [])));
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    commit(ws, 'follow.txt');
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const second = await withRun(ws, 'demo', run => startReview(ws, run));
+    await review(ws, second.reviewId, [{ ...observation('again', 'correctness'), path: 'follow.txt' }]);
+    await withRun(ws, 'demo', run => recordReview(ws, run));
+    await withRun(ws, 'demo', run => completeSlice(ws, run));
+    const run = readRun(ws, 'demo');
+    assert.equal(run.waiting.length, 0);
+    assert.equal(run.observations.find(entry => entry.id === 'thermo-again')?.placement, 'left');
+  });
+
+  it('a headless completion that is refused after the defaults would be filed files nothing, so the retry creates no duplicate issue', async () => {
+    using gh = fakeGh();
+    using dir = repo();
+    const { ws } = await headlessSubmitRun(dir.root, ['Feature'], {}, { deferred: { kind: 'github' } });
+    await submitGreenWithObservation(ws);
+    writeFileSync(join(ws.root, 'ok'), 'dirty\n');
+    await assert.rejects(withRun(ws, 'demo', run => completeSlice(ws, run)));
+    assert.equal(gh.calls().length, 0);
+    writeFileSync(join(ws.root, 'ok'), 'x\n');
+    await withRun(ws, 'demo', run => completeSlice(ws, run));
+    assert.equal(gh.calls().length, 1);
+    assert.equal(readRun(ws, 'demo').slices[0]?.status, 'done');
   });
 
   it('a headless run places the defaults with no dialog when the slice completes: end queue, and leave items to the deferred sink', async () => {

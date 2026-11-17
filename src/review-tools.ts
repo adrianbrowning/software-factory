@@ -174,6 +174,9 @@ export function registerReviewTools(tool: RunTool) {
         return reply(`The user did not place the observations. Ask how to handle them.\nNext: ${nextAction(readRun(ws, feature))}`);
       }
       const { failure, fixed, lines, rest } = await withRun(ws, feature, async run => {
+        const chosen = planPlace(ws, run, params).items.filter(item => item.choice === 'fix').map(item => itemKey(item.entry.review, item.entry.finding.id));
+        // Validate the fix round before anything is filed: a refusal after a deferral would roll the state back and keep the issue.
+        if (chosen.length > 0) planFix(ws, run, { observations: chosen });
         const placed = await placeObservationBatch(ws, run, params);
         const fixed = placed.fixes.length === 0 ? undefined : fixObservations(ws, run, { observations: placed.fixes }, 'Chosen in the batched placement after the slice\'s final review.');
         // Only what the ledger holds now was placed: a failed deferral and the fix round that waits on it are not.

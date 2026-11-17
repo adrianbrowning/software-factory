@@ -728,9 +728,14 @@ export function targetingAfter(review: { id: string; sha: string }, domains: rea
  * Every kept observation has a category: submitDomain refuses one without it, and a downgrade needs one.
  */
 function collectObservations(run: Run, slice: Slice, reviewId: string, observations: Finding[]) {
-  const fresh = observations.filter(finding => !run.observations.some(entry => entry.key === itemKey(reviewId, finding.id)));
+  const others = slice.unplaced.filter(entry => entry.review !== reviewId);
+  const fresh = observations.filter(
+    finding =>
+      !run.observations.some(entry => entry.key === itemKey(reviewId, finding.id)) &&
+      !others.some(entry => findingLocation(entry.finding) === findingLocation(finding) && entry.finding.problem === finding.problem),
+  );
   slice.unplaced = [
-    ...slice.unplaced.filter(entry => entry.review !== reviewId),
+    ...others,
     ...fresh.map(finding => {
       if (finding.category === undefined) throw new Error(`Observation "${finding.id}" has no category.`);
       return { category: finding.category, finding, review: reviewId };
@@ -921,10 +926,6 @@ export async function completeSlice(ws: Workspace, run: Run) {
   if (needsFullReview(slice)) {
     throw new Error(`The last green review of slice ${slice.id} was targeted. Call factory_review_start for a full review of the same commit, then factory_complete_slice.`);
   }
-  if (run.mode === 'headless') await placeDefaults(ws, run);
-  if (slice.unplaced.length > 0) {
-    throw new Error(`Slice ${slice.id} has unplaced observations: ${slice.unplaced.map(entry => entry.finding.id).join(', ')}. Place them with factory_place (placements [] takes every default), then call factory_complete_slice. A headless run places them by default in factory_complete_slice.`);
-  }
   const sha = await requireOnBranchClean(ws.root, slice, 'Cannot complete the slice');
   if (sha !== green) {
     dropPass(slice, 'checks');
@@ -937,12 +938,23 @@ export async function completeSlice(ws: Workspace, run: Run) {
     reopenReview(run, slice);
     throw new Invalidated(`${newerDecisions(run, covered)} newer than the green review, so its reviewers did not check the code against them. Call factory_review_start for a new review.`);
   }
-  if (slice.doneSha !== undefined) {
-    await restack(ws, run, slice, slice.doneSha);
-    slice.doneSha = undefined;
+  if (run.mode === 'headless') await placeDefaults(ws, run);
+  if (slice.unplaced.length > 0) {
+    throw new Error(`Slice ${slice.id} has unplaced observations: ${slice.unplaced.map(entry => entry.finding.id).join(', ')}. Place them with factory_place (placements [] takes every default), then call factory_complete_slice. A headless run places them by default in factory_complete_slice.`);
   }
-  slice.status = 'done';
-  writeTicket(ws, run, slice);
+  try {
+    if (slice.doneSha !== undefined) {
+      await restack(ws, run, slice, slice.doneSha);
+      slice.doneSha = undefined;
+    }
+    slice.status = 'done';
+    writeTicket(ws, run, slice);
+  } catch (error) {
+    // The defaults may have filed items by now: save the placement instead of rolling it back.
+    slice.status = 'active';
+    if (error instanceof Invalidated) throw error;
+    throw new Invalidated(`Completing slice ${slice.id} failed after its observations were placed: ${error instanceof Error ? error.message : String(error)}. Call factory_complete_slice again.`);
+  }
   if (slice.peakContextTokens > ws.config.sliceTokenBudget || slice.compactions > 0) {
     addEvent(run, 'budget-exceeded', `peak ${slice.peakContextTokens} tokens, ${slice.compactions} compactions`, slice);
   }

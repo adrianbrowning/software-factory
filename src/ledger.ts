@@ -58,7 +58,11 @@ export const CARRIED_HERE = 'carried to this slice: check it';
  * title and problem, each text on one line and cut at 500 and 2000 characters; `None.` for an empty ledger. An entry
  * carried to `slice` is marked `CARRIED_HERE`: a finding that it is unbuilt or wrong there is kept, not dropped as `same as <key>`.
  */
-export function renderKnownObservations(run: Run, slice: Pick<Slice, 'carried'>) {
-  if (run.observations.length === 0) return 'None.';
-  return run.observations.map(entry => `- \`${entry.key}\` (${entry.placement === 'carried' && isCarriedTo(entry, slice) ? `${entry.placement}; ${CARRIED_HERE}` : entry.placement}): ${entry.location} - ${evidenceLine(entry.title, 500)}\n  Problem: ${evidenceLine(entry.problem, 2_000)}`).join('\n');
+export function renderKnownObservations(run: Run, slice: Pick<Slice, 'carried' | 'unplaced'>) {
+  const lines = run.observations.map(entry => `- \`${entry.key}\` (${entry.placement === 'carried' && isCarriedTo(entry, slice) ? `${entry.placement}; ${CARRIED_HERE}` : entry.placement}): ${entry.location} - ${evidenceLine(entry.title, 500)}\n  Problem: ${evidenceLine(entry.problem, 2_000)}`);
+  for (const { finding, review } of slice.unplaced) {
+    const text = ledgerText(finding);
+    lines.push(`- \`${itemKey(review, finding.id)}\` (unplaced): ${text.location} - ${evidenceLine(text.title, 500)}\n  Problem: ${evidenceLine(text.problem, 2_000)}`);
+  }
+  return lines.length === 0 ? 'None.' : lines.join('\n');
 }

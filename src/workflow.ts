@@ -563,6 +563,7 @@ export function planFollowUp(ws: Workspace, run: Run, proposed: AppendInput) {
 export function addFollowUp(ws: Workspace, run: Run, proposed: AppendInput) {
   const planned = planFollowUp(ws, run, proposed);
   planned.carried = run.waiting;
+  if (planned.carried.length > 0) planned.fromEndQueue = true;
   run.waiting = [];
   const slice = pushSlice(ws, run, planned);
   if (run.status === 'done') run.status = 'running';
