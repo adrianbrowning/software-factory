@@ -949,17 +949,17 @@ export async function completeSlice(ws: Workspace, run: Run) {
     }
     slice.status = 'done';
     writeTicket(ws, run, slice);
+    if (slice.peakContextTokens > ws.config.sliceTokenBudget || slice.compactions > 0) {
+      addEvent(run, 'budget-exceeded', `peak ${slice.peakContextTokens} tokens, ${slice.compactions} compactions`, slice);
+    }
+    addEvent(run, 'slice-done', `${slice.fixRounds} fix rounds, ${slice.reviews} reviews`, slice);
+    settle(ws, run);
   } catch (error) {
     // The defaults may have filed items by now: save the placement instead of rolling it back.
     slice.status = 'active';
     if (error instanceof Invalidated) throw error;
     throw new Invalidated(`Completing slice ${slice.id} failed after its observations were placed: ${error instanceof Error ? error.message : String(error)}. Call factory_complete_slice again.`);
   }
-  if (slice.peakContextTokens > ws.config.sliceTokenBudget || slice.compactions > 0) {
-    addEvent(run, 'budget-exceeded', `peak ${slice.peakContextTokens} tokens, ${slice.compactions} compactions`, slice);
-  }
-  addEvent(run, 'slice-done', `${slice.fixRounds} fix rounds, ${slice.reviews} reviews`, slice);
-  settle(ws, run);
   return slice;
 }
 
