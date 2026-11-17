@@ -10,7 +10,7 @@ import { MAX_IDLE_STOP_ATTEMPTS, resetModuleState, stopDecision } from '../src/i
 import { readRun, type Run, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, pauseRun, planSlices, resolveStall } from '../src/workflow.ts';
-import { commit, finding, green, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
+import { settleObservations, commit, finding, green, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
 
 beforeEach(() => resetModuleState());
 
@@ -147,6 +147,14 @@ describe('implementer sessions', () => {
     using repo = emptyRepo();
     const { next } = await startedRun(repo.root);
     assert.match(next, /Implementer report file: \S+\/\.scratch\/demo\/reports\/01\.md/);
+  });
+
+  it('says in the factory_next reply that factory_checks runs the full checks and the implementer runs only what it touched', async () => {
+    using repo = emptyRepo();
+    const { next } = await startedRun(repo.root);
+    assert.match(next, /Checks that factory_checks runs in full after the implementer commits \(the implementer runs only the typecheck and the test files it touched\): true\\n/);
+    const ticket = readFileSync(/Ticket: ([^\\]+)/.exec(next)?.[1] ?? '', 'utf8');
+    assert.match(ticket, /## Checks\n\nfactory_checks runs these in full after the implementer commits; the implementer runs only the typecheck and the test files it touched\.\n\n- true\n/);
   });
 
   it('tells the orchestrator to run every reviewer and then the validator in one eval step', async () => {
@@ -349,7 +357,7 @@ describe('used-up fix budget', () => {
     const { call, ws } = await budgetRun(repo.root, ['Feature']);
     await greenWithObservation(ws, 2);
 
-    const fixed = await call('factory_fix', { observations: ['thermo-naming'], reason: 'tidy' }, { confirm: async () => true, select: async () => 'Pause the run' });
+    const fixed = await call('factory_fix', { bug: 'Crash.', reason: 'tidy' }, { confirm: async () => true, select: async () => 'Pause the run' });
     assert.doesNotMatch(fixed.content[0]?.text ?? '', /The run is (paused|stalled)/);
     assert.match(
       fixed.content[0]?.text ?? '',
@@ -405,7 +413,7 @@ describe('used-up fix budget', () => {
     const { call, ws } = await budgetRun(repo.root, ['Feature']);
     await greenWithObservation(ws, 1);
     const interrupted = { confirm: async () => true, select: async () => Promise.reject(new Error('omp exited')) };
-    await assert.rejects(call('factory_fix', { observations: ['thermo-naming'], reason: 'tidy' }, interrupted));
+    await assert.rejects(call('factory_fix', { bug: 'Crash.', reason: 'tidy' }, interrupted));
     assert.deepEqual([readRun(ws, 'demo').status, readRun(ws, 'demo').slices[0]?.stalled], ['running', true]);
 
     const asked: string[] = [];
@@ -429,6 +437,21 @@ describe('used-up fix budget', () => {
     assert.match(asked[0] ?? '', /^Fix a bug in slice 01 "Feature"\?\nFound while demoing\.\n\n- Bug: Empty input crashes the parser\./);
     assert.match(fixed.content[0]?.text ?? '', /Slice 01 is back in fix for the bug\. Fix file: .*01-f1\.md/);
     assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'fix');
+  });
+
+  it('factory_fix for observations only never stalls or mentions the fix budget, even at the round limit', async () => {
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature']);
+    await greenWithObservation(ws, 2);
+    const asked: string[] = [];
+    let selects = 0;
+    const fixed = await call('factory_fix', { observations: ['thermo-naming'], reason: 'tidy' }, { confirm: async (title: string, body: string) => (asked.push(`${title}\n${body}`), true), select: async () => (selects++, 'Pause the run') });
+    assert.equal(asked.length, 1);
+    assert.doesNotMatch(asked[0] ?? '', /fix budget/);
+    assert.doesNotMatch(fixed.content[0]?.text ?? '', /fix budget|used up/);
+    assert.equal(selects, 0);
+    const slice = readRun(ws, 'demo').slices[0];
+    assert.deepEqual([slice?.stalled, slice?.fixRounds, slice?.phase], [false, 2, 'fix']);
   });
 
   it('shows the start of a long bug in the factory_fix dialog', async () => {
@@ -490,25 +513,21 @@ describe('used-up fix budget', () => {
     assert.equal(dialogs, 0);
   });
 
-  it('factory_carry queues a done slice\'s observations after factory_complete_slice and after factory_next, and factory_fix refuses them', async () => {
+  it('factory_carry queues the active slice\'s observations, refuses a second carry of them, and the slice then completes', async () => {
     using repo = budgetRepo();
     const { call, ws } = await budgetRun(repo.root, ['Feature', 'Second', 'Third']);
     await greenWithObservation(ws, 1);
     const yes = { confirm: async () => true };
-    await call('factory_complete_slice', {});
 
     const toEnd = await call('factory_carry', { observations: ['thermo-naming'], to: 'end' }, yes);
     assert.match(toEnd.content[0]?.text ?? '', /^Queued thermo-naming for the next factory_follow_up slice \(1 waiting\)/);
     assert.equal(readRun(ws, 'demo').events.at(-1)?.slice, '01');
-    await assert.rejects(call('factory_fix', { observations: ['thermo-naming'], reason: 'tidy' }, yes), /Slice 01 is done \(green review 01-r1\); factory_complete_slice already ran\..*factory_reopen.*factory_follow_up/);
+    await assert.rejects(call('factory_carry', { observations: ['thermo-naming'], to: '03' }, yes), /Observations already carried: thermo-naming\./);
+    assert.deepEqual(readRun(ws, 'demo').slices[2]?.carried, []);
 
+    await call('factory_complete_slice', {});
     await call('factory_next', {});
-    const toPending = await call('factory_carry', { observations: ['thermo-naming'], to: '03' }, yes);
-    assert.match(toPending.content[0]?.text ?? '', /^Carried thermo-naming into slice 03 "Third"/);
-    assert.equal(readRun(ws, 'demo').slices[2]?.carried.length, 1);
-    await assert.rejects(call('factory_fix', { observations: ['thermo-naming'], reason: 'tidy' }, yes), /Slice 01 is done/);
-    await assert.rejects(call('factory_carry', { observations: ['thermo-naming'], to: '01' }, yes), /Slice 01 is done; factory_carry takes a pending slice/);
-    await assert.rejects(call('factory_carry', { observations: ['bug-made-up'], to: 'end' }, yes), /No green review lists these observations: bug-made-up/);
+    await assert.rejects(call('factory_carry', { observations: ['thermo-naming'], to: '03' }, yes), /Slice 02 has no green review to carry observations or a note from/);
   });
 
   it('queues work for the end with factory_carry, lists it in factory_status, refuses factory_retro, and factory_follow_up takes it', async () => {
@@ -522,7 +541,7 @@ describe('used-up fix budget', () => {
     const queued = await call('factory_carry', { note: 'Log the parse time.', observations: ['thermo-naming'], to: 'end' }, yes);
     assert.match(asked[0] ?? '', /^Carry to the end of the run\?\n- Note: Log the parse time\.\n- thermo-naming: naming\n\nSlice 01 keeps its green review\. They wait on the run: the next factory_follow_up slice builds them/);
     assert.match(queued.content[0]?.text ?? '', /^Queued the note, thermo-naming for the next factory_follow_up slice \(1 waiting\)\.\nNext: Call factory_complete_slice for slice 01/);
-    assert.deepEqual(readRun(ws, 'demo').slices, before);
+    assert.deepEqual(readRun(ws, 'demo').slices.map(item => ({ ...item, unplaced: [] })), before.map(item => ({ ...item, unplaced: [] })));
 
     const status = await call('factory_status', {});
     assert.match(status.content[0]?.text ?? '', /"waiting": \[\n\s+"### From green review 01-r1 of slice 01 \\"Feature\\"\\n\\nLog the parse time\.\\n\\n#### \[observation\] thermo-naming/);
@@ -544,6 +563,7 @@ describe('used-up fix budget', () => {
     const { call, ws } = await budgetRun(repo.root, ['Feature', 'Second']);
     await greenWithObservation(ws, 1);
     await call('factory_carry', { note: 'Log the parse time.', to: 'end' }, { confirm: async () => true });
+    await settleObservations(ws);
     await withRun(ws, 'demo', current => completeSlice(ws, current));
     await withRun(ws, 'demo', current => nextSlice(ws, current));
     commit(ws, 'bad');

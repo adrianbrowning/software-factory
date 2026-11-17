@@ -35,11 +35,17 @@ export function decisionCitations(file: string, source: string) {
   );
 }
 
-/** The files `source` imports from its own directory, by its static import and `export … from` declarations, side-effect imports included. */
-export function importsOf(source: string) {
+/**
+ * The files `source` imports from its own directory, by its static import and `export … from` declarations, side-effect
+ * imports included. With `runtimeOnly`, a declaration that is wholly type-only (`import type`, `export type`) is left out:
+ * node strips it, so it never loads the file. `import { type C }` stays: node strips only the specifier and still loads the file.
+ */
+export function importsOf(source: string, options: { runtimeOnly?: boolean } = {}) {
   const file = ts.createSourceFile('source.ts', source, ts.ScriptTarget.Latest);
   return file.statements.flatMap(statement => {
     if (!ts.isImportDeclaration(statement) && !ts.isExportDeclaration(statement)) return [];
+    const typeOnly = ts.isImportDeclaration(statement) ? statement.importClause?.isTypeOnly === true : statement.isTypeOnly;
+    if (options.runtimeOnly === true && typeOnly) return [];
     const specifier = statement.moduleSpecifier;
     const target = specifier !== undefined && ts.isStringLiteral(specifier) ? /^\.\/([^/]+\.ts)$/.exec(specifier.text)?.[1] : undefined;
     return target === undefined ? [] : [target];
@@ -154,6 +160,11 @@ describe('structure checks: the helpers', () => {
     const graph = new Map(Object.entries(files).map(([name, source]) => [name, importsOf(source)]));
     assert.deepEqual(cyclesOf(graph), ['a.ts -> b.ts -> a.ts']);
   });
+
+  it('leaves a type-only import out of the runtime graph, and keeps a value import', () => {
+    const source = ["import type { B } from './b.ts';", "import { type C } from './c.ts';", "import { d } from './d.ts';", "export type { E } from './e.ts';", "export { f } from './f.ts';"].join('\n');
+    assert.deepEqual(importsOf(source, { runtimeOnly: true }), ['c.ts', 'd.ts', 'f.ts']);
+  });
 });
 
 describe('structure of src/', () => {
@@ -166,8 +177,8 @@ describe('structure of src/', () => {
     assert.deepEqual(long, []);
   });
 
-  it('has no import cycle', () => {
-    const graph = new Map(files.map(file => [file.name, importsOf(file.source)]));
+  it('has no runtime import cycle (a type-only import is erased, so it cannot cycle)', () => {
+    const graph = new Map(files.map(file => [file.name, importsOf(file.source, { runtimeOnly: true })]));
     assert.deepEqual(cyclesOf(graph), []);
   });
 });

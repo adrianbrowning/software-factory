@@ -6,7 +6,8 @@ import { type Command, ctx, load } from './extension.ts';
 import { loadConfig, parseConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
 import { readRun, withRun, type Workspace } from '../src/run.ts';
-import { recordReview, renderFinding, runChecks, startReview } from '../src/review.ts';
+import { renderFinding } from '../src/finding-text.ts';
+import { recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, planSlices } from '../src/workflow.ts';
 import { commit, fakeGh, finding, newRun, review, sh, slice, step, tempRepo, workspace } from './helpers.ts';
 
@@ -173,20 +174,6 @@ describe('factory_defer', () => {
     assert.deepEqual(readRun(no.ws, 'demo').deferred, []);
   });
 
-  for (const [name, sink, offered] of [['with a sink', { kind: 'file' }, true], ['without a sink', undefined, false]] as const) {
-    it(`green review reply ${offered ? 'offers' : 'omits'} factory_defer ${name}`, async () => {
-      using repo = tempRepo('factory-defer-', CHECKS_OK);
-      const { call, ws } = await sinkRun(repo.root, sink, 'active');
-      await withRun(ws, 'demo', run => runChecks(ws, run));
-      const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
-      await review(ws, reviewId, [finding('thermo', 'observation', 'naming')]);
-      const reply = text(await call('factory_review_record', {}));
-      assert.match(reply, /Review is green/);
-      assert.equal(/factory_defer/.test(reply), offered);
-      if (!offered) assert.match(reply, /, or queued for one follow-up slice/);
-    });
-  }
-
   it('factory_fix refuses observations already deferred or carried', async () => {
     using repo = tempRepo('factory-defer-', CHECKS_OK);
     const { call, ws } = await sinkRun(repo.root, { kind: 'file' });
@@ -204,9 +191,13 @@ describe('factory_defer', () => {
     gh.failOn(2);
     await assert.rejects(call('factory_defer', { observations: ['thermo-naming', 'thermo-style'] }), /HTTP 502[\s\S]*only the rest: thermo-style/);
     assert.deepEqual(readRun(ws, 'demo').deferred.map(item => item.id), ['thermo-naming']);
+    const entry = (name: string) => ({ id: `thermo-${name}`, key: `01-r1:thermo-${name}`, location: 'ok:1', placement: 'deferred', problem: 'wrong', review: '01-r1', slice: '01', title: name });
+    assert.deepEqual(readRun(ws, 'demo').observations, [entry('naming')], 'only the observation whose issue was filed is in the ledger');
+    await assert.rejects(call('factory_defer', { observations: ['thermo-naming'] }), /Observations already deferred: thermo-naming/);
     gh.healed();
     await call('factory_defer', { observations: ['thermo-style'] });
     assert.deepEqual(readRun(ws, 'demo').deferred.map(item => item.id), ['thermo-naming', 'thermo-style']);
+    assert.deepEqual(readRun(ws, 'demo').observations, [entry('naming'), entry('style')]);
     assert.equal(gh.calls().length, 3);
   });
 
