@@ -6,7 +6,7 @@ import { describe, it } from 'node:test';
 import { readRun, ticketPath } from '../src/run.ts';
 import { completeSlice, recordDecisions, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextAction, nextSlice, planSlices, reopenSlice, resolveBase } from '../src/workflow.ts';
-import { commit, finding, green, newRun, review, sh, slice, start, step, tempDir, workspace } from './helpers.ts';
+import { settleObservations, commit, finding, green, newRun, review, sh, slice, start, step, tempDir, workspace } from './helpers.ts';
 
 describe('slice loop gates: stacking and review data', { concurrency: 4 }, () => {
   it('takes a slice from red checks through a blocking review to done', async () => {
@@ -62,6 +62,7 @@ describe('slice loop gates: stacking and review data', { concurrency: 4 }, () =>
     await review(ws, third.reviewId, []);
     assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
 
+    await settleObservations(ws);
     const done = await step(ws, run => completeSlice(ws, run));
     assert.equal(done.status, 'done');
     assert.match(nextAction(readRun(ws, 'demo')), /retro/);

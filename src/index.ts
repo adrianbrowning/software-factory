@@ -75,6 +75,7 @@ const ORCHESTRATION_TOOLS = [
   'factory_carry',
   'factory_defer',
   'factory_leave',
+  'factory_place',
   'factory_reopen',
   'factory_follow_up',
   'factory_status',

@@ -5,7 +5,7 @@ import { forgetRun, readRun, statePath } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { fixObservations } from '../src/observations.ts';
 import { nextAction, nextSlice, resolveStall } from '../src/workflow.ts';
-import { commit, finding, green, greenWithObservation, newRun, review, slice, step, workspace } from './helpers.ts';
+import { settleObservations, commit, finding, green, greenWithObservation, newRun, review, slice, step, workspace } from './helpers.ts';
 
 describe('slice loop gates: fixes', { concurrency: 4 }, () => {
   it('fixes observations the user chose from a green review in a tracked round that needs new checks and a new review', async () => {
@@ -43,6 +43,7 @@ describe('slice loop gates: fixes', { concurrency: 4 }, () => {
 
     commit(ws, 'ok', 'renamed\n');
     await green(ws);
+    await settleObservations(ws);
     assert.equal((await step(ws, run => completeSlice(ws, run))).status, 'done');
   });
 
@@ -164,6 +165,7 @@ describe('slice loop gates: fixes', { concurrency: 4 }, () => {
 
     commit(ws, 'ok', 'fixed\n');
     await green(ws);
+    await settleObservations(ws);
     assert.equal((await step(ws, run => completeSlice(ws, run))).status, 'done');
   });
 

@@ -36,6 +36,7 @@ Call `factory_review_submit` once with `reviewId`, `domain: "performance"`, and 
 
 - `id`: `performance-<kebab-case-title>`, stable across review rounds, no line numbers
 - `severity`: `critical`, `high`, or `observation`
+- `category`: required for an `observation`: `correctness`, `missing-test`, `misleading-doc`, `naming`, `structure` or `style` (the tool refuses an observation without one)
 - `path` and `line`: the file and its new-side line in the diff; omit `line` for a file-level finding
 - `title`, `problem`, `fix`, and `fix_prompt` (plain text an implementer can act on directly)
 

@@ -7,7 +7,8 @@ import { resetModuleState } from '../src/index.ts';
 import { findingLocation } from '../src/ledger.ts';
 import { renderedObservation } from '../src/legacy-observations.ts';
 import { type Finding, forgetRun, type ObservationEntry, readRun, statePath, withRun, type Workspace } from '../src/run.ts';
-import { completeSlice, recordReview, renderFinding, runChecks, startReview } from '../src/review.ts';
+import { renderFinding } from '../src/finding-text.ts';
+import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, planSlices } from '../src/workflow.ts';
 import { commit, finding, review, slice, tempRepo } from './helpers.ts';
 

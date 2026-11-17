@@ -31,10 +31,29 @@ export const REQUIRED_REVIEW_DOMAINS = ['bug', 'scope'] as const satisfies reado
 const text = z.string().min(1);
 
 export const SEVERITIES = ['critical', 'high', 'observation'] as const;
+
+/** What an observation is about, which decides its default placement (see `DEFAULT_PLACEMENT`). */
+export const OBSERVATION_CATEGORIES = ['correctness', 'missing-test', 'misleading-doc', 'naming', 'structure', 'style'] as const;
+export type ObservationCategory = (typeof OBSERVATION_CATEGORIES)[number];
+
+/** Where a slice's batch of observations puts one by default: work that is wrong or unproven waits in the end queue, taste is left. */
+export const DEFAULT_PLACEMENT = {
+  correctness: 'end',
+  'misleading-doc': 'end',
+  'missing-test': 'end',
+  naming: 'leave',
+  structure: 'leave',
+  style: 'leave',
+} as const satisfies Record<ObservationCategory, 'end' | 'leave'>;
 export const SOURCE_KINDS = ['github', 'jira', 'file', 'text'] as const;
 
 /** One finding in the cc-pr-review-ci review.json shape. */
 export const findingSchema = z.object({
+  /** Required on an observation (submitDomain refuses one without it), and on a finding the validator downgrades to one. */
+  category: z
+    .enum(OBSERVATION_CATEGORIES)
+    .optional()
+    .describe('Required for an observation, and for a critical or high finding the validator may downgrade to one: correctness, missing-test, misleading-doc, naming, structure or style. It sets where the observation goes by default'),
   decision: z
     .number()
     .int()
@@ -117,6 +136,9 @@ const sha = z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/);
  * Who wrote a review artifact and the sha256 of what the tool wrote, so a later edit is detected. `amended` marks a
  * validator that has used its one correction.
  */
+const unplacedSchema = z.object({ category: z.enum(OBSERVATION_CATEGORIES), finding: findingSchema, review: text });
+export type Unplaced = z.infer<typeof unplacedSchema>;
+
 const submissionSchema = z.object({ agentId: text, amended: z.boolean().optional(), hash: text });
 
 const skippedDomainSchema = z.object({ domain: z.enum(REVIEW_DOMAINS), reason: text.describe('Why the diff needs no review in this domain') });
@@ -191,6 +213,8 @@ const sliceSchema = sliceInputSchema.extend({
   recordBatch: text.optional(),
   /** Set while the slice waits for the user to decide on an exhausted fix budget. */
   stalled: z.boolean(),
+  /** Kept observations of the slice's reviews, red ones too, that no placement has handled yet; factory_place and factory_complete_slice drain it. Each placement removes its observation (placeObservations). */
+  unplaced: z.array(unplacedSchema).default([]),
   /** Set by a red review, and by an observation-only fix round: the next review is targeted, over `domains` (plus the required ones), on the changes since `base`, the commit of the review `from`. Cleared when a review is recorded. */
   targeting: z.object({ base: sha, domains: z.array(z.enum(REVIEW_DOMAINS)), from: text }).optional(),
   status: z.enum(['active', 'done', 'pending']),

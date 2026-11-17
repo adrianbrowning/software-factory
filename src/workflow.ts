@@ -246,6 +246,7 @@ function makeSlice(ws: Workspace, run: Run, input: SliceInput, index: number, pa
     roundLimit: run.mode === 'headless' ? HEADLESS_FIX_ROUNDS : ws.config.maxRounds,
     stalled: false,
     status: 'pending',
+    unplaced: [],
   };
 }
 

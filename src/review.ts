@@ -22,6 +22,7 @@ import {
   greenCommit,
   outdatedGreenCount,
   isAutonomous,
+  OBSERVATION_CATEGORIES,
   type Decision,
   type Domain,
   type Finding,
@@ -42,6 +43,8 @@ import {
   type Workspace,
   writeAtomic,
 } from './run.ts';
+import { renderFinding } from './finding-text.ts';
+import { placeDefaults } from './place.ts';
 import { storedReport } from './report.ts';
 import { head, porcelain, requireOnBranchClean, snapshot } from './repo.ts';
 import {
@@ -484,6 +487,9 @@ export function submitDomain(
     if (ids.has(finding.id)) throw new Error(`Duplicate finding id "${finding.id}"`);
     ids.add(finding.id);
     requireInDiff(review.lines, finding);
+    if (finding.severity === 'observation' && finding.category === undefined) {
+      throw new Error(`Finding "${finding.id}" is an observation without a category. Give it one of: ${OBSERVATION_CATEGORIES.join(', ')}.`);
+    }
     if (finding.decision !== undefined) {
       if (finding.severity === 'observation') throw new Error(`Finding "${finding.id}" breaks a recorded decision, so it must be critical or high.`);
       if (finding.decision > review.decisions) {
@@ -626,6 +632,10 @@ function checkCoverage(findings: Finding[], validation: Validation, decisionCoun
     });
     if (outside.length > 0) throw new Error(`Observations outside the fix diff are dropped in a targeted review (blocking findings stay): ${outside.join(', ')}`);
   }
+  const uncategorised = downgraded.filter(id => byId.get(id)?.category === undefined);
+  if (uncategorised.length > 0) {
+    throw new Error(`A downgraded finding becomes an observation, which needs a category: ${uncategorised.join(', ')}. Keep or drop them, or have the reviewer submit them with a category.`);
+  }
   const notBlocking = downgraded.filter(id => byId.get(id)?.severity === 'observation');
   if (notBlocking.length > 0) throw new Error(`Only critical or high findings can be downgraded: ${notBlocking.join(', ')}`);
   const breaksDecision = downgraded.filter(id => byId.get(id)?.decision !== undefined);
@@ -697,25 +707,35 @@ function countBy(findings: Finding[], key: 'domain' | 'severity') {
     .join(' ');
 }
 
-/** A finding as a markdown section under a `heading` of the given level (`##` by default). */
-export function renderFinding(finding: Finding, decisions: Decision[], heading = '##') {
-  const decision = finding.decision === undefined ? '' : `\n- Breaks decision ${finding.decision}: ${redact(decisions[finding.decision - 1]?.text ?? '')}`;
-  return `${heading} [${finding.severity}] ${finding.id}\n\n- Location: ${findingLocation(finding)}\n- Title: ${evidence(finding.title, 500)}\n- Problem: ${evidence(finding.problem, 2_000)}\n- Fix: ${evidence(finding.fix, 2_000)}\n- Fix prompt: ${evidence(finding.fix_prompt, 2_000)}${decision}`;
-}
-
 /**
  * What `recordReview` decided: `green` (with the observations to place), `accepted-unresolved` (a headless slice with no
  * fix rounds left, counted as green with its open items on record), or `fix` (a fix file written for the blocking
  * findings and open fix items, `stalled` when the round limit is used up).
  */
 export type RecordedReview =
-  | { kind: 'green'; observations: string[] }
+  | { final: boolean; kind: 'green'; observations: string[] }
   | { kind: 'accepted-unresolved'; unresolved: string[] }
   | { blocking: number; fixPath: string; kind: 'fix'; open: number; stalled: boolean };
 
 /** The targeting a fix round after `review` leaves for the next review: the domains that need another look. */
 export function targetingAfter(review: { id: string; sha: string }, domains: readonly Domain[]) {
   return { base: review.sha, domains: [...new Set(domains)], from: review.id };
+}
+
+/**
+ * Adds the kept observations of review `reviewId`, green or red, to the slice's unplaced list, in place of any it already
+ * holds from that review (so recording a review again adds nothing twice). One the ledger already holds is not added.
+ * Every kept observation has a category: submitDomain refuses one without it, and a downgrade needs one.
+ */
+function collectObservations(run: Run, slice: Slice, reviewId: string, observations: Finding[]) {
+  const fresh = observations.filter(finding => !run.observations.some(entry => entry.key === itemKey(reviewId, finding.id)));
+  slice.unplaced = [
+    ...slice.unplaced.filter(entry => entry.review !== reviewId),
+    ...fresh.map(finding => {
+      if (finding.category === undefined) throw new Error(`Observation "${finding.id}" has no category.`);
+      return { category: finding.category, finding, review: reviewId };
+    }),
+  ];
 }
 
 /** Marks the slice's review green over `decisions`; `unresolved` are the items it is accepted with, if any. */
@@ -752,6 +772,7 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
   const kept = keptFindings(findings, validation);
   const blocking = kept.filter(finding => finding.severity !== 'observation');
   const observations = kept.filter(finding => finding.severity === 'observation');
+  collectObservations(run, slice, review.id, observations);
   const verdicts = review.fixVerdicts ?? [];
   const verdictOf = new Map(verdicts.map(entry => [entry.id, entry]));
   // An item without a closing verdict stays open, so no item passes unchecked; a blocking finding under its id already carries it.
@@ -771,7 +792,7 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
     const full = review.targeted === undefined;
     markGreen(slice, review.decisions, full ? 'full' : 'targeted');
     addEvent(run, 'review-green', `${full ? '' : 'targeted '}${detail}`, slice);
-    return { kind: 'green', observations: observations.map(finding => renderFinding(finding, run.decisions)) };
+    return { final: !needsFullReview(slice), kind: 'green', observations: observations.map(finding => renderFinding(finding, run.decisions)) };
   }
   clearFullGreen(slice);
   slice.targeting = targetingAfter(review, [...blocking.map(finding => finding.domain), ...(open.length > 0 ? (['scope'] as const) : [])]);
@@ -899,6 +920,10 @@ export async function completeSlice(ws: Workspace, run: Run) {
   }
   if (needsFullReview(slice)) {
     throw new Error(`The last green review of slice ${slice.id} was targeted. Call factory_review_start for a full review of the same commit, then factory_complete_slice.`);
+  }
+  if (run.mode === 'headless') await placeDefaults(ws, run);
+  if (slice.unplaced.length > 0) {
+    throw new Error(`Slice ${slice.id} has unplaced observations: ${slice.unplaced.map(entry => entry.finding.id).join(', ')}. Place them with factory_place (placements [] takes every default), then call factory_complete_slice. A headless run places them by default in factory_complete_slice.`);
   }
   const sha = await requireOnBranchClean(ws.root, slice, 'Cannot complete the slice');
   if (sha !== green) {

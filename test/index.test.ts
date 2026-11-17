@@ -10,7 +10,7 @@ import { MAX_IDLE_STOP_ATTEMPTS, resetModuleState, stopDecision } from '../src/i
 import { readRun, type Run, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, pauseRun, planSlices, resolveStall } from '../src/workflow.ts';
-import { commit, finding, green, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
+import { settleObservations, commit, finding, green, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
 
 beforeEach(() => resetModuleState());
 
@@ -513,24 +513,21 @@ describe('used-up fix budget', () => {
     assert.equal(dialogs, 0);
   });
 
-  it('factory_carry queues a done slice\'s observations after factory_complete_slice, refuses a second carry of them after factory_next, and factory_fix refuses them', async () => {
+  it('factory_carry queues the active slice\'s observations, refuses a second carry of them, and the slice then completes', async () => {
     using repo = budgetRepo();
     const { call, ws } = await budgetRun(repo.root, ['Feature', 'Second', 'Third']);
     await greenWithObservation(ws, 1);
     const yes = { confirm: async () => true };
-    await call('factory_complete_slice', {});
 
     const toEnd = await call('factory_carry', { observations: ['thermo-naming'], to: 'end' }, yes);
     assert.match(toEnd.content[0]?.text ?? '', /^Queued thermo-naming for the next factory_follow_up slice \(1 waiting\)/);
     assert.equal(readRun(ws, 'demo').events.at(-1)?.slice, '01');
-    await assert.rejects(call('factory_fix', { observations: ['thermo-naming'], reason: 'tidy' }, yes), /Slice 01 is done \(green review 01-r1\); factory_complete_slice already ran\..*factory_reopen.*factory_follow_up/);
-
-    await call('factory_next', {});
     await assert.rejects(call('factory_carry', { observations: ['thermo-naming'], to: '03' }, yes), /Observations already carried: thermo-naming\./);
     assert.deepEqual(readRun(ws, 'demo').slices[2]?.carried, []);
-    await assert.rejects(call('factory_fix', { observations: ['thermo-naming'], reason: 'tidy' }, yes), /Slice 01 is done/);
-    await assert.rejects(call('factory_carry', { observations: ['thermo-naming'], to: '01' }, yes), /Observations already carried: thermo-naming\./);
-    await assert.rejects(call('factory_carry', { observations: ['bug-made-up'], to: 'end' }, yes), /No green review lists these observations: bug-made-up/);
+
+    await call('factory_complete_slice', {});
+    await call('factory_next', {});
+    await assert.rejects(call('factory_carry', { observations: ['thermo-naming'], to: '03' }, yes), /Slice 02 has no green review to carry observations or a note from/);
   });
 
   it('queues work for the end with factory_carry, lists it in factory_status, refuses factory_retro, and factory_follow_up takes it', async () => {
@@ -544,7 +541,7 @@ describe('used-up fix budget', () => {
     const queued = await call('factory_carry', { note: 'Log the parse time.', observations: ['thermo-naming'], to: 'end' }, yes);
     assert.match(asked[0] ?? '', /^Carry to the end of the run\?\n- Note: Log the parse time\.\n- thermo-naming: naming\n\nSlice 01 keeps its green review\. They wait on the run: the next factory_follow_up slice builds them/);
     assert.match(queued.content[0]?.text ?? '', /^Queued the note, thermo-naming for the next factory_follow_up slice \(1 waiting\)\.\nNext: Call factory_complete_slice for slice 01/);
-    assert.deepEqual(readRun(ws, 'demo').slices, before);
+    assert.deepEqual(readRun(ws, 'demo').slices.map(item => ({ ...item, unplaced: [] })), before.map(item => ({ ...item, unplaced: [] })));
 
     const status = await call('factory_status', {});
     assert.match(status.content[0]?.text ?? '', /"waiting": \[\n\s+"### From green review 01-r1 of slice 01 \\"Feature\\"\\n\\nLog the parse time\.\\n\\n#### \[observation\] thermo-naming/);
@@ -566,6 +563,7 @@ describe('used-up fix budget', () => {
     const { call, ws } = await budgetRun(repo.root, ['Feature', 'Second']);
     await greenWithObservation(ws, 1);
     await call('factory_carry', { note: 'Log the parse time.', to: 'end' }, { confirm: async () => true });
+    await settleObservations(ws);
     await withRun(ws, 'demo', current => completeSlice(ws, current));
     await withRun(ws, 'demo', current => nextSlice(ws, current));
     commit(ws, 'bad');
