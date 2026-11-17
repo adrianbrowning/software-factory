@@ -819,4 +819,15 @@ describe('factory_start git architecture warning', () => {
     const resumed = await run(repo.root, { resume: 'demo' }, () => { throw new Error('boom'); });
     assert.match(resumed, /Run \\"demo\\"/);
   });
+
+  it('does not run the check for /factory headless', async () => {
+    using repo = tempRepo('factory-gitwarn-headless-', CHECKS_OK);
+    writeFileSync(join(repo.root, 'demo.md'), '# Demo\n\nDo it\n');
+    const commands = new Map<string, Command>();
+    let calls = 0;
+    load({ checkGit: () => { calls += 1; return 'WARN-GIT'; }, commands });
+    const main = { ...ctx('main', 'main'), cwd: repo.root, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, notify() {} } };
+    await commands.get('factory')?.handler('headless demo.md', main);
+    assert.equal(calls, 0);
+  });
 });
