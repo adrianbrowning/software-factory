@@ -53,3 +53,14 @@ test('a non-executable git earlier on PATH is skipped', () => {
   assert.deepEqual(seen, ['/opt/x/git']);
   assert.match(w ?? '', /\/opt\/x\/git/);
 });
+
+test('an empty PATH component means the working directory', () => {
+  const cwdGit = `${process.cwd()}/git`;
+  const seen: string[] = [];
+  gitArchWarning(host({
+    describe: p => { seen.push(p); return 'x86_64'; },
+    isExecutable: p => p === cwdGit || p === '/opt/x/git',
+    path: ':/opt/x',
+  }));
+  assert.deepEqual(seen, [cwdGit]);
+});

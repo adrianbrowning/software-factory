@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { accessSync, constants, existsSync, realpathSync, statSync } from 'node:fs';
-import { delimiter, join } from 'node:path';
+import { delimiter, join, resolve } from 'node:path';
 
 export type GitArchHost = {
   /** Describes a binary, as `file -b` does. */
@@ -38,8 +38,7 @@ export function defaultGitArchHost(): GitArchHost {
 
 function firstExecutable(name: string, host: GitArchHost): string | undefined {
   for (const dir of (host.path ?? '').split(delimiter)) {
-    if (dir === '') continue;
-    const candidate = join(dir, name);
+    const candidate = dir === '' ? resolve(name) : join(dir, name);
     if (host.isExecutable(candidate)) return candidate;
   }
   return undefined;
