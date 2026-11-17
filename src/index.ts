@@ -243,16 +243,10 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
         });
       }
     }
-    let gitWarning: string | undefined;
-    try {
-      gitWarning = checkGit();
-    } catch {
-      gitWarning = undefined;
-    }
     bindRun(entry.pointer, { feature: run.feature, mainId: ctx.agent.id, ws });
     await pi.setActiveTools([...new Set([...pi.getActiveTools(), ...ORCHESTRATION_TOOLS])]);
     return reply(
-      `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${run.mode === 'headless' ? HEADLESS_FIX_ROUNDS : ws.config.maxRounds}.\nNext: ${nextAction(run)}${gitWarning === undefined ? '' : `\n${gitWarning}`}`,
+      `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${run.mode === 'headless' ? HEADLESS_FIX_ROUNDS : ws.config.maxRounds}.\nNext: ${nextAction(run)}`,
       summarize(ws, run),
     );
   }
@@ -265,7 +259,17 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
     label: 'Factory: start',
     name: 'factory_start',
     schema: startSchema,
-    run: ({ feature, resume, source }, target, ctx) => startOrResume({ feature, resume, source }, target, ctx),
+    run: async ({ feature, resume, source }, target, ctx) => {
+      const started = await startOrResume({ feature, resume, source }, target, ctx);
+      let gitWarning: string | undefined;
+      try {
+        gitWarning = checkGit();
+      } catch {
+        gitWarning = undefined;
+      }
+      if (gitWarning === undefined) return started;
+      return reply(`${started.content[0]?.text ?? ''}\n${gitWarning}`, started.details);
+    },
   });
 
   tool({

@@ -21,6 +21,12 @@ test('x86_64-only git warns with its path and /usr/bin/git', () => {
   assert.match(w ?? '', /\/usr\/bin\/git/);
 });
 
+test('without /usr/bin/git the warning names the resolved git and not /usr/bin/git', () => {
+  const w = gitArchWarning(host({ exists: () => false }));
+  assert.match(w ?? '', /\/opt\/x\/git/);
+  assert.doesNotMatch(w ?? '', /\/usr\/bin\/git/);
+});
+
 test('universal or arm64 git gives no warning', () => {
   assert.equal(gitArchWarning(host({ describe: () => 'Mach-O universal binary with 2 architectures: [x86_64] [arm64]' })), undefined);
   assert.equal(gitArchWarning(host({ describe: () => 'Mach-O 64-bit executable arm64' })), undefined);
