@@ -947,8 +947,7 @@ export async function completeSlice(ws: Workspace, run: Run) {
     reopenReview(run, slice);
     throw new Invalidated(`${newerDecisions(run, covered)} newer than the green review, so its reviewers did not check the code against them. Call factory_review_start for a new review.`);
   }
-  const placedHere = run.mode === 'headless';
-  if (placedHere) await placeDefaults(ws, run);
+  const placedHere = await placeDefaults(ws, run);
   if (slice.unplaced.length > 0) {
     throw new Error(`Slice ${slice.id} has unplaced observations: ${slice.unplaced.map(entry => entry.finding.id).join(', ')}. Place them with factory_place (placements [] takes every default), then call factory_complete_slice. A headless run places them by default in factory_complete_slice.`);
   }
@@ -965,7 +964,7 @@ export async function completeSlice(ws: Workspace, run: Run) {
     addEvent(run, 'slice-done', `${slice.fixRounds} fix rounds, ${slice.reviews} reviews`, slice);
     settle(ws, run);
   } catch (error) {
-    // Only the headless defaults file items in this call: save that placement instead of rolling it back. Otherwise the state rolls back.
+    // Only observations the headless defaults placed in this call are saved instead of rolled back. Otherwise the state rolls back.
     if (!placedHere || error instanceof Invalidated) throw error;
     slice.status = 'active';
     throw new Invalidated(`Completing slice ${slice.id} failed after its default observations were placed: ${error instanceof Error ? error.message : String(error)}. Call factory_complete_slice again.`);

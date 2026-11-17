@@ -10,7 +10,7 @@ import { carriedKeysLine, carriesKey } from '../src/legacy-observations.ts';
 import { type Finding, readRun, REVIEW_DOMAINS, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, keptFindings, recordReview, runChecks, startReview, submitDomain, submitValidation, validationSchema } from '../src/review.ts';
 import { addFollowUp, applyReslice, approvePlan, nextAction, nextSlice, planReslice, planSlices } from '../src/workflow.ts';
-import { commit, fakeGh, finding, headlessSubmitRun, noFixItems, review, slice, submitGreenWithObservation, tempRepo } from './helpers.ts';
+import { CHECKS_OK, commit, fakeGh, finding, headlessSubmitRun, noFixItems, retroDoneRun, review, reviewActive, slice, submitGreenWithObservation, tempRepo } from './helpers.ts';
 
 beforeEach(() => resetModuleState());
 
@@ -361,6 +361,33 @@ describe('batched observation placement', () => {
     assert.equal(run.slices[0]?.unplaced.length, 0);
     assert.equal(run.observations.length, 1);
     assert.equal(run.events.some(event => event.kind === 'slice-done'), false);
+  });
+
+  it('a headless completion that places nothing and then fails rolls the state back and rethrows the error', async () => {
+    using dir = repo();
+    const { ws } = await headlessSubmitRun(dir.root, ['Feature']);
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+    await review(ws, reviewId, []);
+    await withRun(ws, 'demo', run => recordReview(ws, run));
+    const before = readRun(ws, 'demo');
+    breakTicket(ws);
+    await assert.rejects(withRun(ws, 'demo', run => completeSlice(ws, run)), error => error instanceof Error && /EISDIR/.test(error.message) && !/after its default observations were placed/.test(error.message));
+    const after = readRun(ws, 'demo');
+    assert.equal(after.slices[0]?.status, 'active');
+    assert.deepEqual(after.events, before.events, 'no slice-done event is kept');
+  });
+
+  it('a headless Record deferred items slice leaves its correctness observation, so the run still becomes done', async () => {
+    using repo = tempRepo('factory-place-', CHECKS_OK);
+    const { call, ws } = await retroDoneRun(repo.root, { kind: 'file', path: 'notes/later.md' }, true);
+    await call('factory_retro', { findings: [] });
+    await reviewActive(ws, 'record', [observation('gap', 'correctness', 'comments')]);
+    await withRun(ws, 'demo', run => completeSlice(ws, run));
+    const run = readRun(ws, 'demo');
+    assert.equal(run.waiting.length, 0);
+    assert.equal(run.observations.find(entry => entry.id === 'comments-gap')?.placement, 'left');
+    assert.equal(run.status, 'done');
   });
 
   it('a headless run places the defaults with no dialog when the slice completes: end queue, and leave items to the deferred sink', async () => {

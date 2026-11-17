@@ -22,11 +22,11 @@ export const placementSchema = z.object({
 });
 export type PlaceRequest = { placements: z.infer<typeof placementSchema>[] };
 
-/** The placement an observation gets when the user names none: by its category, with a leave sent to the deferred sink in a headless run that has one (the Record slice defers nothing). */
+/** The placement an observation gets when the user names none: by its category, with a leave sent to the deferred sink in a headless run that has one (the Record slice defers nothing). A headless follow-up slice or Record slice never puts its observations back into the end queue. */
 export function defaultChoice(ws: Workspace, run: Run, slice: Slice, entry: Unplaced): PlaceChoice {
   const toSink = run.mode === 'headless' && ws.config.deferred !== undefined && !isRecordSlice(slice);
   if (DEFAULT_PLACEMENT[entry.category] === 'end') {
-    if (run.mode === 'headless' && slice.fromEndQueue === true) return toSink ? 'defer' : 'leave';
+    if (run.mode === 'headless' && (slice.fromEndQueue === true || isRecordSlice(slice))) return toSink ? 'defer' : 'leave';
     return 'end';
   }
   return toSink ? 'defer' : 'leave';
@@ -131,11 +131,12 @@ export async function placeObservationBatch(ws: Workspace, run: Run, request: Pl
 
 /**
  * A headless run's step before it completes its slice: places the observations still unplaced by their defaults, with no
- * dialog. Throws Invalidated when the deferred sink fails, so withRun saves what was filed and the ledger entries; it stays recorded and a second call places the rest.
+ * dialog, and returns whether it placed any. Throws Invalidated when the deferred sink fails, so withRun saves what was filed and the ledger entries; it stays recorded and a second call places the rest.
  */
 export async function placeDefaults(ws: Workspace, run: Run) {
   const slice = requireActive(run);
-  if (run.mode !== 'headless' || slice.unplaced.length === 0) return;
+  if (run.mode !== 'headless' || slice.unplaced.length === 0) return false;
   const { failure } = await placeObservationBatch(ws, run, { placements: [] });
   if (failure !== undefined) throw new Invalidated(`The deferred sink failed, so slice ${slice.id} is not complete: ${failure.message}. Items already filed stay recorded; call factory_complete_slice again.`);
+  return true;
 }

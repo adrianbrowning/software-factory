@@ -234,7 +234,9 @@ correctness, missing-test and misleading-doc to the end queue, naming, structure
 takes the exceptions (fix, carry to a pending slice, end, defer, leave; `placements: []` takes every default), asks one
 confirm in an interactive run, applies them all and records each in the ledger. `factory_complete_slice` refuses while
 the slice has an unplaced observation. A headless run places the defaults with no dialog when it completes the slice,
-and sends the leave items to the deferred sink when one is set.
+and sends the leave items to the deferred sink when one is set. The observations of a headless follow-up slice or Record
+deferred items slice never go back to the end queue: they go to the sink when the slice may defer to it (a Record slice
+may not), else they are left.
 
 ### Leave observations, and the observation ledger
 
@@ -243,8 +245,8 @@ fixed (`factory_fix`) or left (`factory_leave`). Each entry holds the review id 
 example `01-r1:thermo-naming`), the finding's location, title and problem, and the placement. `factory_status` lists
 it under `observations`.
 
-`factory_leave` (observation ids from the active slice's green review or, when it does not list them, from the one done
-slice whose last green review does) records them as left: no slice builds them and no sink gets them. An interactive
+`factory_leave` (observation ids from the active slice's green review, after its full review) records them as left:
+no slice builds them and no sink gets them. An interactive
 run asks once; a declined dialog records nothing, and a headless run records with no dialog. `factory_carry`,
 `factory_defer` and `factory_leave` refuse observation ids until the slice's last green review is a full one; a
 note-only carry or defer works at any green review.
