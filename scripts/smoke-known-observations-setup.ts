@@ -32,7 +32,7 @@ const s = (title: string, blockedBy: string[]) => ({ acceptance: [`${title} work
 await withRun(ws, 'demo', (run: any) => approvePlan(ws, run, planSlices(ws, run, [s('Greeting', []), s('Loud greeting', ['Greeting'])])));
 
 const problem = "The exported function name `f` does not say what it does: a reader of a call site cannot tell that it returns a greeting.";
-const thermo = (id: string, title: string) => ({ domain: 'thermo', fix: 'Rename f to greet.', fix_prompt: 'Rename f to greet in greet.ts and its callers.', id, line: 1, path: 'greet.ts', problem, severity: 'observation', title });
+const thermo = (id: string, title: string) => ({ category: 'naming', domain: 'thermo', fix: 'Rename f to greet.', fix_prompt: 'Rename f to greet in greet.ts and its callers.', id, line: 1, path: 'greet.ts', problem, severity: 'observation', title });
 
 async function reviewWith(findings: any[], validate: boolean) {
   await withRun(ws, 'demo', (run: any) => runChecks(ws, run));

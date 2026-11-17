@@ -16,7 +16,7 @@ This is a scripted smoke test. Follow these steps exactly, in order. Do nothing 
 2. Call factory_review_start with {"skip":[{"domain":"security","reason":"smoke"},{"domain":"performance","reason":"smoke"},{"domain":"holistic","reason":"smoke"},{"domain":"comments","reason":"smoke"}]}. Its reply gives the review id, data file, reference dir, findings dir and the domains list.
 3. Run exactly one eval cell (python, timeout 0), filling REVIEW_ID, DATA, REFDIR, FINDINGS and DOMAINS from that reply:
 import os, json
-REPEAT = json.loads('''{"domain":"thermo","fix":"Rename f to greet.","fix_prompt":"Rename f to greet in greet.ts and its callers.","id":"thermo-vague-function-name","line":1,"path":"greet.ts","problem":"The exported function name `f` does not say what it does: a reader of a call site cannot tell that it returns a greeting.","severity":"observation","title":"Function name f is vague"}''')
+REPEAT = json.loads('''{"category":"naming","domain":"thermo","fix":"Rename f to greet.","fix_prompt":"Rename f to greet in greet.ts and its callers.","id":"thermo-vague-function-name","line":1,"path":"greet.ts","problem":"The exported function name `f` does not say what it does: a reader of a call site cannot tell that it returns a greeting.","severity":"observation","title":"Function name f is vague"}''')
 def task(d):
     if d == "thermo":
         return f"Review id: REVIEW_ID\nDomain: thermo\nData file: DATA\nReference file: {os.path.join('REFDIR','thermo.md')}\nThis is a smoke test of the validator. Do not review the diff. Call factory_review_submit for domain thermo with exactly this one finding, unchanged: {json.dumps(REPEAT)}"
