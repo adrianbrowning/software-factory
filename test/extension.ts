@@ -11,10 +11,10 @@ export type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 
 export type Command = { handler: (args: string, ctx: unknown) => Promise<void> };
 
-type LoadOptions = { activated?: string[]; commands?: Map<string, Command>; handlers?: Map<string, Handler>; sent?: string[]; sentOptions?: unknown[]; thinking?: () => string | undefined };
+type LoadOptions = { activated?: string[]; commands?: Map<string, Command>; handlers?: Map<string, Handler>; sent?: string[]; sentOptions?: unknown[]; thinking?: () => string | undefined; checkGit?: () => string | undefined };
 
 /** Registers the extension against a recording `pi` and returns its tools by name; `activated` collects what setActiveTools gets, `handlers` records its event hooks, `commands` its slash commands, `sent` the messages passed to pi.sendUserMessage, `thinking` gives pi.getThinkingLevel. */
-export function load({ activated = [], commands = new Map(), handlers = new Map(), sent = [], sentOptions = [], thinking = () => 'off' }: LoadOptions = {}) {
+export function load({ activated = [], commands = new Map(), handlers = new Map(), sent = [], sentOptions = [], thinking = () => 'off', checkGit }: LoadOptions = {}) {
   const tools = new Map<string, Registered>();
   const pi = {
     getActiveTools: () => [],
@@ -37,7 +37,7 @@ export function load({ activated = [], commands = new Map(), handlers = new Map(
     },
     setLabel() {},
   };
-  softwareFactory(pi as unknown as ExtensionAPI);
+  softwareFactory(pi as unknown as ExtensionAPI, checkGit);
   return tools;
 }
 

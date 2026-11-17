@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { bindRun } from './active-run.ts';
 import { auditChild, IMPLEMENTER, resetAudit, SPAWN_ROLES } from './agents.ts';
 import { CONFIG_PATH, describeModels, loadConfig, requireAvailableModels, requireOrchestrator, type RoleModels, routeSpawn } from './config.ts';
+import { gitArchWarning } from './git-arch.ts';
 import { deferItems } from './deferred.ts';
 import { chooseChecks, ensureChecks, gate, loadSource } from './gates.ts';
 import {
@@ -178,7 +179,8 @@ export function stopDecision(run: Run, sessionId: string, previous: { count: num
   return { action: 'block' as const, attempts: { count, events: run.events.length } };
 }
 
-export default function softwareFactory(pi: ExtensionAPI) {
+/** `checkGit` is the git-architecture check; tests replace it. */
+export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string | undefined = gitArchWarning) {
   // Under omp -p a bare sendUserMessage from a command handler is dropped before dispatch; an explicit steer starts the turn (smoke-tested: only it fires agent_start/turn_start).
   const sendContinuation = (text: string) => pi.sendUserMessage(text, { deliverAs: 'steer', attribution: 'agent' });
   pi.setLabel('Software Factory');
@@ -241,10 +243,16 @@ export default function softwareFactory(pi: ExtensionAPI) {
         });
       }
     }
+    let gitWarning: string | undefined;
+    try {
+      gitWarning = checkGit();
+    } catch {
+      gitWarning = undefined;
+    }
     bindRun(entry.pointer, { feature: run.feature, mainId: ctx.agent.id, ws });
     await pi.setActiveTools([...new Set([...pi.getActiveTools(), ...ORCHESTRATION_TOOLS])]);
     return reply(
-      `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${run.mode === 'headless' ? HEADLESS_FIX_ROUNDS : ws.config.maxRounds}.\nNext: ${nextAction(run)}`,
+      `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${run.mode === 'headless' ? HEADLESS_FIX_ROUNDS : ws.config.maxRounds}.\nNext: ${nextAction(run)}${gitWarning === undefined ? '' : `\n${gitWarning}`}`,
       summarize(ws, run),
     );
   }
