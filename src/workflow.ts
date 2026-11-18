@@ -203,7 +203,7 @@ export async function startRun(ws: Workspace, input: { annotate?: ((run: Run) =>
     source,
     status: 'intake',
     trunk,
-    version: 1,
+    version: 2,
     waiting: [],
   };
   addEvent(run, 'start', `${source.kind} ${source.ref}; checks: ${checks.join('; ')}`);
