@@ -460,7 +460,10 @@ The gates stop model mistakes and limit what a misled agent can do. They are not
   results instead of running the checks again.
 - Issue text and comments are marked as untrusted in `issue.md` and in the review data. `factory_start` loads GitHub
   issues itself with `gh` and asks you before the run uses the title, text, or comments of GitHub users who are not
-  collaborators. Unlike the earlier Sandcastle drop-in, nothing runs in a container.
+  collaborators, in one dialog for the primary issue and every related one. Unlike the earlier Sandcastle drop-in, nothing runs in a container.
+- A run can cover several GitHub issues: `factory_start` takes `source: { kind: "github", ref, related: ["126", ...] }`.
+  `ref` is the primary issue; its title, ref and URL stay the run's. The related issues' text and comments follow it in
+  the run's issue body, and `issue.md` and `factory_status` list each related issue.
 
 ## Develop
 

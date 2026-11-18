@@ -4,7 +4,8 @@ import { join } from 'node:path';
 import { beforeEach, describe, it } from 'node:test';
 import { type Command, ctx, load } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
-import { forgetRun, readRun, statePath } from '../src/run.ts';
+import { forgetRun, readRun, runDir, statePath } from '../src/run.ts';
+import { loadSource } from '../src/gates.ts';
 import { resetModuleState } from '../src/index.ts';
 import { headlessTarget } from '../src/workflow.ts';
 import { tempDir, tempRepo } from './helpers.ts';
@@ -129,6 +130,94 @@ describe('/factory headless', () => {
     const { command, sent } = session(repo.root);
     await assert.rejects(Promise.resolve(command('headless .md')), /Cannot name a run after "\.md"/);
     assert.deepEqual(sent, []);
+  });
+});
+
+describe('factory_start with related issues', () => {
+  const issues: Record<string, unknown> = {
+    '126': { author: { login: 'stranger' }, body: 'Related text.', comments: [], title: 'Related', url: 'https://github.com/o/r/issues/126' },
+    '242': {
+      author: { login: 'owner' },
+      body: 'Primary text.',
+      comments: [{ author: { login: 'drive-by' }, authorAssociation: 'NONE', body: 'Primary outside comment.' }],
+      title: 'Primary',
+      url: 'https://github.com/o/r/issues/242',
+    },
+  };
+
+  /** Runs `body` with a fake gh on PATH: issue 242 is by an owner, 126 by a stranger. */
+  async function withFakeGh(body: () => Promise<void>) {
+    using bin = tempDir('factory-fake-gh-');
+    const cases = Object.entries(issues).map(([number, issue]) => `  ${number}) echo '${JSON.stringify(issue)}';;`).join('\n');
+    writeFileSync(join(bin.root, 'gh'), `#!/bin/sh\nif [ "$1" = issue ]; then case "$3" in\n${cases}\nesac; else case "$2" in *242) echo OWNER;; *) echo NONE;; esac; fi\n`);
+    chmodSync(join(bin.root, 'gh'), 0o755);
+    const path = process.env.PATH;
+    process.env.PATH = `${bin.root}:${path}`;
+    try {
+      await body();
+    } finally {
+      process.env.PATH = path;
+    }
+  }
+
+  function asking(root: string, answer: boolean) {
+    const asked: string[] = [];
+    const tools = load({ commands: new Map(), sent: [], sentOptions: [] });
+    const main = {
+      ...ctx('main', 'main'),
+      cwd: root,
+      hasUI: true,
+      sessionManager: { getSessionId: () => 'session' },
+      ui: { confirm: async (_title: string, body: string) => (asked.push(body), answer), notify() {} },
+    };
+    const call = async (name: string, params: unknown) => JSON.stringify(await tools.get(name)?.execute('id', params, undefined, undefined, main));
+    return { asked, call };
+  }
+
+  for (const answer of [true, false]) {
+    it(`asks once for outside text across both issues, grouped by issue, and ${answer ? 'keeps' : 'leaves out'} all of it`, async () => {
+      await withFakeGh(async () => {
+        using repo = tempRepo('factory-gh-related-', CHECKS_OK);
+        const { asked, call } = asking(repo.root, answer);
+        const status = await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '242', related: ['126'] } });
+        assert.equal(asked.length, 1);
+        assert.match(asked[0] ?? '', /Issue 242 \(Primary\)[\s\S]*Primary outside comment[\s\S]*Issue 126 \(Related\)[\s\S]*Related text/);
+        const ws = { config: loadConfig(repo.root), root: repo.root };
+        const run = readRun(ws, 'demo');
+        assert.match(run.source.body, /Primary text\./);
+        assert.equal(/Primary outside comment/.test(run.source.body), answer);
+        assert.equal(/Related text\./.test(run.source.body), answer);
+        assert.deepEqual(run.source.related, [{ ref: '126', title: answer ? 'Related' : 'GitHub issue 126', url: 'https://github.com/o/r/issues/126' }]);
+        assert.equal(run.source.ref, '242');
+        const issueMd = readFileSync(join(runDir(ws, 'demo'), 'issue.md'), 'utf8');
+        assert.match(issueMd, /Source: github 242 \(https:\/\/github.com\/o\/r\/issues\/242\)\nSource: github 126 \(https:\/\/github.com\/o\/r\/issues\/126\)\n/);
+        assert.match(status, /126/);
+        assert.match(await call('factory_status', {}), /\\"related\\"/);
+      });
+    });
+  }
+
+  it('a headless load leaves out all outside text and records the autonomous note', async () => {
+    await withFakeGh(async () => {
+      using repo = tempRepo('factory-gh-related-headless-', CHECKS_OK);
+      const ws = { config: loadConfig(repo.root), root: repo.root };
+      const { notes, source } = await loadSource(ctx('main', 'main') as never, ws, { kind: 'github', ref: '242', related: ['126'] }, 'headless');
+      assert.doesNotMatch(source.body, /outside comment|Related text/);
+      assert.match(source.body, /Primary text\./);
+      assert.equal(notes.length, 1);
+      assert.match(notes[0] ?? '', /@drive-by, @stranger/);
+    });
+  });
+
+  it('a github source without related keeps the same state shape', async () => {
+    await withFakeGh(async () => {
+      using repo = tempRepo('factory-gh-norelated-', CHECKS_OK);
+      const { call } = asking(repo.root, true);
+      await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '242' } });
+      const ws = { config: loadConfig(repo.root), root: repo.root };
+      assert.equal('related' in readRun(ws, 'demo').source, false);
+      assert.match(readFileSync(join(runDir(ws, 'demo'), 'issue.md'), 'utf8'), /^# Primary\n\nSource: github 242 \(https:\/\/github.com\/o\/r\/issues\/242\)\n\n/);
+    });
   });
 });
 

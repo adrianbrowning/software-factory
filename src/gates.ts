@@ -39,17 +39,30 @@ export async function loadSource(ctx: ExtensionContext, ws: Workspace, input: So
   if (input.kind === 'file') return { notes: [], source: await fileSource(ws, input.ref) };
   if (input.kind !== 'github') return { notes: [], source: input };
   const notes: string[] = [];
-  const source = await githubSource(input.ref, await fetchGithubIssue(ws, input.ref), async outside => {
-    if (mode === 'headless') {
-      notes.push(`gate intake (auto): left out text from outside authors ${outside.map(part => `@${part.author}`).join(', ')}`);
-      return false;
-    }
-    return confirm(
-      ctx,
-      `Use ${outside.length} parts of the issue written outside the repository?`,
-      `These authors are not repository collaborators. Yes uses their text as evidence for the run; No leaves it out.\n\n${outside.map(part => `@${part.author} (${part.association}):\n${evidence(part.text, 1_000)}`).join('\n\n')}`,
-    );
-  });
+  const related = await Promise.all((input.related ?? []).map(async ref => ({ issue: await fetchGithubIssue(ws, ref), ref })));
+  const source = await githubSource(
+    input.ref,
+    await fetchGithubIssue(ws, input.ref),
+    async outside => {
+      if (mode === 'headless') {
+        notes.push(`gate intake (auto): left out text from outside authors ${[...new Set(outside.map(part => `@${part.author}`))].join(', ')}`);
+        return false;
+      }
+      const refs = [...new Set(outside.map(part => part.ref))];
+      const grouped = refs
+        .map(ref => {
+          const parts = outside.filter(part => part.ref === ref);
+          return `Issue ${ref} (${parts[0]?.title}):\n\n${parts.map(part => `@${part.author} (${part.association}):\n${evidence(part.text, 1_000)}`).join('\n\n')}`;
+        })
+        .join('\n\n---\n\n');
+      return confirm(
+        ctx,
+        `Use ${outside.length} parts of the issue text written outside the repository?`,
+        `These authors are not repository collaborators. Yes uses their text as evidence for the run; No leaves it out.\n\n${grouped}`,
+      );
+    },
+    related,
+  );
   return { notes, source };
 }
 

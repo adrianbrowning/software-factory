@@ -6,7 +6,11 @@ import { type Source, sourceSchema, type Workspace } from './run.ts';
 
 /** What `factory_start` takes: GitHub and file issues by reference (the tool loads them), Jira and pasted text in full. */
 export const sourceInputSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('github'), ref: z.string().min(1).describe('Issue number or URL; the tool loads it with gh') }),
+  z.object({
+    kind: z.literal('github'),
+    ref: z.string().min(1).describe('Primary issue number or URL; the tool loads it with gh'),
+    related: z.array(z.string().min(1)).optional().describe('Further issue numbers or URLs the run also covers; the tool loads each with its comments'),
+  }),
   z.object({ kind: z.literal('file'), ref: z.string().min(1).describe('Path of the issue file: absolute, or relative to the repository root; the tool reads it') }),
   sourceSchema.extend({ kind: z.enum(['jira', 'text']) }),
 ]);
@@ -38,18 +42,23 @@ export async function fetchGithubIssue(ws: Workspace, ref: string): Promise<Gith
   return { ...issue, authorAssociation };
 }
 
-type OutsidePart = { association: string; author: string; text: string };
+type OutsidePart = { association: string; author: string; ref: string; text: string; title: string };
 
 /**
  * The run source for a GitHub issue: its body and comments. Text by people outside the repository goes to `approve`
  * (the user's dialog) and stays out unless it returns true; `approve` runs only when there is such text.
  */
-export async function githubSource(ref: string, issue: GithubIssue, approve: (outside: OutsidePart[]) => Promise<boolean>): Promise<Source> {
-  const parts = [
-    { association: issue.authorAssociation, author: issue.author, text: `${issue.title}\n\n${issue.body}` },
-    ...issue.comments.map(comment => ({ association: comment.authorAssociation, author: comment.author, text: comment.body })),
+export async function githubSource(
+  ref: string,
+  issue: GithubIssue,
+  approve: (outside: OutsidePart[]) => Promise<boolean>,
+  related: { issue: GithubIssue; ref: string }[] = [],
+): Promise<Source> {
+  const parts = (at: string, from: GithubIssue): OutsidePart[] => [
+    { association: from.authorAssociation, author: from.author, ref: at, text: `${from.title}\n\n${from.body}`, title: from.title },
+    ...from.comments.map(comment => ({ association: comment.authorAssociation, author: comment.author, ref: at, text: comment.body, title: from.title })),
   ];
-  const outside = parts.filter(part => !TRUSTED_ASSOCIATIONS.has(part.association));
+  const outside = [parts(ref, issue), ...related.map(item => parts(item.ref, item.issue))].flat().filter(part => !TRUSTED_ASSOCIATIONS.has(part.association));
   const include = outside.length > 0 && (await approve(outside));
   const use = (association: string) => include || TRUSTED_ASSOCIATIONS.has(association);
   const authored = use(issue.authorAssociation);
@@ -58,7 +67,21 @@ export async function githubSource(ref: string, issue: GithubIssue, approve: (ou
     .filter(comment => use(comment.authorAssociation))
     .map(comment => `### @${comment.author} (${comment.authorAssociation})\n\n${comment.body}`);
   const title = authored ? issue.title : `GitHub issue ${ref}`;
-  return { body: comments.length === 0 ? body : `${body}\n\n## Comments\n\n${comments.join('\n\n')}`, kind: 'github', ref, title, url: issue.url };
+  const sections = related.map(item => ({ item, section: relatedSection(item.ref, item.issue, include) }));
+  const primary = comments.length === 0 ? body : `${body}\n\n## Comments\n\n${comments.join('\n\n')}`;
+  const source: Source = { body: [primary, ...sections.map(entry => entry.section.body)].join('\n\n'), kind: 'github', ref, title, url: issue.url };
+  if (sections.length > 0) source.related = sections.map(entry => ({ ref: entry.item.ref, title: entry.section.title, url: entry.item.issue.url }));
+  return source;
+}
+
+/** The text of one related issue: a section of the run source body. */
+function relatedSection(ref: string, issue: GithubIssue, include: boolean) {
+  const use = (association: string) => include || TRUSTED_ASSOCIATIONS.has(association);
+  const authored = use(issue.authorAssociation);
+  const title = authored ? issue.title : `GitHub issue ${ref}`;
+  const text = authored ? issue.body : `(The issue title and text by @${issue.author}, who is not a repository collaborator, are left out.)`;
+  const comments = issue.comments.filter(comment => use(comment.authorAssociation)).map(comment => `### @${comment.author} (${comment.authorAssociation})\n\n${comment.body}`);
+  return { body: `## Related issue ${ref}: ${title}\n\n${text}${comments.length === 0 ? '' : `\n\n### Comments\n\n${comments.join('\n\n')}`}`, title };
 }
 
 /** The run source for an issue file; its title is the first `# ` heading, or the file name. */
