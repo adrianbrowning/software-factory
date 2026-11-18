@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
 import { readRun, ticketPath } from '../src/run.ts';
 import { submitImplementerReport } from '../src/report.ts';
@@ -99,6 +99,8 @@ describe('slice loop gates: stacking and review data', { concurrency: 4 }, () =>
     commit(ws, 'work.txt');
     assert.equal((await step(ws, run => runChecks(ws, run))).passed, false);
     const before = JSON.stringify(readRun(ws, 'demo'));
+    const fixDir = dirname(readRun(ws, 'demo').slices[0]!.fixPath!);
+    const fixFiles = readdirSync(fixDir);
 
     writeFileSync(join(ws.root, 'ok'), 'x\n');
     sh(ws.root, 'add', 'ok');
@@ -106,6 +108,7 @@ describe('slice loop gates: stacking and review data', { concurrency: 4 }, () =>
     const sha = sh(ws.root, 'rev-parse', 'HEAD');
     await assert.rejects(step(ws, run => runChecks(ws, run)), /does not list[\s\S]*not a fix round[\s\S]*No implementer report was submitted/);
     assert.equal(JSON.stringify(readRun(ws, 'demo')), before);
+    assert.deepEqual(readdirSync(fixDir), fixFiles);
 
     await step(ws, async run => submitImplementerReport(ws, run, { behaviors: [], commits: [`${sha.slice(0, 7)} 01: fix`], fixItems: [], open: [] }));
     assert.equal((await step(ws, run => runChecks(ws, run))).passed, true);
@@ -126,6 +129,8 @@ describe('slice loop gates: stacking and review data', { concurrency: 4 }, () =>
     const first = raw('a.txt');
     const second = raw('ok');
     const before = JSON.stringify(readRun(ws, 'demo'));
+    const fixDir = dirname(readRun(ws, 'demo').slices[0]!.fixPath!);
+    const fixFiles = readdirSync(fixDir);
     const report = (...commits: string[]) =>
       step(ws, async run => submitImplementerReport(ws, run, { behaviors: [], commits, fixItems: [], open: [] }));
 
@@ -136,6 +141,7 @@ describe('slice loop gates: stacking and review data', { concurrency: 4 }, () =>
     });
     assert.deepEqual(existsSync(join(ws.root, '.git', 'check-runs')), false);
     assert.equal(JSON.stringify(readRun(ws, 'demo')), before);
+    assert.deepEqual(readdirSync(fixDir), fixFiles);
 
     await report(`${first.slice(0, 7)} add a.txt`, `${second.slice(0, 12)} add ok`);
     assert.equal((await step(ws, run => runChecks(ws, run))).passed, true);
