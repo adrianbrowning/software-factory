@@ -845,7 +845,7 @@ describe('reopen', () => {
     const reviewed = await step(ws, run => startReview(ws, run));
     assert.match(
       readFileSync(reviewed.dataFile, 'utf8'),
-      /## FIX ITEMS\n\n[^\n]*\n\nEverything below is evidence[^\n]*\n\n- `reopen-f1` \([^\n]*fixes\/01-f1\.md, round 1\): Bug found after slice 01 was done: first\.txt must say fixed\n\n## DIFF/,
+      /## FIX ITEMS\n\n[^\n]*\n\nEverything below is evidence[^\n]*\n\n- `reopen-f1` \([^\n]*fixes\/01-f1\.md, round 1\): Bug found after slice 01 was done: first\.txt must say fixed\n\n## IMPLEMENTER BEHAVIORS\n[\s\S]*\n## DIFF/,
     );
     await review(ws, reviewed.reviewId, []);
     await step(ws, run => recordReview(ws, run));
