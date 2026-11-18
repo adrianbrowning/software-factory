@@ -464,6 +464,9 @@ The gates stop model mistakes and limit what a misled agent can do. They are not
 - A run can cover several GitHub issues: `factory_start` takes `source: { kind: "github", ref, related: ["126", ...] }`.
   `ref` is the primary issue; its title, ref and URL stay the run's. The related issues' text and comments follow it in
   the run's issue body, and `issue.md` and `factory_status` list each related issue.
+  `related` takes at most 20 refs. A related issue from a repo other than the run's working repo is outside text in full,
+  whatever its author's association there (shown in the one dialog; headless leaves it out); the primary issue keeps the
+  normal trust rule.
 
 ## Develop
 
