@@ -31,7 +31,7 @@ describe('model routing', () => {
     const repo = tempRepo('factory-models-', { '.omp/factory.json': JSON.stringify(config) });
     const handlers = new Map<string, Handler>();
     const commands = new Map<string, Command>();
-    const live: { ctxModel: string | undefined; model: string | undefined; thinking: string | undefined } = { ctxModel: undefined, model: undefined, thinking: 'off' };
+    const live: { ctxModel: string | undefined; jobs: unknown; model: string | undefined; thinking: string | undefined } = { ctxModel: undefined, jobs: null, model: undefined, thinking: 'off' };
     const tools = load({ commands, handlers, thinking: () => live.thinking });
     const available = new Set<string>();
     const asModel = (spec: string) => ({ id: spec.slice(spec.indexOf('/') + 1), provider: spec.slice(0, spec.indexOf('/')) });
@@ -42,6 +42,7 @@ describe('model routing', () => {
         return live.ctxModel === undefined ? undefined : asModel(live.ctxModel);
       },
       cwd: repo.root,
+      getAsyncJobSnapshot: () => live.jobs,
       hasUI: true,
       models: {
         current: () => (live.model === undefined ? undefined : asModel(live.model)),
@@ -552,6 +553,31 @@ describe('model routing', () => {
     assert.match(repo.notes.at(-1) ?? '', /Active run: demo: .*\nRuns: demo$/);
     writeFileSync(join(repo.root, '.omp/factory.json'), '{not json');
     await repo.command('pause');
+    assert.equal(readRun(ws, 'demo').status, 'paused');
+  });
+
+  it('allows a stop while a job runs or awaits delivery, restarts the idle count, and treats a null snapshot as idle', async () => {
+    using repo = routedRepo(undefined);
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    const ws: Workspace = { config: loadConfig(repo.root), root: repo.root };
+    await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')])));
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    const idle = { delivery: { delivering: false, pendingJobIds: [], queued: 0 }, running: [] };
+    const blocked = async () => ((await repo.stop()) as { decision?: string } | undefined)?.decision === 'block';
+
+    repo.live.jobs = null;
+    assert.equal(await blocked(), true);
+    repo.live.jobs = idle;
+    assert.equal(await blocked(), true);
+    repo.live.jobs = { ...idle, running: [{ id: 'job' }] };
+    assert.equal(await repo.stop(), undefined);
+    repo.live.jobs = { ...idle, delivery: { delivering: false, pendingJobIds: ['job'], queued: 1 } };
+    assert.equal(await repo.stop(), undefined);
+    repo.live.jobs = idle;
+    assert.equal(await blocked(), true);
+    assert.equal(await blocked(), true);
+    assert.equal(readRun(ws, 'demo').status, 'running');
+    await repo.stop();
     assert.equal(readRun(ws, 'demo').status, 'paused');
   });
 

@@ -41,6 +41,6 @@ export function load({ activated = [], commands = new Map(), handlers = new Map(
   return tools;
 }
 
-export type TestContext = { agent: { depth: number; id: string; kind: 'main' | 'sub'; name: string }; cwd: string; hasUI: boolean };
+export type TestContext = { agent: { depth: number; id: string; kind: 'main' | 'sub'; name: string }; cwd: string; getAsyncJobSnapshot: () => unknown; hasUI: boolean };
 
-export const ctx = (kind: 'main' | 'sub', name: string): TestContext => ({ agent: { depth: 1, id: `${name}-1`, kind, name }, cwd: process.cwd(), hasUI: false });
+export const ctx = (kind: 'main' | 'sub', name: string): TestContext => ({ agent: { depth: 1, id: `${name}-1`, kind, name }, cwd: process.cwd(), getAsyncJobSnapshot: () => null, hasUI: false });

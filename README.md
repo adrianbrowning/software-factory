@@ -139,7 +139,8 @@ The factory saves the choice in the scratch dir, and later runs use it with no d
 with the whole team, set `checks` in `.omp/factory.json` instead; then the factory does not ask.
 
 While a run is active, the session cannot end until the run is done, paused, or stalled. The third stop attempt in a
-row without progress pauses the run instead.
+row without progress pauses the run instead. A stop while the session has a running job (a subagent, eval cell, or bash
+job) or a job result waiting for delivery is allowed and not counted, because the job's result wakes the session.
 
 When a slice uses up its fix budget (from red checks, a blocking review, `factory_fix` with a bug, or `factory_reopen`; a `factory_fix` round for observations only does not count), a dialog asks whether to
 continue with `maxRounds` more fix rounds or pause. A paused stall leaves the run stalled, and the tool reply and its

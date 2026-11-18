@@ -173,9 +173,13 @@ function planSummary(slices: Run['slices']) {
     .join('\n');
 }
 
-/** Stop gate: block a stop while the owner session's run is running, and pause it after repeated idle stops. */
-export function stopDecision(run: Run, sessionId: string, previous: { count: number; events: number } | undefined) {
+/** The part of ctx.getAsyncJobSnapshot() the stop gate reads. */
+export type JobState = { delivery: { delivering: boolean; pendingJobIds: readonly string[]; queued: number }; running: readonly unknown[] } | null;
+
+/** Stop gate: block a stop while the owner session's run is running, and pause it after repeated idle stops. A running job, or a result awaiting delivery, wakes the session, so that stop is allowed and not counted. */
+export function stopDecision(run: Run, sessionId: string, previous: { count: number; events: number } | undefined, jobs: JobState = null) {
   if (run.ownerSessionId !== sessionId || run.status !== 'running') return { action: 'allow' as const };
+  if (jobs !== null && (jobs.running.length > 0 || jobs.delivery.pendingJobIds.length > 0 || jobs.delivery.queued > 0 || jobs.delivery.delivering)) return { action: 'allow' as const };
   const count = previous?.events === run.events.length ? previous.count + 1 : 1;
   if (count >= MAX_IDLE_STOP_ATTEMPTS) return { action: 'pause' as const };
   return { action: 'block' as const, attempts: { count, events: run.events.length } };
@@ -637,8 +641,11 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
     } catch {
       return;
     }
-    const decision = stopDecision(run, event.session_id, stopAttempts.get(feature));
-    if (decision.action === 'allow') return;
+    const decision = stopDecision(run, event.session_id, stopAttempts.get(feature), ctx.getAsyncJobSnapshot());
+    if (decision.action === 'allow') {
+      stopAttempts.delete(feature);
+      return;
+    }
     if (decision.action === 'pause') {
       stopAttempts.delete(feature);
       await withRun(ws, feature, current => pauseRun(current, `no progress after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts`));

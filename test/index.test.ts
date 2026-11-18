@@ -73,6 +73,15 @@ describe('stopDecision', () => {
     const decision = stopDecision(run(), 'owner', { count: MAX_IDLE_STOP_ATTEMPTS - 1, events: 1 });
     assert.equal(decision.action, 'block');
   });
+
+  it('allows a stop while a job runs or a delivery is pending, without counting it', () => {
+    const idle = { delivery: { delivering: false, pendingJobIds: [], queued: 0 }, running: [] };
+    const stale = { count: MAX_IDLE_STOP_ATTEMPTS - 1, events: 2 };
+    assert.equal(stopDecision(run(), 'owner', stale, { ...idle, running: [{}] }).action, 'allow');
+    assert.equal(stopDecision(run(), 'owner', stale, { ...idle, delivery: { ...idle.delivery, pendingJobIds: ['j'] } }).action, 'allow');
+    assert.equal(stopDecision(run(), 'owner', stale, idle).action, 'pause');
+    assert.equal(stopDecision(run(), 'owner', stale, null).action, 'pause');
+  });
 });
 
 const git = (root: string, ...args: string[]) => execFileSync('git', args, { cwd: root });
