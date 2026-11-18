@@ -39,6 +39,18 @@ describe('review data file: implementer behaviors', { concurrency: 4 }, () => {
     const section = behaviorsSection((await step(ws, run => startReview(ws, run))).dataFile);
     assert.match(section, /No implementer report was stored/);
   });
+
+  it('says None. when the stored report has no behaviors', async () => {
+    using ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, async run => submitImplementerReport(ws, run, { behaviors: [], commits: [], open: [] }));
+    await step(ws, run => runChecks(ws, run));
+    const section = behaviorsSection((await step(ws, run => startReview(ws, run))).dataFile);
+    assert.match(section, /None\./);
+    assert.doesNotMatch(section, /No implementer report was stored/);
+  });
 });
 
 describe('review data file after a fix round', () => {
