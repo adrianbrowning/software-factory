@@ -756,12 +756,13 @@ export function markPaused(run: Run, reason: string) {
   addEvent(run, 'pause', reason);
 }
 
-/** True when every recorded domain file and the validation file is on disk with the hash the tool recorded. */
+/** True when the review's data file exists and every recorded domain file and the validation file is on disk with the hash the tool recorded. */
 function recordedFilesIntact(ws: Workspace, run: Run, review: NonNullable<Slice['review']>) {
   const dir = reviewDir(ws, run.feature, review.id);
   const matches = (path: string, recorded: { hash: string }) =>
     existsSync(path) && createHash('sha256').update(readFileSync(path, 'utf8')).digest('hex') === recorded.hash;
   return (
+    existsSync(reviewPaths(ws, run, review.id).dataFile) &&
     Object.entries(review.submissions).every(([domain, recorded]) => recorded === undefined || matches(join(dir, 'domains', `${domain}.json`), recorded)) &&
     (review.validation === undefined || matches(join(dir, 'validation.json'), review.validation))
   );
@@ -770,9 +771,11 @@ function recordedFilesIntact(ws: Workspace, run: Run, review: NonNullable<Slice[
 /**
  * Resumes a run in a new owner session. A paused or stalled run runs again. A slice past its checks keeps them while
  * they still stand on HEAD (see `standingChecks`); otherwise it goes back to `checks` and earns its review again. An
- * open review stays open with its submissions while HEAD and the repository snapshot are unchanged; a changed snapshot
- * discards it. A run saved before runs kept their own
- * checks gets the repository's checks, which its passes may not have run, so its active slice goes back to `checks`.
+ * open review stays open with its submissions while HEAD and the repository snapshot are unchanged, its data file
+ * exists, and every recorded domain and validation file still matches its hash. Otherwise it is discarded with a
+ * reason: a changed snapshot, or a missing data file, or a recorded file that is missing or edited. A run saved before
+ * runs kept their own checks gets the repository's checks, which its passes may not have run, so its active slice goes
+ * back to `checks`.
  */
 export async function resumeRun(ws: Workspace, run: Run, sessionId: string) {
   const filled = run.checks.length === 0;
