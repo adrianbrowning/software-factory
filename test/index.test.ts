@@ -7,7 +7,7 @@ import { beforeEach, describe, it, mock } from 'node:test';
 import { type Command, ctx, type Handler, load, type TestContext } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
 import { MAX_IDLE_STOP_ATTEMPTS, resetModuleState, stopDecision } from '../src/index.ts';
-import { readRun, type Run, ticketPath, withRun, type Workspace } from '../src/run.ts';
+import { readRun, type Run, reviewPaths, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, pauseRun, planSlices, resolveStall } from '../src/workflow.ts';
 import { settleObservations, commit, finding, green, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
@@ -584,7 +584,7 @@ describe('active run in a fresh extension copy', () => {
   /** Calls factory_start in a new extension copy as the main session `mainId` in the checkout at `root`. */
   const startIn = async (root: string, params: unknown, mainId: string) => {
     const main = { ...ctx('main', 'main'), agent: { ...ctx('main', 'main').agent, id: mainId }, cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, notify() {} } };
-    await load().get('factory_start')?.execute('id', params, undefined, undefined, main);
+    return load().get('factory_start')?.execute('id', params, undefined, undefined, main);
   };
   /** A reviewer child of `parentId` at turn_end in a new extension copy; the audit records it in the run bound to `root`. */
   const turnEnd = async (root: string, parentId: string) => {
@@ -685,6 +685,22 @@ describe('active run in a fresh extension copy', () => {
 
     assert.deepEqual(auditedSessions(repo.root, 'demo'), ['child-of-main-resume']);
     assert.deepEqual(auditedSessions(repo.root, 'other'), []);
+  });
+
+  it('lists the kept open review paths in the resume reply text', async () => {
+    using repo = tempRepo('factory-fresh-resume-review-', CHECKS_OK);
+    const { reviewId, ws } = await openReview(repo.root);
+
+    const result = await startIn(repo.root, { resume: 'demo' }, 'main-resume');
+    const first = result !== null && typeof result === 'object' && 'content' in result && Array.isArray(result.content) ? result.content[0] : undefined;
+    const text: string = first !== null && typeof first === 'object' && 'text' in first && typeof first.text === 'string' ? first.text : '';
+
+    const line = text.split('\n').find((candidate: string) => candidate.startsWith(`Open review ${reviewId}: `)) ?? '';
+    const paths = reviewPaths(ws, { feature: 'demo' }, reviewId);
+    assert.ok(line.includes(`Data file: ${paths.dataFile};`), line);
+    assert.ok(line.includes(`Reference dir: ${paths.referenceDir};`), line);
+    assert.ok(line.includes(`Findings dir: ${paths.findingsDir};`), line);
+    assert.match(line, /domains with no submission: .*\bbug\b.*\bscope\b.*; validation submitted: no$/);
   });
 
   /** A run bound in `root` whose state directory was then deleted, in a copy with no binding. */

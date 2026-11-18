@@ -1,4 +1,5 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { basename, dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { effectiveModels } from './config.ts';
@@ -19,6 +20,8 @@ import {
   reportPath,
   runDir,
   type Run,
+  reviewDomains,
+  reviewPaths,
   saveRun,
   type Slice,
   type SliceInput,
@@ -28,6 +31,7 @@ import {
   type Source,
   sourceSchema,
   statePath,
+  reviewDir,
   ticketPath,
   type Workspace,
   requireActive,
@@ -35,7 +39,7 @@ import {
   stallNotice,
   writeAtomic,
 } from './run.ts';
-import { head, requireClean, requireOnBranchClean } from './repo.ts';
+import { head, requireClean, requireOnBranchClean, snapshot } from './repo.ts';
 
 const FEATURE_PATTERN = /^[a-z0-9][a-z0-9-]{0,47}$/;
 export const UNTRUSTED_NOTE =
@@ -733,6 +737,16 @@ export function pauseRun(run: Run, reason: string) {
   markPaused(run, reason);
 }
 
+/** The next step of an open review: only the domains with no submission get a reviewer, then the validator. */
+function reviewAction(review: NonNullable<Slice['review']>, where: string) {
+  const missing = reviewDomains(review.skipped).filter(domain => review.submissions[domain] === undefined);
+  if (missing.length > 0) {
+    return `Finish review ${review.id} of ${where}: spawn only the reviewers for the domains with no submission (${missing.join(', ')}), then the validator, then call factory_review_record.`;
+  }
+  if (review.validation === undefined) return `Finish review ${review.id} of ${where}: every domain has submitted; spawn the validator, then call factory_review_record.`;
+  return `Review ${review.id} of ${where} has every domain and the validation submitted: call factory_review_record.`;
+}
+
 /**
  * Pauses a run with a recorded reason, whatever its status. A stop gate pauses from intake, running or done;
  * factory_pause from intake or running; `/factory pause` goes through `pauseRun`, which stays running-only.
@@ -742,10 +756,22 @@ export function markPaused(run: Run, reason: string) {
   addEvent(run, 'pause', reason);
 }
 
+/** True when every recorded domain file and the validation file is on disk with the hash the tool recorded. */
+function recordedFilesIntact(ws: Workspace, run: Run, review: NonNullable<Slice['review']>) {
+  const dir = reviewDir(ws, run.feature, review.id);
+  const matches = (path: string, recorded: { hash: string }) =>
+    existsSync(path) && createHash('sha256').update(readFileSync(path, 'utf8')).digest('hex') === recorded.hash;
+  return (
+    Object.entries(review.submissions).every(([domain, recorded]) => recorded === undefined || matches(join(dir, 'domains', `${domain}.json`), recorded)) &&
+    (review.validation === undefined || matches(join(dir, 'validation.json'), review.validation))
+  );
+}
+
 /**
  * Resumes a run in a new owner session. A paused or stalled run runs again. A slice past its checks keeps them while
  * they still stand on HEAD (see `standingChecks`); otherwise it goes back to `checks` and earns its review again. An
- * open review is dropped either way: its reviewers belonged to the old session. A run saved before runs kept their own
+ * open review stays open with its submissions while HEAD and the repository snapshot are unchanged; a changed snapshot
+ * discards it. A run saved before runs kept their own
  * checks gets the repository's checks, which its passes may not have run, so its active slice goes back to `checks`.
  */
 export async function resumeRun(ws: Workspace, run: Run, sessionId: string) {
@@ -762,7 +788,11 @@ export async function resumeRun(ws: Workspace, run: Run, sessionId: string) {
   const slice = activeSlice(run);
   if (slice !== undefined && hasPass(slice)) {
     if (filled || standingChecks(slice, await head(ws.root)) === undefined) dropPass(slice, 'checks');
-    else discardReview(run, slice, 'resumed in a new session');
+    else if (slice.phase === 'review' && slice.review !== undefined && (await snapshot(ws.root)) !== slice.review.snapshot) {
+      discardReview(run, slice, 'repository changed while the run was away');
+    } else if (slice.phase === 'review' && slice.review !== undefined && !recordedFilesIntact(ws, run, slice.review)) {
+      discardReview(run, slice, 'recorded review files changed while the run was away');
+    }
   }
   run.ownerSessionId = sessionId;
   addEvent(run, 'resume', `session ${sessionId}`);
@@ -860,7 +890,7 @@ export function nextAction(run: Run): string {
       if (slice.review === undefined && slice.targeting !== undefined) return `The review of ${where} is a targeted review after ${slice.targeting.from}: call factory_review_start with no skips; the factory picks the domains.`;
       return slice.review === undefined
         ? `Pick the review domains for ${where} from its changed files, then call factory_review_start with the domains to skip.`
-        : `Finish review ${slice.review.id}: every domain reviewer and the validator must submit, then call factory_review_record.`;
+        : reviewAction(slice.review, where);
     case 'ready':
       if (needsFullReview(slice)) return `The last green review of ${where} was targeted: call factory_review_start for a full review of the same commit (no new checks), then factory_complete_slice.`;
       if (run.mode !== 'headless' && slice.unplaced.length > 0) {
@@ -874,6 +904,15 @@ export function nextAction(run: Run): string {
     default:
       return slice.phase satisfies never;
   }
+}
+
+/** The active slice's open review with its missing domains and work paths, or undefined when none is open. */
+function openReviewOf(ws: Workspace, run: Run) {
+  const slice = activeSlice(run);
+  const review = slice?.phase === 'review' ? slice.review : undefined;
+  if (review === undefined) return undefined;
+  const missing = reviewDomains(review.skipped).filter(domain => review.submissions[domain] === undefined);
+  return { ...reviewPaths(ws, run, review.id), missingDomains: missing, reviewId: review.id, validated: review.validation !== undefined };
 }
 
 export function summarize(ws: Workspace, run: Run) {
@@ -898,6 +937,8 @@ export function summarize(ws: Workspace, run: Run) {
     observations: run.observations,
     mode: run.mode,
     nextAction: nextAction(run),
+    /** The open review of the active slice with the paths step 6 needs to spawn its missing reviewers and the validator. */
+    openReview: openReviewOf(ws, run),
     runDir: runDir(ws, run.feature),
     slices: run.slices.map(slice => ({
       /** The actual model and thinking level of each factory agent and scout that ran for the slice, routed or not. */

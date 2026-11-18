@@ -37,7 +37,7 @@ It builds the throwaway repo (`scripts/smoke-worker-submissions-setup.ts` starts
 
 ## Traps that lost live smoke runs
 
-- **Resume discards an open review.** `factory_start` with `resume` discards a review the setup opened before it ("resumed in a new session"). The setup must stop at passing checks; the live session calls `factory_review_start` itself.
+- **Resume keeps an open review.** `factory_start` with `resume` keeps a review the setup opened before it, while HEAD and the repository snapshot are unchanged; its submissions stay recorded and only the domains with no submission are spawned again. A changed snapshot discards it ("repository changed while the run was away"). The setup should still stop at passing checks; the live session calls `factory_review_start` itself.
 - **Print mode keeps running the loop.** A print-mode session that gets a `Next:` line carries on with the factory loop (further reviews, then a retro). End the prompt by telling the session to stop after the last named step, to call no other factory tool, and to stop at the first error.
 - **Provider environment.** Set it on the omp command itself, for example `AWS_PROFILE=Labs_Claude omp -p ...` after `aws sso login`. `--max-cost 2` is too low for an opus orchestrator; use 5 or more.
 

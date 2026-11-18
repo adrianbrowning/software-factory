@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { type FactoryConfig, modelsSchema, SPAWN_MODEL_ROLES } from './config.ts';
 import { legacyObservations } from './legacy-observations.ts';
@@ -404,6 +405,21 @@ export const lockPath = (ws: Workspace, feature: string) => `${statePath(ws, fea
 export const ticketPath = (ws: Workspace, feature: string, slice: Pick<Slice, 'branch' | 'id'>) =>
   join(runDir(ws, feature), 'issues', `${slice.branch.split('/').pop()}.md`);
 export const reviewDir = (ws: Workspace, feature: string, reviewId: string) => join(runDir(ws, feature), 'reviews', reviewId);
+export const REVIEW_REFERENCE_DIR = fileURLToPath(new URL('../skills/software-factory/references/review/', import.meta.url));
+
+/** The domains a review waits for: every domain it did not skip. */
+export function reviewDomains(skipped: { domain: Domain }[]) {
+  return REVIEW_DOMAINS.filter(domain => !skipped.some(entry => entry.domain === domain));
+}
+
+/** The files a review's reviewers and validator work from; recoverable after a resume from the review id alone. */
+export function reviewPaths(ws: Workspace, run: Pick<Run, 'feature'>, id: string) {
+  return {
+    dataFile: join(reviewDir(ws, run.feature, id), 'data.md'),
+    findingsDir: join(reviewDir(ws, run.feature, id), 'domains'),
+    referenceDir: REVIEW_REFERENCE_DIR,
+  };
+}
 export const reportPath = (ws: Workspace, feature: string, slice: Pick<Slice, 'id'>) => join(runDir(ws, feature), 'reports', `${slice.id}.md`);
 
 /** Write via rename so concurrent readers never see a partial file. */
