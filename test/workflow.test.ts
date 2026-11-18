@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { startImplementerSession, submitImplementerReport } from '../src/report.ts';
-import { forgetRun, greenCommit, readRun, REVIEW_DOMAINS, REVIEW_REFERENCE_DIR, type Run, ticketPath, type Workspace } from '../src/run.ts';
+import { forgetRun, greenCommit, readRun, REVIEW_DOMAINS, REVIEW_REFERENCE_DIR, reviewDir, type Run, ticketPath, type Workspace } from '../src/run.ts';
 import { completeSlice, recordDecisions, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
 import {
   addFollowUp,
@@ -457,6 +457,25 @@ describe('pause and resume', () => {
     assert.deepEqual([resumed?.phase, resumed?.checked, resumed?.review], ['review', before?.checked, undefined]);
     const dropped = state.events.find(event => event.kind === 'review-invalidated');
     assert.deepEqual([dropped?.slice, dropped?.detail], ['01', `${opened.reviewId}: repository changed while the run was away`]);
+  });
+
+  it('discards an open review on resume when a recorded domain file is gone, keeping the slice in review', async () => {
+    using ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const { reviewId } = await step(ws, run => startReview(ws, run));
+    await step(ws, run => submitDomain(ws, run, { agentId: 'r-scope', domain: 'scope', findings: [], fixItems: [], reviewId }));
+    await step(ws, run => pauseRun(run, 'test'));
+    rmSync(join(reviewDir(ws, 'demo', reviewId), 'domains', 'scope.json'));
+
+    forgetRun(ws, 'demo');
+    await step(ws, run => resumeRun(ws, run, 'session-2'));
+    const state = readRun(ws, 'demo');
+    assert.deepEqual([state.slices[0]?.phase, state.slices[0]?.review], ['review', undefined]);
+    const dropped = state.events.find(event => event.kind === 'review-invalidated');
+    assert.equal(dropped?.detail, `${reviewId}: recorded review files changed while the run was away`);
   });
 
   it('keeps a green slice ready on its green commit on resume', async () => {

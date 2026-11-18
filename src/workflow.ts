@@ -1,4 +1,5 @@
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { basename, dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
 import { effectiveModels } from './config.ts';
@@ -30,6 +31,7 @@ import {
   type Source,
   sourceSchema,
   statePath,
+  reviewDir,
   ticketPath,
   type Workspace,
   requireActive,
@@ -754,6 +756,17 @@ export function markPaused(run: Run, reason: string) {
   addEvent(run, 'pause', reason);
 }
 
+/** True when every recorded domain file and the validation file is on disk with the hash the tool recorded. */
+function recordedFilesIntact(ws: Workspace, run: Run, review: NonNullable<Slice['review']>) {
+  const dir = reviewDir(ws, run.feature, review.id);
+  const matches = (path: string, recorded: { hash: string }) =>
+    existsSync(path) && createHash('sha256').update(readFileSync(path, 'utf8')).digest('hex') === recorded.hash;
+  return (
+    Object.entries(review.submissions).every(([domain, recorded]) => recorded === undefined || matches(join(dir, 'domains', `${domain}.json`), recorded)) &&
+    (review.validation === undefined || matches(join(dir, 'validation.json'), review.validation))
+  );
+}
+
 /**
  * Resumes a run in a new owner session. A paused or stalled run runs again. A slice past its checks keeps them while
  * they still stand on HEAD (see `standingChecks`); otherwise it goes back to `checks` and earns its review again. An
@@ -777,6 +790,8 @@ export async function resumeRun(ws: Workspace, run: Run, sessionId: string) {
     if (filled || standingChecks(slice, await head(ws.root)) === undefined) dropPass(slice, 'checks');
     else if (slice.phase === 'review' && slice.review !== undefined && (await snapshot(ws.root)) !== slice.review.snapshot) {
       discardReview(run, slice, 'repository changed while the run was away');
+    } else if (slice.phase === 'review' && slice.review !== undefined && !recordedFilesIntact(ws, run, slice.review)) {
+      discardReview(run, slice, 'recorded review files changed while the run was away');
     }
   }
   run.ownerSessionId = sessionId;

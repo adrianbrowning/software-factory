@@ -584,7 +584,7 @@ describe('active run in a fresh extension copy', () => {
   /** Calls factory_start in a new extension copy as the main session `mainId` in the checkout at `root`. */
   const startIn = async (root: string, params: unknown, mainId: string) => {
     const main = { ...ctx('main', 'main'), agent: { ...ctx('main', 'main').agent, id: mainId }, cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, notify() {} } };
-    await load().get('factory_start')?.execute('id', params, undefined, undefined, main);
+    return load().get('factory_start')?.execute('id', params, undefined, undefined, main);
   };
   /** A reviewer child of `parentId` at turn_end in a new extension copy; the audit records it in the run bound to `root`. */
   const turnEnd = async (root: string, parentId: string) => {
@@ -685,6 +685,16 @@ describe('active run in a fresh extension copy', () => {
 
     assert.deepEqual(auditedSessions(repo.root, 'demo'), ['child-of-main-resume']);
     assert.deepEqual(auditedSessions(repo.root, 'other'), []);
+  });
+
+  it('lists the kept open review paths in the resume reply text', async () => {
+    using repo = tempRepo('factory-fresh-resume-review-', CHECKS_OK);
+    const { reviewId } = await openReview(repo.root);
+
+    const text = JSON.stringify(await startIn(repo.root, { resume: 'demo' }, 'main-resume'));
+
+    assert.match(text, new RegExp(`Open review ${reviewId}: Data file: .*; Reference dir: .*; Findings dir: .*; domains with no submission: security, .*bug.*scope`));
+    assert.match(text, /validation submitted: no/);
   });
 
   /** A run bound in `root` whose state directory was then deleted, in a copy with no binding. */

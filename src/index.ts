@@ -252,9 +252,15 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
     }
     bindRun(entry.pointer, { feature: run.feature, mainId: ctx.agent.id, ws });
     await pi.setActiveTools([...new Set([...pi.getActiveTools(), ...ORCHESTRATION_TOOLS])]);
+    const summary = summarize(ws, run);
+    const open = summary.openReview;
+    const openText =
+      open === undefined
+        ? ''
+        : `\nOpen review ${open.reviewId}: Data file: ${open.dataFile}; Reference dir: ${open.referenceDir}; Findings dir: ${open.findingsDir}; domains with no submission: ${open.missingDomains.length === 0 ? 'none' : open.missingDomains.join(', ')}; validation submitted: ${open.validated ? 'yes' : 'no'}`;
     return reply(
-      `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${run.mode === 'headless' ? HEADLESS_FIX_ROUNDS : ws.config.maxRounds}.${warned}\nNext: ${nextAction(run)}`,
-      summarize(ws, run),
+      `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${run.mode === 'headless' ? HEADLESS_FIX_ROUNDS : ws.config.maxRounds}.${warned}\nNext: ${nextAction(run)}${openText}`,
+      summary,
     );
   }
 
