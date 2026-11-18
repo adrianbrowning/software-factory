@@ -276,30 +276,32 @@ describe('factory_start related issue hardening', () => {
     });
   }
 
-  it('treats a primary issue from another repo than the working repo as outside text, interactive and headless', async () => {
+  it('keeps an OWNER-authored primary issue from another repo with no dialog, interactive and headless', async () => {
     const issues = { 900: make('900', 'https://github.com/evil/other/issues/900') };
     await withGh(gh(issues, '*/900'), async () => {
       using repo = tempRepo('factory-gh-primary-', CHECKS_OK);
       const { asked, call } = asking(repo.root, false);
       await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '900' } });
-      assert.equal(asked.length, 1);
-      assert.match(asked[0] ?? '', /Issue 900[\s\S]*Text 900\./);
-      assert.doesNotMatch(readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo').source.body, /Text 900\./);
+      assert.equal(asked.length, 0);
+      assert.match(readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo').source.body, /Text 900\./);
       const ws = { config: loadConfig(repo.root), root: repo.root };
       const { notes, source } = await loadSource(ctx('main', 'main') as never, ws, { kind: 'github', ref: '900' }, 'headless');
-      assert.doesNotMatch(source.body, /Text 900\./);
-      assert.match(notes[0] ?? '', /@user900/);
+      assert.match(source.body, /Text 900\./);
+      assert.deepEqual(notes, []);
     });
   });
 
-  it('trusts nothing when the working repo cannot be identified', async () => {
-    const issues = { 1: base };
-    await withGh(gh(issues, '*/1', 'exit 1'), async () => {
+  it('keeps the primary but asks about a related issue when the working repo cannot be identified', async () => {
+    const issues = { 1: base, 2: make('2', 'https://github.com/o/r/issues/2') };
+    await withGh(gh(issues, '*/1|*/2', 'exit 1'), async () => {
       using repo = tempRepo('factory-gh-norepo-', CHECKS_OK);
       const { asked, call } = asking(repo.root, false);
-      await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1' } });
+      await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1', related: ['2'] } });
       assert.equal(asked.length, 1);
-      assert.doesNotMatch(readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo').source.body, /Text 1\./);
+      assert.match(asked[0] ?? '', /Issue 2[\s\S]*Text 2\./);
+      const body = readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo').source.body;
+      assert.match(body, /Text 1\./);
+      assert.doesNotMatch(body, /Text 2\./);
     });
   });
 

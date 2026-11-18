@@ -84,8 +84,8 @@ export async function githubSource(
   related: { issue: GithubIssue; ref: string }[],
   repo: string | undefined,
 ): Promise<Source> {
-  // An issue from another repo than the run's is outside text whatever its author association says there; with no known working repo nothing is trusted.
-  const trusted = (from: GithubIssue, association: string) => TRUSTED_ASSOCIATIONS.has(association) && repo !== undefined && repoOf(from.url) === repo;
+  // The primary issue keeps its own author associations. A related issue from another repo than the run's is outside text whatever its author association says there; with no known working repo no related issue is trusted.
+  const trusted = (from: GithubIssue, association: string) => TRUSTED_ASSOCIATIONS.has(association) && (from === issue || (repo !== undefined && repoOf(from.url) === repo));
   const parts = (at: string, from: GithubIssue): OutsidePart[] => [
     { association: from.authorAssociation, author: from.author, ref: at, text: `${from.title}\n\n${from.body}`, title: from.title },
     ...from.comments.map(comment => ({ association: comment.authorAssociation, author: comment.author, ref: at, text: comment.body, title: from.title })),
