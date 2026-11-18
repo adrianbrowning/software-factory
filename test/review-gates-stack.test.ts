@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { readRun, ticketPath } from '../src/run.ts';
 import { submitImplementerReport } from '../src/report.ts';
 import { completeSlice, recordDecisions, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextAction, nextSlice, planSlices, reopenSlice, resolveBase } from '../src/workflow.ts';
-import { settleObservations, commit, finding, green, newRun, review, sh, slice, start, step, tempDir, workspace } from './helpers.ts';
+import { checkRuns, countedCheck, settleObservations, commit, finding, green, newRun, review, sh, slice, start, step, tempDir, workspace } from './helpers.ts';
 
 describe('slice loop gates: stacking and review data', { concurrency: 4 }, () => {
   it('takes a slice from red checks through a blocking review to done', async () => {
@@ -109,6 +109,37 @@ describe('slice loop gates: stacking and review data', { concurrency: 4 }, () =>
 
     await step(ws, async run => submitImplementerReport(ws, run, { behaviors: [], commits: [`${sha.slice(0, 7)} 01: fix`], fixItems: [], open: [] }));
     assert.equal((await step(ws, run => runChecks(ws, run))).passed, true);
+  });
+
+  it('names only the unlisted commits of a fix round, ignores short prefixes and earlier commits, and runs no check while refusing', async () => {
+    using ws = workspace({ checks: [countedCheck('run', 'test -f ok')], maxRounds: 5 });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'work.txt');
+    assert.equal((await step(ws, run => runChecks(ws, run))).passed, false);
+    const raw = (file: string) => {
+      writeFileSync(join(ws.root, file), 'x\n');
+      sh(ws.root, 'add', file);
+      sh(ws.root, 'commit', '-qm', `add ${file}`);
+      return sh(ws.root, 'rev-parse', 'HEAD');
+    };
+    const first = raw('a.txt');
+    const second = raw('ok');
+    const before = JSON.stringify(readRun(ws, 'demo'));
+    const report = (...commits: string[]) =>
+      step(ws, async run => submitImplementerReport(ws, run, { behaviors: [], commits, fixItems: [], open: [] }));
+
+    await report(`${first.slice(0, 7)} add a.txt`, `${second.slice(0, 6)} add ok`);
+    await assert.rejects(step(ws, run => runChecks(ws, run)), (error: Error) => {
+      assert.match(error.message, /does not list:\n[0-9a-f]+ add ok\nMessage the implementer[\s\S]*Implementer report:/);
+      return true;
+    });
+    assert.deepEqual(existsSync(join(ws.root, '.git', 'check-runs')), false);
+    assert.equal(JSON.stringify(readRun(ws, 'demo')), before);
+
+    await report(`${first.slice(0, 7)} add a.txt`, `${second.slice(0, 12)} add ok`);
+    assert.equal((await step(ws, run => runChecks(ws, run))).passed, true);
+    assert.deepEqual(checkRuns(ws), ['run']);
   });
 
   it('starts each later slice from the slice below it and reviews only its own diff', async () => {
