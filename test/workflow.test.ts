@@ -150,10 +150,17 @@ describe('planSlices', () => {
     const slices = planSlices(ws, readRun(ws, 'demo'), [
       slice('Slice branch slugs end on a whole word always'),
       slice('x'.repeat(45)),
+      slice(`${'a'.repeat(20)} ${'b'.repeat(19)}`),
+      slice(`${'a'.repeat(20)} ${'b'.repeat(19)} cc`),
     ]);
     assert.deepEqual(
       slices.map(item => item.branch),
-      [`factory/demo/01-slice-branch-slugs-end-on-a-whole-word`, `factory/demo/02-${'x'.repeat(40)}`],
+      [
+        `factory/demo/01-slice-branch-slugs-end-on-a-whole-word`,
+        `factory/demo/02-${'x'.repeat(40)}`,
+        `factory/demo/03-${'a'.repeat(20)}-${'b'.repeat(19)}`,
+        `factory/demo/04-${'a'.repeat(20)}-${'b'.repeat(19)}`,
+      ],
     );
   });
 
