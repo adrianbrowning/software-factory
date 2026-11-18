@@ -328,9 +328,9 @@ describe('factory_start related issue hardening', () => {
       assert.doesNotMatch(asked[0] ?? '', /MIDDLE-MARK/);
       assert.doesNotMatch(asked[0] ?? '', /ghp_abcdefghij/);
       assert.match(asked[0] ?? '', /Issue 777 \(Leaks <REDACTED>/);
-      const longest = Math.max(0, ...(asked[0] ?? '').match(/a+/g)?.map(run => run.length) ?? []);
-      assert.ok(longest <= 1_000, `shown 'a' run is ${longest}`);
-      assert.match(asked[0] ?? '', /\[\d+ characters not shown\]/);
+      // The part is `${redacted title}\n\n${body}`: 'Leaks <REDACTED>' (16) + 2 + 2,811 = 2,829 characters, so 1,829 are hidden and the last 1,000 (all 'z') are shown.
+      assert.deepEqual((asked[0] ?? '').match(/z+/g), ['z'.repeat(1_000)]);
+      assert.match(asked[0] ?? '', /\[1829 characters not shown\]/);
       const run = readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo');
       assert.ok(run.source.body.includes(full));
     });
