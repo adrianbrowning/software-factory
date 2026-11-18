@@ -369,13 +369,15 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   slice.review = { decisions: run.decisions.length, id, lines, sha: checked.sha, skipped, snapshot: await snapshot(ws.root), submissions: {}, targeted };
   const skippedDetail = skipped.map(entry => `${entry.domain} (${entry.reason})`).join('; ');
   addEvent(run, 'review-start', skipped.length === 0 ? id : `${id} skipped ${skippedDetail}`, slice);
+  return { ...reviewPaths(ws, run, id), domains: reviewDomains(skipped), pathSkipped: byPath, reviewId: id };
+}
+
+/** The files a review's reviewers and validator work from; recoverable after a resume from the review id alone. */
+export function reviewPaths(ws: Workspace, run: Run, id: string) {
   return {
-    dataFile,
-    domains: reviewDomains(skipped),
+    dataFile: join(reviewDir(ws, run.feature, id), 'data.md'),
     findingsDir: join(reviewDir(ws, run.feature, id), 'domains'),
-    pathSkipped: byPath,
     referenceDir: REVIEW_REFERENCE_DIR,
-    reviewId: id,
   };
 }
 

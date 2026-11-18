@@ -36,7 +36,7 @@ import {
   writeAtomic,
 } from './run.ts';
 import { head, requireClean, requireOnBranchClean, snapshot } from './repo.ts';
-import { reviewDomains } from './review.ts';
+import { reviewDomains, reviewPaths } from './review.ts';
 
 const FEATURE_PATTERN = /^[a-z0-9][a-z0-9-]{0,47}$/;
 export const UNTRUSTED_NOTE =
@@ -890,6 +890,15 @@ export function nextAction(run: Run): string {
   }
 }
 
+/** The active slice's open review with its missing domains and work paths, or undefined when none is open. */
+function openReviewOf(ws: Workspace, run: Run) {
+  const slice = activeSlice(run);
+  const review = slice?.phase === 'review' ? slice.review : undefined;
+  if (review === undefined) return undefined;
+  const missing = reviewDomains(review.skipped).filter(domain => review.submissions[domain] === undefined);
+  return { ...reviewPaths(ws, run, review.id), missingDomains: missing, reviewId: review.id, validated: review.validation !== undefined };
+}
+
 export function summarize(ws: Workspace, run: Run) {
   return {
     /** Agent records from when no slice was active, such as a scout during intake. */
@@ -912,6 +921,8 @@ export function summarize(ws: Workspace, run: Run) {
     observations: run.observations,
     mode: run.mode,
     nextAction: nextAction(run),
+    /** The open review of the active slice with the paths step 6 needs to spawn its missing reviewers and the validator. */
+    openReview: openReviewOf(ws, run),
     runDir: runDir(ws, run.feature),
     slices: run.slices.map(slice => ({
       /** The actual model and thinking level of each factory agent and scout that ran for the slice, routed or not. */

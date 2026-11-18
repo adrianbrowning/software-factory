@@ -426,6 +426,10 @@ describe('pause and resume', () => {
     const skipped = state.slices[0]?.review?.skipped.map(entry => entry.domain) ?? [];
     const others = REVIEW_DOMAINS.filter(domain => domain !== 'scope' && !skipped.includes(domain));
     assert.notEqual(others.length, 0);
+    const handoff = summarize(ws, state).openReview;
+    assert.deepEqual([handoff?.reviewId, handoff?.missingDomains, handoff?.validated], [reviewId, others, false]);
+    assert.equal(existsSync(handoff?.dataFile ?? ''), true);
+    assert.match(handoff?.findingsDir ?? '', /domains$/);
     assert.match(nextAction(state), new RegExp(`spawn only the reviewers for the domains with no submission \\(${others.join(', ')}\\)`));
     for (const domain of others) await step(ws, run => submitDomain(ws, run, { agentId: `r-${domain}`, domain, findings: [], reviewId }));
     assert.match(nextAction(readRun(ws, 'demo')), /spawn the validator/);
