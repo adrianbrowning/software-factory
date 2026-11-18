@@ -8,6 +8,13 @@ import { delimiter, join } from 'node:path';
 process.env.GIT_CONFIG_GLOBAL = '/dev/null';
 process.env.GIT_CONFIG_NOSYSTEM = '1';
 
+// Git 2.56 (and other recent versions) starts a detached `git maintenance run --auto` after each commit. It locks and unlinks
+// .git/objects/maintenance.lock after the commit returns, so a cpSync of a just-built template repo (helpers.ts
+// tempRepo) can fail with ENOENT on .git/objects. No test needs auto maintenance.
+process.env.GIT_CONFIG_COUNT = '1';
+process.env.GIT_CONFIG_KEY_0 = 'maintenance.auto';
+process.env.GIT_CONFIG_VALUE_0 = 'false';
+
 // The suite starts thousands of git processes, so the git binary's start-up time sets its wall time. A git earlier on
 // PATH than the system one can be an x86_64 build under Rosetta on an Apple Silicon Mac, which starts much slower.
 // Tests run the system git when there is one.
