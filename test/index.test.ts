@@ -7,7 +7,7 @@ import { beforeEach, describe, it, mock } from 'node:test';
 import { type Command, ctx, type Handler, load, type TestContext } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
 import { MAX_IDLE_STOP_ATTEMPTS, resetModuleState, stopDecision } from '../src/index.ts';
-import { readRun, type Run, ticketPath, withRun, type Workspace } from '../src/run.ts';
+import { readRun, type Run, reviewPaths, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, pauseRun, planSlices, resolveStall } from '../src/workflow.ts';
 import { settleObservations, commit, finding, green, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
@@ -689,12 +689,18 @@ describe('active run in a fresh extension copy', () => {
 
   it('lists the kept open review paths in the resume reply text', async () => {
     using repo = tempRepo('factory-fresh-resume-review-', CHECKS_OK);
-    const { reviewId } = await openReview(repo.root);
+    const { reviewId, ws } = await openReview(repo.root);
 
-    const text = JSON.stringify(await startIn(repo.root, { resume: 'demo' }, 'main-resume'));
+    const result = await startIn(repo.root, { resume: 'demo' }, 'main-resume');
+    const first = result !== null && typeof result === 'object' && 'content' in result && Array.isArray(result.content) ? result.content[0] : undefined;
+    const text: string = first !== null && typeof first === 'object' && 'text' in first && typeof first.text === 'string' ? first.text : '';
 
-    assert.match(text, new RegExp(`Open review ${reviewId}: Data file: .*; Reference dir: .*; Findings dir: .*; domains with no submission: security, .*bug.*scope`));
-    assert.match(text, /validation submitted: no/);
+    const line = text.split('\n').find((candidate: string) => candidate.startsWith(`Open review ${reviewId}: `)) ?? '';
+    const paths = reviewPaths(ws, { feature: 'demo' }, reviewId);
+    assert.ok(line.includes(`Data file: ${paths.dataFile};`), line);
+    assert.ok(line.includes(`Reference dir: ${paths.referenceDir};`), line);
+    assert.ok(line.includes(`Findings dir: ${paths.findingsDir};`), line);
+    assert.match(line, /domains with no submission: .*\bbug\b.*\bscope\b.*; validation submitted: no$/);
   });
 
   /** A run bound in `root` whose state directory was then deleted, in a copy with no binding. */

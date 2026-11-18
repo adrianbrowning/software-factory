@@ -478,6 +478,59 @@ describe('pause and resume', () => {
     assert.equal(dropped?.detail, `${reviewId}: recorded review files changed while the run was away`);
   });
 
+  /** A paused run whose open review has every domain and the validation recorded; returns the review id and the checks before resume. */
+  async function validatedReview(ws: Workspace) {
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const opened = await step(ws, run => startReview(ws, run));
+    const { reviewId } = opened;
+    for (const domain of opened.domains) {
+      await step(ws, run => submitDomain(ws, run, { agentId: `r-${domain}`, domain, findings: [], ...(domain === 'scope' ? { fixItems: [] } : {}), reviewId }));
+    }
+    await step(ws, run => submitValidation(ws, run, { agentId: 'validator', dropped: [], keep: [], reviewId }));
+    await step(ws, run => pauseRun(run, 'test'));
+    return { checked: readRun(ws, 'demo').slices[0]?.checked, domains: opened.domains, reviewId };
+  }
+
+  const resumed = async (ws: Workspace) => {
+    forgetRun(ws, 'demo');
+    await step(ws, run => resumeRun(ws, run, 'session-2'));
+    return readRun(ws, 'demo');
+  };
+
+  it('keeps an open review on resume when every recorded domain file and the validation file are intact', async () => {
+    using ws = workspace();
+    await validatedReview(ws);
+    const state = await resumed(ws);
+    assert.notEqual(state.slices[0]?.review, undefined);
+    assert.equal(state.events.some(event => event.kind === 'review-invalidated'), false);
+  });
+
+  it('discards an open review on resume when a recorded domain file was edited, leaving the checks standing', async () => {
+    using ws = workspace();
+    const { checked, domains, reviewId } = await validatedReview(ws);
+    writeFileSync(join(reviewDir(ws, 'demo', reviewId), 'domains', `${domains[0]}.json`), '{"edited":true}');
+    const state = await resumed(ws);
+    assert.deepEqual([state.slices[0]?.phase, state.slices[0]?.review, state.slices[0]?.checked], ['review', undefined, checked]);
+    assert.match(state.events.find(event => event.kind === 'review-invalidated')?.detail ?? '', /recorded review files changed while the run was away/);
+  });
+
+  for (const [name, change] of [
+    ['gone', (path: string) => rmSync(path)],
+    ['edited', (path: string) => writeFileSync(path, '{"edited":true}')],
+  ] as const) {
+    it(`discards an open review on resume when the recorded validation file is ${name}, leaving the checks standing`, async () => {
+      using ws = workspace();
+      const { checked, reviewId } = await validatedReview(ws);
+      change(join(reviewDir(ws, 'demo', reviewId), 'validation.json'));
+      const state = await resumed(ws);
+      assert.deepEqual([state.slices[0]?.phase, state.slices[0]?.review, state.slices[0]?.checked], ['review', undefined, checked]);
+      assert.match(state.events.find(event => event.kind === 'review-invalidated')?.detail ?? '', /recorded review files changed while the run was away/);
+    });
+  }
+
   it('keeps a green slice ready on its green commit on resume', async () => {
     using ws = workspace();
     await newRun(ws, [slice('Feature')]);
