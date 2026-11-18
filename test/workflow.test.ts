@@ -201,7 +201,12 @@ describe('implementer report', () => {
     assert.equal(red.report, `No implementer report was submitted for slice 01 (factory_implementer_report). Once it is, read it at ${path}`);
 
     const first = await step(ws, run =>
-      submitImplementerReport(ws, run, { behaviors: ['old test → old behavior'], commits: ['abc1234 01: first try'], fixItems: [], open: [] }),
+      submitImplementerReport(ws, run, {
+        behaviors: [{ test: 'old test', behavior: 'old behavior', seenRed: false }],
+        commits: ['abc1234 01: first try'],
+        fixItems: [],
+        open: [],
+      }),
     );
     assert.deepEqual([first.path, first.replaced], [path, false]);
     writeFileSync(join(ws.root, 'ok'), 'x\n');
@@ -210,7 +215,7 @@ describe('implementer report', () => {
     const head = sh(ws.root, 'rev-parse', '--short=12', 'HEAD');
     const second = await step(ws, run =>
       submitImplementerReport(ws, run, {
-        behaviors: ['writes ok → checks pass'],
+        behaviors: [{ test: 'writes ok', behavior: 'checks pass', seenRed: true, red: 'ok was missing' }],
         commits: ['abc1234 01: first try', `${head} 01: add ok`],
         fixItems: [`check-f1-1: fixed in ${head}`],
         open: [],
@@ -220,7 +225,7 @@ describe('implementer report', () => {
     const passed = await step(ws, run => runChecks(ws, run));
     assert.equal(
       passed.report,
-      `Implementer report:\nCommits:\n- abc1234 01: first try\n- ${head} 01: add ok\nFix file items:\n- check-f1-1: fixed in ${head}\nBehaviors:\n- writes ok → checks pass\nOpen:\n- none\nReport file: ${path}`,
+      `Implementer report:\nCommits:\n- abc1234 01: first try\n- ${head} 01: add ok\nFix file items:\n- check-f1-1: fixed in ${head}\nBehaviors:\n- writes ok → checks pass (seen red: yes — ok was missing)\nOpen:\n- none\nReport file: ${path}`,
     );
 
     await green(ws);

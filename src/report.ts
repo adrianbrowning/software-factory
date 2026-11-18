@@ -5,9 +5,21 @@ import { activeSlice, reportPath, requireActive, type Run, type Slice, type Work
 // One line each, so an item cannot add lines that read as factory output in the factory_checks reply.
 const reportItem = z.string().min(1).regex(/^[^\r\n]+$/, 'one line per item');
 
+const behaviorSchema = z
+  .object({
+    test: reportItem.describe('The test name'),
+    behavior: reportItem.describe('The behavior the test proves'),
+    seenRed: z.boolean().describe('Whether you watched this test fail before its code existed; false when you never saw it fail'),
+    red: reportItem.optional().describe('One line: the failing run you observed. Required when seenRed is true; omit when seenRed is false'),
+  })
+  .superRefine((entry, ctx) => {
+    if (entry.seenRed && entry.red === undefined) ctx.addIssue({ code: 'custom', message: 'red is required when seenRed is true', path: ['red'] });
+    if (!entry.seenRed && entry.red !== undefined) ctx.addIssue({ code: 'custom', message: 'omit red when seenRed is false', path: ['red'] });
+  });
+
 /** The implementer's final report. The factory keeps it, so a follow-up turn (an advisor note) cannot lose it. */
 export const implementerReportSchema = z.object({
-  behaviors: z.array(reportItem).describe('Each test name → the behavior it proves; empty when you wrote no test'),
+  behaviors: z.array(behaviorSchema).describe('Each test, the behavior it proves, and whether you saw it fail first; empty when you wrote no test'),
   commits: z.array(reportItem).describe('Each commit you made, as `<short sha> <subject>`; empty when you made none'),
   fixItems: z
     .array(reportItem)
@@ -17,13 +29,17 @@ export const implementerReportSchema = z.object({
 });
 export type ImplementerReport = z.infer<typeof implementerReportSchema>;
 
+function renderBehavior({ test, behavior, red }: z.infer<typeof behaviorSchema>) {
+  return `${test} → ${behavior} (seen red: ${red === undefined ? 'no' : `yes — ${red}`})`;
+}
+
 function renderReport(report: ImplementerReport) {
   const section = (title: string, items: string[]) => [`${title}:`, ...(items.length === 0 ? ['- none'] : items.map(item => `- ${item}`))];
   return [
     'Implementer report:',
     ...section('Commits', report.commits),
     ...(report.fixItems === undefined ? [] : section('Fix file items', report.fixItems)),
-    ...section('Behaviors', report.behaviors),
+    ...section('Behaviors', report.behaviors.map(renderBehavior)),
     ...section('Open', report.open),
   ].join('\n');
 }
