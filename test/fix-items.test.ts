@@ -6,7 +6,7 @@ import { type Finding, type FixVerdict, readRun, type Workspace } from '../src/r
 import { recordDecisions, recordReview, runChecks, startReview, submitDomain } from '../src/review.ts';
 import { fixObservations } from '../src/observations.ts';
 import { nextSlice } from '../src/workflow.ts';
-import { commit, finding, fixItems, greenWithObservation, newRun, review, sh, slice, step, workspace } from './helpers.ts';
+import { commit, finding, fixItems, greenWithObservation, listInReport, newRun, review, sh, slice, step, workspace } from './helpers.ts';
 
 describe('fix items', { concurrency: 4 }, () => {
   it('numbers two failed checks of one round check-f1-1 and check-f1-2, in check order', async () => {
@@ -76,6 +76,7 @@ describe('fix items', { concurrency: 4 }, () => {
 
     sh(ws.root, 'rm', '-q', 'ok');
     sh(ws.root, 'commit', '-qm', 'break');
+    listInReport(ws);
     const red = await step(ws, run => runChecks(ws, run));
     assert.ok(!red.passed);
     assert.match(readFileSync(red.fixPath, 'utf8'), /## Fix items\n\n- `check-f2-1`: test -f ok: failed \(exit 1\)/);

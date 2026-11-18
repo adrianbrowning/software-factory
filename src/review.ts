@@ -46,7 +46,7 @@ import {
 import { renderFinding } from './finding-text.ts';
 import { collectObservations, placeDefaults } from './place.ts';
 import { changedLines, changedPaths, targetedReview } from './targeted.ts';
-import { storedReport } from './report.ts';
+import { reportListsCommit, storedReport } from './report.ts';
 import { head, porcelain, requireOnBranchClean, snapshot } from './repo.ts';
 import {
   needsFullReview,
@@ -167,6 +167,16 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   }
   const commits = own.map(commit => commit.oneline).join('\n');
   if (own.length === 0) throw new Error(`Slice ${slice.id} has no commits past ${slice.parentBranch}. The implementer must commit the slice work first.\n${report}`);
+  // A fix round's commits (past the fix file's commit) must all be in the stored report, so the orchestrator reads a report that matches the work.
+  if (slice.phase === 'fix' && slice.fixFromSha !== undefined) {
+    const roundShas = new Set((await git(ws.root, 'rev-list', `${slice.fixFromSha}..HEAD`)).split('\n').filter(Boolean));
+    const unlisted = own.filter(commit => roundShas.has(commit.sha) && !reportListsCommit(ws, run, slice, commit.sha));
+    if (unlisted.length > 0) {
+      throw new Error(
+        `Slice ${slice.id} has ${unlisted.length} commits from this fix round that its implementer report does not list:\n${unlisted.map(commit => commit.oneline).join('\n')}\nMessage the implementer (agent://<id>) to resubmit its report with factory_implementer_report, listing every commit, then call factory_checks again. This is not a fix round.\n${report}`,
+      );
+    }
+  }
   // `sha` is HEAD from the guard above; the log and rev-list reads in between do not move it.
   // A fix round that ends on the commit its fix file described: the implementer changed nothing.
   const unchanged = slice.phase === 'fix' && slice.fixFromSha === sha;

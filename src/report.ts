@@ -49,6 +49,21 @@ export function storedReport(ws: Workspace, run: Run, slice: Slice) {
   return `${readFileSync(path, 'utf8').trimEnd()}\nReport file: ${path}`;
 }
 
+/** Whether the stored report's Commits section lists `sha`: an item starting with a hex prefix of it, at least 7 characters. */
+export function reportListsCommit(ws: Workspace, run: Run, slice: Slice, sha: string) {
+  const path = reportPath(ws, run.feature, slice);
+  if (!existsSync(path)) return false;
+  const lines = readFileSync(path, 'utf8').split('\n');
+  const start = lines.indexOf('Commits:');
+  if (start < 0) return false;
+  for (const line of lines.slice(start + 1)) {
+    if (!line.startsWith('- ')) break;
+    const prefix = /^[0-9a-f]{7,40}/i.exec(line.slice(2))?.[0].toLowerCase();
+    if (prefix !== undefined && sha.startsWith(prefix)) return true;
+  }
+  return false;
+}
+
 /**
  * A report belongs to one implementer session: a newly spawned implementer (a fix round, or a respawn after a stop
  * report) starts without the stored report of the one before. A follow-up turn of the same session keeps it.

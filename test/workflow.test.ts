@@ -203,20 +203,23 @@ describe('implementer report', () => {
       submitImplementerReport(ws, run, { behaviors: ['old test → old behavior'], commits: ['abc1234 01: first try'], fixItems: [], open: [] }),
     );
     assert.deepEqual([first.path, first.replaced], [path, false]);
+    writeFileSync(join(ws.root, 'ok'), 'x\n');
+    sh(ws.root, 'add', 'ok');
+    sh(ws.root, 'commit', '-qm', 'add ok');
+    const head = sh(ws.root, 'rev-parse', '--short=12', 'HEAD');
     const second = await step(ws, run =>
       submitImplementerReport(ws, run, {
         behaviors: ['writes ok → checks pass'],
-        commits: ['abc1234 01: first try', 'def5678 01: add ok'],
-        fixItems: ['check-f1-1: fixed in def5678'],
+        commits: ['abc1234 01: first try', `${head} 01: add ok`],
+        fixItems: [`check-f1-1: fixed in ${head}`],
         open: [],
       }),
     );
     assert.deepEqual([second.path, second.replaced], [first.path, true]);
-    commit(ws, 'ok');
     const passed = await step(ws, run => runChecks(ws, run));
     assert.equal(
       passed.report,
-      `Implementer report:\nCommits:\n- abc1234 01: first try\n- def5678 01: add ok\nFix file items:\n- check-f1-1: fixed in def5678\nBehaviors:\n- writes ok → checks pass\nOpen:\n- none\nReport file: ${path}`,
+      `Implementer report:\nCommits:\n- abc1234 01: first try\n- ${head} 01: add ok\nFix file items:\n- check-f1-1: fixed in ${head}\nBehaviors:\n- writes ok → checks pass\nOpen:\n- none\nReport file: ${path}`,
     );
 
     await green(ws);
