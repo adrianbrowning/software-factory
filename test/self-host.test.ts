@@ -96,14 +96,17 @@ describe('self-host warning', () => {
       assert.notEqual(pluginDigest(repo.root), edited);
     });
 
-    it('warns that a new session is needed when src/ or agents/ changed since load', () => {
-      using repo = tree();
-      const loaded = { digest: pluginDigest(repo.root), root: repo.root };
-      write(repo.root, 'src/new-gate.ts', 'export {}');
-      const warning = selfHostWarning(repo.root, loaded) ?? assert.fail('no warning');
-      assert.match(warning, /stale/);
-      assert.match(warning, /new omp session/);
-    });
+    const changes: [string, string, string][] = [['an added src/ file', 'src/new-gate.ts', 'export {}'], ['an edited agents/ file', 'agents/a.md', 'edited agent'], ['an added agents/ file', 'agents/b.md', 'new agent']];
+    for (const [name, path, content] of changes) {
+      it(`warns that a new session is needed when ${name} changed since load`, () => {
+        using repo = tree();
+        const loaded = { digest: pluginDigest(repo.root), root: repo.root };
+        write(repo.root, path, content);
+        const warning = selfHostWarning(repo.root, loaded) ?? assert.fail('no warning');
+        assert.match(warning, /stale/);
+        assert.match(warning, /new omp session/);
+      });
+    }
 
     it('gives no warning when only skills/ changed or nothing changed', () => {
       using repo = tree();
