@@ -53,11 +53,17 @@ export async function fetchGithubIssue(ws: Workspace, ref: string): Promise<Gith
 
 type OutsidePart = { association: string; author: string; ref: string; text: string; title: string };
 
-/** The `owner/repo` of the repository's `origin` remote when it is a GitHub URL. */
+/** The `owner/repo` the run works in: the `origin` remote when it is a GitHub URL, else what `gh repo view` names; undefined when neither tells. */
 export async function workingRepo(ws: Workspace) {
   try {
     const url = (await git(ws.root, 'remote', 'get-url', 'origin')).trim();
-    return /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/i.exec(url)?.[1]?.toLowerCase();
+    const fromRemote = /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/i.exec(url)?.[1];
+    if (fromRemote !== undefined) return fromRemote.toLowerCase();
+  } catch {
+    // No origin remote: ask gh.
+  }
+  try {
+    return (await gh(ws.root, 'repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner')).trim().toLowerCase() || undefined;
   } catch {
     return undefined;
   }
@@ -71,11 +77,11 @@ export async function githubSource(
   ref: string,
   issue: GithubIssue,
   approve: (outside: OutsidePart[]) => Promise<boolean>,
-  related: { issue: GithubIssue; ref: string }[] = [],
-  repo?: string,
+  related: { issue: GithubIssue; ref: string }[],
+  repo: string | undefined,
 ): Promise<Source> {
-  // An issue from another repo than the run's is outside text whatever its author association says there.
-  const trusted = (from: GithubIssue, association: string) => TRUSTED_ASSOCIATIONS.has(association) && (repo === undefined || repoOf(from.url) === repo);
+  // An issue from another repo than the run's is outside text whatever its author association says there; with no known working repo nothing is trusted.
+  const trusted = (from: GithubIssue, association: string) => TRUSTED_ASSOCIATIONS.has(association) && repo !== undefined && repoOf(from.url) === repo;
   const parts = (at: string, from: GithubIssue): OutsidePart[] => [
     { association: from.authorAssociation, author: from.author, ref: at, text: `${from.title}\n\n${from.body}`, title: from.title },
     ...from.comments.map(comment => ({ association: comment.authorAssociation, author: comment.author, ref: at, text: comment.body, title: from.title })),

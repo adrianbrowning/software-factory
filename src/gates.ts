@@ -2,7 +2,7 @@ import type { ExtensionContext } from '@oh-my-pi/pi-coding-agent';
 import { checksPrompt, type HeadlessGate, parseChecks, suggestChecks } from './config.ts';
 import { evidence, redact } from './evidence.ts';
 import { addEvent, readRun, type Run, type Source, withRun, type Workspace } from './run.ts';
-import { fetchGithubIssue, fileSource, githubSource, issueKey, repoOf, type SourceInput, workingRepo } from './source.ts';
+import { fetchGithubIssue, fileSource, githubSource, issueKey, type SourceInput, workingRepo } from './source.ts';
 import { markPaused, repoChecks, saveChecks } from './workflow.ts';
 
 async function confirm(ctx: ExtensionContext, title: string, body: string) {
@@ -69,7 +69,7 @@ export async function loadSource(ctx: ExtensionContext, ws: Workspace, input: So
       );
     },
     related,
-    (await workingRepo(ws)) ?? repoOf(primary.url),
+    await workingRepo(ws),
   );
   return { notes, source };
 }

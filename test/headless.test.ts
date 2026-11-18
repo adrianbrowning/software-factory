@@ -93,7 +93,7 @@ describe('/factory headless', () => {
   it('names a GitHub issue run issue-<n> from the number, with or without #', async () => {
     using bin = tempDir('factory-fake-gh-');
     const issue = JSON.stringify({ author: { login: 'owner' }, body: 'Do it', comments: [], title: 'Demo', url: 'https://github.com/o/r/issues/102' });
-    writeFileSync(join(bin.root, 'gh'), `#!/bin/sh\nif [ "$1" = issue ]; then echo '${issue}'; else echo OWNER; fi\n`);
+    writeFileSync(join(bin.root, 'gh'), `#!/bin/sh\nif [ "$1" = repo ]; then echo o/r; exit 0; fi\nif [ "$1" = issue ]; then echo '${issue}'; else echo OWNER; fi\n`);
     chmodSync(join(bin.root, 'gh'), 0o755);
     const path = process.env.PATH;
     process.env.PATH = `${bin.root}:${path}`;
@@ -158,7 +158,7 @@ describe('factory_start with related issues', () => {
   async function withFakeGh(body: () => Promise<void>) {
     using bin = tempDir('factory-fake-gh-');
     const cases = Object.entries(issues).map(([number, issue]) => `  ${number}) echo '${JSON.stringify(issue)}';;`).join('\n');
-    writeFileSync(join(bin.root, 'gh'), `#!/bin/sh\nif [ "$1" = issue ]; then case "$3" in\n${cases}\nesac; else case "$2" in *242|*900) echo OWNER;; *) echo NONE;; esac; fi\n`);
+    writeFileSync(join(bin.root, 'gh'), `#!/bin/sh\nif [ "$1" = repo ]; then echo o/r; exit 0; fi\nif [ "$1" = issue ]; then case "$3" in\n${cases}\nesac; else case "$2" in *242|*900) echo OWNER;; *) echo NONE;; esac; fi\n`);
     chmodSync(join(bin.root, 'gh'), 0o755);
     const path = process.env.PATH;
     process.env.PATH = `${bin.root}:${path}`;
@@ -237,7 +237,7 @@ describe('factory_start with related issues', () => {
 });
 
 describe('factory_start related issue hardening', () => {
-  const gh = (issues: Record<string, unknown>, owners: string) => `#!/bin/sh\nif [ "$1" = issue ]; then case "\${3##*/}" in\n${Object.entries(issues).map(([n, i]) => `  ${n}) echo '${JSON.stringify(i)}';;`).join('\n')}\nesac; else case "$2" in ${owners}) echo OWNER;; *) echo NONE;; esac; fi\n`;
+  const gh = (issues: Record<string, unknown>, owners: string, repoCmd = 'echo o/r') => `#!/bin/sh\nif [ "$1" = repo ]; then ${repoCmd}; exit 0; fi\nif [ "$1" = issue ]; then case "\${3##*/}" in\n${Object.entries(issues).map(([n, i]) => `  ${n}) echo '${JSON.stringify(i)}';;`).join('\n')}\nesac; else case "$2" in ${owners}) echo OWNER;; *) echo NONE;; esac; fi\n`;
   const make = (n: string, url: string, over: Record<string, unknown> = {}) => ({ author: { login: `user${n}` }, body: `Text ${n}.`, comments: [], title: `Title ${n}`, url, ...over });
   async function withGh(script: string, body: () => Promise<void>) {
     using bin = tempDir('factory-fake-gh-');
@@ -275,6 +275,33 @@ describe('factory_start related issue hardening', () => {
       });
     });
   }
+
+  it('treats a primary issue from another repo than the working repo as outside text, interactive and headless', async () => {
+    const issues = { 900: make('900', 'https://github.com/evil/other/issues/900') };
+    await withGh(gh(issues, '*/900'), async () => {
+      using repo = tempRepo('factory-gh-primary-', CHECKS_OK);
+      const { asked, call } = asking(repo.root, false);
+      await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '900' } });
+      assert.equal(asked.length, 1);
+      assert.match(asked[0] ?? '', /Issue 900[\s\S]*Text 900\./);
+      assert.doesNotMatch(readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo').source.body, /Text 900\./);
+      const ws = { config: loadConfig(repo.root), root: repo.root };
+      const { notes, source } = await loadSource(ctx('main', 'main') as never, ws, { kind: 'github', ref: '900' }, 'headless');
+      assert.doesNotMatch(source.body, /Text 900\./);
+      assert.match(notes[0] ?? '', /@user900/);
+    });
+  });
+
+  it('trusts nothing when the working repo cannot be identified', async () => {
+    const issues = { 1: base };
+    await withGh(gh(issues, '*/1', 'exit 1'), async () => {
+      using repo = tempRepo('factory-gh-norepo-', CHECKS_OK);
+      const { asked, call } = asking(repo.root, false);
+      await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1' } });
+      assert.equal(asked.length, 1);
+      assert.doesNotMatch(readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo').source.body, /Text 1\./);
+    });
+  });
 
   it('caps each outside part in the dialog at 1,000 characters but keeps the full approved text, and redacts the issue title in the header', async () => {
     const issues = { 1: base, 777: make('777', 'https://github.com/o/r/issues/777', { body: `${'a'.repeat(1_400)}MIDDLE-MARK${'z'.repeat(1_400)}`, title: 'Leaks ghp_abcdefghijklmnopqrstuvwxyz0123456789' }) };
