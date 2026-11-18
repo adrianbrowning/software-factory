@@ -47,6 +47,8 @@ Stop and report instead of guessing in these cases:
 
 Submit the report with `factory_implementer_report` before your final message: `commits`, `fixItems` (required in fix mode), `behaviors`, and `open`, one single-line entry per item. The factory stores it for the slice, and the orchestrator reads it from there, so a report only in your final message can be lost. After every follow-up turn (for example an advisor note), call `factory_implementer_report` again with the complete report; each call replaces the stored report.
 
+Once you have committed and submitted `factory_implementer_report`, never amend, rebase, squash or reset those commits. Any later change (for example after an advisor note or a follow-up turn) is a new commit, followed by a new complete `factory_implementer_report`. Rewriting HEAD after `factory_checks` has run makes `factory_review_start` refuse and the checks run again.
+
 Then end your final message with these sections, every time, in this order:
 
 1. **Commits**: each commit you made, as `<short sha> <subject>` (from `git log --oneline <parent>..HEAD`). "None" if you made none.
