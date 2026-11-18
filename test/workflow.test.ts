@@ -4,7 +4,7 @@ import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { startImplementerSession, submitImplementerReport } from '../src/report.ts';
-import { forgetRun, greenCommit, readRun, REVIEW_DOMAINS, REVIEW_REFERENCE_DIR, reviewDir, type Run, ticketPath, type Workspace } from '../src/run.ts';
+import { forgetRun, greenCommit, readRun, REVIEW_DOMAINS, REVIEW_REFERENCE_DIR, reviewDir, reviewPaths, type Run, ticketPath, type Workspace } from '../src/run.ts';
 import { completeSlice, recordDecisions, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
 import {
   addFollowUp,
@@ -506,6 +506,27 @@ describe('pause and resume', () => {
     const state = await resumed(ws);
     assert.notEqual(state.slices[0]?.review, undefined);
     assert.equal(state.events.some(event => event.kind === 'review-invalidated'), false);
+  });
+
+  it('keeps a review validated before the pause and records it after resume', async () => {
+    using ws = workspace();
+    await validatedReview(ws);
+    const state = await resumed(ws);
+    assert.notEqual(state.slices[0]?.review?.validation, undefined);
+    const handoff = summarize(ws, state).openReview;
+    assert.deepEqual([handoff?.validated, handoff?.missingDomains], [true, []]);
+    assert.match(nextAction(state), /call factory_review_record\./);
+    await step(ws, run => recordReview(ws, run));
+    assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'ready');
+  });
+
+  it('discards an open review on resume when its data file is gone, leaving the checks standing', async () => {
+    using ws = workspace();
+    const { checked, reviewId } = await validatedReview(ws);
+    rmSync(reviewPaths(ws, readRun(ws, 'demo'), reviewId).dataFile);
+    const state = await resumed(ws);
+    assert.deepEqual([state.slices[0]?.phase, state.slices[0]?.review, state.slices[0]?.checked], ['review', undefined, checked]);
+    assert.equal(state.events.find(event => event.kind === 'review-invalidated')?.detail, `${reviewId}: recorded review files changed while the run was away`);
   });
 
   it('discards an open review on resume when a recorded domain file was edited, leaving the checks standing', async () => {
