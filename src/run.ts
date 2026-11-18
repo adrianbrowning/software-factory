@@ -452,7 +452,12 @@ export function readRun(ws: Workspace, feature: string): Run {
       throw new Error(`${path} changed outside the factory tools. Restore it, or pause and resume the run to re-verify it.`);
     }
   }
-  const raw: unknown = JSON.parse(content);
+  let raw: unknown;
+  try {
+    raw = JSON.parse(content);
+  } catch (error) {
+    throw new Error(`Corrupt factory state ${path}: ${error instanceof Error ? error.message : String(error)}`);
+  }
   const header = stateHeaderSchema.safeParse(raw);
   if (header.success && header.data.version > STATE_VERSION) {
     const writer = header.data.factoryVersion;

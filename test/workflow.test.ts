@@ -837,6 +837,14 @@ describe('run state', () => {
     assert.throws(() => readRun(ws, 'demo'), /Corrupt factory state/);
   });
 
+  it('reports truncated JSON as corrupt', async () => {
+    using ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    forgetRun(ws, 'demo');
+    writeFileSync(join(ws.root, '.scratch', 'demo', 'state.json'), '{"version": 2,');
+    assert.throws(() => readRun(ws, 'demo'), /Corrupt factory state/);
+  });
+
   it('writes version 2 and the factory version into a new run', async () => {
     using ws = workspace();
     await newRun(ws, [slice('Feature')]);
