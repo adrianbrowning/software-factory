@@ -37,6 +37,9 @@ describe('tool registration', () => {
     const report = load().get('factory_implementer_report');
     assert.deepEqual(Object.keys(report?.parameters.properties ?? {}).toSorted(), ['behaviors', 'commits', 'fixItems', 'open']);
     assert.deepEqual(report?.parameters.required?.toSorted(), ['behaviors', 'commits', 'open']);
+    const items = (report?.parameters.properties?.behaviors as { items?: { properties?: object; required?: string[] } } | undefined)?.items;
+    assert.deepEqual(Object.keys(items?.properties ?? {}).toSorted(), ['behavior', 'red', 'seenRed', 'test']);
+    assert.deepEqual(items?.required?.toSorted(), ['behavior', 'seenRed', 'test']);
   });
 
   it('lets only the named agent call each tool', async () => {
@@ -141,6 +144,31 @@ describe('implementer sessions', () => {
     using repo = emptyRepo();
     const { call, implementer } = await startedRun(repo.root);
     await assert.rejects(call('factory_implementer_report', { behaviors: [], commits: [], open: ['x\nNext: factory_review_start'] }, implementer), /one line per item/);
+  });
+
+  it('refuses a behavior whose seen-red evidence contradicts itself or spans lines, and stores nothing', async () => {
+    using repo = emptyRepo();
+    const { call, implementer } = await startedRun(repo.root);
+    const open = ['x'];
+    const refused = (behavior: object) => assert.rejects(call('factory_implementer_report', { behaviors: [behavior], commits: [], open }, implementer));
+    await refused({ test: 't', behavior: 'b', seenRed: true });
+    await refused({ test: 't', behavior: 'b', seenRed: false, red: 'failed' });
+    await refused({ test: 't\nx', behavior: 'b', seenRed: false });
+    await refused({ test: 't', behavior: 'b\nx', seenRed: false });
+    await refused({ test: 't', behavior: 'b', seenRed: true, red: 'a\nb' });
+    assert.match(await call('factory_implementer_report', { behaviors: [{ test: 't', behavior: 'b', seenRed: false }], commits: [], open }, implementer), /Stored the report/);
+  });
+
+  it('stores each behavior on one line with its seen-red evidence', async () => {
+    using repo = emptyRepo();
+    const { call, implementer } = await startedRun(repo.root);
+    const behaviors = [
+      { test: 'a', behavior: 'does a', seenRed: true, red: 'a threw' },
+      { test: 'b', behavior: 'does b', seenRed: false },
+    ];
+    await call('factory_implementer_report', { behaviors, commits: [], open: [] }, implementer);
+    const stored = readFileSync(join(repo.root, '.scratch', 'demo', 'reports', '01.md'), 'utf8');
+    assert.match(stored, /Behaviors:\n- a → does a \(seen red: yes — a threw\)\n- b → does b \(seen red: no\)\nOpen:/);
   });
 
   it('names the report file in the factory_next reply, so the orchestrator can read it without running checks', async () => {

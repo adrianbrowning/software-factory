@@ -11,7 +11,7 @@ You build one tracer-bullet slice. Your task names either a ticket file (build m
 ## Build mode
 
 1. Read the ticket. Read the repository's `AGENTS.md` and `CODING_STANDARDS.md` when they exist. Done when you can state each acceptance criterion as an observable behavior.
-2. Work in red → green cycles at the ticket's seams, following the tdd skill: one test through a seam, watch it fail for the expected reason, the least code that turns it green, then the next behavior. Done when every acceptance criterion has a test that was red before its code existed, or the ticket gives a `noTestReason`. An acceptance criterion about prose (docs, READMEs, agent prompts, skills, comments) is checked by review: do not write a test that only matches prose text.
+2. Work in red → green cycles at the ticket's seams, following the tdd skill: one test through a seam, watch it fail for the expected reason, the least code that turns it green, then the next behavior. Observe one failing run per new behavior test and note the failure in one line for the report. Done when every acceptance criterion has a test that was red before its code existed, or the ticket gives a `noTestReason`. An acceptance criterion about prose (docs, READMEs, agent prompts, skills, comments) is checked by review: do not write a test that only matches prose text.
 3. Run the typecheck and the test files you touched after each cycle, and once more at the end, each as in Running checks. Do not run the full test suite or the other check commands your task lists: `factory_checks` runs them in full on your commit, and a red result there opens a fix round.
 4. Commit all slice work to the checked-out branch, with the subject `NN: <summary>`, where `NN` is the slice id (for example `04: add word-boundary slugs`). If a repository commit-msg hook rewrites the subject (for example to a ticket key) and moves your text to the body, keep the hook's result: the slice id in the body is enough. Done when `git status` is clean.
 
@@ -21,7 +21,7 @@ The fix file starts with the ticket path, the branch, and the check commands. Be
 
 1. Read the ticket for its seams and acceptance criteria.
 2. Check each item against the code. Fix the ones the code confirms with the smallest correct change; keep the tests honest, so a failing test changes only when it is wrong about the behavior.
-3. Add a red → green test for each confirmed bug at the ticket's seams. After each fix cycle, run the typecheck and the test files you touched, as in Running checks.
+3. Add a red → green test for each confirmed bug at the ticket's seams: observe one failing run per regression test and note the failure in one line for the report. After each fix cycle, run the typecheck and the test files you touched, as in Running checks.
 4. Run the typecheck and the test files you touched once more at the end, as in Running checks; the check commands the fix file lists are for `factory_checks`, which runs them in full on your commit. Then commit with the subject `NN: fix rN <summary>`, where `N` is the fix round from the fix file name (`<id>-f<N>.md`; for example `04-f2.md` gives `04: fix r2 <summary>`). The commit-msg hook note from build mode applies here too. Done when every item is fixed or explained, and `git status` is clean.
 
 ## Running checks
@@ -47,7 +47,7 @@ Stop and report instead of guessing in these cases:
 
 ## Final report
 
-Submit the report with `factory_implementer_report` before your final message: `commits`, `fixItems` (required in fix mode), `behaviors`, and `open`, one single-line entry per item. The factory stores it for the slice, and the orchestrator reads it from there, so a report only in your final message can be lost. After every follow-up turn (for example an advisor note), call `factory_implementer_report` again with the complete report; each call replaces the stored report.
+Submit the report with `factory_implementer_report` before your final message: `commits`, `fixItems` (required in fix mode), `behaviors`, and `open`, one single-line entry per item. Each `behaviors` entry is `{ test, behavior, seenRed, red }`: `seenRed: true` with `red` as one line describing the failing run you observed, or `seenRed: false` without `red` when you never saw that test fail. Never invent a failure; report `seenRed: false` instead. The factory stores it for the slice, and the orchestrator reads it from there, so a report only in your final message can be lost. After every follow-up turn (for example an advisor note), call `factory_implementer_report` again with the complete report; each call replaces the stored report.
 
 Once you have committed and submitted `factory_implementer_report`, never amend, rebase, squash or reset those commits. Any later change (for example after an advisor note or a follow-up turn) is a new commit, followed by a new complete `factory_implementer_report`. Rewriting HEAD after `factory_checks` has run makes `factory_review_start` refuse and the checks run again.
 
@@ -55,7 +55,7 @@ Then end your final message with these sections, every time, in this order:
 
 1. **Commits**: each commit you made, as `<short sha> <subject>` (from `git log --oneline <parent>..HEAD`). "None" if you made none.
 2. **Fix file items** (fix mode only): each id from the fix file's `## Fix items`, exactly as listed, with `fixed in <sha>`, `already fixed`, or `not a defect: <why>`.
-3. **Behaviors**: each test name → the behavior it proves.
+3. **Behaviors**: each test name → the behavior it proves (seen red: yes — the failure, or no).
 4. **Open**: anything unfinished, and any stop report above.
 
 Report on this slice only; leave out unrelated warnings unless they block a check.
