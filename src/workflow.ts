@@ -172,7 +172,8 @@ export async function saveChecks(ws: Workspace, checks: string[]) {
   return parsed;
 }
 
-export async function startRun(ws: Workspace, input: { feature: string; mode?: Run['mode'] | undefined; sessionId: string; source: Source }) {
+/** Creates the run and saves it once; `annotate` adds events to it before that first save, so they exist whenever the run does. */
+export async function startRun(ws: Workspace, input: { annotate?: ((run: Run) => void) | undefined; feature: string; mode?: Run['mode'] | undefined; sessionId: string; source: Source }) {
   requireFeatureName(input.feature);
   if (existsSync(statePath(ws, input.feature))) {
     throw new Error(`Run "${input.feature}" already exists. Use /factory resume ${input.feature}.`);
@@ -206,6 +207,7 @@ export async function startRun(ws: Workspace, input: { feature: string; mode?: R
     waiting: [],
   };
   addEvent(run, 'start', `${source.kind} ${source.ref}; checks: ${checks.join('; ')}`);
+  input.annotate?.(run);
   writeAtomic(
     join(runDir(ws, run.feature), 'issue.md'),
     `# ${source.title}\n\nSource: ${source.kind} ${source.ref}${source.url ? ` (${source.url})` : ''}\n\n${UNTRUSTED_NOTE}\n\n<untrusted-issue>\n${source.body}\n</untrusted-issue>\n`,

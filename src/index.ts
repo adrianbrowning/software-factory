@@ -30,7 +30,7 @@ import { boundAt, cachedRoot, NO_ACTIVE_RUN, resetRoots, type RootEntry, toolReg
 import { submitHeadless } from './headless-submit.ts';
 import { submitStack } from './submit.ts';
 import { decisionInputSchema, planDecisions, recordDecisions, runChecks } from './review.ts';
-import { selfHostWarning } from './self-host.ts';
+import { recordSelfHostWarning, setLoadedPlugin } from './self-host.ts';
 import { registerReviewTools } from './review-tools.ts';
 import { decideStall, emptySchema, reply, STALL_DESCRIPTION } from './tool-replies.ts';
 import {
@@ -129,6 +129,7 @@ const stopAttempts = new Map<string, { count: number; events: number }>();
 /** Test-only: clears the module-level run state (stop attempts, cached roots and pointer paths, audited sessions), so tests do not share it. */
 export function resetModuleState() {
   stopAttempts.clear();
+  setLoadedPlugin();
   resetRoots();
   resetAudit();
 }
@@ -198,6 +199,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
     const sessionId = ctx.sessionManager.getSessionId();
     let run: Run;
     const notes: string[] = [];
+    let warned = '';
     const mode = params.mode ?? 'interactive';
     if (params.resume !== undefined) {
       const feature = requireFeatureName(params.resume);
@@ -224,6 +226,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
       run = await withRun(ws, feature, async latest => {
         await resumeRun(ws, latest, sessionId);
         for (const note of notes) addEvent(latest, 'autonomous', note);
+        warned = recordSelfHostWarning(latest, ws.root);
         return latest;
       });
     } else {
@@ -236,25 +239,21 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
       requireOrchestratorSession(ws.config.models, ctx, 'start');
       const loaded = await loadSource(ctx, ws, params.source, mode);
       notes.push(...loaded.notes, ...(await ensureChecks(ctx, ws, mode)));
-      run = await startRun(ws, { feature: params.feature, mode, sessionId, source: loaded.source });
-      if (notes.length > 0) {
-        run = await withRun(ws, run.feature, latest => {
-          for (const note of notes) addEvent(latest, 'autonomous', note);
-          return latest;
-        });
-      }
-    }
-    const warning = selfHostWarning(ws.root);
-    if (warning !== undefined) {
-      run = await withRun(ws, run.feature, latest => {
-        addEvent(latest, 'warning', warning);
-        return latest;
+      run = await startRun(ws, {
+        annotate: created => {
+          for (const note of notes) addEvent(created, 'autonomous', note);
+          warned = recordSelfHostWarning(created, ws.root);
+        },
+        feature: params.feature,
+        mode,
+        sessionId,
+        source: loaded.source,
       });
     }
     bindRun(entry.pointer, { feature: run.feature, mainId: ctx.agent.id, ws });
     await pi.setActiveTools([...new Set([...pi.getActiveTools(), ...ORCHESTRATION_TOOLS])]);
     return reply(
-      `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${run.mode === 'headless' ? HEADLESS_FIX_ROUNDS : ws.config.maxRounds}.${warning === undefined ? '' : `\nWarning: ${warning}`}\nNext: ${nextAction(run)}`,
+      `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${run.mode === 'headless' ? HEADLESS_FIX_ROUNDS : ws.config.maxRounds}.${warned}\nNext: ${nextAction(run)}`,
       summarize(ws, run),
     );
   }

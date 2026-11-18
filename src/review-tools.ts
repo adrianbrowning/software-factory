@@ -12,7 +12,7 @@ import { submitHeadless } from './headless-submit.ts';
 import type { RunTool } from './tool-scope.ts';
 import { nextAction } from './workflow.ts';
 import { decideStall, emptySchema, reply, STALL_DESCRIPTION } from './tool-replies.ts';
-import { selfHostWarning } from './self-host.ts';
+import { recordSelfHostWarning } from './self-host.ts';
 import { z } from 'zod';
 
 const reviewStartSchema = z.object({
@@ -90,10 +90,8 @@ export function registerReviewTools(tool: RunTool) {
     async run(params, { feature, ws }) {
       return withRun(ws, feature, async run => {
         const review = await startReview(ws, run, params.skip, params.keep);
-        const warning = selfHostWarning(ws.root);
-        if (warning !== undefined) addEvent(run, 'warning', warning);
+        const warned = recordSelfHostWarning(run, ws.root);
         const byPath = review.pathSkipped.length === 0 ? '' : `\nSkipped by path: ${review.pathSkipped.map(entry => `${entry.domain} (${entry.reason})`).join('; ')}.`;
-        const warned = warning === undefined ? '' : `\nWarning: ${warning}`;
         return reply(
           `Review ${review.reviewId} is open.${byPath}${warned}\nData file: ${review.dataFile}\nReference dir: ${review.referenceDir}\nFindings dir: ${review.findingsDir}\nRun the reviewers and the validator in one eval step (timeout 0; the software-factory skill has the snippet in section 4, step 6). Spawn one ${REVIEWER} per domain with agent(): ${review.domains.join(', ')}. Give each its domain, the review id, the data file, and the reference file <reference dir>/<domain>.md. With the kernel wait(), wait for every reviewer, then spawn one ${VALIDATOR} with the review id, the data file, the findings dir, and the reference dir, and wait for it (it may correct its validation once). Then call factory_review_record.`,
           review,
