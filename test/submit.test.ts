@@ -176,6 +176,21 @@ async function bigRun(ws: Workspace, { deferred = [], whatToBuild = 'x'.repeat(1
 const CLOSING_SECTIONS = ['## Checks run', '## Review rounds', '## Autonomous decisions', '## Accepted unresolved', '## Deferred items'];
 
 describe('prBody', () => {
+  it('lists one Related line per related issue after the Issue line, with no closing keywords', async () => {
+    using ws = workspace();
+    const { run, slice: one } = await bigRun(ws, { whatToBuild: 'x' });
+    run.source.url = 'https://github.com/o/r/issues/1';
+    run.source.related = [
+      { ref: '2', title: 'Second', url: 'https://github.com/o/r/issues/2' },
+      { ref: '3', title: 'Third', url: 'https://github.com/o/r/issues/3' },
+    ];
+    const lines = prBody(run, one, [one]).split('\n');
+    assert.equal(lines[0], `Issue: https://github.com/o/r/issues/1 (${run.source.title})`);
+    assert.equal(lines[1], 'Related: https://github.com/o/r/issues/2 (Second)');
+    assert.equal(lines[2], 'Related: https://github.com/o/r/issues/3 (Third)');
+    assert.doesNotMatch(lines.join('\n'), /\b(closes|fixes|resolves)\b/i);
+  });
+
   it('keeps every closing section and its entries when the slice summary is huge', async () => {
     using ws = workspace();
     const { run, slice: big } = await bigRun(ws, { deferred: [{ location: 'notes/later.md', title: 'later item' }] });
