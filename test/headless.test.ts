@@ -135,7 +135,16 @@ describe('/factory headless', () => {
 
 describe('factory_start with related issues', () => {
   const issues: Record<string, unknown> = {
-    '126': { author: { login: 'stranger' }, body: 'Related text.', comments: [], title: 'Related', url: 'https://github.com/o/r/issues/126' },
+    '126': {
+      author: { login: 'stranger' },
+      body: `Related text. ${'long '.repeat(400)}END-OF-RELATED`,
+      comments: [
+        { author: { login: 'maintainer' }, authorAssociation: 'MEMBER', body: 'Related trusted comment.' },
+        { author: { login: 'passerby' }, authorAssociation: 'NONE', body: 'Related outside comment.' },
+      ],
+      title: 'Related',
+      url: 'https://github.com/o/r/issues/126',
+    },
     '242': {
       author: { login: 'owner' },
       body: 'Primary text.',
@@ -181,12 +190,15 @@ describe('factory_start with related issues', () => {
         const { asked, call } = asking(repo.root, answer);
         const status = await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '242', related: ['126'] } });
         assert.equal(asked.length, 1);
-        assert.match(asked[0] ?? '', /Issue 242 \(Primary\)[\s\S]*Primary outside comment[\s\S]*Issue 126 \(Related\)[\s\S]*Related text/);
+        assert.match(asked[0] ?? '', /Issue 242 \(Primary\)[\s\S]*Primary outside comment[\s\S]*Issue 126 \(Related\)[\s\S]*Related text[\s\S]*END-OF-RELATED[\s\S]*Related outside comment/);
+        assert.doesNotMatch(asked[0] ?? '', /Related trusted comment/);
         const ws = { config: loadConfig(repo.root), root: repo.root };
         const run = readRun(ws, 'demo');
         assert.match(run.source.body, /Primary text\./);
         assert.equal(/Primary outside comment/.test(run.source.body), answer);
         assert.equal(/Related text\./.test(run.source.body), answer);
+        assert.equal(/Related outside comment\./.test(run.source.body), answer);
+        assert.match(run.source.body, /Related trusted comment\./);
         assert.deepEqual(run.source.related, [{ ref: '126', title: answer ? 'Related' : 'GitHub issue 126', url: 'https://github.com/o/r/issues/126' }]);
         assert.equal(run.source.ref, '242');
         const issueMd = readFileSync(join(runDir(ws, 'demo'), 'issue.md'), 'utf8');
@@ -203,6 +215,7 @@ describe('factory_start with related issues', () => {
       const ws = { config: loadConfig(repo.root), root: repo.root };
       const { notes, source } = await loadSource(ctx('main', 'main') as never, ws, { kind: 'github', ref: '242', related: ['126'] }, 'headless');
       assert.doesNotMatch(source.body, /outside comment|Related text/);
+      assert.match(source.body, /Related trusted comment\./);
       assert.match(source.body, /Primary text\./);
       assert.equal(notes.length, 1);
       assert.match(notes[0] ?? '', /@drive-by, @stranger/);

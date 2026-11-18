@@ -1,6 +1,6 @@
 import type { ExtensionContext } from '@oh-my-pi/pi-coding-agent';
 import { checksPrompt, type HeadlessGate, parseChecks, suggestChecks } from './config.ts';
-import { evidence } from './evidence.ts';
+import { redact } from './evidence.ts';
 import { addEvent, readRun, type Run, type Source, withRun, type Workspace } from './run.ts';
 import { fetchGithubIssue, fileSource, githubSource, type SourceInput } from './source.ts';
 import { markPaused, repoChecks, saveChecks } from './workflow.ts';
@@ -52,7 +52,7 @@ export async function loadSource(ctx: ExtensionContext, ws: Workspace, input: So
       const grouped = refs
         .map(ref => {
           const parts = outside.filter(part => part.ref === ref);
-          return `Issue ${ref} (${parts[0]?.title}):\n\n${parts.map(part => `@${part.author} (${part.association}):\n${evidence(part.text, 1_000)}`).join('\n\n')}`;
+          return `Issue ${ref} (${parts[0]?.title}):\n\n${parts.map(part => `@${part.author} (${part.association}):\n${redact(part.text)}`).join('\n\n')}`;
         })
         .join('\n\n---\n\n');
       return confirm(
