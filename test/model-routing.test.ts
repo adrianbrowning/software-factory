@@ -59,7 +59,7 @@ describe('model routing', () => {
     const call = async (name: string, params: unknown) => JSON.stringify(await tools.get(name)?.execute('id', params, undefined, undefined, main));
     const spawn = (agent: string, cwd = repo.root, from: TestContext['agent'] = main.agent) =>
       handlers.get('before_subagent_spawn')?.({ agent, invocationKind: 'task', patterns: ['@task'], type: 'before_subagent_spawn' }, { ...main, agent: from, cwd });
-    const stop = () => handlers.get('session_stop')?.({ session_id: 'session', type: 'session_stop' }, main);
+    const stop = (sessionId = 'session') => handlers.get('session_stop')?.({ session_id: sessionId, type: 'session_stop' }, main);
     const command = (args: string) => commands.get('factory')?.handler(args, main);
     const statusModels = async () => {
       const status: { details: { models: unknown } } = JSON.parse(await call('factory_status', {}));
@@ -577,6 +577,21 @@ describe('model routing', () => {
     assert.equal(await blocked(), true);
     assert.equal(await blocked(), true);
     assert.equal(readRun(ws, 'demo').status, 'running');
+    await repo.stop();
+    assert.equal(readRun(ws, 'demo').status, 'paused');
+  });
+
+  it('keeps the owner idle stop count when another main session stops in the same repo', async () => {
+    using repo = routedRepo(undefined);
+    await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+    const ws: Workspace = { config: loadConfig(repo.root), root: repo.root };
+    await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')])));
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+
+    await repo.stop();
+    assert.equal(await repo.stop('someone-else'), undefined);
+    await repo.stop();
+    assert.equal(await repo.stop('someone-else'), undefined);
     await repo.stop();
     assert.equal(readRun(ws, 'demo').status, 'paused');
   });
