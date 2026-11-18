@@ -28,6 +28,8 @@ The fix file starts with the ticket path, the branch, and the check commands. Be
 
 Run the typecheck and the test files you touched, each as its own bash call, exactly as written, so its exit code is the command's own; a pipe into `grep`, `tail`, `head`, or similar replaces it with the filter's. For the typecheck, use the typecheck command among your task's check commands; if none is listed, use the repository's own typecheck script if it has one, otherwise skip the typecheck. For the tests, use the runner of the listed test command, or else the repository's test script, naming only the files you touched. Read that exit code before you commit: a nonzero exit is a failing check. When the output is long, find the failures in the full output the bash tool saves (its artifact) rather than filtering it or running the suite again.
 
+A check that runs longer than the bash tool's foreground limit (about 60 s) moves to a background job: the bash call returns before the check has finished, and that return is not a result. Wait for the job's result (the follow-up message that names it, or the `wait` tool) and read its exit code before you report the check result or commit. Never commit while a check is still running and amend or add to the commit after the result arrives.
+
 ## Stop and report
 
 Stop and report instead of guessing in these cases:
