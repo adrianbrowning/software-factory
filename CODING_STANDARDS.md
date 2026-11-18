@@ -17,3 +17,7 @@ The handlers for `before_subagent_spawn`, `turn_end` and `session_stop` run in e
 ## Refusal messages
 
 A refusal or error message that names a next step must name a step that works in the state that produced the refusal, and a test runs that step once after the refusal. Example: the ambiguity refusal in `resolveObservations` told the orchestrator to carry the items as a free-text note, but a note-only `factory_carry` needs an active slice with a green review, and the refusal happened with no active slice.
+
+## Review data sections in tests
+
+Tests that assert on a section of a review data file extract it with `dataSection` or `fixItems` from `test/helpers.ts`, not with an inline regex that names the next section. Adding a section then breaks no test.
