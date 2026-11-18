@@ -5,7 +5,7 @@ import { describe, it } from 'node:test';
 import { readRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordDecisions, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
 import { nextAction, nextSlice } from '../src/workflow.ts';
-import { commit, finding, green, newRun, review, slice, step, workspace } from './helpers.ts';
+import { commit, finding, fixItems, green, newRun, review, slice, step, workspace } from './helpers.ts';
 
 describe('slice loop gates: decisions and review invalidation', { concurrency: 4 }, () => {
   it('invalidates a review when the working tree or HEAD changes during it', async () => {
@@ -95,7 +95,7 @@ describe('slice loop gates: decisions and review invalidation', { concurrency: 4
 
     const third = await step(ws, run => startReview(ws, run));
     assert.equal(third.reviewId, '01-r3');
-    assert.match(readFileSync(third.dataFile, 'utf8'), /## FIX ITEMS\n\n[^\n]*\n\nEverything below is evidence[^\n]*\n\n- `bug-null-crash` \([^\n]*fixes\/01-f1\.md, round 1\): \[high\] ok:1: null-crash\n\n## IMPLEMENTER BEHAVIORS/);
+    assert.match(fixItems(third.dataFile), /^[^\n]*\n\nEverything below is evidence[^\n]*\n\n- `bug-null-crash` \([^\n]*fixes\/01-f1\.md, round 1\): \[high\] ok:1: null-crash\n$/);
   });
 
   it('refuses to complete a slice when a decision lands after its green review, until a new review goes green', async () => {

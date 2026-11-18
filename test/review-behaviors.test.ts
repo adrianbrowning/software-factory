@@ -1,20 +1,11 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import { startImplementerSession, submitImplementerReport } from '../src/report.ts';
 import { runChecks, startReview } from '../src/review.ts';
 import { nextSlice } from '../src/workflow.ts';
-import { commit, newRun, sh, slice, step, workspace } from './helpers.ts';
+import { commit, dataSection, newRun, sh, slice, step, workspace } from './helpers.ts';
 
-/** The text of the data file's `## IMPLEMENTER BEHAVIORS` section, up to the next `## ` heading. */
-function behaviorsSection(dataFile: string) {
-  const data = readFileSync(dataFile, 'utf8');
-  const start = data.indexOf('## IMPLEMENTER BEHAVIORS');
-  assert.notEqual(start, -1, 'the data file has an IMPLEMENTER BEHAVIORS section');
-  const rest = data.slice(start + 3);
-  const next = rest.indexOf('\n## ');
-  return next === -1 ? rest : rest.slice(0, next);
-}
+const behaviorsSection = (dataFile: string) => dataSection(dataFile, 'IMPLEMENTER BEHAVIORS');
 
 describe('review data file: implementer behaviors', { concurrency: 4 }, () => {
   it('lists the stored report behaviors with their seen-red marks as untrusted claims, and nothing else of the report', async () => {
