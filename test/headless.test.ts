@@ -338,6 +338,7 @@ describe('factory_start related issue hardening', () => {
     const { call } = session(repo.root);
     const rejects = async (source: unknown) => !/Run \\"demo\\"/.test(await call('factory_start', { feature: 'demo', source }).catch(error => String(error)));
     assert.ok(await rejects({ kind: 'github', ref: '1', related: Array.from({ length: 21 }, (_, i) => String(i + 2)) }));
+    assert.ok(await rejects({ kind: 'file', ref: 'ticket.md', related: ['2'] }));
     assert.ok(await rejects({ ...SOURCE, kind: 'text', related: [{ ref: '9', title: 'x' }] }));
     assert.ok(await rejects({ ...SOURCE, kind: 'jira', related: [{ ref: '9', title: 'x' }] }));
   });
