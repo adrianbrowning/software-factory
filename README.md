@@ -426,6 +426,10 @@ next fix file (which then names it as asked in that round), and carries into the
 Each reviewer writes only its own domain file, so parallel reviewers never share a write. The submit tool rejects a
 finding whose `path` the diff does not change, or whose `line` is outside that file's new-side hunks.
 
+`state.json` records the state schema version and the `factoryVersion` that saved it. Version 1 files still load and
+are saved as version 2. A file with a newer state version, written by a newer factory, is refused with a message naming the writer's factory version, the
+state version and this factory's version.
+
 The review gate snapshots `HEAD` plus `git status` when a review opens and rejects the review if either changes.
 A slice completes only when `HEAD` is still the commit that passed checks and review, and `/factory submit`
 refuses any branch whose tip is not its reviewed commit. With `landOn`, it also refuses while that branch is

@@ -860,7 +860,8 @@ describe('run state', () => {
     const path = join(ws.root, '.scratch', 'demo', 'state.json');
     const state = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
     writeFileSync(path, JSON.stringify({ ...state, factoryVersion: '9.9.9', version: 3 }));
-    assert.throws(() => readRun(ws, 'demo'), error => error instanceof Error && /9\.9\.9/.test(error.message) && /version 3/.test(error.message) && /0\.2\.0/.test(error.message) && !/Corrupt/.test(error.message));
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string };
+    assert.throws(() => readRun(ws, 'demo'), error => error instanceof Error && /9\.9\.9/.test(error.message) && /version 3/.test(error.message) && error.message.includes(pkg.version) && !/Corrupt/.test(error.message));
     const { factoryVersion: _written, ...unversioned } = state;
     writeFileSync(path, JSON.stringify({ ...unversioned, version: 3 }));
     assert.throws(() => readRun(ws, 'demo'), error => error instanceof Error && /unknown version/.test(error.message) && !/Corrupt/.test(error.message));
