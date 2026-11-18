@@ -427,7 +427,7 @@ Each reviewer writes only its own domain file, so parallel reviewers never share
 finding whose `path` the diff does not change, or whose `line` is outside that file's new-side hunks.
 
 `state.json` records the state schema version and the `factoryVersion` that saved it. Version 1 files still load and
-are saved as version 2. A file from a newer factory is refused with a message naming the writer's factory version, the
+are saved as version 2. A file with a newer state version, written by a newer factory, is refused with a message naming the writer's factory version, the
 state version and this factory's version.
 
 The review gate snapshots `HEAD` plus `git status` when a review opens and rejects the review if either changes.
