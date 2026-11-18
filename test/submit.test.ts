@@ -107,7 +107,7 @@ describe('submit', () => {
     using ws = workspace();
     const branches = await doneRun(ws, 2);
     await step(ws, run => {
-      run.source = { ...run.source, url: 'https://github.com/o/r/issues/7' };
+      run.source = { ...run.source, url: 'https://github.com/o/r/issues/7', related: [{ ref: '8', title: 'Eighth', url: 'https://github.com/o/r/issues/8' }, { ref: '9', title: 'Ninth', url: 'https://github.com/o/r/issues/9' }] };
       run.decisions.push({ author: 'autonomous', text: 'Took the narrower reading.' }, { author: 'user', text: 'Skip the CLI.' }, { author: 'autonomous', text: 'Used token ghp_abcdefghijklmnopqrstuvwxyz0123456789 for the fixture.' });
       addEvent(run, 'autonomous', 'gate intake (auto): left out text from outside authors @mallory');
       const [one] = run.slices;
@@ -134,6 +134,13 @@ describe('submit', () => {
     assert.doesNotMatch(first, /lint rule/);
     assert.doesNotMatch(second, /bug-x/);
     assert.match(second, /demo\/retro: lint rule.*https:\/\/github\.com\/o\/r\/issues\/9/, 'retro items are listed on the top slice');
+    for (const body of [first, second]) {
+      const lines = body.split('\n');
+      assert.match(lines[0] ?? '', /^Issue: https:\/\/github\.com\/o\/r\/issues\/7 \(/);
+      assert.equal(lines[1], 'Related: https://github.com/o/r/issues/8 (Eighth)');
+      assert.equal(lines[2], 'Related: https://github.com/o/r/issues/9 (Ninth)');
+      assert.doesNotMatch(body, /\b(closes|fixes|resolves) #/i);
+    }
   });
 });
 

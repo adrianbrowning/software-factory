@@ -59,6 +59,19 @@ describe('headless submit', () => {
     assert.ok(readRun(ws, 'demo').events.some(event => event.kind === 'submit'));
   });
 
+  it('lists the Related lines in the draft PR bodies of a headless run', async () => {
+    using repo = tempRepo('factory-hsubmit-', HEADLESS_FILES);
+    const { branches, call, ws } = await headlessSubmitRun(repo.root, ['S1']);
+    await withRun(ws, 'demo', run => { run.source = { ...run.source, url: 'https://github.com/o/r/issues/7', related: [{ ref: '8', title: 'Eighth', url: 'https://github.com/o/r/issues/8' }] }; });
+    await greenWithObservation(ws);
+    using gh = fakeGh({ stack: undefined, submitted: withPrs(branches) });
+    await call('factory_complete_slice', {});
+    await call('factory_retro', { findings: [] });
+    const lines = (gh.bodies().get(101) ?? '').split('\n');
+    assert.match(lines[0] ?? '', /^Issue: https:\/\/github\.com\/o\/r\/issues\/7 \(/);
+    assert.equal(lines[1], 'Related: https://github.com/o/r/issues/8 (Eighth)');
+  });
+
   it('does not tell the user to run /factory submit after a headless run opened its PRs', async () => {
     using repo = tempRepo('factory-hsubmit-', HEADLESS_FILES);
     const { branches, call, ws } = await headlessSubmitRun(repo.root, ['S1']);
