@@ -335,14 +335,30 @@ describe('factory_start related issue hardening', () => {
     });
   });
 
-  it('rejects more than 20 related refs, and related on jira and text sources', async () => {
-    using repo = tempRepo('factory-related-schema-', CHECKS_OK);
-    const { call } = session(repo.root);
-    const rejects = async (source: unknown) => !/Run \\"demo\\"/.test(await call('factory_start', { feature: 'demo', source }).catch(error => String(error)));
-    assert.ok(await rejects({ kind: 'github', ref: '1', related: Array.from({ length: 21 }, (_, i) => String(i + 2)) }));
-    assert.ok(await rejects({ kind: 'file', ref: 'ticket.md', related: ['2'] }));
-    assert.ok(await rejects({ ...SOURCE, kind: 'text', related: [{ ref: '9', title: 'x' }] }));
-    assert.ok(await rejects({ ...SOURCE, kind: 'jira', related: [{ ref: '9', title: 'x' }] }));
+  it('runs gh issue view once per distinct ref when related repeats the primary ref', async () => {
+    const log = join(tempDir('factory-gh-log-').root, 'calls');
+    const script = gh({ 1: base, 2: make('2', 'https://github.com/o/r/issues/2') }, owners).replace('if [ "$1" = issue ]; then', `if [ "$1" = issue ]; then echo "$3" >> ${log};`);
+    await withGh(script, async () => {
+      using repo = tempRepo('factory-gh-once-', CHECKS_OK);
+      const { call } = asking(repo.root, true);
+      await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1', related: ['1', '1', '2', '2'] } });
+      assert.deepEqual(readFileSync(log, 'utf8').trim().split('\n').sort(), ['1', '2']);
+    });
+  });
+
+  it('rejects more than 20 related refs, and related on file, jira and text sources, but starts a run with exactly 20', async () => {
+    const issues = Object.fromEntries(Array.from({ length: 22 }, (_, i) => [i + 1, make(String(i + 1), `https://github.com/o/r/issues/${i + 1}`)]));
+    await withGh(gh(issues, '*'), async () => {
+      using repo = tempRepo('factory-related-schema-', CHECKS_OK);
+      const { call } = session(repo.root);
+      const outcome = (source: unknown) => call('factory_start', { feature: 'demo', source }).catch(error => String(error));
+      const refs = (count: number) => Array.from({ length: count }, (_, i) => String(i + 2));
+      assert.match(await outcome({ kind: 'github', ref: '1', related: refs(21) }), /too[ _]big|at most 20|<=\s*20|maximum/i);
+      assert.match(await outcome({ kind: 'file', ref: 'ticket.md', related: ['2'] }), /`related` is only for github sources/);
+      assert.match(await outcome({ ...SOURCE, kind: 'text', related: [{ ref: '9', title: 'x' }] }), /`related` is only for github sources/);
+      assert.match(await outcome({ ...SOURCE, kind: 'jira', related: [{ ref: '9', title: 'x' }] }), /`related` is only for github sources/);
+      assert.match(await outcome({ kind: 'github', ref: '1', related: refs(20) }), /Run \\"demo\\"/);
+    });
   });
 });
 

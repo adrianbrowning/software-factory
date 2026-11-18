@@ -40,7 +40,8 @@ export async function loadSource(ctx: ExtensionContext, ws: Workspace, input: So
   if (input.kind !== 'github') return { notes: [], source: input };
   const notes: string[] = [];
   const primary = await fetchGithubIssue(ws, input.ref);
-  const loaded = await Promise.all((input.related ?? []).map(async ref => ({ issue: await fetchGithubIssue(ws, ref), ref })));
+  const refs = [...new Set(input.related ?? [])].filter(ref => ref !== input.ref);
+  const loaded = await Promise.all(refs.map(async ref => ({ issue: await fetchGithubIssue(ws, ref), ref })));
   // Each issue is loaded once: a related ref that resolves to the primary or to an earlier related issue is dropped.
   const seen = new Set([issueKey(primary.url) ?? primary.url]);
   const related = loaded.filter(item => {
