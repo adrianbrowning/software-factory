@@ -77,8 +77,17 @@ describe('stopDecision', () => {
   it('allows a stop while a job runs or a delivery is pending, without counting it', () => {
     const idle = { delivery: { delivering: false, pendingJobIds: [], queued: 0 }, running: [] };
     const stale = { count: MAX_IDLE_STOP_ATTEMPTS - 1, events: 2 };
-    assert.equal(stopDecision(run(), 'owner', stale, { ...idle, running: [{}] }).action, 'allow');
-    assert.equal(stopDecision(run(), 'owner', stale, { ...idle, delivery: { ...idle.delivery, pendingJobIds: ['j'] } }).action, 'allow');
+    const signals = {
+      delivering: { ...idle, delivery: { ...idle.delivery, delivering: true } },
+      pending: { ...idle, delivery: { ...idle.delivery, pendingJobIds: ['j'] } },
+      queued: { ...idle, delivery: { ...idle.delivery, queued: 1 } },
+      running: { ...idle, running: [{}] },
+    };
+    for (const jobs of Object.values(signals)) {
+      assert.deepEqual(stopDecision(run(), 'owner', stale, jobs), { action: 'allow', clear: true });
+      assert.deepEqual(stopDecision(run(), 'other', stale, jobs), { action: 'allow', clear: false });
+      assert.deepEqual(stopDecision(run({ status: 'paused' }), 'owner', stale, jobs), { action: 'allow', clear: false });
+    }
     assert.equal(stopDecision(run(), 'owner', stale, idle).action, 'pause');
     assert.equal(stopDecision(run(), 'owner', stale, null).action, 'pause');
   });

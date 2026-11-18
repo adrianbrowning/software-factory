@@ -556,29 +556,45 @@ describe('model routing', () => {
     assert.equal(readRun(ws, 'demo').status, 'paused');
   });
 
-  it('allows a stop while a job runs or awaits delivery, restarts the idle count, and treats a null snapshot as idle', async () => {
+  const idleJobs = { delivery: { delivering: false, pendingJobIds: [], queued: 0 }, running: [] };
+  const signals = {
+    'a delivering job result': { ...idleJobs, delivery: { ...idleJobs.delivery, delivering: true } },
+    'a pending job result': { ...idleJobs, delivery: { ...idleJobs.delivery, pendingJobIds: ['job'] } },
+    'a queued job result': { ...idleJobs, delivery: { ...idleJobs.delivery, queued: 1 } },
+    'a running job': { ...idleJobs, running: [{ id: 'job' }] },
+  };
+
+  for (const [name, signal] of Object.entries(signals)) {
+    it(`allows a stop with only ${name} and restarts the idle count`, async () => {
+      using repo = routedRepo(undefined);
+      await repo.call('factory_start', { feature: 'demo', source: SOURCE });
+      const ws: Workspace = { config: loadConfig(repo.root), root: repo.root };
+      await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')])));
+      await withRun(ws, 'demo', run => nextSlice(ws, run));
+      const blocked = async () => ((await repo.stop()) as { decision?: string } | undefined)?.decision === 'block';
+
+      repo.live.jobs = idleJobs;
+      assert.equal(await blocked(), true);
+      assert.equal(await blocked(), true);
+      repo.live.jobs = signal;
+      assert.equal(await repo.stop(), undefined);
+      repo.live.jobs = idleJobs;
+      assert.equal(await blocked(), true);
+      assert.equal(await blocked(), true);
+      assert.equal(readRun(ws, 'demo').status, 'running');
+      await repo.stop();
+      assert.equal(readRun(ws, 'demo').status, 'paused');
+    });
+  }
+
+  it('treats a null job snapshot as idle', async () => {
     using repo = routedRepo(undefined);
     await repo.call('factory_start', { feature: 'demo', source: SOURCE });
     const ws: Workspace = { config: loadConfig(repo.root), root: repo.root };
     await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')])));
     await withRun(ws, 'demo', run => nextSlice(ws, run));
-    const idle = { delivery: { delivering: false, pendingJobIds: [], queued: 0 }, running: [] };
-    const blocked = async () => ((await repo.stop()) as { decision?: string } | undefined)?.decision === 'block';
-
     repo.live.jobs = null;
-    assert.equal(await blocked(), true);
-    repo.live.jobs = idle;
-    assert.equal(await blocked(), true);
-    repo.live.jobs = { ...idle, running: [{ id: 'job' }] };
-    assert.equal(await repo.stop(), undefined);
-    repo.live.jobs = { ...idle, delivery: { delivering: false, pendingJobIds: ['job'], queued: 1 } };
-    assert.equal(await repo.stop(), undefined);
-    repo.live.jobs = idle;
-    assert.equal(await blocked(), true);
-    assert.equal(await blocked(), true);
-    assert.equal(readRun(ws, 'demo').status, 'running');
-    await repo.stop();
-    assert.equal(readRun(ws, 'demo').status, 'paused');
+    assert.deepEqual(await repo.stop(), { decision: 'block', reason: `Software factory run "demo" is not finished. Next: ${nextAction(readRun(ws, 'demo'))}` });
   });
 
   it('keeps the owner idle stop count when another main session stops in the same repo', async () => {
