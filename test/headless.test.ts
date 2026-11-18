@@ -158,7 +158,7 @@ describe('factory_start with related issues', () => {
   async function withFakeGh(body: () => Promise<void>) {
     using bin = tempDir('factory-fake-gh-');
     const cases = Object.entries(issues).map(([number, issue]) => `  ${number}) echo '${JSON.stringify(issue)}';;`).join('\n');
-    writeFileSync(join(bin.root, 'gh'), `#!/bin/sh\nif [ "$1" = issue ]; then case "$3" in\n${cases}\nesac; else case "$2" in *242) echo OWNER;; *) echo NONE;; esac; fi\n`);
+    writeFileSync(join(bin.root, 'gh'), `#!/bin/sh\nif [ "$1" = issue ]; then case "$3" in\n${cases}\nesac; else case "$2" in *242|*900) echo OWNER;; *) echo NONE;; esac; fi\n`);
     chmodSync(join(bin.root, 'gh'), 0o755);
     const path = process.env.PATH;
     process.env.PATH = `${bin.root}:${path}`;
@@ -190,7 +190,8 @@ describe('factory_start with related issues', () => {
         const { asked, call } = asking(repo.root, answer);
         const status = await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '242', related: ['126'] } });
         assert.equal(asked.length, 1);
-        assert.match(asked[0] ?? '', /Issue 242 \(Primary\)[\s\S]*Primary outside comment[\s\S]*Issue 126 \(Related\)[\s\S]*Related text[\s\S]*END-OF-RELATED[\s\S]*Related outside comment/);
+        assert.match(asked[0] ?? '', /Issue 242 \(Primary\)[\s\S]*Primary outside comment[\s\S]*Issue 126 \(Related\)[\s\S]*@stranger[\s\S]*truncated[\s\S]*Related outside comment/);
+        assert.match(asked[0] ?? '', /END-OF-RELATED/);
         assert.doesNotMatch(asked[0] ?? '', /Related trusted comment/);
         const ws = { config: loadConfig(repo.root), root: repo.root };
         const run = readRun(ws, 'demo');
@@ -204,7 +205,8 @@ describe('factory_start with related issues', () => {
         const issueMd = readFileSync(join(runDir(ws, 'demo'), 'issue.md'), 'utf8');
         assert.match(issueMd, /Source: github 242 \(https:\/\/github.com\/o\/r\/issues\/242\)\nSource: github 126 \(https:\/\/github.com\/o\/r\/issues\/126\)\n/);
         assert.match(status, /126/);
-        assert.match(await call('factory_status', {}), /\\"related\\"/);
+        const statusText = await call('factory_status', {});
+        assert.match(statusText, new RegExp(`related[\\s\\S]*126[\\s\\S]*${answer ? 'Related' : 'GitHub issue 126'}[\\s\\S]*github\\.com/o/r/issues/126`));
       });
     });
   }
@@ -231,6 +233,86 @@ describe('factory_start with related issues', () => {
       assert.equal('related' in readRun(ws, 'demo').source, false);
       assert.match(readFileSync(join(runDir(ws, 'demo'), 'issue.md'), 'utf8'), /^# Primary\n\nSource: github 242 \(https:\/\/github.com\/o\/r\/issues\/242\)\n\n/);
     });
+  });
+});
+
+describe('factory_start related issue hardening', () => {
+  const gh = (issues: Record<string, unknown>, owners: string) => `#!/bin/sh\nif [ "$1" = issue ]; then case "\${3##*/}" in\n${Object.entries(issues).map(([n, i]) => `  ${n}) echo '${JSON.stringify(i)}';;`).join('\n')}\nesac; else case "$2" in ${owners}) echo OWNER;; *) echo NONE;; esac; fi\n`;
+  const make = (n: string, url: string, over: Record<string, unknown> = {}) => ({ author: { login: `user${n}` }, body: `Text ${n}.`, comments: [], title: `Title ${n}`, url, ...over });
+  async function withGh(script: string, body: () => Promise<void>) {
+    using bin = tempDir('factory-fake-gh-');
+    writeFileSync(join(bin.root, 'gh'), script);
+    chmodSync(join(bin.root, 'gh'), 0o755);
+    const path = process.env.PATH;
+    process.env.PATH = `${bin.root}:${path}`;
+    try {
+      await body();
+    } finally {
+      process.env.PATH = path;
+    }
+  }
+  function asking(root: string, answer: boolean) {
+    const asked: string[] = [];
+    const tools = load({ commands: new Map(), sent: [], sentOptions: [] });
+    const main = { ...ctx('main', 'main'), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async (_t: string, body: string) => (asked.push(body), answer), notify() {} } };
+    const call = async (name: string, params: unknown) => JSON.stringify(await tools.get(name)?.execute('id', params, undefined, undefined, main));
+    return { asked, call };
+  }
+  const base = make('1', 'https://github.com/o/r/issues/1');
+  const owners = '*/1|*/900|*/2';
+
+  for (const answer of [true, false]) {
+    it(`treats a related issue from another repo as outside text even when its author is OWNER there (${answer ? 'approved' : 'declined'})`, async () => {
+      const issues = { 1: base, 900: make('900', 'https://github.com/evil/other/issues/900') };
+      await withGh(gh(issues, owners), async () => {
+        using repo = tempRepo('factory-gh-cross-', CHECKS_OK);
+        const { asked, call } = asking(repo.root, answer);
+        await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1', related: ['900'] } });
+        assert.equal(asked.length, 1);
+        assert.match(asked[0] ?? '', /Issue 900[\s\S]*Text 900\./);
+        const run = readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo');
+        assert.equal(/Text 900\./.test(run.source.body), answer);
+      });
+    });
+  }
+
+  it('caps each outside part in the dialog at 1,000 characters but keeps the full approved text, and redacts the issue title in the header', async () => {
+    const issues = { 1: base, 777: make('777', 'https://github.com/o/r/issues/777', { body: `${'a'.repeat(1_400)}MIDDLE-MARK${'z'.repeat(1_400)}`, title: 'Leaks ghp_abcdefghijklmnopqrstuvwxyz0123456789' }) };
+    await withGh(gh(issues, owners), async () => {
+      using repo = tempRepo('factory-gh-cap-', CHECKS_OK);
+      const { asked, call } = asking(repo.root, true);
+      await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1', related: ['777'] } });
+      assert.doesNotMatch(asked[0] ?? '', /MIDDLE-MARK/);
+      assert.doesNotMatch(asked[0] ?? '', /ghp_abcdefghij/);
+      assert.match(asked[0] ?? '', /Issue 777 \(Leaks <REDACTED>/);
+      const run = readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo');
+      assert.match(run.source.body, /MIDDLE-MARK/);
+    });
+  });
+
+  it('loads an issue once when related repeats the primary or an earlier related entry, even by URL', async () => {
+    const issues = { 1: make('1', 'https://github.com/o/r/issues/1', { author: { login: 'owner1' } }), 2: make('2', 'https://github.com/o/r/issues/2', { author: { login: 'stranger' } }) };
+    await withGh(gh(issues, '*/1'), async () => {
+      using repo = tempRepo('factory-gh-dup-', CHECKS_OK);
+      const { asked, call } = asking(repo.root, true);
+      await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1', related: ['1', '2', '2', 'https://github.com/o/r/issues/2'] } });
+      assert.equal(asked.length, 1);
+      assert.equal((asked[0] ?? '').match(/Issue 2 /g)?.length, 1);
+      assert.doesNotMatch(asked[0] ?? '', /Issue 1 /);
+      const run = readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo');
+      assert.equal(run.source.body.match(/Text 2\./g)?.length, 1);
+      assert.equal(run.source.body.match(/## Related issue/g)?.length, 1);
+      assert.equal(run.source.related?.length, 1);
+    });
+  });
+
+  it('rejects more than 20 related refs, and related on jira and text sources', async () => {
+    using repo = tempRepo('factory-related-schema-', CHECKS_OK);
+    const { call } = session(repo.root);
+    const rejects = async (source: unknown) => !/Run \\"demo\\"/.test(await call('factory_start', { feature: 'demo', source }).catch(error => String(error)));
+    assert.ok(await rejects({ kind: 'github', ref: '1', related: Array.from({ length: 21 }, (_, i) => String(i + 2)) }));
+    assert.ok(await rejects({ ...SOURCE, kind: 'text', related: [{ ref: '9', title: 'x' }] }));
+    assert.ok(await rejects({ ...SOURCE, kind: 'jira', related: [{ ref: '9', title: 'x' }] }));
   });
 });
 

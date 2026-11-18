@@ -198,6 +198,16 @@ describe('prBody', () => {
     assert.doesNotMatch(lines.join('\n'), /\b(closes|fixes|resolves)\b/i);
   });
 
+  it('does not let a primary or related title form a GitHub closing keyword', async () => {
+    using ws = workspace();
+    const { run, slice: one } = await bigRun(ws, { whatToBuild: 'x' });
+    run.source.title = 'Resolves #41';
+    run.source.related = [{ ref: '2', title: 'Fixes #42', url: 'https://github.com/o/r/issues/2' }, { ref: '3', title: 'closed https://github.com/o/r/issues/43', url: 'https://github.com/o/r/issues/3' }];
+    const body = prBody(run, one, [one]);
+    assert.doesNotMatch(body, /\b(close[sd]?|fix(es|ed)?|resolve[sd]?)\b[:\s]*(#|https?:\/\/)/i);
+    assert.match(body, /Fixes/);
+  });
+
   it('keeps every closing section and its entries when the slice summary is huge', async () => {
     using ws = workspace();
     const { run, slice: big } = await bigRun(ws, { deferred: [{ location: 'notes/later.md', title: 'later item' }] });

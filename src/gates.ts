@@ -1,8 +1,8 @@
 import type { ExtensionContext } from '@oh-my-pi/pi-coding-agent';
 import { checksPrompt, type HeadlessGate, parseChecks, suggestChecks } from './config.ts';
-import { redact } from './evidence.ts';
+import { evidence, redact } from './evidence.ts';
 import { addEvent, readRun, type Run, type Source, withRun, type Workspace } from './run.ts';
-import { fetchGithubIssue, fileSource, githubSource, type SourceInput } from './source.ts';
+import { fetchGithubIssue, fileSource, githubSource, issueKey, repoOf, type SourceInput, workingRepo } from './source.ts';
 import { markPaused, repoChecks, saveChecks } from './workflow.ts';
 
 async function confirm(ctx: ExtensionContext, title: string, body: string) {
@@ -39,10 +39,17 @@ export async function loadSource(ctx: ExtensionContext, ws: Workspace, input: So
   if (input.kind === 'file') return { notes: [], source: await fileSource(ws, input.ref) };
   if (input.kind !== 'github') return { notes: [], source: input };
   const notes: string[] = [];
-  const related = await Promise.all((input.related ?? []).map(async ref => ({ issue: await fetchGithubIssue(ws, ref), ref })));
+  const primary = await fetchGithubIssue(ws, input.ref);
+  const loaded = await Promise.all((input.related ?? []).map(async ref => ({ issue: await fetchGithubIssue(ws, ref), ref })));
+  // Each issue is loaded once: a related ref that resolves to the primary or to an earlier related issue is dropped.
+  const seen = new Set([issueKey(primary.url) ?? primary.url]);
+  const related = loaded.filter(item => {
+    const key = issueKey(item.issue.url) ?? item.issue.url;
+    return !seen.has(key) && seen.add(key);
+  });
   const source = await githubSource(
     input.ref,
-    await fetchGithubIssue(ws, input.ref),
+    primary,
     async outside => {
       if (mode === 'headless') {
         notes.push(`gate intake (auto): left out text from outside authors ${[...new Set(outside.map(part => `@${part.author}`))].join(', ')}`);
@@ -52,7 +59,7 @@ export async function loadSource(ctx: ExtensionContext, ws: Workspace, input: So
       const grouped = refs
         .map(ref => {
           const parts = outside.filter(part => part.ref === ref);
-          return `Issue ${ref} (${parts[0]?.title}):\n\n${parts.map(part => `@${part.author} (${part.association}):\n${redact(part.text)}`).join('\n\n')}`;
+          return `Issue ${ref} (${redact(parts[0]?.title ?? '')}):\n\n${parts.map(part => `@${part.author} (${part.association}):\n${evidence(part.text, 1_000)}`).join('\n\n')}`;
         })
         .join('\n\n---\n\n');
       return confirm(
@@ -62,6 +69,7 @@ export async function loadSource(ctx: ExtensionContext, ws: Workspace, input: So
       );
     },
     related,
+    (await workingRepo(ws)) ?? repoOf(primary.url),
   );
   return { notes, source };
 }
