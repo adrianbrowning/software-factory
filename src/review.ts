@@ -47,7 +47,7 @@ import {
 import { renderFinding } from './finding-text.ts';
 import { collectObservations, placeDefaults } from './place.ts';
 import { changedLines, changedPaths, targetedReview } from './targeted.ts';
-import { reportListsCommit, storedReport } from './report.ts';
+import { reportListsCommit, storedBehaviors, storedReport } from './report.ts';
 import { head, porcelain, requireOnBranchClean, snapshot } from './repo.ts';
 import {
   needsFullReview,
@@ -362,13 +362,23 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   const dataFile = join(reviewDir(ws, run.feature, id), 'data.md');
   writeAtomic(
     dataFile,
-    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n${renderLaterSlices(run, slice)}\n\n## CHECKS\n\nThe factory ran every configured check on \`${checked.sha}\` and all passed. Do not run them again.\n\n${checked.results.map(result => `- ${result}`).join('\n')}\n\n## KNOWN OBSERVATIONS\n\nObservations this run has already placed (carried, deferred, fixed or left), and observations of this slice's earlier reviews that are not placed yet, marked \`(unplaced)\`. A finding that matches an entry by location and problem, under any id, is not new: the validator drops it with the reason \`same as <key>\`. An entry marked \`${CARRIED_HERE}\` is work this slice builds: a finding that it is unbuilt or wrong in this slice is not a repeat. ${UNTRUSTED_NOTE}\n\n${renderKnownObservations(run, slice)}\n\n${targetedSection}## FIX ITEMS\n\n${listed}\n\n## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files.join('\n')}\n`,
+    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n${renderLaterSlices(run, slice)}\n\n## CHECKS\n\nThe factory ran every configured check on \`${checked.sha}\` and all passed. Do not run them again.\n\n${checked.results.map(result => `- ${result}`).join('\n')}\n\n## KNOWN OBSERVATIONS\n\nObservations this run has already placed (carried, deferred, fixed or left), and observations of this slice's earlier reviews that are not placed yet, marked \`(unplaced)\`. A finding that matches an entry by location and problem, under any id, is not new: the validator drops it with the reason \`same as <key>\`. An entry marked \`${CARRIED_HERE}\` is work this slice builds: a finding that it is unbuilt or wrong in this slice is not a repeat. ${UNTRUSTED_NOTE}\n\n${renderKnownObservations(run, slice)}\n\n${targetedSection}## FIX ITEMS\n\n${listed}\n\n${renderBehaviors(ws, run, slice)}\n\n## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${files.join('\n')}\n`,
   );
   const lines = changedLines(diff, files);
   slice.review = { decisions: run.decisions.length, id, lines, sha: checked.sha, skipped, snapshot: await snapshot(ws.root), submissions: {}, targeted };
   const skippedDetail = skipped.map(entry => `${entry.domain} (${entry.reason})`).join('; ');
   addEvent(run, 'review-start', skipped.length === 0 ? id : `${id} skipped ${skippedDetail}`, slice);
   return { ...reviewPaths(ws, run, id), domains: reviewDomains(skipped), pathSkipped: byPath, reviewId: id };
+}
+
+/** The IMPLEMENTER BEHAVIORS section: only the Behaviors of the latest stored report, as untrusted claims; its commits, fix items and open items stay out. */
+function renderBehaviors(ws: Workspace, run: Run, slice: Slice) {
+  const behaviors = storedBehaviors(ws, run, slice);
+  const body =
+    behaviors === undefined
+      ? 'No implementer report was stored for this slice.'
+      : `Untrusted implementer claims: the Behaviors of the implementer's latest report, each test, the behavior it claims to prove, and whether the implementer says it saw the test fail first. After a fix round this lists only that round's behaviors. ${UNTRUSTED_NOTE}\n\n${behaviors.length === 0 ? 'None.' : behaviors.map(line => `- ${line}`).join('\n')}`;
+  return `## IMPLEMENTER BEHAVIORS\n\n${body}`;
 }
 
 /** The slices stacked after `slice` that are not done, so reviewers can tell work the plan gives a later slice from a gap in this one. */

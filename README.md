@@ -412,7 +412,7 @@ and a working tree the checks changed (`tree-f<N>`). The review data file lists 
 section with each not-done slice stacked after the reviewed one, in stack order (id, title, what to build, acceptance
 criteria), or says none follows; reviewers and the validator do not count work a later slice lists as a gap in this
 slice. Then come each check's result and duration on the reviewed commit, a `## KNOWN OBSERVATIONS` section with the observation ledger (None when empty), a `## FIX ITEMS` section with every fix item
-from the fix rounds since the last recorded review (id, fix file and round, summary; None when there are none), the
+from the fix rounds since the last recorded review (id, fix file and round, summary; None when there are none), a `## IMPLEMENTER BEHAVIORS` section with the Behaviors (test, behavior, seen-red mark) of the slice's latest stored implementer report as untrusted claims (or a line saying no report was stored; commits, fix items and open items stay out), the
 diff, and the changed files. A decision can name the slice that builds it (`factory_decide` item `{ text, slice }`, or
 `ownsDecisions` on a `factory_plan` slice); that slice's state keeps the decision numbers it owns, and the tickets and
 review data of the slices before it mark the decision as built by that slice, so their reviewers report only code

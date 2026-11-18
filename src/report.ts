@@ -65,6 +65,21 @@ export function storedReport(ws: Workspace, run: Run, slice: Slice) {
   return `${readFileSync(path, 'utf8').trimEnd()}\nReport file: ${path}`;
 }
 
+/** The Behaviors lines of the slice's stored implementer report (one `<test> → <behavior> (seen red: ...)` line each), or undefined when no report is stored. */
+export function storedBehaviors(ws: Workspace, run: Run, slice: Slice) {
+  const path = reportPath(ws, run.feature, slice);
+  if (!existsSync(path)) return undefined;
+  const lines = readFileSync(path, 'utf8').split('\n');
+  const start = lines.indexOf('Behaviors:');
+  if (start < 0) return [];
+  const items: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (!line.startsWith('- ')) break;
+    if (line !== '- none') items.push(line.slice(2));
+  }
+  return items;
+}
+
 /** Whether the stored report's Commits section lists `sha`: an item starting with a hex prefix of it, at least 7 characters. */
 export function reportListsCommit(ws: Workspace, run: Run, slice: Slice, sha: string) {
   const path = reportPath(ws, run.feature, slice);
