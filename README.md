@@ -436,6 +436,10 @@ Checks refuse a slice that holds commits another branch or remote outside the ru
 or fast-forward onto other work), so the review diff is only the slice's own commits. A backup branch that copies a
 slice trips this too; delete it, or keep backups under a name the check ignores (`<prefix>/<feature>/…`).
 
+In a fix round, checks also refuse when a commit made since the fix file is missing from the Commits section of the
+stored implementer report (or no report is stored). The refusal lists those commits, does not count a fix round, and
+asks you to message the implementer to resubmit its report with `factory_implementer_report`.
+
 ## Trust boundaries
 
 The gates stop model mistakes and limit what a misled agent can do. They are not a sandbox:

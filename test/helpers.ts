@@ -4,7 +4,7 @@ import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, re
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { type FactoryConfig, parseConfig, loadConfig } from '../src/config.ts';
-import { type Finding, type FixVerdict, readRun, REVIEW_DOMAINS, type SliceInput, type Workspace, withRun } from '../src/run.ts';
+import { activeSlice, type Finding, type FixVerdict, readRun, REVIEW_DOMAINS, reportPath, type SliceInput, statePath, type Workspace, withRun } from '../src/run.ts';
 import { recordReview, runChecks, startReview, submitDomain, submitValidation, completeSlice } from '../src/review.ts';
 import { placeObservationBatch, planPlace } from '../src/place.ts';
 import { approvePlan, nextSlice, planSlices, startRun } from '../src/workflow.ts';
@@ -106,6 +106,20 @@ export function commit(ws: Workspace, file: string, content = 'x\n') {
   writeFileSync(join(ws.root, file), content);
   sh(ws.root, 'add', file);
   sh(ws.root, 'commit', '-qm', `add ${file}`);
+  listInReport(ws);
+}
+
+/** Like an implementer that reports every commit of a fix round: lists HEAD in the active fix-phase slice's stored report. */
+function listInReport(ws: Workspace) {
+  if (!existsSync(statePath(ws, 'demo'))) return;
+  const slice = activeSlice(readRun(ws, 'demo'));
+  if (slice?.phase !== 'fix') return;
+  const path = reportPath(ws, 'demo', slice);
+  const earlier = existsSync(path) ? /^- ([0-9a-f]{7,}) /gm : undefined;
+  const shas = earlier === undefined ? [] : [...readFileSync(path, 'utf8').matchAll(earlier)].map(match => match[1]);
+  const lines = [...shas, sh(ws.root, 'rev-parse', '--short=12', 'HEAD')].map(sha => `- ${sha} commit`);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `Implementer report:\nCommits:\n${lines.join('\n')}\nFix file items:\n- none\nBehaviors:\n- none\nOpen:\n- none\n`);
 }
 
 export function finding(domain: Finding['domain'], severity: Finding['severity'], name: string): Finding {

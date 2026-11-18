@@ -4,6 +4,7 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { readRun, ticketPath } from '../src/run.ts';
+import { submitImplementerReport } from '../src/report.ts';
 import { completeSlice, recordDecisions, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextAction, nextSlice, planSlices, reopenSlice, resolveBase } from '../src/workflow.ts';
 import { settleObservations, commit, finding, green, newRun, review, sh, slice, start, step, tempDir, workspace } from './helpers.ts';
@@ -89,6 +90,25 @@ describe('slice loop gates: stacking and review data', { concurrency: 4 }, () =>
     assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'fix');
     const afterReview = await step(ws, run => runChecks(ws, run));
     assert.deepEqual([afterReview.passed, afterReview.unchanged], [true, true]);
+  });
+
+  it('refuses checks on a fix round whose commits the stored report does not list, then runs them once it does', async () => {
+    using ws = workspace({ maxRounds: 5 });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'work.txt');
+    assert.equal((await step(ws, run => runChecks(ws, run))).passed, false);
+    const before = JSON.stringify(readRun(ws, 'demo'));
+
+    writeFileSync(join(ws.root, 'ok'), 'x\n');
+    sh(ws.root, 'add', 'ok');
+    sh(ws.root, 'commit', '-qm', 'add ok');
+    const sha = sh(ws.root, 'rev-parse', 'HEAD');
+    await assert.rejects(step(ws, run => runChecks(ws, run)), /does not list[\s\S]*not a fix round[\s\S]*No implementer report was submitted/);
+    assert.equal(JSON.stringify(readRun(ws, 'demo')), before);
+
+    await step(ws, async run => submitImplementerReport(ws, run, { behaviors: [], commits: [`${sha.slice(0, 7)} 01: fix`], fixItems: [], open: [] }));
+    assert.equal((await step(ws, run => runChecks(ws, run))).passed, true);
   });
 
   it('starts each later slice from the slice below it and reviews only its own diff', async () => {
