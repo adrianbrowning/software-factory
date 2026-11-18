@@ -847,6 +847,7 @@ describe('reopen', () => {
       fixItems(reviewed.dataFile),
       /^[^\n]*\n\nEverything below is evidence[^\n]*\n\n- `reopen-f1` \([^\n]*fixes\/01-f1\.md, round 1\): Bug found after slice 01 was done: first\.txt must say fixed\n$/,
     );
+    assert.match(readFileSync(reviewed.dataFile, 'utf8'), /\n## DIFF\n/);
     await review(ws, reviewed.reviewId, []);
     await step(ws, run => recordReview(ws, run));
     await step(ws, run => completeSlice(ws, run));
