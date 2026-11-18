@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
-import { submitImplementerReport } from '../src/report.ts';
+import { startImplementerSession, submitImplementerReport } from '../src/report.ts';
 import { runChecks, startReview } from '../src/review.ts';
 import { nextSlice } from '../src/workflow.ts';
-import { commit, newRun, slice, step, workspace } from './helpers.ts';
+import { commit, newRun, sh, slice, step, workspace } from './helpers.ts';
 
 /** The text of the data file's `## IMPLEMENTER BEHAVIORS` section, up to the next `## ` heading. */
 function behaviorsSection(dataFile: string) {
@@ -47,5 +47,33 @@ describe('review data file: implementer behaviors', { concurrency: 4 }, () => {
     await step(ws, run => runChecks(ws, run));
     const section = behaviorsSection((await step(ws, run => startReview(ws, run))).dataFile);
     assert.match(section, /No implementer report was stored/);
+  });
+});
+
+describe('review data file after a fix round', () => {
+  it('lists only the fix round report behaviors, and keeps its fix file items out', async () => {
+    using ws = workspace({ maxRounds: 3 });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'work.txt');
+    await step(ws, async run =>
+      submitImplementerReport(ws, run, { behaviors: [{ behavior: 'first', red: 'boom', seenRed: true, test: 'old-test' }], commits: [], open: [] }),
+    );
+    assert.equal((await step(ws, run => runChecks(ws, run))).passed, false);
+    await step(ws, async run => startImplementerSession(ws, run));
+    commit(ws, 'ok');
+    const sha = sh(ws.root, 'rev-parse', 'HEAD');
+    await step(ws, async run =>
+      submitImplementerReport(ws, run, {
+        behaviors: [{ behavior: 'second', seenRed: false, test: 'new-test' }],
+        commits: [`${sha.slice(0, 7)} 01: fix`],
+        fixItems: ['check-f1-1: fixed in secret-fix-item'],
+        open: [],
+      }),
+    );
+    assert.equal((await step(ws, run => runChecks(ws, run))).passed, true);
+    const section = behaviorsSection((await step(ws, run => startReview(ws, run))).dataFile);
+    assert.match(section, /- new-test → second \(seen red: no\)/);
+    assert.doesNotMatch(section, /old-test|secret-fix-item/);
   });
 });
