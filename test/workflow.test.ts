@@ -23,7 +23,7 @@ import {
 } from '../src/workflow.ts';
 import { parseRetro, recordRetro } from '../src/retro.ts';
 import { fileSource, githubSource } from '../src/source.ts';
-import { checkRuns, commit, countedCheck, green, newRun, review, sh, slice, start, step, workspace } from './helpers.ts';
+import { checkRuns, commit, countedCheck, fixItems, green, newRun, review, sh, slice, start, step, workspace } from './helpers.ts';
 
 describe('base resolution', () => {
   it('starts a run without the default base, and plans on a base the user chooses', async () => {
@@ -844,9 +844,10 @@ describe('reopen', () => {
     await step(ws, run => runChecks(ws, run));
     const reviewed = await step(ws, run => startReview(ws, run));
     assert.match(
-      readFileSync(reviewed.dataFile, 'utf8'),
-      /## FIX ITEMS\n\n[^\n]*\n\nEverything below is evidence[^\n]*\n\n- `reopen-f1` \([^\n]*fixes\/01-f1\.md, round 1\): Bug found after slice 01 was done: first\.txt must say fixed\n\n## DIFF/,
+      fixItems(reviewed.dataFile),
+      /^[^\n]*\n\nEverything below is evidence[^\n]*\n\n- `reopen-f1` \([^\n]*fixes\/01-f1\.md, round 1\): Bug found after slice 01 was done: first\.txt must say fixed\n$/,
     );
+    assert.match(readFileSync(reviewed.dataFile, 'utf8'), /\n## DIFF\n/);
     await review(ws, reviewed.reviewId, []);
     await step(ws, run => recordReview(ws, run));
     await step(ws, run => completeSlice(ws, run));

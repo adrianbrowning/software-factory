@@ -65,19 +65,32 @@ export function storedReport(ws: Workspace, run: Run, slice: Slice) {
   return `${readFileSync(path, 'utf8').trimEnd()}\nReport file: ${path}`;
 }
 
-/** Whether the stored report's Commits section lists `sha`: an item starting with a hex prefix of it, at least 7 characters. */
-export function reportListsCommit(ws: Workspace, run: Run, slice: Slice, sha: string) {
+/** The items under `<title>:` in the slice's stored report (lines starting '- ', up to the first other line, '- none' dropped); undefined when no report is stored. */
+function reportSection(ws: Workspace, run: Run, slice: Slice, title: string) {
   const path = reportPath(ws, run.feature, slice);
-  if (!existsSync(path)) return false;
+  if (!existsSync(path)) return undefined;
   const lines = readFileSync(path, 'utf8').split('\n');
-  const start = lines.indexOf('Commits:');
-  if (start < 0) return false;
+  const start = lines.indexOf(`${title}:`);
+  if (start < 0) return [];
+  const items: string[] = [];
   for (const line of lines.slice(start + 1)) {
     if (!line.startsWith('- ')) break;
-    const prefix = /^[0-9a-f]{7,40}/i.exec(line.slice(2))?.[0].toLowerCase();
-    if (prefix !== undefined && sha.startsWith(prefix)) return true;
+    if (line !== '- none') items.push(line.slice(2));
   }
-  return false;
+  return items;
+}
+
+/** The Behaviors lines of the slice's stored implementer report (one `<test> → <behavior> (seen red: ...)` line each), or undefined when no report is stored. */
+export function storedBehaviors(ws: Workspace, run: Run, slice: Slice) {
+  return reportSection(ws, run, slice, 'Behaviors');
+}
+
+/** Whether the stored report's Commits section lists `sha`: an item starting with a hex prefix of it, at least 7 characters. */
+export function reportListsCommit(ws: Workspace, run: Run, slice: Slice, sha: string) {
+  return (reportSection(ws, run, slice, 'Commits') ?? []).some(item => {
+    const prefix = /^[0-9a-f]{7,40}/i.exec(item)?.[0].toLowerCase();
+    return prefix !== undefined && sha.startsWith(prefix);
+  });
 }
 
 /**

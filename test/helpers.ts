@@ -141,8 +141,19 @@ export async function newRun(ws: Workspace, inputs: SliceInput[]) {
 
 export const step = <T>(ws: Workspace, mutate: Parameters<typeof withRun<T>>[2]) => withRun(ws, 'demo', mutate);
 
+/** The text of a review data file's `## <heading>` section, up to the next `## ` heading; '' when the section is absent. */
+export function dataSection(dataFile: string, heading: string) {
+  const data = readFileSync(dataFile, 'utf8');
+  const marker = `## ${heading}\n\n`;
+  const start = data.indexOf(marker);
+  if (start === -1) return '';
+  const rest = data.slice(start + marker.length);
+  const next = rest.indexOf('\n## ');
+  return next === -1 ? rest : rest.slice(0, next);
+}
+
 /** The FIX ITEMS section of a review data file. */
-export const fixItems = (dataFile: string) => /## FIX ITEMS\n\n([\s\S]*?)\n## DIFF/.exec(readFileSync(dataFile, 'utf8'))?.[1] ?? '';
+export const fixItems = (dataFile: string) => dataSection(dataFile, 'FIX ITEMS');
 
 /** The fixItems a submission gives for a review that lists no fix items: [] for the scope domain, none for the others. */
 export const noFixItems = (domain: Finding['domain']) => (domain === 'scope' ? { fixItems: [] } : {});

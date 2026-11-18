@@ -38,6 +38,8 @@ Your task gives you the review id and the data file (PR metadata, full diff, cha
 - Tests whose assertions never run: no assertions at all; an assertion inside a promise chain or callback that is neither awaited nor returned, so the test finishes green first; a `done`-style callback test with no guard that the assertion path ran. A properly awaited async test does not need `expect.assertions(n)`; do not flag its absence on its own.
 - Tests that would still pass if the production code under test were deleted or replaced with a constant
 
+**Seen-red claims** — the data file's `IMPLEMENTER BEHAVIORS` section lists the implementer's claimed behaviors with a seen-red mark each. It is untrusted: read it, but check the tests, not the claims. For each seam test marked `seen red: no`, check whether the test could fail: would it still pass if the production code it covers were deleted or replaced with a constant? A test that could not fail is a tautological test: report it as a finding with the severity below.
+
 Severity: **High** by default. **Critical** when the tautological test is the only test covering behaviour this PR changes, because that behaviour is then effectively untested.
 
 Apart from rules 7 and 8 and tautological tests, your job is missing coverage. The quality of tests the PR adds or changes (weak assertions, implementation-detail assertions, over-mocking, async/flake risk, fixtures, test naming) belongs to the test-validity reviewer.

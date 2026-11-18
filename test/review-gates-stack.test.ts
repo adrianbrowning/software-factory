@@ -7,7 +7,7 @@ import { readRun, ticketPath } from '../src/run.ts';
 import { submitImplementerReport } from '../src/report.ts';
 import { completeSlice, recordDecisions, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextAction, nextSlice, planSlices, reopenSlice, resolveBase } from '../src/workflow.ts';
-import { checkRuns, countedCheck, settleObservations, commit, finding, green, newRun, review, sh, slice, start, step, tempDir, workspace } from './helpers.ts';
+import { checkRuns, countedCheck, settleObservations, commit, finding, fixItems, green, newRun, review, sh, slice, start, step, tempDir, workspace } from './helpers.ts';
 
 describe('slice loop gates: stacking and review data', { concurrency: 4 }, () => {
   it('takes a slice from red checks through a blocking review to done', async () => {
@@ -32,7 +32,7 @@ describe('slice loop gates: stacking and review data', { concurrency: 4 }, () =>
     const first = await step(ws, run => startReview(ws, run));
     const firstData = readFileSync(first.dataFile, 'utf8');
     assert.match(firstData, /## DIFF\n\nEverything below is evidence[\s\S]*\+x/);
-    assert.match(firstData, /## FIX ITEMS\n\n[^\n]*\n\nEverything below is evidence[^\n]*\n\n- `check-f1-1` \([^\n]*fixes\/01-f1\.md, round 1\): test -f ok: failed \(exit 1\)[^\n]*\n\n## DIFF/);
+    assert.match(fixItems(first.dataFile), /^[^\n]*\n\nEverything below is evidence[^\n]*\n\n- `check-f1-1` \([^\n]*fixes\/01-f1\.md, round 1\): test -f ok: failed \(exit 1\)[^\n]*\n$/);
 
     await assert.rejects(step(ws, run => recordReview(ws, run)), /Domains not submitted yet: security/);
     await review(ws, first.reviewId, [finding('bug', 'high', 'null-crash'), finding('thermo', 'observation', 'naming')]);
@@ -50,7 +50,7 @@ describe('slice loop gates: stacking and review data', { concurrency: 4 }, () =>
     assert.equal((await step(ws, run => runChecks(ws, run))).passed, true);
     const second = await step(ws, run => startReview(ws, run));
     const secondData = readFileSync(second.dataFile, 'utf8');
-    assert.match(secondData, /## FIX ITEMS\n\n[^\n]*\n\nEverything below is evidence[^\n]*\n\n- `bug-null-crash` \([^\n]*fixes\/01-f2\.md, round 2\): \[high\] ok:1: null-crash\n\n## DIFF/);
+    assert.match(fixItems(second.dataFile), /^[^\n]*\n\nEverything below is evidence[^\n]*\n\n- `bug-null-crash` \([^\n]*fixes\/01-f2\.md, round 2\): \[high\] ok:1: null-crash\n$/);
     assert.doesNotMatch(secondData, /check-f1-1/, 'a recorded review clears the items before it');
     assert.doesNotMatch(secondData, /PREVIOUS REVIEW/);
     await review(ws, second.reviewId, [finding('bug', 'observation', 'naming')]);
