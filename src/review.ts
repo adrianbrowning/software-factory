@@ -390,7 +390,7 @@ function renderLaterSlices(run: Run, slice: Slice) {
 }
 
 /** The domains a review waits for: every domain it did not skip. */
-function reviewDomains(skipped: { domain: Domain }[]) {
+export function reviewDomains(skipped: { domain: Domain }[]) {
   return REVIEW_DOMAINS.filter(domain => !skipped.some(entry => entry.domain === domain));
 }
 
