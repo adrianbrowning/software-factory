@@ -837,6 +837,51 @@ describe('run state', () => {
     assert.throws(() => readRun(ws, 'demo'), /Corrupt factory state/);
   });
 
+  it('writes version 2 and the factory version into a new run', async () => {
+    using ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    const state = JSON.parse(readFileSync(join(ws.root, '.scratch', 'demo', 'state.json'), 'utf8')) as Record<string, unknown>;
+    const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as Record<string, unknown>;
+    assert.deepEqual([state.version, state.factoryVersion], [2, pkg.version]);
+  });
+
+  it('names the writer, state version and own version for a newer state file', async () => {
+    using ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    forgetRun(ws, 'demo');
+    const path = join(ws.root, '.scratch', 'demo', 'state.json');
+    const state = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    writeFileSync(path, JSON.stringify({ ...state, factoryVersion: '9.9.9', version: 3 }));
+    assert.throws(() => readRun(ws, 'demo'), error => error instanceof Error && /9\.9\.9/.test(error.message) && /version 3/.test(error.message) && /0\.2\.0/.test(error.message) && !/Corrupt/.test(error.message));
+    const { factoryVersion: _written, ...unversioned } = state;
+    writeFileSync(path, JSON.stringify({ ...unversioned, version: 3 }));
+    assert.throws(() => readRun(ws, 'demo'), error => error instanceof Error && /unknown version/.test(error.message) && !/Corrupt/.test(error.message));
+  });
+
+  it('reports a non-numeric version as corrupt', async () => {
+    using ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    forgetRun(ws, 'demo');
+    const path = join(ws.root, '.scratch', 'demo', 'state.json');
+    const state = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    writeFileSync(path, JSON.stringify({ ...state, version: 'x' }));
+    assert.throws(() => readRun(ws, 'demo'), /Corrupt factory state/);
+  });
+
+  it('loads a version 1 file with string decisions and saves it as version 2', async () => {
+    using ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    forgetRun(ws, 'demo');
+    const path = join(ws.root, '.scratch', 'demo', 'state.json');
+    const state = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    delete state.factoryVersion;
+    writeFileSync(path, JSON.stringify({ ...state, decisions: ['skip docs'], version: 1 }));
+    const run = readRun(ws, 'demo');
+    assert.deepEqual(run.decisions, [{ author: 'user', text: 'skip docs' }]);
+    await step(ws, () => {});
+    assert.equal((JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>).version, 2);
+  });
+
   it('rejects a state file edited outside the factory tools in this process', async () => {
     using ws = workspace();
     await newRun(ws, [slice('Feature')]);

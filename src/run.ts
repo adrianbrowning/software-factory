@@ -380,12 +380,15 @@ const runSchema = z.object({
    * factory_follow_up takes all of it into its slice's ticket. The retro waits for an empty queue.
    */
   waiting: z.array(text).default([]),
-  version: z.literal(1),
-}).transform(({ carriedObservations, slices, ...run }) => {
+  version: z.union([z.literal(1), z.literal(2)]),
+  /** The factory version that last saved the file. Absent in version 1 files. */
+  factoryVersion: z.string().optional(),
+}).transform(({ carriedObservations, slices, version: _version, ...run }) => {
   const sections = [...run.waiting.map(section => ({ text: section, to: 'end' })), ...slices.flatMap(slice => slice.carried.map(section => ({ text: section, to: slice.id })))];
   // A state file with an `observations` list is current: its deferred items are not read as observations.
   const observations = run.observations ?? legacyObservations(carriedObservations, run.deferred, sections);
-  return { ...run, observations, slices: slices.map(slice => legacySlice(slice, run.checks)) };
+  // LEGACY-STATE(version-1): a version 1 file loads as the current version; the next save writes version 2.
+  return { ...run, observations, slices: slices.map(slice => legacySlice(slice, run.checks)), version: 2 as const };
 });
 export type Run = z.infer<typeof runSchema>;
 
@@ -431,6 +434,12 @@ function savedHashes(path: string): string[] {
   }
 }
 
+/** The run state schema version this factory writes and the newest it can read. */
+export const STATE_VERSION = 2;
+export const FACTORY_VERSION = z.object({ version: z.string() }).parse(JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'))).version;
+/** The two fields readRun checks before the full parse, so a newer file gets a version error, not a schema one. */
+const stateHeaderSchema = z.object({ factoryVersion: z.string().optional().catch(undefined), version: z.number() });
+
 export function readRun(ws: Workspace, feature: string): Run {
   const path = statePath(ws, feature);
   let content = readFileSync(path, 'utf8');
@@ -443,7 +452,15 @@ export function readRun(ws: Workspace, feature: string): Run {
       throw new Error(`${path} changed outside the factory tools. Restore it, or pause and resume the run to re-verify it.`);
     }
   }
-  const parsed = runSchema.safeParse(JSON.parse(content));
+  const raw: unknown = JSON.parse(content);
+  const header = stateHeaderSchema.safeParse(raw);
+  if (header.success && header.data.version > STATE_VERSION) {
+    const writer = header.data.factoryVersion;
+    throw new Error(
+      `${path} was written by ${writer === undefined ? 'a factory of an unknown version' : `factory ${writer}`} (state version ${header.data.version}); this factory is ${FACTORY_VERSION} and reads state up to version ${STATE_VERSION}. Update the factory plugin.`,
+    );
+  }
+  const parsed = runSchema.safeParse(raw);
   if (!parsed.success) throw new Error(`Corrupt factory state ${path}: ${z.prettifyError(parsed.error)}`);
   return parsed.data;
 }
@@ -455,7 +472,7 @@ export function forgetRun(ws: Workspace, feature: string) {
 
 export function saveRun(ws: Workspace, run: Run) {
   const path = statePath(ws, run.feature);
-  const content = `${JSON.stringify(run, null, 2)}\n`;
+  const content = `${JSON.stringify({ ...run, factoryVersion: FACTORY_VERSION, version: STATE_VERSION }, null, 2)}\n`;
   const current = hash(content);
   writeAtomic(savedPath(path), `${current}\n${savedHashes(path).find(previous => previous !== current) ?? ''}\n`);
   writeAtomic(path, content);
