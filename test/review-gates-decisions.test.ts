@@ -95,7 +95,7 @@ describe('slice loop gates: decisions and review invalidation', { concurrency: 4
 
     const third = await step(ws, run => startReview(ws, run));
     assert.equal(third.reviewId, '01-r3');
-    assert.match(readFileSync(third.dataFile, 'utf8'), /## FIX ITEMS\n\n[^\n]*\n\nEverything below is evidence[^\n]*\n\n- `bug-null-crash` \([^\n]*fixes\/01-f1\.md, round 1\): \[high\] ok:1: null-crash\n\n## DIFF/);
+    assert.match(readFileSync(third.dataFile, 'utf8'), /## FIX ITEMS\n\n[^\n]*\n\nEverything below is evidence[^\n]*\n\n- `bug-null-crash` \([^\n]*fixes\/01-f1\.md, round 1\): \[high\] ok:1: null-crash\n\n## IMPLEMENTER BEHAVIORS/);
   });
 
   it('refuses to complete a slice when a decision lands after its green review, until a new review goes green', async () => {
