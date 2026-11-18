@@ -30,6 +30,7 @@ import { boundAt, cachedRoot, NO_ACTIVE_RUN, resetRoots, type RootEntry, toolReg
 import { submitHeadless } from './headless-submit.ts';
 import { submitStack } from './submit.ts';
 import { decisionInputSchema, planDecisions, recordDecisions, runChecks } from './review.ts';
+import { selfHostWarning } from './self-host.ts';
 import { registerReviewTools } from './review-tools.ts';
 import { decideStall, emptySchema, reply, STALL_DESCRIPTION } from './tool-replies.ts';
 import {
@@ -243,10 +244,17 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
         });
       }
     }
+    const warning = selfHostWarning(ws.root);
+    if (warning !== undefined) {
+      run = await withRun(ws, run.feature, latest => {
+        addEvent(latest, 'warning', warning);
+        return latest;
+      });
+    }
     bindRun(entry.pointer, { feature: run.feature, mainId: ctx.agent.id, ws });
     await pi.setActiveTools([...new Set([...pi.getActiveTools(), ...ORCHESTRATION_TOOLS])]);
     return reply(
-      `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${run.mode === 'headless' ? HEADLESS_FIX_ROUNDS : ws.config.maxRounds}.\nNext: ${nextAction(run)}`,
+      `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${run.mode === 'headless' ? HEADLESS_FIX_ROUNDS : ws.config.maxRounds}.${warning === undefined ? '' : `\nWarning: ${warning}`}\nNext: ${nextAction(run)}`,
       summarize(ws, run),
     );
   }
