@@ -19,6 +19,8 @@ import {
   reportPath,
   runDir,
   type Run,
+  reviewDomains,
+  reviewPaths,
   saveRun,
   type Slice,
   type SliceInput,
@@ -36,7 +38,6 @@ import {
   writeAtomic,
 } from './run.ts';
 import { head, requireClean, requireOnBranchClean, snapshot } from './repo.ts';
-import { reviewDomains, reviewPaths } from './review.ts';
 
 const FEATURE_PATTERN = /^[a-z0-9][a-z0-9-]{0,47}$/;
 export const UNTRUSTED_NOTE =

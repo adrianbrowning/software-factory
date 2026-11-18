@@ -5,7 +5,6 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { evidence, evidenceLine, redact } from './evidence.ts';
 import { deferItems, draftOf, isRecordSlice, itemKey } from './deferred.ts';
@@ -34,6 +33,8 @@ import {
   REQUIRED_REVIEW_DOMAINS,
   REVIEW_DOMAINS,
   reviewDir,
+  reviewDomains,
+  reviewPaths,
   type Run,
   SEVERITIES,
   skippedDomainsSchema,
@@ -59,8 +60,6 @@ import {
   UNTRUSTED_NOTE,
   writeTicket,
 } from './workflow.ts';
-
-export const REVIEW_REFERENCE_DIR = fileURLToPath(new URL('../skills/software-factory/references/review/', import.meta.url));
 
 /** One decision for factory_decide: its text, or its text and the id of the pending or active slice that builds it. */
 export const decisionInputSchema = z.union([
@@ -372,15 +371,6 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   return { ...reviewPaths(ws, run, id), domains: reviewDomains(skipped), pathSkipped: byPath, reviewId: id };
 }
 
-/** The files a review's reviewers and validator work from; recoverable after a resume from the review id alone. */
-export function reviewPaths(ws: Workspace, run: Run, id: string) {
-  return {
-    dataFile: join(reviewDir(ws, run.feature, id), 'data.md'),
-    findingsDir: join(reviewDir(ws, run.feature, id), 'domains'),
-    referenceDir: REVIEW_REFERENCE_DIR,
-  };
-}
-
 /** The slices stacked after `slice` that are not done, so reviewers can tell work the plan gives a later slice from a gap in this one. */
 function renderLaterSlices(run: Run, slice: Slice) {
   const later = run.slices.slice(run.slices.indexOf(slice) + 1).filter(item => item.status !== 'done');
@@ -389,11 +379,6 @@ function renderLaterSlices(run: Run, slice: Slice) {
     item => `### ${item.id}: ${item.title}\n\n**What to build:** ${item.whatToBuild}\n\n${item.acceptance.map(line => `- ${line}`).join('\n')}`,
   );
   return `## LATER SLICES\n\nLater slices of the plan build this work. Work a later slice lists is not a finding against this slice; this slice's own acceptance criteria, seams, and decisions still count in full, and code here that contradicts a later slice's plan is still a finding.\n\n${listed.join('\n\n')}`;
-}
-
-/** The domains a review waits for: every domain it did not skip. */
-export function reviewDomains(skipped: { domain: Domain }[]) {
-  return REVIEW_DOMAINS.filter(domain => !skipped.some(entry => entry.domain === domain));
 }
 
 export type Review = NonNullable<Slice['review']>;

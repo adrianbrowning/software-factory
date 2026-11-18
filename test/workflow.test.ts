@@ -4,8 +4,8 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { startImplementerSession, submitImplementerReport } from '../src/report.ts';
-import { forgetRun, greenCommit, readRun, REVIEW_DOMAINS, type Run, ticketPath, type Workspace } from '../src/run.ts';
-import { completeSlice, recordDecisions, recordReview, REVIEW_REFERENCE_DIR, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
+import { forgetRun, greenCommit, readRun, REVIEW_DOMAINS, REVIEW_REFERENCE_DIR, type Run, ticketPath, type Workspace } from '../src/run.ts';
+import { completeSlice, recordDecisions, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
 import {
   addFollowUp,
   amendSeams,
