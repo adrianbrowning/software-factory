@@ -456,7 +456,7 @@ The gates stop model mistakes and limit what a misled agent can do. They are not
   them: a `state.json.saved` file beside it records the hashes of the last saves, so every thread and process that
   loads the extension sees it. The file sits in the run directory, so the implementer's tools can edit or delete it: the check catches accidental edits to `state.json`, not a deliberate bypass. A `state.json.lock` file serializes their updates. After a restart, `/factory resume` trusts the file on disk: the active slice keeps
   its passed checks and green review only while HEAD is still the commit they recorded and the run's check commands
-  are the ones that passed, and an open review stays open with its recorded submissions while HEAD and the repository snapshot are unchanged, and is discarded (review-invalidated event) when the snapshot changed or a recorded review file is missing or edited. `/factory checks` on that same commit reuses the stored
+  are the ones that passed, and an open review stays open with its recorded submissions while HEAD and the repository snapshot are unchanged, and is discarded (review-invalidated event) when the snapshot changed, the review's `data.md` is missing, or a recorded domain or validation file is missing or edited. `/factory checks` on that same commit reuses the stored
   results instead of running the checks again.
 - Issue text and comments are marked as untrusted in `issue.md` and in the review data. `factory_start` loads GitHub
   issues itself with `gh` and asks you before the run uses the title, text, or comments of GitHub users who are not
