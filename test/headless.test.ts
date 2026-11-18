@@ -348,18 +348,40 @@ describe('factory_start related issue hardening', () => {
     });
   });
 
-  it('looks up the working repo only when there are related issues', async () => {
-    using log = tempDir('factory-gh-log-');
-    const file = join(log.root, 'repo-calls');
+  it('falls back to the origin remote as the working repo when gh repo view fails: an OWNER related issue there needs no dialog', async () => {
     const issues = { 1: base, 2: make('2', 'https://github.com/o/r/issues/2') };
-    await withGh(gh(issues, owners, `echo called >> ${file}; echo o/r`), async () => {
-      using repo = tempRepo('factory-gh-nolookup-', CHECKS_OK);
-      const { call } = asking(repo.root, true);
-      await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1' } });
-      assert.equal(existsSync(file), false);
-      const ws = { config: loadConfig(repo.root), root: repo.root };
-      await loadSource(ctx('main', 'main') as never, ws, { kind: 'github', ref: '1', related: ['2'] }, 'headless');
-      assert.equal(existsSync(file), true);
+    await withGh(gh(issues, owners, 'exit 1'), async () => {
+      using repo = tempRepo('factory-gh-origin-', CHECKS_OK);
+      execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/o/r.git'], { cwd: repo.root });
+      const { asked, call } = asking(repo.root, false);
+      await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1', related: ['2'] } });
+      assert.equal(asked.length, 0);
+      assert.match(readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo').source.body, /Text 2\./);
+    });
+  });
+
+  it('looks up the working repo (gh repo view or git remote) only when there are related issues', async () => {
+    using log = tempDir('factory-gh-log-');
+    using gitBin = tempDir('factory-fake-git-');
+    const file = join(log.root, 'repo-calls');
+    const realGit = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    writeFileSync(join(gitBin.root, 'git'), `#!/bin/sh\nif [ "$1" = remote ] && [ "$2" = get-url ]; then echo git >> ${file}; fi\nexec ${realGit} "$@"\n`);
+    chmodSync(join(gitBin.root, 'git'), 0o755);
+    const issues = { 1: base, 2: make('2', 'https://github.com/o/r/issues/2') };
+    await withGh(gh(issues, owners, `echo gh >> ${file}; exit 1`), async () => {
+      const path = process.env.PATH;
+      process.env.PATH = `${gitBin.root}:${path}`;
+      try {
+        using repo = tempRepo('factory-gh-nolookup-', CHECKS_OK);
+        const { call } = asking(repo.root, true);
+        await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1' } });
+        assert.equal(existsSync(file), false);
+        const ws = { config: loadConfig(repo.root), root: repo.root };
+        await loadSource(ctx('main', 'main') as never, ws, { kind: 'github', ref: '1', related: ['2'] }, 'headless');
+        assert.match(readFileSync(file, 'utf8'), /gh\ngit\n/);
+      } finally {
+        process.env.PATH = path;
+      }
     });
   });
 
