@@ -376,8 +376,7 @@ describe('factory_start related issue hardening', () => {
         const { call } = asking(repo.root, true);
         await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1' } });
         assert.equal(existsSync(file), false);
-        const ws = { config: loadConfig(repo.root), root: repo.root };
-        await loadSource(ctx('main', 'main') as never, ws, { kind: 'github', ref: '1', related: ['2'] }, 'headless');
+        await call('factory_start', { feature: 'demo-related', source: { kind: 'github', ref: '1', related: ['2'] } });
         assert.match(readFileSync(file, 'utf8'), /gh\ngit\n/);
       } finally {
         process.env.PATH = path;
