@@ -16,7 +16,7 @@ type Reply = { content: { text: string }[]; details?: { dataFile?: string; domai
 /** A run with slice Feature (a test seam, so testing always reviews) and Second, driven through the registered tools. */
 async function setup(root: string) {
   const tools = load();
-  const call = async (name: string, params: unknown, agent: 'main' | 'factory-reviewer' | 'factory-review-validator' = 'main') => {
+  const call = async (name: string, params: unknown, agent: 'main' | 'factory-implementer' | 'factory-reviewer' | 'factory-review-validator' = 'main') => {
     const caller = { ...ctx(agent === 'main' ? 'main' : 'sub', agent), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, notify() {} } };
     const tool = tools.get(name);
     if (tool === undefined) throw new Error(`no tool ${name}`);
@@ -245,6 +245,8 @@ describe('targeted re-review in other flows', () => {
     await finish(first.domains, [finding('security', 'high', 'leak')], ['security-leak']);
     execFileSync('git', ['rm', '-q', 'gone.txt'], { cwd: dir.root });
     execFileSync('git', ['commit', '-qm', 'remove gone.txt'], { cwd: dir.root });
+    const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir.root, encoding: 'utf8' }).trim();
+    await call('factory_implementer_report', { behaviors: [], commits: [`${sha.slice(0, 7)} remove gone.txt`], fixItems: [], open: [] }, 'factory-implementer');
     await call('factory_checks', {});
     const targeted = await open();
     assert.match(readFileSync(targeted.dataFile, 'utf8'), /- gone\.txt: \(no hunk lines/);

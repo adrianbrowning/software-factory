@@ -110,7 +110,7 @@ export function commit(ws: Workspace, file: string, content = 'x\n') {
 }
 
 /** Like an implementer that reports every commit of a fix round: lists HEAD in the active fix-phase slice's stored report. */
-function listInReport(ws: Workspace) {
+export function listInReport(ws: Workspace) {
   if (!existsSync(statePath(ws, 'demo'))) return;
   const slice = activeSlice(readRun(ws, 'demo'));
   if (slice?.phase !== 'fix') return;
