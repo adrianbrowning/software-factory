@@ -124,7 +124,7 @@ describe('/factory headless', () => {
     using repo = tempRepo('factory-headless-many-', CHECKS_OK);
     const { command, sent } = session(repo.root);
     const refs = Array.from({ length: 21 }, (_, i) => String(i + 1)).join(',');
-    await assert.rejects(Promise.resolve(command(`headless 294 --related ${refs}`)), /20/);
+    await assert.rejects(Promise.resolve(command(`headless 294 --related ${refs}`)), /--related takes at most 20 issue refs \(the limit is 20\)/);
     assert.deepEqual(sent, []);
     assert.equal(existsSync(statePath({ config: loadConfig(repo.root), root: repo.root }, 'issue-294')), false);
   });
@@ -435,9 +435,9 @@ describe('headlessTarget', () => {
   });
 
   it('refuses invalid --related input', () => {
-    assert.throws(() => headlessTarget('ticket.md --related 260'), /--related/);
-    assert.throws(() => headlessTarget('294 --related'), /--related/);
-    assert.throws(() => headlessTarget('294 --related 260,,285'), /--related/);
-    assert.throws(() => headlessTarget('294 --related abc'), /--related/);
+    assert.throws(() => headlessTarget('ticket.md --related 260'), /GitHub issue as the primary/);
+    assert.throws(() => headlessTarget('294 --related'), /--related needs a value/);
+    assert.throws(() => headlessTarget('294 --related 260,,285'), /empty item/);
+    assert.throws(() => headlessTarget('294 --related abc'), /"abc" is not one/);
   });
 });
