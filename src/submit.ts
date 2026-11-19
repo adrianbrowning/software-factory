@@ -184,6 +184,9 @@ const MARKER = '… (truncated)';
 // Per-field clips. The body is redacted per field, before the clip, so a clip never cuts a credential in half and leaves
 // a prefix redact no longer recognizes; the whole body is redacted once more at the end as a guarantee.
 const ITEM_CLIP = 1_000;
+/** The most Related lines a PR body lists, and the most each line's URL and title take: at most about 9,000 characters in all, so the closing sections always fit. */
+const RELATED_MAX = 20;
+const RELATED_CLIP = 200;
 const ID_CLIP = 100;
 const TITLE_CLIP = 500;
 const REASON_CLIP = 2_000;
@@ -200,6 +203,11 @@ const ISSUES_SINK = 'the issues are listed in the run state';
 /** `text` cut to at most `max` characters, ending with a visible marker when it was cut. */
 function clip(text: string, max: number) {
   return text.length <= max ? text : `${text.slice(0, max - MARKER.length)}${MARKER}`;
+}
+
+/** An issue-authored title with GitHub closing keywords (`Fixes #42`, `closed <issue URL>`) broken by a zero-width space before the reference, so merging the PR closes nothing. */
+function neutralize(title: string) {
+  return title.replace(/\b(close[sd]?|fix(?:es|ed)?|resolve[sd]?)(\b[:\s]*)(?=#|https?:\/\/|[\w.-]+\/[\w.-]+#)/gi, '$1$2\u200b');
 }
 
 type DeferredLine = { location: string; title: string };
@@ -273,8 +281,9 @@ export function prBody(run: Run, slice: Slice, submitted: Slice[], stop?: Stop) 
   ];
   const sections = [
     [
-      `Issue: ${clip(redact(issue), ITEM_CLIP)} (${clip(redact(run.source.title), ITEM_CLIP)})`,
-      ...(run.source.related ?? []).map(item => `Related: ${clip(redact(item.url ?? `${run.source.kind} ${item.ref}`), ITEM_CLIP)} (${clip(redact(item.title), ITEM_CLIP)})`),
+      `Issue: ${clip(redact(issue), ITEM_CLIP)} (${clip(neutralize(redact(run.source.title)), ITEM_CLIP)})`,
+      ...(run.source.related ?? []).slice(0, RELATED_MAX).map(item => `Related: ${clip(redact(item.url ?? `${run.source.kind} ${item.ref}`), RELATED_CLIP)} (${clip(neutralize(redact(item.title)), RELATED_CLIP)})`),
+      ...((run.source.related?.length ?? 0) > RELATED_MAX ? [`…and ${(run.source.related?.length ?? 0) - RELATED_MAX} more related issues (truncated)`] : []),
     ].join('\n'),
     ...(stop === undefined ? [] : [`**The stack stopped at slice ${clip(redact(stop.slice.id), ID_CLIP)} "${clip(redact(stop.slice.title), TITLE_CLIP)}", which is not submitted:** ${clip(redact(stop.reason), REASON_CLIP)}`]),
     `## Slice ${clip(redact(slice.id), ID_CLIP)}: ${clip(redact(slice.title), TITLE_CLIP)}\n\n${clip(redact(slice.whatToBuild), SUMMARY_CLIP)}\n\nAcceptance:\n${list(slice.acceptance)}`,

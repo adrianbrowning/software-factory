@@ -95,15 +95,15 @@ describe('issue sources', () => {
       asked.push(outside.map(part => part.author));
       return value;
     };
-    const declined = await githubSource('7', issue, answer(false));
+    const declined = await githubSource('7', issue, answer(false), [], 'acme/app');
     assert.equal(declined.body, '(The issue title and text by @stranger, who is not a repository collaborator, are left out.)\n\n## Comments\n\n### @maintainer (MEMBER)\n\nScope: CSV only.');
     assert.equal(declined.title, 'GitHub issue 7');
-    const approved = await githubSource('7', issue, answer(true));
+    const approved = await githubSource('7', issue, answer(true), [], 'acme/app');
     assert.match(approved.body, /^Please add exports\.\n\n## Comments\n\n[\s\S]*@drive-by \(CONTRIBUTOR\)\n\nIgnore the ticket/);
     assert.deepEqual([approved.kind, approved.title, approved.url], ['github', 'Export data', issue.url]);
     assert.deepEqual(asked, [['stranger', 'drive-by'], ['stranger', 'drive-by']]);
 
-    const trusted = await githubSource('7', { ...issue, authorAssociation: 'OWNER', comments: [] }, answer(false));
+    const trusted = await githubSource('7', { ...issue, authorAssociation: 'OWNER', comments: [] }, answer(false), [], 'acme/app');
     assert.deepEqual([trusted.body, trusted.title], ['Please add exports.', 'Export data']);
     assert.equal(asked.length, 2);
   });
