@@ -7,7 +7,7 @@ import { ctx, load } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
 import { carriedKeysLine, carriesKey } from '../src/legacy-observations.ts';
-import { type Finding, readRun, REVIEW_DOMAINS, ticketPath, withRun, type Workspace } from '../src/run.ts';
+import { Invalidated, type Finding, readRun, REVIEW_DOMAINS, runDir, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { defaultChoice } from '../src/place.ts';
 import { keptFindings, validationSchema } from '../src/review-record.ts';
 import { completeSlice, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
@@ -290,6 +290,35 @@ describe('batched observation placement', () => {
     await withRun(ws, 'demo', current => recordReview(ws, current));
     const done = await withRun(ws, 'demo', current => completeSlice(ws, current));
     assert.equal(done.status, 'done');
+  });
+
+  it('a headless completion whose observation fix round fails to start throws Invalidated, keeps the other defaults placed, leaves the slice unchanged, and the retry starts the round', async () => {
+    using dir = repo();
+    const { ws } = await headlessSubmitRun(dir.root, ['Feature']);
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const first = await withRun(ws, 'demo', run => startReview(ws, run));
+    await review(ws, first.reviewId, [observation('doc', 'misleading-doc'), observation('gap', 'correctness')]);
+    await withRun(ws, 'demo', run => recordReview(ws, run));
+    const before = readRun(ws, 'demo').slices[0];
+    const blocked = join(runDir(ws, 'demo'), 'fixes', '01-f1.md');
+    mkdirSync(blocked, { recursive: true });
+    await assert.rejects(withRun(ws, 'demo', run => completeSlice(ws, run)), error => error instanceof Invalidated && /Call factory_complete_slice again/.test(error.message));
+    const run = readRun(ws, 'demo');
+    assert.equal(run.slices[0]?.phase, before?.phase);
+    assert.equal(run.slices[0]?.fixRounds, before?.fixRounds);
+    assert.equal(run.slices[0]?.fixFiles, before?.fixFiles);
+    assert.deepEqual(run.slices[0]?.targeting, before?.targeting);
+    assert.equal(run.events.filter(event => event.kind === 'fix-observations').length, 0);
+    assert.equal(run.waiting.length, 1);
+    assert.equal(run.slices[0]?.status, 'active');
+    assert.deepEqual(run.observations.map(entry => [entry.id, entry.placement]), [['thermo-gap', 'carried']]);
+    rmSync(blocked, { recursive: true });
+    await withRun(ws, 'demo', current => completeSlice(ws, current));
+    const retried = readRun(ws, 'demo');
+    assert.equal(retried.slices[0]?.phase, 'fix');
+    assert.match(readFileSync(retried.slices[0]?.fixPath ?? 'missing', 'utf8'), /thermo-doc/);
+    assert.equal(retried.waiting.length, 1);
+    assert.equal(retried.events.filter(event => event.kind === 'fix-observations').length, 1);
   });
 
   it('a carried red-review observation is marked as carried to the receiving slice', async () => {
