@@ -22,8 +22,9 @@ export const placementSchema = z.object({
 });
 export type PlaceRequest = { placements: z.infer<typeof placementSchema>[] };
 
-/** The placement an observation gets when the user names none: by its category, with a leave sent to the deferred sink in a headless run that has one (the Record slice defers nothing). A follow-up slice that built end-queue items, or the Record slice, never puts its end-default observations back into the end queue (in any run mode): they go to the sink when the slice may defer to it, else they are left. */
+/** The placement an observation gets when the user names none: by its category (a misleading-doc observation is fixed in this slice while the slice has none placed as fixed, so a slice never loops on fix rounds), with a leave sent to the deferred sink in a headless run that has one (the Record slice defers nothing). A follow-up slice that built end-queue items, or the Record slice, never puts its end-default observations back into the end queue (in any run mode): they go to the sink when the slice may defer to it, else they are left. */
 export function defaultChoice(ws: Workspace, run: Run, slice: Slice, entry: Unplaced): PlaceChoice {
+  if (entry.category === 'misleading-doc' && !run.observations.some(held => held.slice === slice.id && held.placement === 'fixed')) return 'fix';
   const sinkSet = ws.config.deferred !== undefined && !isRecordSlice(slice);
   if (DEFAULT_PLACEMENT[entry.category] === 'end') {
     if (slice.fromEndQueue === true || isRecordSlice(slice)) return sinkSet ? 'defer' : 'leave';
@@ -130,14 +131,14 @@ export async function placeObservationBatch(ws: Workspace, run: Run, { items, sl
 
 /**
  * A headless run's step before it completes its slice: places the observations still unplaced by their defaults, with no
- * dialog, and returns whether it placed any. Throws Invalidated when the deferred sink fails, so withRun saves what was filed and the ledger entries; it stays recorded and a second call places the rest.
+ * dialog, and returns whether it placed any and `fixes`, the qualified ids whose default is a fix in this slice (still unplaced: the caller starts the fix round). Throws Invalidated when the deferred sink fails, so withRun saves what was filed and the ledger entries; it stays recorded and a second call places the rest.
  */
 export async function placeDefaults(ws: Workspace, run: Run) {
   const slice = requireActive(run);
-  if (run.mode !== 'headless' || slice.unplaced.length === 0) return false;
-  const { failure } = await placeObservationBatch(ws, run, planPlace(ws, run, { placements: [] }));
+  if (run.mode !== 'headless' || slice.unplaced.length === 0) return { fixes: [], placed: false };
+  const { failure, fixes } = await placeObservationBatch(ws, run, planPlace(ws, run, { placements: [] }));
   if (failure !== undefined) throw new Invalidated(`The deferred sink failed, so slice ${slice.id} is not complete: ${evidenceLine(failure.message, 500)}. Items already filed stay recorded; call factory_complete_slice again.`);
-  return true;
+  return { fixes, placed: true };
 }
 
 /**

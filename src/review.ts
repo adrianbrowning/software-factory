@@ -45,6 +45,7 @@ import {
   writeAtomic,
 } from './run.ts';
 import { renderFinding } from './finding-text.ts';
+import { fixObservations } from './observations.ts';
 import { collectObservations, placeDefaults } from './place.ts';
 import { changedLines, changedPaths, targetedReview } from './targeted.ts';
 import { reportListsCommit, storedBehaviors, storedReport } from './report.ts';
@@ -906,7 +907,11 @@ export async function completeSlice(ws: Workspace, run: Run) {
     reopenReview(run, slice);
     throw new Invalidated(`${newerDecisions(run, covered)} newer than the green review, so its reviewers did not check the code against them. Call factory_review_start for a new review.`);
   }
-  const placedHere = await placeDefaults(ws, run);
+  const { fixes, placed: placedHere } = await placeDefaults(ws, run);
+  if (fixes.length > 0) {
+    fixObservations(ws, run, { observations: fixes }, 'Default placement of the observations after the slice\'s final review.');
+    return slice;
+  }
   if (slice.unplaced.length > 0) {
     throw new Error(`Slice ${slice.id} has unplaced observations: ${slice.unplaced.map(entry => entry.finding.id).join(', ')}. Place them with factory_place (placements [] takes every default), then call factory_complete_slice. A headless run places them by default in factory_complete_slice.`);
   }
