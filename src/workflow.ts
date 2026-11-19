@@ -51,10 +51,27 @@ export function requireFeatureName(feature: string) {
 }
 
 /**
- * What `/factory headless <issue ref>` starts a run from, and the run's name. A GitHub issue (`102`, `#102`, or its
+ * What `/factory headless <issue ref> [--related <ref>,<ref>]` starts a run from, and the run's name. A GitHub issue (`102`, `#102`, or its
  * URL) is named `issue-<n>` after its number; anything else is an issue file, named after its file name in kebab-case.
+ * `--related` adds issue refs (number, `#number` or issue URL) as `source.related`; it needs a GitHub primary ref.
  */
-export function headlessTarget(ref: string): { feature: string; source: SourceInput } {
+export function headlessTarget(argument: string): { feature: string; source: SourceInput } {
+  const split = /^(.*?)\s+--related(?:\s+(.*))?$/s.exec(argument);
+  const ref = split === null ? argument : split[1]!;
+  const target = headlessPrimary(ref);
+  if (split === null) return target;
+  if (target.source.kind !== 'github') throw new Error('--related needs a GitHub issue as the primary ref, not an issue file.');
+  const items = (split[2] ?? '').trim().split(',').map(item => item.trim());
+  const related = items.map(item => {
+    const bare = /^#?(\d+)$/.exec(item);
+    if (bare?.[1] !== undefined) return bare[1];
+    if (/^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/issues\/\d+$/.test(item)) return item;
+    throw new Error(`--related takes a comma-separated list of issue numbers, #numbers or GitHub issue URLs; "${item}" is not one.`);
+  });
+  return { feature: target.feature, source: { ...target.source, related } };
+}
+
+function headlessPrimary(ref: string): { feature: string; source: SourceInput } {
   const bare = /^#?(\d+)$/.exec(ref);
   const issue = bare ?? /github\.com\/[^/]+\/[^/]+\/issues\/(\d+)/.exec(ref);
   if (issue?.[1] !== undefined) return { feature: `issue-${issue[1]}`, source: { kind: 'github', ref: bare === null ? ref : issue[1] } };

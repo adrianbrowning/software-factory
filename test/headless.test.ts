@@ -394,4 +394,18 @@ describe('headlessTarget', () => {
     const { feature } = headlessTarget(`${'a'.repeat(47)} ${'b'.repeat(20)}.md`);
     assert.equal(feature, 'a'.repeat(47));
   });
+
+  it('takes --related refs as source.related: numbers, #numbers and URLs', () => {
+    assert.deepEqual(headlessTarget('294 --related 260,#285,https://github.com/o/r/issues/209'), {
+      feature: 'issue-294',
+      source: { kind: 'github', ref: '294', related: ['260', '285', 'https://github.com/o/r/issues/209'] },
+    });
+  });
+
+  it('refuses invalid --related input', () => {
+    assert.throws(() => headlessTarget('ticket.md --related 260'), /--related/);
+    assert.throws(() => headlessTarget('294 --related'), /--related/);
+    assert.throws(() => headlessTarget('294 --related 260,,285'), /--related/);
+    assert.throws(() => headlessTarget('294 --related abc'), /--related/);
+  });
 });

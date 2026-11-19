@@ -633,7 +633,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
         return;
       }
       if (verb === 'headless') {
-        if (argument === '') throw new Error('Usage: /factory headless <issue ref>');
+        if (argument === '') throw new Error('Usage: /factory headless <issue ref> [--related <ref>,<ref>,...]');
         // The command starts the run itself, so its mode is headless whatever the model does next.
         const { feature, source } = headlessTarget(argument);
         await startOrResume({ feature, mode: 'headless', source }, { entry: await cachedRoot(ctx.cwd), ws }, ctx);
