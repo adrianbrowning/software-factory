@@ -272,7 +272,10 @@ export function prBody(run: Run, slice: Slice, submitted: Slice[], stop?: Stop) 
     ...run.events.filter(event => event.kind === 'autonomous').map(event => event.detail),
   ];
   const sections = [
-    `Issue: ${clip(redact(issue), ITEM_CLIP)} (${clip(redact(run.source.title), ITEM_CLIP)})`,
+    [
+      `Issue: ${clip(redact(issue), ITEM_CLIP)} (${clip(redact(run.source.title), ITEM_CLIP)})`,
+      ...(run.source.related ?? []).map(item => `Related: ${clip(redact(item.url ?? `${run.source.kind} ${item.ref}`), ITEM_CLIP)} (${clip(redact(item.title), ITEM_CLIP)})`),
+    ].join('\n'),
     ...(stop === undefined ? [] : [`**The stack stopped at slice ${clip(redact(stop.slice.id), ID_CLIP)} "${clip(redact(stop.slice.title), TITLE_CLIP)}", which is not submitted:** ${clip(redact(stop.reason), REASON_CLIP)}`]),
     `## Slice ${clip(redact(slice.id), ID_CLIP)}: ${clip(redact(slice.title), TITLE_CLIP)}\n\n${clip(redact(slice.whatToBuild), SUMMARY_CLIP)}\n\nAcceptance:\n${list(slice.acceptance)}`,
     `## Checks run\n\n${list(slice.checked?.results ?? run.checks)}`,
