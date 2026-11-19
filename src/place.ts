@@ -22,14 +22,14 @@ export const placementSchema = z.object({
 });
 export type PlaceRequest = { placements: z.infer<typeof placementSchema>[] };
 
-/** The placement an observation gets when the user names none: by its category, with a leave sent to the deferred sink in a headless run that has one (the Record slice defers nothing). A headless follow-up slice or Record slice never puts its observations back into the end queue. */
+/** The placement an observation gets when the user names none: by its category, with a leave sent to the deferred sink in a headless run that has one (the Record slice defers nothing). A follow-up slice that built end-queue items, or the Record slice, never puts its end-default observations back into the end queue (in any run mode): they go to the sink when the slice may defer to it, else they are left. */
 export function defaultChoice(ws: Workspace, run: Run, slice: Slice, entry: Unplaced): PlaceChoice {
-  const toSink = run.mode === 'headless' && ws.config.deferred !== undefined && !isRecordSlice(slice);
+  const sinkSet = ws.config.deferred !== undefined && !isRecordSlice(slice);
   if (DEFAULT_PLACEMENT[entry.category] === 'end') {
-    if (run.mode === 'headless' && (slice.fromEndQueue === true || isRecordSlice(slice))) return toSink ? 'defer' : 'leave';
+    if (slice.fromEndQueue === true || isRecordSlice(slice)) return sinkSet ? 'defer' : 'leave';
     return 'end';
   }
-  return toSink ? 'defer' : 'leave';
+  return run.mode === 'headless' && sinkSet ? 'defer' : 'leave';
 }
 
 /** The same default as `defaultChoice`, in words, for the review reply and the dialog. */

@@ -268,6 +268,32 @@ describe('batched observation placement', () => {
     assert.deepEqual(readRun(ws, 'demo').slices[0]?.unplaced.map(entry => entry.finding.id), ['thermo-naming']);
   });
 
+  for (const sink of [false, true]) {
+    it(`an interactive follow-up slice of end-queue items ${sink ? 'defers' : 'leaves'} its own end-default observation and refills no queue`, async () => {
+      using dir = repo(sink ? { deferred: { kind: 'file' } } : {});
+      const { call, full, ws } = await interactive(dir.root);
+      await full([observation('gap', 'correctness')]);
+      await call('factory_place', { placements: [] });
+      await call('factory_complete_slice', {});
+      await withRun(ws, 'demo', run => nextSlice(ws, run));
+      commit(ws, 'second.txt');
+      await withRun(ws, 'demo', run => runChecks(ws, run));
+      await full([]);
+      await call('factory_complete_slice', {});
+      assert.equal(readRun(ws, 'demo').waiting.length, 1);
+      await withRun(ws, 'demo', run => addFollowUp(ws, run, slice('Follow up', [])));
+      await withRun(ws, 'demo', run => nextSlice(ws, run));
+      commit(ws, 'follow.txt');
+      await withRun(ws, 'demo', run => runChecks(ws, run));
+      const text = (await full([{ ...observation('again', 'correctness'), path: 'follow.txt' }])).content[0]?.text ?? '';
+      assert.match(text, new RegExp(`thermo-again[\\s\\S]*Default placement: ${sink ? 'defer to the sink' : 'leave'}`));
+      await call('factory_place', { placements: [] });
+      const run = readRun(ws, 'demo');
+      assert.equal(run.waiting.length, 0);
+      assert.equal(run.observations.find(entry => entry.id === 'thermo-again')?.placement, sink ? 'deferred' : 'left');
+    });
+  }
+
   it('a headless follow-up slice never puts its own observations back into the end queue', async () => {
     using dir = repo();
     const { ws } = await headlessSubmitRun(dir.root, ['Feature']);

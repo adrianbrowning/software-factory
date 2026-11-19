@@ -234,9 +234,10 @@ correctness, missing-test and misleading-doc to the end queue, naming, structure
 takes the exceptions (fix, carry to a pending slice, end, defer, leave; `placements: []` takes every default), asks one
 confirm in an interactive run, applies them all and records each in the ledger. `factory_complete_slice` refuses while
 the slice has an unplaced observation. A headless run places the defaults with no dialog when it completes the slice,
-and sends the leave items to the deferred sink when one is set. The observations of a headless follow-up slice or Record
-deferred items slice never go back to the end queue: they go to the sink when the slice may defer to it (a Record slice
-may not), else they are left.
+and sends the leave items to the deferred sink when one is set. The observations of a follow-up slice built from end-queue
+items (headless or interactive) and of a Record deferred items slice do not default back to the end queue: their end-category
+defaults become defer to the sink when the slice may defer to it (a Record slice may not), else leave, and the user can
+still choose end in `factory_place`.
 
 ### Leave observations, and the observation ledger
 
