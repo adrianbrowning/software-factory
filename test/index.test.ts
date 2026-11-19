@@ -9,7 +9,7 @@ import { loadConfig } from '../src/config.ts';
 import { MAX_IDLE_STOP_ATTEMPTS, resetModuleState, stopDecision } from '../src/index.ts';
 import { readRun, type Run, reviewPaths, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
-import { approvePlan, nextAction, nextSlice, pauseRun, planSlices, resolveStall } from '../src/workflow.ts';
+import { approvePlan, nextSlice, pauseRun, planSlices, resolveStall } from '../src/workflow.ts';
 import { settleObservations, commit, finding, green, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
 
 beforeEach(() => resetModuleState());
@@ -407,16 +407,26 @@ describe('used-up fix budget', () => {
     assert.deepEqual([resumed.status, resumed.slices[0]?.stalled, resumed.slices[0]?.roundLimit], ['running', false, 3]);
   });
 
-  it('resumes a paused run that is not stalled when factory_start is called as the Next line says', async () => {
+  it('resumes a paused run that is not stalled when factory_start is called as factory_status says', async () => {
     using repo = budgetRepo();
     const { call, ws } = await budgetRun(repo.root, ['Feature']);
     await withRun(ws, 'demo', current => pauseRun(current, 'test'));
-    const next = nextAction(readRun(ws, 'demo'));
-    assert.match(next, /call factory_start with resume "demo"/);
+    const status = JSON.stringify(await call('factory_status', {}));
+    assert.match(status, /call factory_start with resume \\"demo\\"/);
     const asked: string[] = [];
     await call('factory_start', { resume: 'demo' }, { confirm: async (_title, body) => (asked.push(body), true) });
     assert.deepEqual(asked, ['Resume "demo" (paused)?']);
     assert.equal(readRun(ws, 'demo').status, 'running');
+  });
+
+  it('keeps a paused run that is not stalled paused when the user declines the resume dialog', async () => {
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature']);
+    await withRun(ws, 'demo', current => pauseRun(current, 'test'));
+    const asked: string[] = [];
+    await assert.rejects(call('factory_start', { resume: 'demo' }, { confirm: async (_title, body) => (asked.push(body), false) }), /The user kept "demo" paused\./);
+    assert.deepEqual(asked, ['Resume "demo" (paused)?']);
+    assert.equal(readRun(ws, 'demo').status, 'paused');
   });
 
   it('refuses factory_reopen of a done slice on a paused stall with the stall notice, before any dialog', async () => {
