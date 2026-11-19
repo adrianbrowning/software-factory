@@ -9,7 +9,7 @@ import { forgetRun, readRun, runDir, statePath } from '../src/run.ts';
 import { loadSource } from '../src/gates.ts';
 import { resetModuleState } from '../src/index.ts';
 import { headlessTarget } from '../src/workflow.ts';
-import { tempDir, tempRepo } from './helpers.ts';
+import { issueGh, prependPath, tempDir, tempRepo } from './helpers.ts';
 
 const CHECKS_OK = { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }), 'ticket.md': '# Add the widget\n\nBuild it.\n' };
 
@@ -92,22 +92,14 @@ describe('/factory headless', () => {
   });
 
   it('names a GitHub issue run issue-<n> from the number, with or without #', async () => {
-    using bin = tempDir('factory-fake-gh-');
-    const issue = JSON.stringify({ author: { login: 'owner' }, body: 'Do it', comments: [], title: 'Demo', url: 'https://github.com/o/r/issues/102' });
-    writeFileSync(join(bin.root, 'gh'), `#!/bin/sh\nif [ "$1" = repo ]; then echo o/r; exit 0; fi\nif [ "$1" = issue ]; then echo '${issue}'; else echo OWNER; fi\n`);
-    chmodSync(join(bin.root, 'gh'), 0o755);
-    const path = process.env.PATH;
-    process.env.PATH = `${bin.root}:${path}`;
-    try {
-      for (const ref of ['#102', '102']) {
-        using repo = tempRepo('factory-headless-gh-', CHECKS_OK);
-        resetModuleState();
-        await session(repo.root).command(`headless ${ref}`);
-        const ws = { config: loadConfig(repo.root), root: repo.root };
-        assert.equal(readRun(ws, 'issue-102').mode, 'headless', ref);
-      }
-    } finally {
-      process.env.PATH = path;
+    const issue = { author: { login: 'owner' }, body: 'Do it', comments: [], title: 'Demo', url: 'https://github.com/o/r/issues/102' };
+    using _gh = issueGh({ issues: { 102: issue } });
+    for (const ref of ['#102', '102']) {
+      using repo = tempRepo('factory-headless-gh-', CHECKS_OK);
+      resetModuleState();
+      await session(repo.root).command(`headless ${ref}`);
+      const ws = { config: loadConfig(repo.root), root: repo.root };
+      assert.equal(readRun(ws, 'issue-102').mode, 'headless', ref);
     }
   });
 
@@ -155,20 +147,8 @@ describe('factory_start with related issues', () => {
     },
   };
 
-  /** Runs `body` with a fake gh on PATH: issue 242 is by an owner, 126 by a stranger. */
-  async function withFakeGh(body: () => Promise<void>) {
-    using bin = tempDir('factory-fake-gh-');
-    const cases = Object.entries(issues).map(([number, issue]) => `  ${number}) echo '${JSON.stringify(issue)}';;`).join('\n');
-    writeFileSync(join(bin.root, 'gh'), `#!/bin/sh\nif [ "$1" = repo ]; then echo o/r; exit 0; fi\nif [ "$1" = issue ]; then case "$3" in\n${cases}\nesac; else case "$2" in *242|*900) echo OWNER;; *) echo NONE;; esac; fi\n`);
-    chmodSync(join(bin.root, 'gh'), 0o755);
-    const path = process.env.PATH;
-    process.env.PATH = `${bin.root}:${path}`;
-    try {
-      await body();
-    } finally {
-      process.env.PATH = path;
-    }
-  }
+  /** A fake gh on PATH: issue 242 is by an owner, 126 by a stranger. */
+  const fakeGh = () => issueGh({ issues, owners: ['*/242', '*/900'] });
 
   function asking(root: string, answer: boolean) {
     const asked: string[] = [];
@@ -186,73 +166,57 @@ describe('factory_start with related issues', () => {
 
   for (const answer of [true, false]) {
     it(`asks once for outside text across both issues, grouped by issue, and ${answer ? 'keeps' : 'leaves out'} all of it`, async () => {
-      await withFakeGh(async () => {
-        using repo = tempRepo('factory-gh-related-', CHECKS_OK);
-        const { asked, call } = asking(repo.root, answer);
-        const status = await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '242', related: ['126'] } });
-        assert.equal(asked.length, 1);
-        assert.match(asked[0] ?? '', /Issue 242 \(Primary\)[\s\S]*Primary outside comment[\s\S]*Issue 126 \(Related\)[\s\S]*@stranger[\s\S]*truncated[\s\S]*Related outside comment/);
-        assert.match(asked[0] ?? '', /END-OF-RELATED/);
-        assert.doesNotMatch(asked[0] ?? '', /Related trusted comment/);
-        const ws = { config: loadConfig(repo.root), root: repo.root };
-        const run = readRun(ws, 'demo');
-        assert.match(run.source.body, /Primary text\./);
-        assert.equal(/Primary outside comment/.test(run.source.body), answer);
-        assert.equal(/Related text\./.test(run.source.body), answer);
-        assert.equal(/Related outside comment\./.test(run.source.body), answer);
-        assert.match(run.source.body, /Related trusted comment\./);
-        assert.deepEqual(run.source.related, [{ ref: '126', title: answer ? 'Related' : 'GitHub issue 126', url: 'https://github.com/o/r/issues/126' }]);
-        assert.equal(run.source.ref, '242');
-        const issueMd = readFileSync(join(runDir(ws, 'demo'), 'issue.md'), 'utf8');
-        assert.match(issueMd, /Source: github 242 \(https:\/\/github.com\/o\/r\/issues\/242\)\nSource: github 126 \(https:\/\/github.com\/o\/r\/issues\/126\)\n/);
-        assert.match(status, /126/);
-        const reply = JSON.parse(await call('factory_status', {})) as { content: { text: string }[] };
-        const summary = JSON.parse(reply.content[0]?.text ?? '{}') as { source: { related: unknown } };
-        assert.deepEqual(summary.source.related, [{ ref: '126', title: answer ? 'Related' : 'GitHub issue 126', url: 'https://github.com/o/r/issues/126' }]);
-      });
+      using _gh = fakeGh();
+      using repo = tempRepo('factory-gh-related-', CHECKS_OK);
+      const { asked, call } = asking(repo.root, answer);
+      const status = await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '242', related: ['126'] } });
+      assert.equal(asked.length, 1);
+      assert.match(asked[0] ?? '', /Issue 242 \(Primary\)[\s\S]*Primary outside comment[\s\S]*Issue 126 \(Related\)[\s\S]*@stranger[\s\S]*truncated[\s\S]*Related outside comment/);
+      assert.match(asked[0] ?? '', /END-OF-RELATED/);
+      assert.doesNotMatch(asked[0] ?? '', /Related trusted comment/);
+      const ws = { config: loadConfig(repo.root), root: repo.root };
+      const run = readRun(ws, 'demo');
+      assert.match(run.source.body, /Primary text\./);
+      assert.equal(/Primary outside comment/.test(run.source.body), answer);
+      assert.equal(/Related text\./.test(run.source.body), answer);
+      assert.equal(/Related outside comment\./.test(run.source.body), answer);
+      assert.match(run.source.body, /Related trusted comment\./);
+      assert.deepEqual(run.source.related, [{ ref: '126', title: answer ? 'Related' : 'GitHub issue 126', url: 'https://github.com/o/r/issues/126' }]);
+      assert.equal(run.source.ref, '242');
+      const issueMd = readFileSync(join(runDir(ws, 'demo'), 'issue.md'), 'utf8');
+      assert.match(issueMd, /Source: github 242 \(https:\/\/github.com\/o\/r\/issues\/242\)\nSource: github 126 \(https:\/\/github.com\/o\/r\/issues\/126\)\n/);
+      assert.match(status, /126/);
+      const reply = JSON.parse(await call('factory_status', {})) as { content: { text: string }[] };
+      const summary = JSON.parse(reply.content[0]?.text ?? '{}') as { source: { related: unknown } };
+      assert.deepEqual(summary.source.related, [{ ref: '126', title: answer ? 'Related' : 'GitHub issue 126', url: 'https://github.com/o/r/issues/126' }]);
     });
   }
 
   it('a headless load leaves out all outside text and records the autonomous note', async () => {
-    await withFakeGh(async () => {
-      using repo = tempRepo('factory-gh-related-headless-', CHECKS_OK);
-      const ws = { config: loadConfig(repo.root), root: repo.root };
-      const { notes, source } = await loadSource(ctx('main', 'main') as never, ws, { kind: 'github', ref: '242', related: ['126'] }, 'headless');
-      assert.doesNotMatch(source.body, /outside comment|Related text/);
-      assert.match(source.body, /Related trusted comment\./);
-      assert.match(source.body, /Primary text\./);
-      assert.equal(notes.length, 1);
-      assert.match(notes[0] ?? '', /@drive-by, @stranger/);
-    });
+    using _gh = fakeGh();
+    using repo = tempRepo('factory-gh-related-headless-', CHECKS_OK);
+    const ws = { config: loadConfig(repo.root), root: repo.root };
+    const { notes, source } = await loadSource(ctx('main', 'main') as never, ws, { kind: 'github', ref: '242', related: ['126'] }, 'headless');
+    assert.doesNotMatch(source.body, /outside comment|Related text/);
+    assert.match(source.body, /Related trusted comment\./);
+    assert.match(source.body, /Primary text\./);
+    assert.equal(notes.length, 1);
+    assert.match(notes[0] ?? '', /@drive-by, @stranger/);
   });
 
   it('a github source without related keeps the same state shape', async () => {
-    await withFakeGh(async () => {
-      using repo = tempRepo('factory-gh-norelated-', CHECKS_OK);
-      const { call } = asking(repo.root, true);
-      await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '242' } });
-      const ws = { config: loadConfig(repo.root), root: repo.root };
-      assert.equal('related' in readRun(ws, 'demo').source, false);
-      assert.match(readFileSync(join(runDir(ws, 'demo'), 'issue.md'), 'utf8'), /^# Primary\n\nSource: github 242 \(https:\/\/github.com\/o\/r\/issues\/242\)\n\n/);
-    });
+    using _gh = fakeGh();
+    using repo = tempRepo('factory-gh-norelated-', CHECKS_OK);
+    const { call } = asking(repo.root, true);
+    await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '242' } });
+    const ws = { config: loadConfig(repo.root), root: repo.root };
+    assert.equal('related' in readRun(ws, 'demo').source, false);
+    assert.match(readFileSync(join(runDir(ws, 'demo'), 'issue.md'), 'utf8'), /^# Primary\n\nSource: github 242 \(https:\/\/github.com\/o\/r\/issues\/242\)\n\n/);
   });
 });
 
 describe('factory_start related issue hardening', () => {
-  const gh = (issues: Record<string, unknown>, owners: string, repoCmd = 'echo o/r') => `#!/bin/sh\nif [ "$1" = repo ]; then ${repoCmd}; exit 0; fi\nif [ "$1" = issue ]; then case "\${3##*/}" in\n${Object.entries(issues).map(([n, i]) => `  ${n}) echo '${JSON.stringify(i)}';;`).join('\n')}\nesac; else case "$2" in ${owners}) echo OWNER;; *) echo NONE;; esac; fi\n`;
   const make = (n: string, url: string, over: Record<string, unknown> = {}) => ({ author: { login: `user${n}` }, body: `Text ${n}.`, comments: [], title: `Title ${n}`, url, ...over });
-  async function withGh(script: string, body: () => Promise<void>) {
-    using bin = tempDir('factory-fake-gh-');
-    writeFileSync(join(bin.root, 'gh'), script);
-    chmodSync(join(bin.root, 'gh'), 0o755);
-    const path = process.env.PATH;
-    process.env.PATH = `${bin.root}:${path}`;
-    try {
-      await body();
-    } finally {
-      process.env.PATH = path;
-    }
-  }
   function asking(root: string, answer: boolean) {
     const asked: string[] = [];
     const tools = load({ commands: new Map(), sent: [], sentOptions: [] });
@@ -261,103 +225,96 @@ describe('factory_start related issue hardening', () => {
     return { asked, call };
   }
   const base = make('1', 'https://github.com/o/r/issues/1');
-  const owners = '*/1|*/900|*/2';
+  const owners = ['*/1', '*/900', '*/2'];
 
   for (const answer of [true, false]) {
     it(`treats a related issue from another repo as outside text even when its author is OWNER there (${answer ? 'approved' : 'declined'})`, async () => {
       const issues = { 1: base, 900: make('900', 'https://github.com/evil/other/issues/900', { comments: [{ author: { login: 'maint' }, authorAssociation: 'MEMBER', body: 'Comment 900.' }] }) };
-      await withGh(gh(issues, owners), async () => {
-        using repo = tempRepo('factory-gh-cross-', CHECKS_OK);
-        const { asked, call } = asking(repo.root, answer);
-        await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1', related: ['900'] } });
-        assert.equal(asked.length, 1);
-        assert.match(asked[0] ?? '', /Issue 900[\s\S]*Text 900\.[\s\S]*Comment 900\./);
-        const run = readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo');
-        assert.equal(/Text 900\./.test(run.source.body), answer);
-        assert.equal(/Comment 900\./.test(run.source.body), answer);
-      });
+      using _gh = issueGh({ issues, owners });
+      using repo = tempRepo('factory-gh-cross-', CHECKS_OK);
+      const { asked, call } = asking(repo.root, answer);
+      await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1', related: ['900'] } });
+      assert.equal(asked.length, 1);
+      assert.match(asked[0] ?? '', /Issue 900[\s\S]*Text 900\.[\s\S]*Comment 900\./);
+      const run = readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo');
+      assert.equal(/Text 900\./.test(run.source.body), answer);
+      assert.equal(/Comment 900\./.test(run.source.body), answer);
     });
   }
 
   it('leaves out a cross-repo related issue and its OWNER/MEMBER comment in headless mode', async () => {
     const issues = { 1: base, 900: make('900', 'https://github.com/evil/other/issues/900', { comments: [{ author: { login: 'maint' }, authorAssociation: 'MEMBER', body: 'Comment 900.' }] }) };
-    await withGh(gh(issues, owners), async () => {
-      using repo = tempRepo('factory-gh-cross-headless-', CHECKS_OK);
-      const ws = { config: loadConfig(repo.root), root: repo.root };
-      const { source } = await loadSource(ctx('main', 'main') as never, ws, { kind: 'github', ref: '1', related: ['900'] }, 'headless');
-      assert.doesNotMatch(source.body, /Text 900\.|Comment 900\./);
-    });
+    using _gh = issueGh({ issues, owners });
+    using repo = tempRepo('factory-gh-cross-headless-', CHECKS_OK);
+    const ws = { config: loadConfig(repo.root), root: repo.root };
+    const { source } = await loadSource(ctx('main', 'main') as never, ws, { kind: 'github', ref: '1', related: ['900'] }, 'headless');
+    assert.doesNotMatch(source.body, /Text 900\.|Comment 900\./);
   });
 
   it('keeps an OWNER-authored primary issue from another repo with no dialog, interactive and headless', async () => {
     const issues = { 900: make('900', 'https://github.com/evil/other/issues/900') };
-    await withGh(gh(issues, '*/900'), async () => {
-      using repo = tempRepo('factory-gh-primary-', CHECKS_OK);
-      const { asked, call } = asking(repo.root, false);
-      await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '900' } });
-      assert.equal(asked.length, 0);
-      assert.match(readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo').source.body, /Text 900\./);
-      const ws = { config: loadConfig(repo.root), root: repo.root };
-      const { notes, source } = await loadSource(ctx('main', 'main') as never, ws, { kind: 'github', ref: '900' }, 'headless');
-      assert.match(source.body, /Text 900\./);
-      assert.deepEqual(notes, []);
-    });
+    using _gh = issueGh({ issues, owners: ['*/900'] });
+    using repo = tempRepo('factory-gh-primary-', CHECKS_OK);
+    const { asked, call } = asking(repo.root, false);
+    await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '900' } });
+    assert.equal(asked.length, 0);
+    assert.match(readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo').source.body, /Text 900\./);
+    const ws = { config: loadConfig(repo.root), root: repo.root };
+    const { notes, source } = await loadSource(ctx('main', 'main') as never, ws, { kind: 'github', ref: '900' }, 'headless');
+    assert.match(source.body, /Text 900\./);
+    assert.deepEqual(notes, []);
   });
 
   it('keeps the primary but asks about a related issue when the working repo cannot be identified', async () => {
     const issues = { 1: base, 2: make('2', 'https://github.com/o/r/issues/2') };
-    await withGh(gh(issues, '*/1|*/2', 'exit 1'), async () => {
-      using repo = tempRepo('factory-gh-norepo-', CHECKS_OK);
-      const { asked, call } = asking(repo.root, false);
-      await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1', related: ['2'] } });
-      assert.equal(asked.length, 1);
-      assert.match(asked[0] ?? '', /Issue 2[\s\S]*Text 2\./);
-      const body = readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo').source.body;
-      assert.match(body, /Text 1\./);
-      assert.doesNotMatch(body, /Text 2\./);
-    });
+    using _gh = issueGh({ issues, owners: ['*/1', '*/2'], repoView: 'exit 1' });
+    using repo = tempRepo('factory-gh-norepo-', CHECKS_OK);
+    const { asked, call } = asking(repo.root, false);
+    await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1', related: ['2'] } });
+    assert.equal(asked.length, 1);
+    assert.match(asked[0] ?? '', /Issue 2[\s\S]*Text 2\./);
+    const body = readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo').source.body;
+    assert.match(body, /Text 1\./);
+    assert.doesNotMatch(body, /Text 2\./);
   });
 
   it('caps each outside part in the dialog at 1,000 characters, says how many are not shown, keeps the full approved text, and redacts the issue title in the header', async () => {
     const full = `${'a'.repeat(1_400)}MIDDLE-MARK${'z'.repeat(1_400)}`;
     const issues = { 1: base, 777: make('777', 'https://github.com/o/r/issues/777', { body: full, title: 'Leaks ghp_abcdefghijklmnopqrstuvwxyz0123456789' }) };
-    await withGh(gh(issues, owners), async () => {
-      using repo = tempRepo('factory-gh-cap-', CHECKS_OK);
-      const { asked, call } = asking(repo.root, true);
-      await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1', related: ['777'] } });
-      assert.doesNotMatch(asked[0] ?? '', /MIDDLE-MARK/);
-      assert.doesNotMatch(asked[0] ?? '', /ghp_abcdefghij/);
-      assert.match(asked[0] ?? '', /Issue 777 \(Leaks <REDACTED>/);
-      // The part is `${redacted title}\n\n${body}`: 'Leaks <REDACTED>' (16) + 2 + 2,811 = 2,829 characters, so 1,829 are hidden and the last 1,000 (all 'z') are shown.
-      assert.deepEqual((asked[0] ?? '').match(/z+/g), ['z'.repeat(1_000)]);
-      assert.match(asked[0] ?? '', /\[1829 characters not shown\]/);
-      const run = readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo');
-      assert.ok(run.source.body.includes(full));
-    });
+    using _gh = issueGh({ issues, owners });
+    using repo = tempRepo('factory-gh-cap-', CHECKS_OK);
+    const { asked, call } = asking(repo.root, true);
+    await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1', related: ['777'] } });
+    assert.doesNotMatch(asked[0] ?? '', /MIDDLE-MARK/);
+    assert.doesNotMatch(asked[0] ?? '', /ghp_abcdefghij/);
+    assert.match(asked[0] ?? '', /Issue 777 \(Leaks <REDACTED>/);
+    // The part is `${redacted title}\n\n${body}`: 'Leaks <REDACTED>' (16) + 2 + 2,811 = 2,829 characters, so 1,829 are hidden and the last 1,000 (all 'z') are shown.
+    assert.deepEqual((asked[0] ?? '').match(/z+/g), ['z'.repeat(1_000)]);
+    assert.match(asked[0] ?? '', /\[1829 characters not shown\]/);
+    const run = readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo');
+    assert.ok(run.source.body.includes(full));
   });
 
   it('uses the repo gh resolves, not origin, as the working repo: an OWNER related issue in the upstream repo needs no dialog', async () => {
     const issues = { 1: base, 2: make('2', 'https://github.com/o/r/issues/2') };
-    await withGh(gh(issues, owners), async () => {
-      using repo = tempRepo('factory-gh-fork-', CHECKS_OK);
-      execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/fork/r.git'], { cwd: repo.root });
-      const { asked, call } = asking(repo.root, false);
-      await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1', related: ['2'] } });
-      assert.equal(asked.length, 0);
-      assert.match(readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo').source.body, /Text 2\./);
-    });
+    using _gh = issueGh({ issues, owners });
+    using repo = tempRepo('factory-gh-fork-', CHECKS_OK);
+    execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/fork/r.git'], { cwd: repo.root });
+    const { asked, call } = asking(repo.root, false);
+    await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1', related: ['2'] } });
+    assert.equal(asked.length, 0);
+    assert.match(readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo').source.body, /Text 2\./);
   });
 
   it('falls back to the origin remote as the working repo when gh repo view fails: an OWNER related issue there needs no dialog', async () => {
     const issues = { 1: base, 2: make('2', 'https://github.com/o/r/issues/2') };
-    await withGh(gh(issues, owners, 'exit 1'), async () => {
-      using repo = tempRepo('factory-gh-origin-', CHECKS_OK);
-      execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/o/r.git'], { cwd: repo.root });
-      const { asked, call } = asking(repo.root, false);
-      await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1', related: ['2'] } });
-      assert.equal(asked.length, 0);
-      assert.match(readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo').source.body, /Text 2\./);
-    });
+    using _gh = issueGh({ issues, owners, repoView: 'exit 1' });
+    using repo = tempRepo('factory-gh-origin-', CHECKS_OK);
+    execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/o/r.git'], { cwd: repo.root });
+    const { asked, call } = asking(repo.root, false);
+    await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1', related: ['2'] } });
+    assert.equal(asked.length, 0);
+    assert.match(readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo').source.body, /Text 2\./);
   });
 
   it('looks up the working repo (gh repo view or git remote) only when there are related issues', async () => {
@@ -368,65 +325,54 @@ describe('factory_start related issue hardening', () => {
     writeFileSync(join(gitBin.root, 'git'), `#!/bin/sh\nif [ "$1" = remote ] && [ "$2" = get-url ]; then echo git >> ${file}; fi\nexec ${realGit} "$@"\n`);
     chmodSync(join(gitBin.root, 'git'), 0o755);
     const issues = { 1: base, 2: make('2', 'https://github.com/o/r/issues/2') };
-    await withGh(gh(issues, owners, `echo gh >> ${file}; exit 1`), async () => {
-      const path = process.env.PATH;
-      process.env.PATH = `${gitBin.root}:${path}`;
-      try {
-        using repo = tempRepo('factory-gh-nolookup-', CHECKS_OK);
-        const { call } = asking(repo.root, true);
-        await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1' } });
-        assert.equal(readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo').source.ref, '1');
-        assert.equal(existsSync(file), false);
-        await call('factory_start', { feature: 'demo-related', source: { kind: 'github', ref: '1', related: ['2'] } });
-        const lookups = readFileSync(file, 'utf8');
-        assert.match(lookups, /gh/);
-        assert.match(lookups, /git/);
-      } finally {
-        process.env.PATH = path;
-      }
-    });
+    using _gh = issueGh({ issues, owners, repoView: `echo gh >> ${file}; exit 1` });
+    using _git = prependPath(gitBin.root);
+    using repo = tempRepo('factory-gh-nolookup-', CHECKS_OK);
+    const { call } = asking(repo.root, true);
+    await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1' } });
+    assert.equal(readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo').source.ref, '1');
+    assert.equal(existsSync(file), false);
+    await call('factory_start', { feature: 'demo-related', source: { kind: 'github', ref: '1', related: ['2'] } });
+    const lookups = readFileSync(file, 'utf8');
+    assert.match(lookups, /gh/);
+    assert.match(lookups, /git/);
   });
 
   it('loads an issue once when related repeats the primary or an earlier related entry, even by URL', async () => {
     const issues = { 1: make('1', 'https://github.com/o/r/issues/1', { author: { login: 'owner1' } }), 2: make('2', 'https://github.com/o/r/issues/2', { author: { login: 'stranger' } }) };
-    await withGh(gh(issues, '*/1'), async () => {
-      using repo = tempRepo('factory-gh-dup-', CHECKS_OK);
-      const { asked, call } = asking(repo.root, true);
-      await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1', related: ['1', '2', '2', 'https://github.com/o/r/issues/2'] } });
-      assert.equal(asked.length, 1);
-      assert.equal((asked[0] ?? '').match(/Issue 2 /g)?.length, 1);
-      assert.doesNotMatch(asked[0] ?? '', /Issue 1 /);
-      const run = readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo');
-      assert.equal(run.source.body.match(/Text 2\./g)?.length, 1);
-      assert.equal(run.source.body.match(/## Related issue/g)?.length, 1);
-      assert.equal(run.source.related?.length, 1);
-    });
+    using _gh = issueGh({ issues, owners: ['*/1'] });
+    using repo = tempRepo('factory-gh-dup-', CHECKS_OK);
+    const { asked, call } = asking(repo.root, true);
+    await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1', related: ['1', '2', '2', 'https://github.com/o/r/issues/2'] } });
+    assert.equal(asked.length, 1);
+    assert.equal((asked[0] ?? '').match(/Issue 2 /g)?.length, 1);
+    assert.doesNotMatch(asked[0] ?? '', /Issue 1 /);
+    const run = readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo');
+    assert.equal(run.source.body.match(/Text 2\./g)?.length, 1);
+    assert.equal(run.source.body.match(/## Related issue/g)?.length, 1);
+    assert.equal(run.source.related?.length, 1);
   });
 
   it('runs gh issue view once per distinct ref when related repeats the primary ref', async () => {
-    const log = join(tempDir('factory-gh-log-').root, 'calls');
-    const script = gh({ 1: base, 2: make('2', 'https://github.com/o/r/issues/2') }, owners).replace('if [ "$1" = issue ]; then', `if [ "$1" = issue ]; then echo "$3" >> ${log};`);
-    await withGh(script, async () => {
-      using repo = tempRepo('factory-gh-once-', CHECKS_OK);
-      const { call } = asking(repo.root, true);
-      await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1', related: ['1', '1', '2', '2'] } });
-      assert.deepEqual(readFileSync(log, 'utf8').trim().split('\n').sort(), ['1', '2']);
-    });
+    using gh = issueGh({ issues: { 1: base, 2: make('2', 'https://github.com/o/r/issues/2') }, owners });
+    using repo = tempRepo('factory-gh-once-', CHECKS_OK);
+    const { call } = asking(repo.root, true);
+    await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1', related: ['1', '1', '2', '2'] } });
+    assert.deepEqual(gh.viewed().sort(), ['1', '2']);
   });
 
   it('rejects more than 20 related refs, and related on file, jira and text sources, but starts a run with exactly 20', async () => {
     const issues = Object.fromEntries(Array.from({ length: 22 }, (_, i) => [i + 1, make(String(i + 1), `https://github.com/o/r/issues/${i + 1}`)]));
-    await withGh(gh(issues, '*'), async () => {
-      using repo = tempRepo('factory-related-schema-', CHECKS_OK);
-      const { call } = session(repo.root);
-      const outcome = (source: unknown) => call('factory_start', { feature: 'demo', source }).catch(error => String(error));
-      const refs = (count: number) => Array.from({ length: count }, (_, i) => String(i + 2));
-      assert.match(await outcome({ kind: 'github', ref: '1', related: refs(21) }), /too[ _]big|at most 20|<=\s*20|maximum/i);
-      assert.match(await outcome({ kind: 'file', ref: 'ticket.md', related: ['2'] }), /`related` is only for github sources/);
-      assert.match(await outcome({ ...SOURCE, kind: 'text', related: [{ ref: '9', title: 'x' }] }), /`related` is only for github sources/);
-      assert.match(await outcome({ ...SOURCE, kind: 'jira', related: [{ ref: '9', title: 'x' }] }), /`related` is only for github sources/);
-      assert.match(await outcome({ kind: 'github', ref: '1', related: refs(20) }), /Run \\"demo\\"/);
-    });
+    using _gh = issueGh({ issues });
+    using repo = tempRepo('factory-related-schema-', CHECKS_OK);
+    const { call } = session(repo.root);
+    const outcome = (source: unknown) => call('factory_start', { feature: 'demo', source }).catch(error => String(error));
+    const refs = (count: number) => Array.from({ length: count }, (_, i) => String(i + 2));
+    assert.match(await outcome({ kind: 'github', ref: '1', related: refs(21) }), /too[ _]big|at most 20|<=\s*20|maximum/i);
+    assert.match(await outcome({ kind: 'file', ref: 'ticket.md', related: ['2'] }), /`related` is only for github sources/);
+    assert.match(await outcome({ ...SOURCE, kind: 'text', related: [{ ref: '9', title: 'x' }] }), /`related` is only for github sources/);
+    assert.match(await outcome({ ...SOURCE, kind: 'jira', related: [{ ref: '9', title: 'x' }] }), /`related` is only for github sources/);
+    assert.match(await outcome({ kind: 'github', ref: '1', related: refs(20) }), /Run \\"demo\\"/);
   });
 });
 
