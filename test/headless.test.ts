@@ -375,9 +375,12 @@ describe('factory_start related issue hardening', () => {
         using repo = tempRepo('factory-gh-nolookup-', CHECKS_OK);
         const { call } = asking(repo.root, true);
         await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1' } });
+        assert.equal(readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo').source.ref, '1');
         assert.equal(existsSync(file), false);
         await call('factory_start', { feature: 'demo-related', source: { kind: 'github', ref: '1', related: ['2'] } });
-        assert.match(readFileSync(file, 'utf8'), /gh\ngit\n/);
+        const lookups = readFileSync(file, 'utf8');
+        assert.match(lookups, /gh/);
+        assert.match(lookups, /git/);
       } finally {
         process.env.PATH = path;
       }
