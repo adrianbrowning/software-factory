@@ -226,6 +226,18 @@ describe('implementer sessions', () => {
     for (let i = 0; i < MAX_IDLE_STOP_ATTEMPTS; i += 1) actions.push(((await stop([])) as { decision?: string } | undefined)?.decision);
     assert.deepEqual(actions, [...Array(MAX_IDLE_STOP_ATTEMPTS - 1).fill('block'), undefined]);
   });
+
+  it('keeps the owner idle count when another session stops in between', async () => {
+    using repo = emptyRepo();
+    const { handlers, main } = await startedRun(repo.root);
+    const stop = (sessionId: string) => handlers.get('session_stop')?.({ session_id: sessionId, messages: [], type: 'session_stop' }, main);
+    const actions: unknown[] = [];
+    for (let i = 0; i < MAX_IDLE_STOP_ATTEMPTS; i += 1) {
+      actions.push(((await stop('session')) as { decision?: string } | undefined)?.decision);
+      assert.equal(await stop('other'), undefined);
+    }
+    assert.deepEqual(actions, [...Array(MAX_IDLE_STOP_ATTEMPTS - 1).fill('block'), undefined]);
+  });
 });
 
 describe('first-run checks dialog', () => {
