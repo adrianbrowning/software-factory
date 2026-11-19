@@ -45,7 +45,6 @@ import {
   writeAtomic,
 } from './run.ts';
 import { renderFinding } from './finding-text.ts';
-import { fixObservations } from './observations.ts';
 import { collectObservations, placeDefaults } from './place.ts';
 import { changedLines, changedPaths, targetedReview } from './targeted.ts';
 import { reportListsCommit, storedBehaviors, storedReport } from './report.ts';
@@ -911,6 +910,8 @@ export async function completeSlice(ws: Workspace, run: Run) {
   if (fixes.length > 0) {
     const before = { observations: structuredClone(run.observations), slice: structuredClone(slice) };
     try {
+      // Loaded here: observations.ts imports this module, so a static import would be a runtime cycle.
+      const { fixObservations } = await import('./observations.ts');
       fixObservations(ws, run, { observations: fixes }, 'Default placement of the observations after the slice\'s final review.');
     } catch (error) {
       if (!placedHere || error instanceof Invalidated) throw error;
