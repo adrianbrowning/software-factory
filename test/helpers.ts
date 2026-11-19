@@ -314,6 +314,46 @@ export function submitFakeGh({ stack, checkoutFailure = NO_STACK, fail = '', onF
     },
   };
 }
+
+/** Puts `dir` first on PATH until the `using` scope that holds the result ends. It removes only that entry, so several PATH entries in one test clean up in any order. */
+export function prependPath(dir: string) {
+  process.env.PATH = `${dir}:${process.env.PATH}`;
+  return { [Symbol.dispose]: () => void (process.env.PATH = (process.env.PATH ?? '').split(':').filter(entry => entry !== dir).join(':')) };
+}
+
+export interface IssueGh {
+  /** The issues `gh issue view <ref>` serves, by issue number; a ref (number or URL) with no entry prints nothing. */
+  issues: Record<string, unknown>;
+  /** Shell patterns for the `gh api repos/<o>/<r>/issues/<n>` path (for example a slash then the number); an issue whose path matches one has author association OWNER, every other NONE. By default every issue is OWNER's. */
+  owners?: string[];
+  /** The shell command `gh repo view` runs; by default it prints `o/r`. */
+  repoView?: string;
+}
+
+/**
+ * Puts a fake `gh` first on PATH until the `using` scope that holds it ends: it serves `issue view`, the issue author association
+ * (`api`) and `repo view`. `viewed()` lists the ref of each `issue view` call.
+ */
+export function issueGh({ issues, owners = ['*'], repoView = 'echo o/r' }: IssueGh) {
+  const temp = tempDir('factory-fake-gh-');
+  const log = join(temp.root, 'viewed');
+  const cases = Object.entries(issues).map(([number, issue]) => `  ${number}) echo '${JSON.stringify(issue)}';;`).join('\n');
+  const association = owners.length === 0 ? 'echo NONE' : `case "$2" in ${owners.join('|')}) echo OWNER;; *) echo NONE;; esac`;
+  writeFileSync(
+    join(temp.root, 'gh'),
+    `#!/bin/sh\nif [ "$1" = repo ]; then ${repoView}; exit 0; fi\nif [ "$1" = issue ]; then echo "$3" >> '${log}'; case "\${3##*/}" in\n${cases}\nesac; else ${association}; fi\n`,
+  );
+  chmodSync(join(temp.root, 'gh'), 0o755);
+  const path = prependPath(temp.root);
+  return {
+    viewed: () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : []),
+    [Symbol.dispose]: () => {
+      path[Symbol.dispose]();
+      temp[Symbol.dispose]();
+    },
+  };
+}
+
 export const CHECKS_OK = { 'demo.md': '# Demo\n\nDo it.\n', '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) };
 export type Reply = { content: { text: string }[] };
 
