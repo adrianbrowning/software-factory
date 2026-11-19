@@ -633,9 +633,11 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
         return;
       }
       if (verb === 'headless') {
-        if (argument === '') throw new Error('Usage: /factory headless <issue ref>');
+        if (argument === '') throw new Error('Usage: /factory headless <issue ref> [--related <ref>,<ref>,...]');
         // The command starts the run itself, so its mode is headless whatever the model does next.
-        const { feature, source } = headlessTarget(argument);
+        const target = headlessTarget(argument);
+        const feature = target.feature;
+        const source = sourceInputSchema.parse(target.source);
         await startOrResume({ feature, mode: 'headless', source }, { entry: await cachedRoot(ctx.cwd), ws }, ctx);
         sendContinuation(`A headless software-factory run "${feature}" is started for: ${argument}\nRead skill://software-factory and continue it from its next action (${nextAction(readRun(ws, feature))}).`);
         return;

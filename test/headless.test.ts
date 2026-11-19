@@ -103,6 +103,32 @@ describe('/factory headless', () => {
     }
   });
 
+  it('starts a headless run covering the related issues, leaving out cross-repo text', async () => {
+    const mk = (n: string, url: string) => ({ author: { login: 'owner' }, body: `Text ${n}.`, comments: [{ author: { login: 'maint' }, authorAssociation: 'MEMBER', body: `Comment ${n}.` }], title: `Title ${n}`, url });
+    const issues = { 1: mk('1', 'https://github.com/o/r/issues/1'), 2: mk('2', 'https://github.com/o/r/issues/2'), 900: mk('900', 'https://github.com/evil/other/issues/900') };
+    using _gh = issueGh({ issues, owners: ['*/1', '*/900', '*/2'] });
+    using repo = tempRepo('factory-headless-related-', CHECKS_OK);
+    const { command } = session(repo.root);
+    await command('headless 1 --related #2,900');
+    const run = readRun({ config: loadConfig(repo.root), root: repo.root }, 'issue-1');
+    assert.equal(run.mode, 'headless');
+    assert.deepEqual(run.source.related?.map(item => item.ref), ['2', '900']);
+    assert.match(run.source.body, /Text 2\./);
+    assert.doesNotMatch(run.source.body, /Text 900\.|Comment 900\./);
+  });
+
+  it('refuses more than 20 --related refs before a run starts', async () => {
+    const mk = (n: number) => ({ author: { login: 'owner' }, body: `Text ${n}.`, comments: [], title: `Title ${n}`, url: `https://github.com/o/r/issues/${n}` });
+    const issues = Object.fromEntries(Array.from({ length: 22 }, (_, i) => [i + 1, mk(i + 1)]).concat([[294, mk(294)]]));
+    using _gh = issueGh({ issues, owners: ['*'] });
+    using repo = tempRepo('factory-headless-many-', CHECKS_OK);
+    const { command, sent } = session(repo.root);
+    const refs = Array.from({ length: 21 }, (_, i) => String(i + 1)).join(',');
+    await assert.rejects(Promise.resolve(command(`headless 294 --related ${refs}`)), /20/);
+    assert.deepEqual(sent, []);
+    assert.equal(existsSync(statePath({ config: loadConfig(repo.root), root: repo.root }, 'issue-294')), false);
+  });
+
   it('fails with the start error and sends nothing when the issue cannot be loaded', async () => {
     using repo = tempRepo('factory-headless-missing-', CHECKS_OK);
     const { command, sent } = session(repo.root);
@@ -393,5 +419,25 @@ describe('headlessTarget', () => {
   it('cuts a long file name to 48 characters without a trailing dash', () => {
     const { feature } = headlessTarget(`${'a'.repeat(47)} ${'b'.repeat(20)}.md`);
     assert.equal(feature, 'a'.repeat(47));
+  });
+
+  it('takes --related refs as source.related: numbers, #numbers and URLs', () => {
+    assert.deepEqual(headlessTarget('294 --related 260,#285,https://github.com/o/r/issues/209'), {
+      feature: 'issue-294',
+      source: { kind: 'github', ref: '294', related: ['260', '285', 'https://github.com/o/r/issues/209'] },
+    });
+  });
+
+  it('keeps related issue URLs with a trailing slash, query or fragment as given', () => {
+    const urls = ['https://github.com/o/r/issues/209/', 'https://github.com/o/r/issues/209#issuecomment-1', 'https://github.com/o/r/issues/209?x=1'];
+    assert.deepEqual(headlessTarget(`294 --related ${urls.join(',')}`).source, { kind: 'github', ref: '294', related: urls });
+    assert.throws(() => headlessTarget('294 --related https://github.com/o?x/issues/209'), /--related/);
+  });
+
+  it('refuses invalid --related input', () => {
+    assert.throws(() => headlessTarget('ticket.md --related 260'), /--related/);
+    assert.throws(() => headlessTarget('294 --related'), /--related/);
+    assert.throws(() => headlessTarget('294 --related 260,,285'), /--related/);
+    assert.throws(() => headlessTarget('294 --related abc'), /--related/);
   });
 });

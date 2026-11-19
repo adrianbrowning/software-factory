@@ -164,6 +164,14 @@ omp -p --wait-async --no-extensions -e <plugin dir> --max-cost 25 --max-time 540
   `--max-cost` exits 3; the run state stays on disk and `/factory resume <feature>` continues it.
 - `/factory headless` in the TUI has no cost cap and no time limit.
 
+`/factory headless <issue> --related <ref>,<ref>` covers related issues in the same run: a comma-separated list of issue
+numbers, `#numbers` or issue URLs (at most 20), given after the primary issue. The run is still named after the primary
+issue. It needs a GitHub primary issue, not an issue file.
+
+```text
+/factory headless 294 --related 260,#285,https://github.com/o/r/issues/209
+```
+
 Run it from a worktree of the repository, with checks configured (a headless start refuses a repository with no checks).
 The issue-text, planning, stop-report, observation and retro rules of a headless run are in `skills/software-factory/SKILL.md`.
 
