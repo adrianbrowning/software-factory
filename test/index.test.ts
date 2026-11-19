@@ -76,6 +76,23 @@ describe('stopDecision', () => {
     const decision = stopDecision(run(), 'owner', { count: MAX_IDLE_STOP_ATTEMPTS - 1, events: 1 });
     assert.equal(decision.action, 'block');
   });
+
+  describe('while the orchestrator waits on an ask', () => {
+    const toolCall = (name: string) => ({ role: 'assistant', content: [{ type: 'toolCall', id: name, name, arguments: {} }] });
+    const result = (name: string) => ({ role: 'toolResult', toolCallId: name, toolName: name, content: [] });
+    const askMessages = [{ role: 'user', content: 'go' }, toolCall('bash'), result('bash'), toolCall('ask'), result('ask')] as never;
+
+    it('allows an interactive stop whose latest tool call is ask', () => {
+      assert.equal(stopDecision(run(), 'owner', undefined, askMessages).action, 'allow');
+    });
+
+    it('keeps blocking when the latest tool call is not ask, when there is none, and in a headless run', () => {
+      const afterAsk = [...(askMessages as unknown as object[]), toolCall('bash'), result('bash')] as never;
+      assert.equal(stopDecision(run(), 'owner', undefined, afterAsk).action, 'block');
+      assert.equal(stopDecision(run(), 'owner', undefined, [{ role: 'user', content: 'go' }] as never).action, 'block');
+      assert.equal(stopDecision(run({ mode: 'headless' }), 'owner', undefined, askMessages).action, 'block');
+    });
+  });
 });
 
 const git = (root: string, ...args: string[]) => execFileSync('git', args, { cwd: root });
@@ -197,6 +214,17 @@ describe('implementer sessions', () => {
     const reply = await call('factory_review_start', { skip: [] }, main);
     assert.match(reply, /in one eval step/);
     assert.match(reply, /wait for every reviewer, then spawn one factory-review-validator/);
+  });
+
+  it('does not count stops after an ask toward the auto-pause and restarts the count', async () => {
+    using repo = emptyRepo();
+    const { handlers, main } = await startedRun(repo.root);
+    const ask = [{ role: 'assistant', content: [{ type: 'toolCall', id: '1', name: 'ask', arguments: {} }] }, { role: 'toolResult', toolCallId: '1', toolName: 'ask', content: [] }];
+    const stop = (messages: unknown[]) => handlers.get('session_stop')?.({ session_id: 'session', messages, type: 'session_stop' }, main);
+    for (let i = 0; i < MAX_IDLE_STOP_ATTEMPTS + 2; i += 1) assert.equal(await stop(ask), undefined);
+    const actions: unknown[] = [];
+    for (let i = 0; i < MAX_IDLE_STOP_ATTEMPTS; i += 1) actions.push(((await stop([])) as { decision?: string } | undefined)?.decision);
+    assert.deepEqual(actions, [...Array(MAX_IDLE_STOP_ATTEMPTS - 1).fill('block'), undefined]);
   });
 });
 

@@ -173,9 +173,21 @@ function planSummary(slices: Run['slices']) {
     .join('\n');
 }
 
-/** Stop gate: block a stop while the owner session's run is running, and pause it after repeated idle stops. */
-export function stopDecision(run: Run, sessionId: string, previous: { count: number; events: number } | undefined) {
+/** Whether the latest tool call in the session is the omp `ask` tool: the orchestrator waits on the user's answer. */
+function waitingOnAsk(messages: readonly unknown[] | undefined) {
+  for (const message of (messages ?? []).toReversed()) {
+    const { content, role } = message as { content?: unknown; role?: string };
+    if (role !== 'assistant' || !Array.isArray(content)) continue;
+    const calls = (content as { name?: string; type?: string }[]).filter(part => part.type === 'toolCall');
+    if (calls.length > 0) return calls.at(-1)?.name === 'ask';
+  }
+  return false;
+}
+
+/** Stop gate: block a stop while the owner session's run is running, and pause it after repeated idle stops. An interactive run waiting on an ask is allowed to stop. */
+export function stopDecision(run: Run, sessionId: string, previous: { count: number; events: number } | undefined, messages?: readonly unknown[]) {
   if (run.ownerSessionId !== sessionId || run.status !== 'running') return { action: 'allow' as const };
+  if (run.mode !== 'headless' && waitingOnAsk(messages)) return { action: 'allow' as const };
   const count = previous?.events === run.events.length ? previous.count + 1 : 1;
   if (count >= MAX_IDLE_STOP_ATTEMPTS) return { action: 'pause' as const };
   return { action: 'block' as const, attempts: { count, events: run.events.length } };
@@ -643,8 +655,11 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
     } catch {
       return;
     }
-    const decision = stopDecision(run, event.session_id, stopAttempts.get(feature));
-    if (decision.action === 'allow') return;
+    const decision = stopDecision(run, event.session_id, stopAttempts.get(feature), event.messages);
+    if (decision.action === 'allow') {
+      stopAttempts.delete(feature);
+      return;
+    }
     if (decision.action === 'pause') {
       stopAttempts.delete(feature);
       await withRun(ws, feature, current => pauseRun(current, `no progress after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts`));
