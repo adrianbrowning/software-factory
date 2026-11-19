@@ -307,6 +307,8 @@ describe('batched observation placement', () => {
     assert.equal(run.slices[0]?.phase, before?.phase);
     assert.equal(run.slices[0]?.fixRounds, before?.fixRounds);
     assert.equal(run.slices[0]?.fixFiles, before?.fixFiles);
+    assert.deepEqual(run.slices[0]?.targeting, before?.targeting);
+    assert.equal(run.events.filter(event => event.kind === 'fix-observations').length, 0);
     assert.equal(run.waiting.length, 1);
     assert.equal(run.slices[0]?.status, 'active');
     assert.deepEqual(run.observations.map(entry => [entry.id, entry.placement]), [['thermo-gap', 'carried']]);
@@ -316,6 +318,7 @@ describe('batched observation placement', () => {
     assert.equal(retried.slices[0]?.phase, 'fix');
     assert.match(readFileSync(retried.slices[0]?.fixPath ?? 'missing', 'utf8'), /thermo-doc/);
     assert.equal(retried.waiting.length, 1);
+    assert.equal(retried.events.filter(event => event.kind === 'fix-observations').length, 1);
   });
 
   it('a carried red-review observation is marked as carried to the receiving slice', async () => {
