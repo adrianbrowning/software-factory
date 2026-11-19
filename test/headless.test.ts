@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, it } from 'node:test';
@@ -205,8 +206,9 @@ describe('factory_start with related issues', () => {
         const issueMd = readFileSync(join(runDir(ws, 'demo'), 'issue.md'), 'utf8');
         assert.match(issueMd, /Source: github 242 \(https:\/\/github.com\/o\/r\/issues\/242\)\nSource: github 126 \(https:\/\/github.com\/o\/r\/issues\/126\)\n/);
         assert.match(status, /126/);
-        const statusText = await call('factory_status', {});
-        assert.match(statusText, new RegExp(`related[\\s\\S]*126[\\s\\S]*${answer ? 'Related' : 'GitHub issue 126'}[\\s\\S]*github\\.com/o/r/issues/126`));
+        const reply = JSON.parse(await call('factory_status', {})) as { content: { text: string }[] };
+        const summary = JSON.parse(reply.content[0]?.text ?? '{}') as { source: { related: unknown } };
+        assert.deepEqual(summary.source.related, [{ ref: '126', title: answer ? 'Related' : 'GitHub issue 126', url: 'https://github.com/o/r/issues/126' }]);
       });
     });
   }
@@ -263,18 +265,29 @@ describe('factory_start related issue hardening', () => {
 
   for (const answer of [true, false]) {
     it(`treats a related issue from another repo as outside text even when its author is OWNER there (${answer ? 'approved' : 'declined'})`, async () => {
-      const issues = { 1: base, 900: make('900', 'https://github.com/evil/other/issues/900') };
+      const issues = { 1: base, 900: make('900', 'https://github.com/evil/other/issues/900', { comments: [{ author: { login: 'maint' }, authorAssociation: 'MEMBER', body: 'Comment 900.' }] }) };
       await withGh(gh(issues, owners), async () => {
         using repo = tempRepo('factory-gh-cross-', CHECKS_OK);
         const { asked, call } = asking(repo.root, answer);
         await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1', related: ['900'] } });
         assert.equal(asked.length, 1);
-        assert.match(asked[0] ?? '', /Issue 900[\s\S]*Text 900\./);
+        assert.match(asked[0] ?? '', /Issue 900[\s\S]*Text 900\.[\s\S]*Comment 900\./);
         const run = readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo');
         assert.equal(/Text 900\./.test(run.source.body), answer);
+        assert.equal(/Comment 900\./.test(run.source.body), answer);
       });
     });
   }
+
+  it('leaves out a cross-repo related issue and its OWNER/MEMBER comment in headless mode', async () => {
+    const issues = { 1: base, 900: make('900', 'https://github.com/evil/other/issues/900', { comments: [{ author: { login: 'maint' }, authorAssociation: 'MEMBER', body: 'Comment 900.' }] }) };
+    await withGh(gh(issues, owners), async () => {
+      using repo = tempRepo('factory-gh-cross-headless-', CHECKS_OK);
+      const ws = { config: loadConfig(repo.root), root: repo.root };
+      const { source } = await loadSource(ctx('main', 'main') as never, ws, { kind: 'github', ref: '1', related: ['900'] }, 'headless');
+      assert.doesNotMatch(source.body, /Text 900\.|Comment 900\./);
+    });
+  });
 
   it('keeps an OWNER-authored primary issue from another repo with no dialog, interactive and headless', async () => {
     const issues = { 900: make('900', 'https://github.com/evil/other/issues/900') };
@@ -305,8 +318,9 @@ describe('factory_start related issue hardening', () => {
     });
   });
 
-  it('caps each outside part in the dialog at 1,000 characters but keeps the full approved text, and redacts the issue title in the header', async () => {
-    const issues = { 1: base, 777: make('777', 'https://github.com/o/r/issues/777', { body: `${'a'.repeat(1_400)}MIDDLE-MARK${'z'.repeat(1_400)}`, title: 'Leaks ghp_abcdefghijklmnopqrstuvwxyz0123456789' }) };
+  it('caps each outside part in the dialog at 1,000 characters, says how many are not shown, keeps the full approved text, and redacts the issue title in the header', async () => {
+    const full = `${'a'.repeat(1_400)}MIDDLE-MARK${'z'.repeat(1_400)}`;
+    const issues = { 1: base, 777: make('777', 'https://github.com/o/r/issues/777', { body: full, title: 'Leaks ghp_abcdefghijklmnopqrstuvwxyz0123456789' }) };
     await withGh(gh(issues, owners), async () => {
       using repo = tempRepo('factory-gh-cap-', CHECKS_OK);
       const { asked, call } = asking(repo.root, true);
@@ -314,8 +328,38 @@ describe('factory_start related issue hardening', () => {
       assert.doesNotMatch(asked[0] ?? '', /MIDDLE-MARK/);
       assert.doesNotMatch(asked[0] ?? '', /ghp_abcdefghij/);
       assert.match(asked[0] ?? '', /Issue 777 \(Leaks <REDACTED>/);
+      // The part is `${redacted title}\n\n${body}`: 'Leaks <REDACTED>' (16) + 2 + 2,811 = 2,829 characters, so 1,829 are hidden and the last 1,000 (all 'z') are shown.
+      assert.deepEqual((asked[0] ?? '').match(/z+/g), ['z'.repeat(1_000)]);
+      assert.match(asked[0] ?? '', /\[1829 characters not shown\]/);
       const run = readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo');
-      assert.match(run.source.body, /MIDDLE-MARK/);
+      assert.ok(run.source.body.includes(full));
+    });
+  });
+
+  it('uses the repo gh resolves, not origin, as the working repo: an OWNER related issue in the upstream repo needs no dialog', async () => {
+    const issues = { 1: base, 2: make('2', 'https://github.com/o/r/issues/2') };
+    await withGh(gh(issues, owners), async () => {
+      using repo = tempRepo('factory-gh-fork-', CHECKS_OK);
+      execFileSync('git', ['remote', 'add', 'origin', 'https://github.com/fork/r.git'], { cwd: repo.root });
+      const { asked, call } = asking(repo.root, false);
+      await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1', related: ['2'] } });
+      assert.equal(asked.length, 0);
+      assert.match(readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo').source.body, /Text 2\./);
+    });
+  });
+
+  it('looks up the working repo only when there are related issues', async () => {
+    using log = tempDir('factory-gh-log-');
+    const file = join(log.root, 'repo-calls');
+    const issues = { 1: base, 2: make('2', 'https://github.com/o/r/issues/2') };
+    await withGh(gh(issues, owners, `echo called >> ${file}; echo o/r`), async () => {
+      using repo = tempRepo('factory-gh-nolookup-', CHECKS_OK);
+      const { call } = asking(repo.root, true);
+      await call('factory_start', { feature: 'demo', source: { kind: 'github', ref: '1' } });
+      assert.equal(existsSync(file), false);
+      const ws = { config: loadConfig(repo.root), root: repo.root };
+      await loadSource(ctx('main', 'main') as never, ws, { kind: 'github', ref: '1', related: ['2'] }, 'headless');
+      assert.equal(existsSync(file), true);
     });
   });
 

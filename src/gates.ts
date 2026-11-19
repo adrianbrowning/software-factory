@@ -30,6 +30,12 @@ export async function gate(ctx: ExtensionContext, ws: Workspace, feature: string
   throw new Error(`The run is paused, ${reason}. /factory resume ${feature} continues it. Stop now.`);
 }
 
+/** One outside part for the dialog: capped at 1,000 characters, with the count of characters not shown. */
+function shown(text: string) {
+  const hidden = redact(text).length - 1_000;
+  return hidden > 0 ? `[${hidden} characters not shown]\n${evidence(text, 1_000)}` : evidence(text, 1_000);
+}
+
 /**
  * The run source, plus autonomous-event notes. The tool loads GitHub and file issues itself. For GitHub text from
  * outside the repository, an interactive run asks the user; a headless run always leaves it out and returns a note
@@ -42,7 +48,7 @@ export async function loadSource(ctx: ExtensionContext, ws: Workspace, input: So
   const primary = await fetchGithubIssue(ws, input.ref);
   const refs = [...new Set(input.related ?? [])].filter(ref => ref !== input.ref);
   const loaded = await Promise.all(refs.map(async ref => ({ issue: await fetchGithubIssue(ws, ref), ref })));
-  // Each issue is loaded once: a related ref that resolves to the primary or to an earlier related issue is dropped.
+  // Each issue is included once: related refs are fetched first, then one that resolves to the primary or an earlier related issue (compared by issue URL) is dropped.
   const seen = new Set([issueKey(primary.url) ?? primary.url]);
   const related = loaded.filter(item => {
     const key = issueKey(item.issue.url) ?? item.issue.url;
@@ -60,7 +66,7 @@ export async function loadSource(ctx: ExtensionContext, ws: Workspace, input: So
       const grouped = refs
         .map(ref => {
           const parts = outside.filter(part => part.ref === ref);
-          return `Issue ${ref} (${redact(parts[0]?.title ?? '')}):\n\n${parts.map(part => `@${part.author} (${part.association}):\n${evidence(part.text, 1_000)}`).join('\n\n')}`;
+          return `Issue ${ref} (${redact(parts[0]?.title ?? '')}):\n\n${parts.map(part => `@${part.author} (${part.association}):\n${shown(part.text)}`).join('\n\n')}`;
         })
         .join('\n\n---\n\n');
       return confirm(
@@ -70,7 +76,7 @@ export async function loadSource(ctx: ExtensionContext, ws: Workspace, input: So
       );
     },
     related,
-    await workingRepo(ws),
+    related.length > 0 ? await workingRepo(ws) : undefined,
   );
   return { notes, source };
 }

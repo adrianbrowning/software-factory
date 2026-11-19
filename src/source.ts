@@ -57,17 +57,17 @@ export async function fetchGithubIssue(ws: Workspace, ref: string): Promise<Gith
 
 type OutsidePart = { association: string; author: string; ref: string; text: string; title: string };
 
-/** The `owner/repo` the run works in: the `origin` remote when it is a GitHub URL, else what `gh repo view` names; undefined when neither tells. */
+/** The `owner/repo` the run works in: what `gh repo view` names (the repo gh resolves bare issue numbers against), else the `origin` remote when it is a GitHub URL; undefined when neither tells. */
 export async function workingRepo(ws: Workspace) {
   try {
-    const url = (await git(ws.root, 'remote', 'get-url', 'origin')).trim();
-    const fromRemote = /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/i.exec(url)?.[1];
-    if (fromRemote !== undefined) return fromRemote.toLowerCase();
+    const fromGh = (await gh(ws.root, 'repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner')).trim().toLowerCase();
+    if (fromGh !== '') return fromGh;
   } catch {
-    // No origin remote: ask gh.
+    // gh cannot tell: read the origin remote.
   }
   try {
-    return (await gh(ws.root, 'repo', 'view', '--json', 'nameWithOwner', '--jq', '.nameWithOwner')).trim().toLowerCase() || undefined;
+    const url = (await git(ws.root, 'remote', 'get-url', 'origin')).trim();
+    return /github\.com[:/]([^/]+\/[^/]+?)(?:\.git)?\/?$/i.exec(url)?.[1]?.toLowerCase();
   } catch {
     return undefined;
   }
