@@ -407,7 +407,19 @@ describe('used-up fix budget', () => {
     assert.deepEqual([resumed.status, resumed.slices[0]?.stalled, resumed.slices[0]?.roundLimit], ['running', false, 3]);
   });
 
-  it('keeps the plain resume wording for a paused run that is not stalled', async () => {
+  it('resumes a paused run that is not stalled when factory_start is called as factory_status says', async () => {
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature']);
+    await withRun(ws, 'demo', current => pauseRun(current, 'test'));
+    const status = JSON.stringify(await call('factory_status', {}));
+    assert.match(status, /call factory_start with resume \\"demo\\"/);
+    const asked: string[] = [];
+    await call('factory_start', { resume: 'demo' }, { confirm: async (_title, body) => (asked.push(body), true) });
+    assert.deepEqual(asked, ['Resume "demo" (paused)?']);
+    assert.equal(readRun(ws, 'demo').status, 'running');
+  });
+
+  it('keeps a paused run that is not stalled paused when the user declines the resume dialog', async () => {
     using repo = budgetRepo();
     const { call, ws } = await budgetRun(repo.root, ['Feature']);
     await withRun(ws, 'demo', current => pauseRun(current, 'test'));

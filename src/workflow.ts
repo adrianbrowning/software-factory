@@ -875,7 +875,7 @@ export function nextAction(run: Run): string {
   if (slice?.stalled) {
     return stallNotice(run, slice);
   }
-  if (run.status !== 'running') return `The run is ${run.status}. The user resumes it with /factory resume ${run.feature}.`;
+  if (run.status !== 'running') return `The run is ${run.status}. When the user asks to continue, call factory_start with resume "${run.feature}" (the user's command is /factory resume ${run.feature}); otherwise stop.`;
   if (slice === undefined) {
     if (run.slices.some(candidate => candidate.status === 'pending')) return 'Call factory_next to start the next slice.';
     if (run.waiting.length > 0) return waitingNotice(run);

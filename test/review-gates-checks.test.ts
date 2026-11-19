@@ -282,11 +282,14 @@ describe('slice loop gates: checks and the fix budget', { concurrency: 4 }, () =
     await assert.rejects(followUp(), notice);
   });
 
-  it('keeps the plain resume wording for a paused run that is not stalled', async () => {
+  it('tells the orchestrator a paused run that is not stalled resumes with factory_start, only when the user asks', async () => {
     using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => pauseRun(run, 'test'));
-    assert.equal(nextAction(readRun(ws, 'demo')), 'The run is paused. The user resumes it with /factory resume demo.');
+    assert.equal(
+      nextAction(readRun(ws, 'demo')),
+      'The run is paused. When the user asks to continue, call factory_start with resume "demo" (the user\'s command is /factory resume demo); otherwise stop.',
+    );
   });
 
   it('raises the budget by maxRounds, not by the used rounds, when a stalled run resumes', async () => {
