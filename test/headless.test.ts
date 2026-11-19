@@ -118,11 +118,15 @@ describe('/factory headless', () => {
   });
 
   it('refuses more than 20 --related refs before a run starts', async () => {
+    const mk = (n: number) => ({ author: { login: 'owner' }, body: `Text ${n}.`, comments: [], title: `Title ${n}`, url: `https://github.com/o/r/issues/${n}` });
+    const issues = Object.fromEntries(Array.from({ length: 22 }, (_, i) => [i + 1, mk(i + 1)]).concat([[294, mk(294)]]));
+    using _gh = issueGh({ issues, owners: ['*'] });
     using repo = tempRepo('factory-headless-many-', CHECKS_OK);
     const { command, sent } = session(repo.root);
     const refs = Array.from({ length: 21 }, (_, i) => String(i + 1)).join(',');
-    await assert.rejects(Promise.resolve(command(`headless 294 --related ${refs}`)));
+    await assert.rejects(Promise.resolve(command(`headless 294 --related ${refs}`)), /20/);
     assert.deepEqual(sent, []);
+    assert.equal(existsSync(statePath({ config: loadConfig(repo.root), root: repo.root }, 'issue-294')), false);
   });
 
   it('fails with the start error and sends nothing when the issue cannot be loaded', async () => {
