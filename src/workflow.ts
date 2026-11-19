@@ -214,7 +214,7 @@ export async function startRun(ws: Workspace, input: { annotate?: ((run: Run) =>
   input.annotate?.(run);
   writeAtomic(
     join(runDir(ws, run.feature), 'issue.md'),
-    `# ${source.title}\n\nSource: ${source.kind} ${source.ref}${source.url ? ` (${source.url})` : ''}\n\n${UNTRUSTED_NOTE}\n\n<untrusted-issue>\n${source.body}\n</untrusted-issue>\n`,
+    `# ${source.title}\n\nSource: ${source.kind} ${source.ref}${source.url ? ` (${source.url})` : ''}\n${(source.related ?? []).map(item => `Source: ${source.kind} ${item.ref}${item.url ? ` (${item.url})` : ''}\n`).join('')}\n${UNTRUSTED_NOTE}\n\n<untrusted-issue>\n${source.body}\n</untrusted-issue>\n`,
   );
   saveRun(ws, run);
   return run;
@@ -959,7 +959,7 @@ export function summarize(ws: Workspace, run: Run) {
       title: slice.title,
     })),
     sliceTokenBudget: ws.config.sliceTokenBudget,
-    source: { kind: run.source.kind, ref: run.source.ref, title: run.source.title },
+    source: { kind: run.source.kind, ref: run.source.ref, related: run.source.related, title: run.source.title },
     status: run.status,
     /** Carried items waiting for the next factory_follow_up slice (factory_carry `to: "end"`). */
     waiting: run.waiting,

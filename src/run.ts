@@ -99,10 +99,14 @@ export const fixVerdictSchema = z.discriminatedUnion('status', [
 ]);
 export type FixVerdict = z.infer<typeof fixVerdictSchema>;
 
+export const relatedSourceSchema = z.object({ ref: text, title: text, url: z.string().optional() });
+export type RelatedSource = z.infer<typeof relatedSourceSchema>;
+
 export const sourceSchema = z.object({
   body: z.string().describe('Full issue text, including relevant comments'),
   kind: z.enum(SOURCE_KINDS),
   ref: text.describe('Issue reference as the user gave it'),
+  related: z.array(relatedSourceSchema).optional().describe('Further issues whose text is in the body, after the primary issue'),
   title: text,
   url: z.string().optional(),
 });
