@@ -304,6 +304,8 @@ confirm:
 Optional `.omp/factory.json` in the target repository. Commit it on the base branch: every gate needs a clean
 working tree, and unknown keys are rejected.
 
+`factory_checks` reruns each failed check command once, as a whole command. A rerun that passes counts as passed: the summary marks the check flaky with the first failure's exit code and duration, and no fix file or fix round is used. A rerun that fails goes into the fix file and counts as a fix round. A timed-out check is not rerun, and a command-not-found check is refused as an environment error without a rerun.
+
 | Key | Default | Meaning |
 | --- | --- | --- |
 | `checks` | Asked on the first run | Check commands every slice must pass, in order. `factory_checks` runs them in full on the slice's commits; the implementer runs only the typecheck and the test files it touched. Unset: the first `factory_start` in the repository opens a dialog with the `lint`, `typecheck`, `test` scripts chosen, and other check-like `package.json` scripts and `.github/workflows` `run:` commands as commented suggestions. The choice is saved in `scratchDir`, and later runs reuse it with no dialog. `/factory checks` changes it for new runs; a run keeps the checks it started with |

@@ -85,7 +85,7 @@ describe('fix items', { concurrency: 4 }, () => {
     await step(ws, run => runChecks(ws, run));
     const items = fixItems((await step(ws, run => startReview(ws, run))).dataFile);
     assert.match(items, /- `bug-null-crash` \([^\n]*fixes\/01-f1\.md, round 1\): \[high\] ok:1: null-crash\n/);
-    assert.match(items, /- `check-f2-1` \([^\n]*fixes\/01-f2\.md, round 2\): test -f ok: failed \(exit 1\) in \d+ms\n/);
+    assert.match(items, /- `check-f2-1` \([^\n]*fixes\/01-f2\.md, round 2\): test -f ok: failed \(exit 1\) in \d+ms on rerun \(first failed \(exit 1\) in \d+ms\)\n/);
   });
 });
 

@@ -185,7 +185,7 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   // same commit keeps its checks.
   const stored = standingChecks(slice, sha);
   if (stored !== undefined) return { commits, report, unchanged, ...(await passChecks(ws, run, slice, sha, stored, true)) };
-  const results: { command: string; result: CommandResult }[] = [];
+  const results: { command: string; first?: CommandResult; result: CommandResult }[] = [];
   const checkPath = [...ws.config.checkPath, process.env.PATH ?? ''].join(delimiter);
   const env = { ...process.env, PATH: checkPath };
   for (const command of run.checks) {
@@ -209,13 +209,27 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
       `Checks could not find a command:\n${listed}\nPATH used: ${checkPath}\nThis is an environment error, not a code fault. When the command is a tool installed on the user's machine, add the directory that holds it (find it with \`command -v ${tool}\` in the user's terminal) to "checkPath" in .omp/factory.json.${dependency} Then call factory_checks again.`,
     );
   }
+  // Each failed check (not a timeout: a rerun could cost another full timeout) runs once more, as a whole command.
+  for (const entry of results) {
+    if (entry.result.exitCode === 0 || entry.result.timedOut) continue;
+    signal?.throwIfAborted();
+    entry.first = entry.result;
+    entry.result = await runShell(entry.command, ws.root, ws.config.checkTimeoutMs, signal, env);
+  }
+  signal?.throwIfAborted();
   const dirty = (await porcelain(ws.root)).trim();
   const failed = results.filter(({ result }) => result.exitCode !== 0 || result.timedOut);
-  const summary = results.map(({ command, result }) => describeCheck(command, result));
+  const describe = ({ command, first, result }: { command: string; first?: CommandResult; result: CommandResult }) => {
+    if (first === undefined) return describeCheck(command, result);
+    if (result.exitCode === 0 && !result.timedOut) return `${command}: passed on rerun, flaky (first failed (exit ${first.exitCode}) in ${first.durationMs}ms)`;
+    return `${describeCheck(command, result)} on rerun (first failed (exit ${first.exitCode}) in ${first.durationMs}ms)`;
+  };
+  const summary = results.map(describe);
   if (failed.length === 0 && dirty === '') return { commits, report, unchanged, ...(await passChecks(ws, run, slice, sha, summary, false)) };
 
-  const records: FixRecord[] = failed.map(({ command, result }) => {
-    const described = describeCheck(command, result);
+  const records: FixRecord[] = failed.map(entry => {
+    const { result } = entry;
+    const described = describe(entry);
     const section = `## ${described}\n\n### stdout\n\n\`\`\`\n${evidence(result.stdout)}\n\`\`\`\n\n### stderr\n\n\`\`\`\n${evidence(result.stderr)}\n\`\`\``;
     return { item: { kind: 'check', summary: described }, section };
   });

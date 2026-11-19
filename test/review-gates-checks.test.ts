@@ -140,6 +140,60 @@ describe('slice loop gates: checks and the fix budget', { concurrency: 4 }, () =
     assert.equal((await step(ws, run => runChecks(ws, run))).passed, false);
     assert.equal(readRun(ws, 'demo').slices[0]?.fixRounds, 1);
   });
+  it('retries a failed check once: a pass on rerun is flaky, uses no fix round, and a second failure keeps the rerun output', async () => {
+    using counter = tempDir('factory-flaky-');
+    const flaky = `if [ -f '${counter.root}/seen' ]; then exit 0; fi; touch '${counter.root}/seen'; exit 1`;
+    using ws = workspace({ checks: [flaky] });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'work.txt');
+    const result = await step(ws, run => runChecks(ws, run));
+    assert.ok(result.passed);
+    assert.match(result.summary.join('\n'), /flaky[\s\S]*first failed \(exit 1\) in \d+ms/);
+    const after = readRun(ws, 'demo').slices[0];
+    assert.equal(after?.fixRounds, 0);
+    assert.equal(after?.fixPath, undefined);
+
+    using both = tempDir('factory-both-');
+    const hard = `echo run >> '${both.root}/n'; echo "attempt $(wc -l < '${both.root}/n')" >&2; exit 1`;
+    using ws2 = workspace({ checks: [hard] });
+    await newRun(ws2, [slice('Feature')]);
+    await step(ws2, run => nextSlice(ws2, run));
+    commit(ws2, 'work.txt');
+    const failed = await step(ws2, run => runChecks(ws2, run));
+    assert.ok(!failed.passed);
+    assert.match(readFileSync(failed.fixPath, 'utf8'), /attempt\s+2/);
+    assert.equal(readRun(ws2, 'demo').slices[0]?.fixRounds, 1);
+  });
+
+  it('runs a passing check once and does not rerun a timed-out check', async () => {
+    using counter = tempDir('factory-once-');
+    using ws = workspace({ checks: [`echo x >> '${counter.root}/n'`] });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'work.txt');
+    assert.ok((await step(ws, run => runChecks(ws, run))).passed);
+    assert.equal(readFileSync(join(counter.root, 'n'), 'utf8').split('\n').filter(Boolean).length, 1);
+
+    using slow = tempDir('factory-slow-');
+    using ws2 = workspace({ checks: [`echo x >> '${slow.root}/n'; sleep 5`], checkTimeoutMs: 300 });
+    await newRun(ws2, [slice('Feature')]);
+    await step(ws2, run => nextSlice(ws2, run));
+    commit(ws2, 'work.txt');
+    assert.ok(!(await step(ws2, run => runChecks(ws2, run))).passed);
+    assert.equal(readFileSync(join(slow.root, 'n'), 'utf8').split('\n').filter(Boolean).length, 1);
+  });
+  it('marks only the occurrence that failed as flaky when a check command is listed twice', async () => {
+    using counter = tempDir('factory-dup-');
+    const dup = `echo x >> '${counter.root}/n'; [ "$(wc -l < '${counter.root}/n')" -ne 1 ]`;
+    using ws = workspace({ checks: [dup, dup] });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'work.txt');
+    const result = await step(ws, run => runChecks(ws, run));
+    assert.ok(result.passed);
+    assert.equal(result.summary.filter(line => /flaky/.test(line)).length, 1);
+  });
 
   it('reports a check that runs past its timeout', async () => {
     using ws = workspace({ checks: ['sleep 5'], checkTimeoutMs: 100 });
