@@ -249,6 +249,15 @@ describe('batched observation placement', () => {
     const after = { ...run, observations: [...run.observations, held] };
     assert.equal(defaultChoice(ws, after, active, doc), 'end');
     assert.equal(defaultChoice(ws, after, { ...active, fromEndQueue: true }, doc), 'leave');
+    const record = { ...active, record: true as const };
+    const sink = { ...ws, config: { ...ws.config, deferred: { kind: 'github' as const } } };
+    assert.equal(defaultChoice(sink, run, { ...active, fromEndQueue: true }, doc), 'fix');
+    assert.equal(defaultChoice(sink, after, { ...active, fromEndQueue: true }, doc), 'defer');
+    assert.equal(defaultChoice(ws, after, { ...active, fromEndQueue: true }, doc), 'leave');
+    assert.equal(defaultChoice(ws, run, record, doc), 'fix');
+    assert.equal(defaultChoice(ws, after, record, doc), 'leave');
+    const other = { ...after, observations: [{ ...held, slice: '99' }] };
+    assert.equal(defaultChoice(ws, other, active, doc), 'fix');
     const placed = (await call('factory_place', { placements: [] })).content[0]?.text ?? '';
     assert.match(placed, /back in fix\. Fix file: \S+/);
     const sliceNow = readRun(ws, 'demo').slices[0];
