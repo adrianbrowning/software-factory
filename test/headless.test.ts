@@ -424,6 +424,12 @@ describe('headlessTarget', () => {
     });
   });
 
+  it('keeps related issue URLs with a trailing slash, query or fragment as given', () => {
+    const urls = ['https://github.com/o/r/issues/209/', 'https://github.com/o/r/issues/209#issuecomment-1', 'https://github.com/o/r/issues/209?x=1'];
+    assert.deepEqual(headlessTarget(`294 --related ${urls.join(',')}`).source, { kind: 'github', ref: '294', related: urls });
+    assert.throws(() => headlessTarget('294 --related https://github.com/o?x/issues/209'), /--related/);
+  });
+
   it('refuses invalid --related input', () => {
     assert.throws(() => headlessTarget('ticket.md --related 260'), /--related/);
     assert.throws(() => headlessTarget('294 --related'), /--related/);

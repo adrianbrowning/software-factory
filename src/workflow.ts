@@ -65,10 +65,19 @@ export function headlessTarget(argument: string): { feature: string; source: Sou
   const related = items.map(item => {
     const bare = /^#?(\d+)$/.exec(item);
     if (bare?.[1] !== undefined) return bare[1];
-    if (/^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/issues\/\d+$/.test(item)) return item;
+    if (isIssueUrl(item)) return item;
     throw new Error(`--related takes a comma-separated list of issue numbers, #numbers or GitHub issue URLs; "${item}" is not one.`);
   });
   return { feature: target.feature, source: { ...target.source, related } };
+}
+
+function isIssueUrl(item: string) {
+  try {
+    const url = new URL(item);
+    return url.protocol === 'https:' && url.hostname === 'github.com' && /^\/[^/]+\/[^/]+\/issues\/\d+\/?$/.test(url.pathname);
+  } catch {
+    return false;
+  }
 }
 
 function headlessPrimary(ref: string): { feature: string; source: SourceInput } {
