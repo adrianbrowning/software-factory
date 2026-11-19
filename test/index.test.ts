@@ -221,10 +221,14 @@ describe('implementer sessions', () => {
     const { handlers, main } = await startedRun(repo.root);
     const ask = [{ role: 'assistant', content: [{ type: 'toolCall', id: '1', name: 'ask', arguments: {} }] }, { role: 'toolResult', toolCallId: '1', toolName: 'ask', content: [] }];
     const stop = (messages: unknown[]) => handlers.get('session_stop')?.({ session_id: 'session', messages, type: 'session_stop' }, main);
+    const decisions = async (n: number, messages: unknown[]) => {
+      const out: unknown[] = [];
+      for (let i = 0; i < n; i += 1) out.push(((await stop(messages)) as { decision?: string } | undefined)?.decision);
+      return out;
+    };
+    assert.deepEqual(await decisions(MAX_IDLE_STOP_ATTEMPTS - 1, []), Array(MAX_IDLE_STOP_ATTEMPTS - 1).fill('block'));
     for (let i = 0; i < MAX_IDLE_STOP_ATTEMPTS + 2; i += 1) assert.equal(await stop(ask), undefined);
-    const actions: unknown[] = [];
-    for (let i = 0; i < MAX_IDLE_STOP_ATTEMPTS; i += 1) actions.push(((await stop([])) as { decision?: string } | undefined)?.decision);
-    assert.deepEqual(actions, [...Array(MAX_IDLE_STOP_ATTEMPTS - 1).fill('block'), undefined]);
+    assert.deepEqual(await decisions(MAX_IDLE_STOP_ATTEMPTS, []), [...Array(MAX_IDLE_STOP_ATTEMPTS - 1).fill('block'), undefined]);
   });
 
   it('keeps the owner idle count when another session stops in between', async () => {
