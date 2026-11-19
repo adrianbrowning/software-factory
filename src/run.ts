@@ -37,7 +37,7 @@ export const SEVERITIES = ['critical', 'high', 'observation'] as const;
 export const OBSERVATION_CATEGORIES = ['correctness', 'missing-test', 'misleading-doc', 'naming', 'structure', 'style'] as const;
 export type ObservationCategory = (typeof OBSERVATION_CATEGORIES)[number];
 
-/** Where a slice's batch of observations puts one by default: work that is wrong or unproven waits in the end queue, taste is left. */
+/** Where a slice's batch of observations puts one by default: work that is wrong or unproven waits in the end queue, a misleading doc is fixed in the slice (defaultChoice), taste is left. */
 export const DEFAULT_PLACEMENT = {
   correctness: 'end',
   'misleading-doc': 'end',

@@ -8,7 +8,9 @@ import { loadConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
 import { carriedKeysLine, carriesKey } from '../src/legacy-observations.ts';
 import { type Finding, readRun, REVIEW_DOMAINS, ticketPath, withRun, type Workspace } from '../src/run.ts';
-import { completeSlice, keptFindings, recordReview, runChecks, startReview, submitDomain, submitValidation, validationSchema } from '../src/review.ts';
+import { defaultChoice } from '../src/place.ts';
+import { keptFindings, validationSchema } from '../src/review-record.ts';
+import { completeSlice, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
 import { addFollowUp, applyReslice, approvePlan, nextAction, nextSlice, planReslice, planSlices } from '../src/workflow.ts';
 import { CHECKS_OK, commit, fakeGh, finding, headlessSubmitRun, noFixItems, retroDoneRun, review, reviewActive, slice, submitGreenWithObservation, tempRepo } from './helpers.ts';
 
@@ -231,6 +233,63 @@ describe('batched observation placement', () => {
     const sliceNow = readRun(ws, 'demo').slices[0];
     assert.equal(sliceNow?.phase, 'fix');
     assert.equal(sliceNow?.fixRounds, 0);
+  });
+
+  it('a misleading-doc observation defaults to fix until the slice has one placed as fixed, then to its earlier default', async () => {
+    using dir = repo();
+    const { call, full, ws } = await interactive(dir.root);
+    const text = (await full([observation('doc', 'misleading-doc'), observation('gap', 'correctness')])).content[0]?.text ?? '';
+    assert.match(text, /thermo-doc[\s\S]*Default placement: fix in this slice/);
+    assert.match(text, /thermo-gap[\s\S]*Default placement: end queue/);
+    const run = readRun(ws, 'demo');
+    const active = run.slices[0];
+    const doc = active?.unplaced.find(entry => entry.finding.id === 'thermo-doc');
+    if (active === undefined || doc === undefined) throw new Error('missing');
+    assert.equal(defaultChoice(ws, run, active, doc), 'fix');
+    const held = { id: 'x', key: '01-r0:x', location: 'a', placement: 'fixed' as const, problem: 'p', review: '01-r0', slice: active.id, title: 't' };
+    const after = { ...run, observations: [...run.observations, held] };
+    assert.equal(defaultChoice(ws, after, active, doc), 'end');
+    assert.equal(defaultChoice(ws, after, { ...active, fromEndQueue: true }, doc), 'leave');
+    const record = { ...active, record: true as const };
+    const sink = { ...ws, config: { ...ws.config, deferred: { kind: 'github' as const } } };
+    assert.equal(defaultChoice(sink, run, { ...active, fromEndQueue: true }, doc), 'fix');
+    assert.equal(defaultChoice(sink, after, { ...active, fromEndQueue: true }, doc), 'defer');
+    assert.equal(defaultChoice(ws, after, { ...active, fromEndQueue: true }, doc), 'leave');
+    assert.equal(defaultChoice(ws, run, record, doc), 'fix');
+    assert.equal(defaultChoice(ws, after, record, doc), 'leave');
+    const other = { ...after, observations: [{ ...held, slice: '99' }] };
+    assert.equal(defaultChoice(ws, other, active, doc), 'fix');
+    const placed = (await call('factory_place', { placements: [] })).content[0]?.text ?? '';
+    assert.match(placed, /back in fix\. Fix file: \S+/);
+    const sliceNow = readRun(ws, 'demo').slices[0];
+    assert.equal(sliceNow?.phase, 'fix');
+    assert.equal(sliceNow?.fixRounds, 0);
+    assert.match(readFileSync(sliceNow?.fixPath ?? 'missing', 'utf8'), /thermo-doc/);
+    assert.equal(readRun(ws, 'demo').waiting.length, 1);
+  });
+
+  it('a headless completion with a misleading-doc observation ends its other observations, starts an observation-only fix round and completes after it', async () => {
+    using dir = repo();
+    const { call, ws } = await headlessSubmitRun(dir.root, ['Feature']);
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const first = await withRun(ws, 'demo', run => startReview(ws, run));
+    await review(ws, first.reviewId, [observation('doc', 'misleading-doc'), observation('gap', 'correctness')]);
+    await withRun(ws, 'demo', run => recordReview(ws, run));
+    const text = (await call('factory_complete_slice', {})).content[0]?.text ?? '';
+    const fixPath = /Fix file: (\S+)/.exec(text)?.[1] ?? 'missing';
+    assert.match(readFileSync(fixPath, 'utf8'), /thermo-doc/);
+    const run = readRun(ws, 'demo');
+    assert.equal(run.slices[0]?.status, 'active');
+    assert.equal(run.slices[0]?.phase, 'fix');
+    assert.equal(run.slices[0]?.fixRounds, 0);
+    assert.equal(run.waiting.length, 1);
+    assert.deepEqual(run.observations.map(entry => [entry.id, entry.placement]), [['thermo-gap', 'carried'], ['thermo-doc', 'fixed']]);
+    commit(ws, 'doc.txt');
+    await withRun(ws, 'demo', current => runChecks(ws, current));
+    await review(ws, (await withRun(ws, 'demo', current => startReview(ws, current))).reviewId, []);
+    await withRun(ws, 'demo', current => recordReview(ws, current));
+    const done = await withRun(ws, 'demo', current => completeSlice(ws, current));
+    assert.equal(done.status, 'done');
   });
 
   it('a carried red-review observation is marked as carried to the receiving slice', async () => {

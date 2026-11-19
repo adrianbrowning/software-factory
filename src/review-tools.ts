@@ -6,7 +6,8 @@ import { placeObservations } from './ledger.ts';
 import { defaultChoice, describeChoice, describePlan, placeObservationBatch, placementSchema, planPlace } from './place.ts';
 import { carryObservations, fixObservations, leaveObservations, planCarry, planDefer, planFix, planLeave } from './observations.ts';
 import { renderFinding } from './finding-text.ts';
-import { completeSlice, recordReview, startReview, submitDomain, submitValidation, validationSchema } from './review.ts';
+import { completeSlice, recordReview, startReview, submitDomain, submitValidation } from './review.ts';
+import { validationSchema } from './review-record.ts';
 import { activeSlice, addEvent, findingSchema, fixVerdictSchema, readRun, REQUIRED_REVIEW_DOMAINS, REVIEW_DOMAINS, skippedDomainsSchema, ticketPath, withRun } from './run.ts';
 import { submitHeadless } from './headless-submit.ts';
 import type { RunTool } from './tool-scope.ts';
@@ -169,7 +170,7 @@ export function registerReviewTools(tool: RunTool) {
   tool({
     caller: 'main',
     description:
-      'After the slice\'s final full green review, place every unplaced observation of the slice in one batch, after the user agreed to the defaults and exceptions: fix (back to the fix loop, no fix budget used), carry to a pending slice (to), end (the queue for the next factory_follow_up slice), defer (the deferred sink) or leave. List only the exceptions; each other unplaced observation gets its default by category (correctness, missing-test, misleading-doc to end; naming, structure, style to leave). One confirm asks in an interactive run. Refuses an id already placed or not unplaced on the slice.',
+      'After the slice\'s final full green review, place every unplaced observation of the slice in one batch, after the user agreed to the defaults and exceptions: fix (back to the fix loop, no fix budget used), carry to a pending slice (to), end (the queue for the next factory_follow_up slice), defer (the deferred sink) or leave. List only the exceptions; each other unplaced observation gets its default by category (correctness, missing-test to end; misleading-doc to fix in this slice, unless the slice already had an observation placed as fixed, then to end; naming, structure, style to leave). One confirm asks in an interactive run. Refuses an id already placed or not unplaced on the slice.',
     label: 'Factory: place observations',
     name: 'factory_place',
     schema: placeSchema,
@@ -201,7 +202,7 @@ export function registerReviewTools(tool: RunTool) {
 
   tool({
     caller: 'main',
-    description: 'Mark the green slice done. Refuses while the slice has unplaced observations (factory_place); a headless run places them by default first. HEAD must be the reviewed commit. A reopened slice rebases every later slice branch onto its fix.',
+    description: 'Mark the green slice done. Refuses while the slice has unplaced observations (factory_place); a headless run places them by default first, and when a default is a fix (misleading-doc) it starts the observation-only fix round, leaves the slice active in fix and names the fix file. HEAD must be the reviewed commit. A reopened slice rebases every later slice branch onto its fix.',
     label: 'Factory: complete slice',
     name: 'factory_complete_slice',
     schema: emptySchema,
@@ -209,10 +210,11 @@ export function registerReviewTools(tool: RunTool) {
       const done = await withRun(ws, feature, async run => {
         const reopened = activeSlice(run)?.doneSha !== undefined;
         const slice = await completeSlice(ws, run);
+        if (slice.status !== 'done') return `Slice ${slice.id} is back in fix: its default placement fixes observations in this slice. Fix file: ${slice.fixPath ?? 'unknown'}`;
         const restacked = reopened ? ' Every later slice branch is rebased onto it and earns its checks and review again.' : '';
         return `Slice ${slice.id} is done on ${slice.branch}.${restacked}`;
       });
-      const submitted = await submitHeadless(ws, feature);
+      const submitted = done.includes('is back in fix') ? '' : await submitHeadless(ws, feature);
       return reply(`${done}${submitted}\nNext: ${nextAction(readRun(ws, feature))}`);
     },
   });

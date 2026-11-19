@@ -2,13 +2,12 @@
  * The review lifecycle of the active slice: checks, the multi-domain review and its validation, the green review, and
  * completing the slice.
  */
-import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { z } from 'zod';
-import { evidence, evidenceLine, redact } from './evidence.ts';
+import { evidence, redact } from './evidence.ts';
 import { deferItems, draftOf, isRecordSlice, itemKey } from './deferred.ts';
-import { CARRIED_HERE, findingLocation, renderKnownObservations } from './ledger.ts';
+import { CARRIED_HERE, renderKnownObservations } from './ledger.ts';
 import { git, runShell, type CommandResult } from './exec.ts';
 import {
   activeSlice,
@@ -45,6 +44,8 @@ import {
   writeAtomic,
 } from './run.ts';
 import { renderFinding } from './finding-text.ts';
+import { domainFile, findingRecord, keptFindings, readRecorded, recordedFindings, sha256, targetingAfter, type Validation, validationFile, validationSchema } from './review-record.ts';
+import { fixObservations } from './observations.ts';
 import { collectObservations, placeDefaults } from './place.ts';
 import { changedLines, changedPaths, targetedReview } from './targeted.ts';
 import { reportListsCommit, storedBehaviors, storedReport } from './report.ts';
@@ -405,27 +406,12 @@ function renderLaterSlices(run: Run, slice: Slice) {
   return `## LATER SLICES\n\nLater slices of the plan build this work. Work a later slice lists is not a finding against this slice; this slice's own acceptance criteria, seams, and decisions still count in full, and code here that contradicts a later slice's plan is still a finding.\n\n${listed.join('\n\n')}`;
 }
 
-export type Review = NonNullable<Slice['review']>;
-
 function requireReview(run: Run, reviewId: string) {
   const slice = activeSlice(run);
   const review = slice?.review;
   if (review?.id !== reviewId) throw new Error(`Review ${reviewId} is not the active review.`);
   if (slice?.phase !== 'review') throw new Error(`Review ${reviewId} is already recorded.`);
   return review;
-}
-
-const domainFile = (ws: Workspace, run: Run, reviewId: string, domain: string) =>
-  join(reviewDir(ws, run.feature, reviewId), 'domains', `${domain}.json`);
-export const validationFile = (ws: Workspace, run: Run, reviewId: string) => join(reviewDir(ws, run.feature, reviewId), 'validation.json');
-const sha256 = (content: string) => createHash('sha256').update(content).digest('hex');
-
-/** Reads a review artifact only if it is byte-for-byte what the factory tool wrote. */
-export function readRecorded(path: string, recorded: { hash: string } | undefined) {
-  if (recorded === undefined) return undefined;
-  const content = existsSync(path) ? readFileSync(path, 'utf8') : '';
-  if (sha256(content) !== recorded.hash) throw new Error(`${path} changed after it was submitted. Start a new review.`);
-  return JSON.parse(content) as unknown;
 }
 
 /** Throws unless the finding names a changed path and, when it gives a line, a new-side line inside one of its hunks. */
@@ -519,76 +505,6 @@ function checkFixVerdicts(items: FixItem[], verdicts: FixVerdict[], decisionCoun
 
 export function readDomainFindings(ws: Workspace, run: Run, reviewId: string) {
   return recordedFindings(ws, run, requireReview(run, reviewId));
-}
-
-/** Every reviewed domain's submitted findings, read only where the file is what the factory tool wrote. */
-export function recordedFindings(ws: Workspace, run: Run, review: Review) {
-  const findings: Finding[] = [];
-  const missing: string[] = [];
-  for (const domain of reviewDomains(review.skipped)) {
-    const raw = readRecorded(domainFile(ws, run, review.id, domain), review.submissions[domain]);
-    if (raw === undefined) missing.push(domain);
-    else findings.push(...findingListSchema.parse(raw));
-  }
-  return { findings, missing };
-}
-
-export const validationSchema = z.object({
-  dropped: z
-    .array(
-      z.object({
-        duplicateOf: z
-          .string()
-          .min(1)
-          .optional()
-          .describe('Kept finding id this one repeats; the kept one must be at least as severe'),
-        id: z.string().min(1),
-        reason: z.string().min(1),
-      }),
-    )
-    .describe('Findings removed, each with a reason'),
-  downgrade: z
-    .array(
-      z.object({
-        category: z
-          .enum(OBSERVATION_CATEGORIES)
-          .optional()
-          .describe('Required when the reviewer gave the finding no category: what the observation is about (correctness, missing-test, misleading-doc, naming, structure or style); it sets where the observation goes by default'),
-        id: z.string().min(1),
-        reason: z.string().min(1),
-      }),
-    )
-    .default([])
-    .describe('critical/high findings the diff supports but that fail the correctness-or-requirements bar; kept as observations'),
-  escalate: z
-    .array(
-      z.object({
-        decision: z.number().int().positive().describe('Number of the recorded decision the code breaks'),
-        id: z.string().min(1),
-        reason: z.string().min(1),
-      }),
-    )
-    .default([])
-    .describe('observation findings that show the code breaks a recorded user decision; kept as high'),
-  keep: z.array(z.string().min(1)).describe('Ids of findings the diff substantiates, one per distinct problem'),
-});
-type Validation = z.infer<typeof validationSchema>;
-
-/**
- * Kept findings at the severity the gate uses: downgraded findings count as observations (with the category the
- * validator gave one that had none), escalated ones as high and carry the decision the validator cited.
- */
-export function keptFindings(findings: Finding[], validation: Validation) {
-  const downgraded = new Map(validation.downgrade.map(entry => [entry.id, entry.category]));
-  const escalated = new Map(validation.escalate.map(entry => [entry.id, entry.decision]));
-  return findings
-    .filter(finding => validation.keep.includes(finding.id) || downgraded.has(finding.id) || escalated.has(finding.id))
-    .map(finding => {
-      if (downgraded.has(finding.id)) return { ...finding, category: finding.category ?? downgraded.get(finding.id), severity: 'observation' as const };
-      const decision = escalated.get(finding.id);
-      if (decision !== undefined) return { ...finding, decision, severity: 'high' as const };
-      return finding;
-    });
 }
 
 /**
@@ -706,11 +622,6 @@ export type RecordedReview =
   | { kind: 'accepted-unresolved'; unresolved: string[] }
   | { blocking: number; fixPath: string; kind: 'fix'; open: number; stalled: boolean };
 
-/** The targeting a fix round after `review` leaves for the next review: the domains that need another look. */
-export function targetingAfter(review: { id: string; sha: string }, domains: readonly Domain[]) {
-  return { base: review.sha, domains: [...new Set(domains)], from: review.id };
-}
-
 /** Marks the slice's review green over `decisions`; `unresolved` are the items it is accepted with, if any. */
 function markGreen(slice: Slice, decisions: number, { full = false, targeted = false, unresolved }: { full?: boolean; targeted?: boolean; unresolved?: string[] }) {
   slice.phase = 'ready';
@@ -812,12 +723,6 @@ function renderOpenItem(item: FixItem, verdict: FixVerdict | undefined) {
   return `### \`${item.id}\`\n\n- Asked in: ${item.path} (round ${item.round})\n- Item: ${redact(item.summary)}\n- Scope reviewer: ${verdict === undefined ? 'no verdict' : evidence(verdict.reason, 2_000)}`;
 }
 
-/** A finding as a fix record in `group`: its id and summary `[severity] path:line: title` as the fix item. */
-export function findingRecord(finding: Finding, group: string, decisions: Decision[]): FixRecord {
-  const summary = `[${finding.severity}] ${findingLocation(finding)}: ${evidenceLine(finding.title, 500)}`;
-  return { group, item: { id: finding.id, summary }, section: renderFinding(finding, decisions, '###') };
-}
-
 /**
  * Moves every later slice branch onto the reopened slice's fixed tip, bottom up: each child goes from its parent's old
  * tip onto the parent's new tip, so it keeps only its own commits. Every old tip is snapshotted into a backup ref
@@ -906,7 +811,20 @@ export async function completeSlice(ws: Workspace, run: Run) {
     reopenReview(run, slice);
     throw new Invalidated(`${newerDecisions(run, covered)} newer than the green review, so its reviewers did not check the code against them. Call factory_review_start for a new review.`);
   }
-  const placedHere = await placeDefaults(ws, run);
+  const { fixes, placed: placedHere } = await placeDefaults(ws, run);
+  if (fixes.length > 0) {
+    const before = { observations: structuredClone(run.observations), slice: structuredClone(slice) };
+    try {
+      fixObservations(ws, run, { observations: fixes }, 'Default placement of the observations after the slice\'s final review.');
+    } catch (error) {
+      if (!placedHere || error instanceof Invalidated) throw error;
+      // Keep what the defaults already placed (an issue may be filed), undo the partly started fix round so a retry starts it.
+      run.observations = before.observations;
+      Object.assign(slice, before.slice);
+      throw new Invalidated(`Starting the fix round of slice ${slice.id} failed after its default observations were placed: ${error instanceof Error ? error.message : String(error)}. Call factory_complete_slice again.`);
+    }
+    return slice;
+  }
   if (slice.unplaced.length > 0) {
     throw new Error(`Slice ${slice.id} has unplaced observations: ${slice.unplaced.map(entry => entry.finding.id).join(', ')}. Place them with factory_place (placements [] takes every default), then call factory_complete_slice. A headless run places them by default in factory_complete_slice.`);
   }
