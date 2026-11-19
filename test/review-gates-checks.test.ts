@@ -151,6 +151,8 @@ describe('slice loop gates: checks and the fix budget', { concurrency: 4 }, () =
     assert.ok(result.passed);
     assert.match(result.summary.join('\n'), /flaky[\s\S]*first failed \(exit 1\) in \d+ms/);
     const after = readRun(ws, 'demo').slices[0];
+    const event = readRun(ws, 'demo').events.find(e => e.kind === 'checks-pass' && e.slice === after?.id);
+    assert.match(event?.detail ?? '', /flaky[\s\S]*first failed \(exit 1\) in \d+ms/);
     assert.equal(after?.fixRounds, 0);
     assert.equal(after?.fixPath, undefined);
 
