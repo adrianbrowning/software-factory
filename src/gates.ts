@@ -30,7 +30,7 @@ export async function gate(ctx: ExtensionContext, ws: Workspace, feature: string
   throw new Error(`The run is paused, ${reason}. /factory resume ${feature} continues it. Stop now.`);
 }
 
-/** One outside part for the dialog: capped at 1,000 characters, with the count of characters not shown. */
+/** One outside part for the dialog: the last 1,000 characters of the redacted text, preceded by a line saying how many characters are not shown. */
 function shown(text: string) {
   const hidden = redact(text).length - 1_000;
   return hidden > 0 ? `[${hidden} characters not shown]\n${evidence(text, 1_000)}` : evidence(text, 1_000);
