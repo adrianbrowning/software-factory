@@ -103,6 +103,28 @@ describe('/factory headless', () => {
     }
   });
 
+  it('starts a headless run covering the related issues, leaving out cross-repo text', async () => {
+    const mk = (n: string, url: string) => ({ author: { login: 'owner' }, body: `Text ${n}.`, comments: [{ author: { login: 'maint' }, authorAssociation: 'MEMBER', body: `Comment ${n}.` }], title: `Title ${n}`, url });
+    const issues = { 1: mk('1', 'https://github.com/o/r/issues/1'), 2: mk('2', 'https://github.com/o/r/issues/2'), 900: mk('900', 'https://github.com/evil/other/issues/900') };
+    using _gh = issueGh({ issues, owners: ['*/1', '*/900', '*/2'] });
+    using repo = tempRepo('factory-headless-related-', CHECKS_OK);
+    const { command } = session(repo.root);
+    await command('headless 1 --related #2,900');
+    const run = readRun({ config: loadConfig(repo.root), root: repo.root }, 'issue-1');
+    assert.equal(run.mode, 'headless');
+    assert.deepEqual(run.source.related?.map(item => item.ref), ['2', '900']);
+    assert.match(run.source.body, /Text 2\./);
+    assert.doesNotMatch(run.source.body, /Text 900\.|Comment 900\./);
+  });
+
+  it('refuses more than 20 --related refs before a run starts', async () => {
+    using repo = tempRepo('factory-headless-many-', CHECKS_OK);
+    const { command, sent } = session(repo.root);
+    const refs = Array.from({ length: 21 }, (_, i) => String(i + 1)).join(',');
+    await assert.rejects(Promise.resolve(command(`headless 294 --related ${refs}`)));
+    assert.deepEqual(sent, []);
+  });
+
   it('fails with the start error and sends nothing when the issue cannot be loaded', async () => {
     using repo = tempRepo('factory-headless-missing-', CHECKS_OK);
     const { command, sent } = session(repo.root);
