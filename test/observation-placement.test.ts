@@ -9,7 +9,8 @@ import { resetModuleState } from '../src/index.ts';
 import { carriedKeysLine, carriesKey } from '../src/legacy-observations.ts';
 import { type Finding, readRun, REVIEW_DOMAINS, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { defaultChoice } from '../src/place.ts';
-import { completeSlice, keptFindings, recordReview, runChecks, startReview, submitDomain, submitValidation, validationSchema } from '../src/review.ts';
+import { keptFindings, validationSchema } from '../src/review-record.ts';
+import { completeSlice, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
 import { addFollowUp, applyReslice, approvePlan, nextAction, nextSlice, planReslice, planSlices } from '../src/workflow.ts';
 import { CHECKS_OK, commit, fakeGh, finding, headlessSubmitRun, noFixItems, retroDoneRun, review, reviewActive, slice, submitGreenWithObservation, tempRepo } from './helpers.ts';
 

@@ -8,7 +8,7 @@ import { evidence, evidenceLine, redact } from './evidence.ts';
 import { draftOf, isRecordSlice, itemKey, requireSink } from './deferred.ts';
 import { findUnplaced, placeObservations, requireUnplaced } from './ledger.ts';
 import { carriedSection, renderFinding } from './finding-text.ts';
-import { findingRecord, keptFindings, readRecorded, recordedFindings, type Review, targetingAfter, validationFile, validationSchema } from './review.ts';
+import { findingRecord, keptFindings, readRecorded, recordedFindings, type Review, targetingAfter, validationFile, validationSchema } from './review-record.ts';
 import { addEvent, greenCommit, requireActive, type Finding, type Run, type Slice, type Workspace } from './run.ts';
 import { type FixRecord, needsFullReview, requestFix, writeTicket } from './workflow.ts';
 
