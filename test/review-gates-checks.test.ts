@@ -183,6 +183,17 @@ describe('slice loop gates: checks and the fix budget', { concurrency: 4 }, () =
     assert.ok(!(await step(ws2, run => runChecks(ws2, run))).passed);
     assert.equal(readFileSync(join(slow.root, 'n'), 'utf8').split('\n').filter(Boolean).length, 1);
   });
+  it('marks only the occurrence that failed as flaky when a check command is listed twice', async () => {
+    using counter = tempDir('factory-dup-');
+    const dup = `echo x >> '${counter.root}/n'; [ "$(wc -l < '${counter.root}/n')" -ne 1 ]`;
+    using ws = workspace({ checks: [dup, dup] });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'work.txt');
+    const result = await step(ws, run => runChecks(ws, run));
+    assert.ok(result.passed);
+    assert.equal(result.summary.filter(line => /flaky/.test(line)).length, 1);
+  });
 
   it('reports a check that runs past its timeout', async () => {
     using ws = workspace({ checks: ['sleep 5'], checkTimeoutMs: 100 });

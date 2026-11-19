@@ -185,7 +185,7 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   // same commit keeps its checks.
   const stored = standingChecks(slice, sha);
   if (stored !== undefined) return { commits, report, unchanged, ...(await passChecks(ws, run, slice, sha, stored, true)) };
-  const results: { command: string; result: CommandResult }[] = [];
+  const results: { command: string; first?: CommandResult; result: CommandResult }[] = [];
   const checkPath = [...ws.config.checkPath, process.env.PATH ?? ''].join(delimiter);
   const env = { ...process.env, PATH: checkPath };
   for (const command of run.checks) {
@@ -210,27 +210,26 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
     );
   }
   // Each failed check (not a timeout: a rerun could cost another full timeout) runs once more, as a whole command.
-  const firsts = new Map<string, CommandResult>();
   for (const entry of results) {
     if (entry.result.exitCode === 0 || entry.result.timedOut) continue;
     signal?.throwIfAborted();
-    firsts.set(entry.command, entry.result);
+    entry.first = entry.result;
     entry.result = await runShell(entry.command, ws.root, ws.config.checkTimeoutMs, signal, env);
   }
   signal?.throwIfAborted();
   const dirty = (await porcelain(ws.root)).trim();
   const failed = results.filter(({ result }) => result.exitCode !== 0 || result.timedOut);
-  const describe = (command: string, result: CommandResult) => {
-    const first = firsts.get(command);
+  const describe = ({ command, first, result }: { command: string; first?: CommandResult; result: CommandResult }) => {
     if (first === undefined) return describeCheck(command, result);
     if (result.exitCode === 0 && !result.timedOut) return `${command}: passed on rerun, flaky (first failed (exit ${first.exitCode}) in ${first.durationMs}ms)`;
     return `${describeCheck(command, result)} on rerun (first failed (exit ${first.exitCode}) in ${first.durationMs}ms)`;
   };
-  const summary = results.map(({ command, result }) => describe(command, result));
+  const summary = results.map(describe);
   if (failed.length === 0 && dirty === '') return { commits, report, unchanged, ...(await passChecks(ws, run, slice, sha, summary, false)) };
 
-  const records: FixRecord[] = failed.map(({ command, result }) => {
-    const described = describe(command, result);
+  const records: FixRecord[] = failed.map(entry => {
+    const { result } = entry;
+    const described = describe(entry);
     const section = `## ${described}\n\n### stdout\n\n\`\`\`\n${evidence(result.stdout)}\n\`\`\`\n\n### stderr\n\n\`\`\`\n${evidence(result.stderr)}\n\`\`\``;
     return { item: { kind: 'check', summary: described }, section };
   });
