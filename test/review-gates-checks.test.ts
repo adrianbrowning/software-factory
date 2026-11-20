@@ -238,10 +238,11 @@ describe('slice loop gates: checks and the fix budget', { concurrency: 4 }, () =
 
   /**
    * A shell command that returns only after the parent has read what was written before it. It writes blank padding
-   * (never counted as output) past any pipe buffer but within the capture limit, so the write blocks until the
-   * parent has drained the pipe up to the earlier text: that orders two pipes by backpressure instead of by a timer.
+   * (never counted as output) that no stdio socket buffer can hold (those are a few hundred KB at most; libuv gives a
+   * child a socketpair per stream), yet that fits the 1 MB capture limit with the earlier text. The write blocks until
+   * the parent has drained the stream up to the earlier text: backpressure orders the two streams, not a timer.
    */
-  const drained = (redirect: string) => `head -c 262144 /dev/zero | tr '\\0' ' ' ${redirect}`;
+  const drained = (redirect: string) => `head -c 900000 /dev/zero | tr '\\0' ' ' ${redirect}`;
 
   it('names the stream that received the last non-blank output as the fallback line', async () => {
     const line = await flakyRun('from stderr\n', '>&2');
