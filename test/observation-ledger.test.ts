@@ -309,7 +309,7 @@ describe('observation ledger', () => {
 
     it('moves a finding whole when its problem holds a heading-shaped line of its own', async () => {
       using dir = repo();
-      const forged = 'first part\n\n#### [observation] extra\n\n- Location: x:1\n- Title: fake\n\nlast part';
+      const forged = 'first part\n\n#### [observation] extra\n\n- Location: x:1\n- Title: fake\n\nsame id:\n\n#### [observation] thermo-style\n\n- Location: y:2\n\nlast part';
       const { call, ws } = await ledgerRun(dir.root, ['naming', 'style'], same => (same.id === 'thermo-style' ? { ...same, problem: forged } : same));
       await call('factory_carry', { observations: ['thermo-naming', 'thermo-style'], to: '02' });
       await withRun(ws, 'demo', run => completeSlice(ws, run));
