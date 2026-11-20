@@ -271,7 +271,8 @@ describe('batched observation placement', () => {
 
   it('a headless completion with a misleading-doc observation ends its other observations, starts an observation-only fix round and completes after it', async () => {
     using dir = repo();
-    const { call, ws } = await headlessSubmitRun(dir.root, ['Feature']);
+    const submitted: string[] = [];
+    const { call, ws } = await headlessSubmitRun(dir.root, ['Feature'], {}, {}, async (_ws, feature) => (submitted.push(feature), '\nSPY-SUBMITTED'));
     await withRun(ws, 'demo', run => runChecks(ws, run));
     const first = await withRun(ws, 'demo', run => startReview(ws, run));
     await review(ws, first.reviewId, [observation('doc', 'misleading-doc'), observation('gap', 'correctness')]);
@@ -284,6 +285,9 @@ describe('batched observation placement', () => {
     assert.equal(run.slices[0]?.phase, 'fix');
     assert.equal(run.slices[0]?.fixRounds, 0);
     assert.equal(run.waiting.length, 1);
+    assert.ok(!text.includes('SPY-SUBMITTED'), 'a slice back in fix opens no PRs');
+    assert.deepEqual(submitted, [], 'a slice back in fix does not call submitHeadless');
+    assert.ok(!run.events.some(event => ['submit', 'submit-failed', 'submission-stop'].includes(event.kind) || event.detail.includes('gate submission')), 'a slice back in fix records no submission');
     assert.deepEqual(run.observations.map(entry => [entry.id, entry.placement]), [['thermo-gap', 'carried'], ['thermo-doc', 'fixed']]);
     commit(ws, 'doc.txt');
     await withRun(ws, 'demo', current => runChecks(ws, current));
@@ -291,6 +295,19 @@ describe('batched observation placement', () => {
     await withRun(ws, 'demo', current => recordReview(ws, current));
     const done = await withRun(ws, 'demo', current => completeSlice(ws, current));
     assert.equal(done.status, 'done');
+  });
+
+  it('a headless completion that finishes the slice calls submitHeadless once and puts its text in the reply', async () => {
+    using dir = repo();
+    const submitted: string[] = [];
+    const { call, ws } = await headlessSubmitRun(dir.root, ['Feature'], {}, {}, async (_ws, feature) => (submitted.push(feature), '\nSPY-SUBMITTED'));
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    await review(ws, (await withRun(ws, 'demo', run => startReview(ws, run))).reviewId, []);
+    await withRun(ws, 'demo', run => recordReview(ws, run));
+    const text = (await call('factory_complete_slice', {})).content[0]?.text ?? '';
+    assert.match(text, /Slice 01 is done on /);
+    assert.match(text, /SPY-SUBMITTED/);
+    assert.deepEqual(submitted, ['demo']);
   });
 
   it('a headless completion whose observation fix round fails to start throws Invalidated, keeps the other defaults placed, leaves the slice unchanged, and the retry starts the round', async () => {

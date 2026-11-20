@@ -10,6 +10,7 @@ import { placeObservationBatch, planPlace } from '../src/place.ts';
 import { approvePlan, nextSlice, planSlices, startRun } from '../src/workflow.ts';
 import { type Command, ctx, load } from './extension.ts';
 import { parseRetro, recordRetro } from '../src/retro.ts';
+import type { submitHeadless } from '../src/headless-submit.ts';
 
 export function sh(root: string, ...args: string[]) {
   return execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim();
@@ -420,11 +421,11 @@ export const reviewActive = async (ws: Workspace, file: string, findings: Return
 export const HEADLESS_FILES = { 'demo.md': '# Demo\n\nDo it.\n', '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) };
 
 /** A headless run planned with `titles` (each blocked by the one before), whose UI throws on any dialog; slice 01 is active with `ok` committed. */
-export async function headlessSubmitRun(root: string, titles: string[], policy: Record<string, string> = {}, config: Record<string, unknown> = {}) {
+export async function headlessSubmitRun(root: string, titles: string[], policy: Record<string, string> = {}, config: Record<string, unknown> = {}, submit?: typeof submitHeadless) {
   writeFileSync(join(root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], headless: policy, ...config }));
   sh(root, 'commit', '-qam', 'policy');
   const commands = new Map<string, Command>();
-  const tools = load({ commands, sent: [] });
+  const tools = load({ commands, sent: [], submit });
   const noDialog = async (title: string) => {
     throw new Error(`dialog: ${title}`);
   };

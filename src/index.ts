@@ -208,8 +208,8 @@ export function stopDecision(run: Run, sessionId: string, previous: { count: num
   return { action: 'block' as const, attempts: { count, events: run.events.length } };
 }
 
-/** `checkGit` is the git-architecture check; tests replace it. */
-export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string | undefined = gitArchWarning) {
+/** `checkGit` is the git-architecture check and `submit` a headless run's own submission; tests replace them. */
+export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string | undefined = gitArchWarning, submit: typeof submitHeadless = submitHeadless) {
   // Under omp -p a bare sendUserMessage from a command handler is dropped before dispatch; an explicit steer starts the turn (smoke-tested: only it fires agent_start/turn_start).
   const sendContinuation = (text: string) => pi.sendUserMessage(text, { deliverAs: 'steer', attribution: 'agent' });
   pi.setLabel('Software Factory');
@@ -469,7 +469,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
     },
   });
 
-  registerReviewTools(tool);
+  registerReviewTools(tool, submit);
 
   tool({
     caller: 'main',
@@ -571,7 +571,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
         if (filed.error !== undefined) lines.push(`Filing stopped: ${filed.error}. Unfiled findings are marked in retro.md.`);
         return lines.join('\n');
       });
-      const submitted = await submitHeadless(ws, feature);
+      const submitted = await submit(ws, feature);
       return reply(`${recorded}${submitted}\nNext: ${nextAction(readRun(ws, feature))}`);
     },
   });
