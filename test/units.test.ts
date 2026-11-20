@@ -254,6 +254,7 @@ describe('evidence', () => {
     assert.equal(evidenceLine('{\\"token\\":\\"s3cr3t\\"}'), '{\\"token=<REDACTED>}');
     assert.equal(evidenceLine('PASSWORD="abc"def'), 'PASSWORD=<REDACTED>');
     assert.equal(evidenceLine("TOKEN='a'b"), 'TOKEN=<REDACTED>');
+    assert.doesNotMatch(redact(String.raw`{\"token\":\"abc\\\"secret def\"}`), /secret|def/);
   });
 
   it('redacts a long repeated-keyword word in linear time and still redacts long names', () => {
