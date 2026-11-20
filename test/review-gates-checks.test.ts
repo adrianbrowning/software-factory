@@ -217,15 +217,18 @@ describe('slice loop gates: checks and the fix budget', { concurrency: 4 }, () =
     assert.ok(line.split('last stdout line: ')[1]!.replace(/\)$/, '').length <= 300);
   });
 
-  it('names stderr as the stream of the fallback line when stderr has output, else stdout', async () => {
+  it('names the stream that received the last non-blank output as the fallback line', async () => {
     const line = await flakyRun('from stderr\n', '>&2');
     assert.match(line, /last stderr line: from stderr/);
     assert.ok(!line.includes('last stdout line'));
     assert.match(await flakyRun('from stdout\n'), /last stdout line: from stdout/);
-    const both = await flakyRun('', '', () => `printf 'earlier\\n' >&2; printf 'last\\n'`);
-    assert.match(both, /last stderr line: earlier/);
-    assert.ok(!both.includes('last stdout line'));
-    const blank = await flakyRun('', '', () => `printf ' \\n' >&2; printf 'last\\n'`);
+    const stdoutLast = await flakyRun('', '', () => `printf 'earlier\\n' >&2; sleep 0.2; printf 'last\\n'`);
+    assert.match(stdoutLast, /last stdout line: last/);
+    assert.ok(!stdoutLast.includes('earlier'));
+    const stderrLast = await flakyRun('', '', () => `printf 'earlier\\n'; sleep 0.2; printf 'last\\n' >&2`);
+    assert.match(stderrLast, /last stderr line: last/);
+    assert.ok(!stderrLast.includes('earlier'));
+    const blank = await flakyRun('', '', () => `printf 'last\\n'; sleep 0.2; printf ' \\n' >&2`);
     assert.match(blank, /last stdout line: last/);
   });
 

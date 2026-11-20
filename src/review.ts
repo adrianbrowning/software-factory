@@ -143,7 +143,7 @@ async function foreignCommits(ws: Workspace, run: Run, slice: Slice, own: string
 const MAX_NAMED_TESTS = 10;
 
 /** What a check's first failure reported: its failing tests (node:test spec `✖ failing tests:` entries, TAP `not ok` lines), else its last non-empty output line. */
-function firstFailureNames({ stderr, stdout }: CommandResult) {
+function firstFailureNames({ lastStream, stderr, stdout }: CommandResult) {
   const lines = `${stdout}\n${stderr}`.split(/\r?\n/);
   const names = new Set<string>();
   const section = lines.indexOf('✖ failing tests:');
@@ -159,9 +159,9 @@ function firstFailureNames({ stderr, stdout }: CommandResult) {
     if (tap) names.add(evidenceLine(tap[1] ?? ''));
   }
   if (names.size === 0) {
-    const fromStderr = stderr.split(/\r?\n/).findLast(line => line.trim() !== '');
-    const last = fromStderr ?? stdout.split(/\r?\n/).findLast(line => line.trim() !== '');
-    return last === undefined ? '' : `; last ${fromStderr === undefined ? 'stdout' : 'stderr'} line: ${evidenceLine(last, 299)}`;
+    const stream = lastStream ?? 'stdout';
+    const last = (stream === 'stderr' ? stderr : stdout).split(/\r?\n/).findLast(line => line.trim() !== '');
+    return last === undefined ? '' : `; last ${stream} line: ${evidenceLine(last, 299)}`;
   }
   const listed = [...names].slice(0, MAX_NAMED_TESTS).join(', ');
   const rest = names.size - MAX_NAMED_TESTS;
