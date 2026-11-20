@@ -209,6 +209,7 @@ export async function startRun(ws: Workspace, input: { annotate?: ((run: Run) =>
     retroRecorded: false,
     slices: [],
     source,
+    splitTitles: [],
     status: 'intake',
     trunk,
     version: 2,
@@ -428,7 +429,7 @@ export function planReslice(ws: Workspace, run: Run, proposed: unknown): Reslice
   first.status = 'active';
   // Carried-in work goes to the first child; moveCarried then hands each later child the items it names in `carried`.
   first.carried = active.carried;
-  moveCarried(active, childInputs, slices.slice(index, index + children.length), run.slices.map(slice => slice.title));
+  moveCarried(active, childInputs, slices.slice(index, index + children.length), [...run.slices.map(slice => slice.title), ...run.splitTitles]);
   // Unplaced observations of the split slice (red reviews' too) go with its work to the first child.
   first.unplaced = active.unplaced;
   const remap = renumbering(run, active, slices);
@@ -506,6 +507,7 @@ export async function applyReslice(ws: Workspace, run: Run, { renamed, slices }:
   }
   // Items a Record slice wrote follow its renumbering: the split slice to its first child, later ones to their remade slice.
   for (const item of run.deferred) item.recorded = (item.recorded === undefined ? undefined : renamed.get(item.recorded)) ?? item.recorded;
+  run.splitTitles.push(active.title);
   run.slices = slices;
   for (const slice of slices.filter(candidate => candidate.status !== 'done')) writeTicket(ws, run, slice);
   addEvent(

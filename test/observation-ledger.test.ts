@@ -231,6 +231,19 @@ describe('observation ledger', () => {
     assert.match(await knownOf(ws, call, 'second.txt'), /- `01-r1:thermo-naming` \(carried; carried to this slice: check it\): /);
   });
 
+  it('moves a carried item on a later reslice after the slice it was carried from was split into differently titled children', async () => {
+    using dir = repo();
+    const { call, ws } = await ledgerRun(dir.root, ['naming']);
+    await call('factory_carry', { observations: ['thermo-naming'], to: '02' });
+    await call('factory_reslice', { slices: [slice('Part one'), slice('Part two', ['Part one'])] });
+    await finishActive(ws, 'one.txt');
+    await finishActive(ws, 'two.txt');
+    await call('factory_reslice', { slices: [slice('Late one'), { ...slice('Late two', ['Late one']), carried: ['01-r1:thermo-naming'] }] });
+    const run = readRun(ws, 'demo');
+    assert.deepEqual(run.slices.find(item => item.title === 'Late one')?.carried, []);
+    assert.match(run.slices.find(item => item.title === 'Late two')?.carried.join('\n') ?? '', /\[observation\] thermo-naming/);
+  });
+
   describe('factory_reslice with carried keys', () => {
     /** Slice 01 done with the thermo observations `names` carried to slice 02, which is active and about to be split. */
     const carriedToActive = async (root: string, names: string[], note?: string) => {

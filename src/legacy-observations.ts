@@ -90,7 +90,7 @@ export function legacyObservations(carried: string[], deferred: LegacyDeferred[]
 /**
  * Moves the carried sections each child of a re-slice names (`carried` keys) from the first child to that child, whole.
  * Everything unnamed (sections, notes, sections without keys) stays with the first child. Throws, naming the key, for a
- * key the split slice does not carry, a key named twice, a key in a section without a keys line, or a key in a section
+ * key the split slice does not carry, a key named by two different children (a key one child lists twice is taken once), a key in a section without a keys line, or a key in a section
  * that lists several keys or also holds a note (from an older state file; it is not split); the children are built before it is called, so nothing is saved.
  */
 export function moveCarried(active: CarriedSlice, inputs: { carried?: string[] | undefined; title: string }[], children: CarriedSlice[], titles: string[]) {
