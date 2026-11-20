@@ -813,16 +813,11 @@ export async function completeSlice(ws: Workspace, run: Run) {
   }
   const { fixes, placed: placedHere } = await placeDefaults(ws, run);
   if (fixes.length > 0) {
-    const before = { observations: structuredClone(run.observations), slice: structuredClone(slice), events: run.events.length };
     try {
       fixObservations(ws, run, { observations: fixes }, 'Default placement of the observations after the slice\'s final review.');
     } catch (error) {
       if (!placedHere || error instanceof Invalidated) throw error;
-      // Keep what the defaults already placed (an issue may be filed), undo the partly started fix round so a retry starts it.
-      run.observations = before.observations;
-      Object.assign(slice, before.slice);
-      slice.targeting = before.slice.targeting;
-      run.events.length = before.events;
+      // The failed round changed nothing; what the defaults already placed stays (an issue may be filed), and a retry starts the round.
       throw new Invalidated(`Starting the fix round of slice ${slice.id} failed after its default observations were placed: ${error instanceof Error ? error.message : String(error)}. Call factory_complete_slice again.`);
     }
     return slice;

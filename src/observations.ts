@@ -10,7 +10,7 @@ import { findUnplaced, placeObservations, requireUnplaced } from './ledger.ts';
 import { carriedSection, renderFinding } from './finding-text.ts';
 import { findingRecord, keptFindings, readRecorded, recordedFindings, type Review, targetingAfter, validationFile, validationSchema } from './review-record.ts';
 import { addEvent, greenCommit, requireActive, type Finding, type Run, type Slice, type Workspace } from './run.ts';
-import { type FixRecord, needsFullReview, requestFix, writeTicket } from './workflow.ts';
+import { type FixRecord, needsFullReview, startFix, writeFixFile, writeTicket } from './workflow.ts';
 
 function noGreenReview(sliceId: string, purpose: string): Error {
   return new Error(`Slice ${sliceId} has no green review to ${purpose} from.`);
@@ -171,8 +171,6 @@ function unplacedObservations(run: Run, chosen: Set<string>) {
 export function fixObservations(ws: Workspace, run: Run, request: FixRequest, reason: string) {
   const { bug, groups, observations, review, slice } = planFix(ws, run, request);
   const ids = observations.map(finding => finding.id);
-  addEvent(run, 'fix-observations', `${groups.map(group => group.review.id).join(', ')}: ${[...(bug === undefined ? [] : ['bug']), ...ids].join(', ')}`, slice);
-  for (const group of groups) placeObservations(run, group.review, slice, group.observations, 'fixed');
   const why = evidence(reason, 4_000);
   const records: FixRecord[] = [
     ...(bug === undefined
@@ -187,9 +185,13 @@ export function fixObservations(ws: Workspace, run: Run, request: FixRequest, re
       group.observations.map(finding => findingRecord(finding, `## Observations from ${group.review.id === review.id ? 'green review' : 'review'} ${group.review.id} the user chose to fix\n\n${why}`, run.decisions)),
     ),
   ];
+  // The fix file is written before the run changes, so a failed write leaves the run as it was.
+  const written = writeFixFile(ws, run, slice, records);
+  addEvent(run, 'fix-observations', `${groups.map(group => group.review.id).join(', ')}: ${[...(bug === undefined ? [] : ['bug']), ...ids].join(', ')}`, slice);
+  for (const group of groups) placeObservations(run, group.review, slice, group.observations, 'fixed');
   // A bug round needs a full review; an observation-only round is reviewed only where it changed things (a targeted review).
   slice.targeting = bug === undefined ? targetingAfter(review, observations.map(finding => finding.domain)) : undefined;
-  return requestFix(ws, run, slice, review.sha, records, bug !== undefined);
+  return startFix(run, slice, review.sha, written, bug !== undefined);
 }
 
 /** What factory_leave takes: observation ids from a green review (as for factory_carry). */
