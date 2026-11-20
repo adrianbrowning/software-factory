@@ -185,7 +185,20 @@ describe('implementer sessions', () => {
     assert.match(stored, /Stored the report/);
     const before = readFileSync(file, 'utf8');
     await assert.rejects(call('factory_implementer_report', report(['(see git log)'], ['second']), implementer), /\(see git log\)/);
-    await assert.rejects(call('factory_implementer_report', report([`${otherSha.slice(0, 7)} base`], ['second']), implementer), /base/);
+    await assert.rejects(call('factory_implementer_report', report([`${otherSha.slice(0, 7)} base`], ['second']), implementer), (error: Error) => {
+      const [rejected = '', listed = ''] = error.message.split("The slice's commits:");
+      assert.ok(rejected.includes(`${otherSha.slice(0, 7)} base`));
+      assert.ok(listed.includes(`${sha.slice(0, 7)} work done`));
+      return true;
+    });
+    await assert.rejects(call('factory_implementer_report', report([`${sha.slice(0, 7)} work done`, '(see git log)', 'also bogus'], ['second']), implementer), (error: Error) => {
+      const [rejected = '', listed = ''] = error.message.split("The slice's commits:");
+      assert.ok(rejected.includes('(see git log)'));
+      assert.ok(rejected.includes('also bogus'));
+      assert.ok(!rejected.includes('work done'));
+      assert.ok(listed.includes(`${sha.slice(0, 7)} work done`));
+      return true;
+    });
     assert.equal(readFileSync(file, 'utf8'), before);
     assert.match(await call('factory_implementer_report', report([], ['third']), implementer), /Replaced the stored report/);
   });
