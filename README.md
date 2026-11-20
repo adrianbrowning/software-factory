@@ -175,6 +175,13 @@ issue. It needs a GitHub primary issue, not an issue file.
 Run it from a worktree of the repository, with checks configured (a headless start refuses a repository with no checks).
 The issue-text, planning, stop-report, observation and retro rules of a headless run are in `skills/software-factory/SKILL.md`.
 
+To work through a backlog, `scripts/headless-backlog.sh <issue> [<issue> ...]` runs one headless run per issue, one
+after the other, in the current worktree. Each run plans on a fresh `origin/main` and opens its own stack of draft PRs; a
+run that fails or pauses does not stop the next one. A done run is skipped and a run that is not done is resumed, so
+running the script again continues the backlog. It prints each run's status and PR URLs, and exits 1 when any issue did
+not end with a done run. Set `OMP` (default `,omp`), `PLUGIN_DIR` (default the installed plugin), `MAX_COST` (default
+25) and `MAX_TIME` (default 5400); the logs go to `<git dir>/headless-backlog/`.
+
 ### Land on an existing branch
 
 Use this when you want the work on a branch that you already have, and you do not want new PRs. At intake, tell
