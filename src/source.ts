@@ -4,12 +4,15 @@ import { z } from 'zod';
 import { git, gh } from './exec.ts';
 import { type Source, sourceSchema, type Workspace } from './run.ts';
 
+/** The most related issue refs a run takes; the one owner of the limit. */
+export const RELATED_MAX = 20;
+
 /** What `factory_start` takes: GitHub and file issues by reference (the tool loads them), Jira and pasted text in full. */
 export const sourceInputSchema = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('github'),
     ref: z.string().min(1).describe('Primary issue number or URL; the tool loads it with gh'),
-    related: z.array(z.string().min(1)).max(20).optional().describe('Up to 20 further issue numbers or URLs the run also covers; the tool loads each with its comments'),
+    related: z.array(z.string().min(1)).max(RELATED_MAX).optional().describe(`Up to ${RELATED_MAX} further issue numbers or URLs the run also covers; the tool loads each with its comments`),
   }),
   z.object({
     kind: z.literal('file'),

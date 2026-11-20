@@ -434,6 +434,12 @@ describe('headlessTarget', () => {
     assert.throws(() => headlessTarget('294 --related https://github.com/o?x/issues/209'), /--related/);
   });
 
+  it('limits --related to 20 refs in headlessTarget itself', () => {
+    const refs = (n: number) => Array.from({ length: n }, (_, i) => String(100 + i)).join(',');
+    assert.equal(headlessTarget(`294 --related ${refs(20)}`).source.related?.length, 20);
+    assert.throws(() => headlessTarget(`294 --related ${refs(21)}`), /--related takes at most 20 issue refs \(the limit is 20\)/);
+  });
+
   it('refuses invalid --related input', () => {
     assert.throws(() => headlessTarget('ticket.md --related 260'), /GitHub issue as the primary/);
     assert.throws(() => headlessTarget('294 --related'), /--related needs a value/);

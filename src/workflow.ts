@@ -6,7 +6,7 @@ import { effectiveModels } from './config.ts';
 import { evidence, evidenceLine } from './evidence.ts';
 import { git } from './exec.ts';
 import { isRecordSlice, recordFailed, waitsForRecord } from './deferred.ts';
-import type { SourceInput } from './source.ts';
+import { RELATED_MAX, type SourceInput } from './source.ts';
 import {
   activeSlice,
   addEvent,
@@ -63,6 +63,7 @@ export function headlessTarget(argument: string): { feature: string; source: Sou
   if (target.source.kind !== 'github') throw new Error('--related needs a GitHub issue as the primary ref, not an issue file.');
   if ((split[2] ?? '').trim() === '') throw new Error('--related needs a value: a comma-separated list of issue numbers, #numbers or GitHub issue URLs.');
   const items = split[2]!.trim().split(',').map(item => item.trim());
+  if (items.length > RELATED_MAX) throw new Error(`--related takes at most ${RELATED_MAX} issue refs (the limit is ${RELATED_MAX}).`);
   const related = items.map(item => {
     if (item === '') throw new Error('--related has an empty item in its comma-separated list.');
     const bare = /^#?(\d+)$/.exec(item);
