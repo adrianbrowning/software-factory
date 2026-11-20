@@ -80,16 +80,22 @@ describe('stopDecision', () => {
   describe('while the orchestrator waits on an ask', () => {
     const toolCall = (name: string) => ({ role: 'assistant', content: [{ type: 'toolCall', id: name, name, arguments: {} }] });
     const result = (name: string) => ({ role: 'toolResult', toolCallId: name, toolName: name, content: [] });
-    const askMessages = [{ role: 'user', content: 'go' }, toolCall('bash'), result('bash'), toolCall('ask'), result('ask')] as never;
+    const askMessages = [{ role: 'user', content: 'go' }, toolCall('bash'), result('bash'), toolCall('ask'), result('ask')];
 
     it('allows an interactive stop whose latest tool call is ask', () => {
       assert.equal(stopDecision(run(), 'owner', undefined, askMessages).action, 'allow');
     });
 
-    it('keeps blocking when the latest tool call is not ask, when there is none, and in a headless run', () => {
-      const afterAsk = [...(askMessages as unknown as object[]), toolCall('bash'), result('bash')] as never;
+    it('keeps blocking when another tool call follows the ask', () => {
+      const afterAsk = [...askMessages, toolCall('bash'), result('bash')];
       assert.equal(stopDecision(run(), 'owner', undefined, afterAsk).action, 'block');
-      assert.equal(stopDecision(run(), 'owner', undefined, [{ role: 'user', content: 'go' }] as never).action, 'block');
+    });
+
+    it('keeps blocking when there is no tool call', () => {
+      assert.equal(stopDecision(run(), 'owner', undefined, [{ role: 'user', content: 'go' }]).action, 'block');
+    });
+
+    it('keeps blocking in a headless run even when the latest tool call is ask', () => {
       assert.equal(stopDecision(run({ mode: 'headless' }), 'owner', undefined, askMessages).action, 'block');
     });
   });
@@ -231,16 +237,18 @@ describe('implementer sessions', () => {
     assert.deepEqual(await decisions(MAX_IDLE_STOP_ATTEMPTS, []), [...Array(MAX_IDLE_STOP_ATTEMPTS - 1).fill('block'), undefined]);
   });
 
-  it('keeps the owner idle count when another session stops in between', async () => {
-    using repo = emptyRepo();
-    const { handlers, main } = await startedRun(repo.root);
-    const stop = (sessionId: string) => handlers.get('session_stop')?.({ session_id: sessionId, messages: [], type: 'session_stop' }, main);
-    const actions: unknown[] = [];
-    for (let i = 0; i < MAX_IDLE_STOP_ATTEMPTS; i += 1) {
-      actions.push(((await stop('session')) as { decision?: string } | undefined)?.decision);
-      assert.equal(await stop('other'), undefined);
-    }
-    assert.deepEqual(actions, [...Array(MAX_IDLE_STOP_ATTEMPTS - 1).fill('block'), undefined]);
+  describe('stop gate, guard for existing behavior', () => {
+    it('keeps the owner idle count when another session stops in between', async () => {
+      using repo = emptyRepo();
+      const { handlers, main } = await startedRun(repo.root);
+      const stop = (sessionId: string) => handlers.get('session_stop')?.({ session_id: sessionId, messages: [], type: 'session_stop' }, main);
+      const actions: unknown[] = [];
+      for (let i = 0; i < MAX_IDLE_STOP_ATTEMPTS; i += 1) {
+        actions.push(((await stop('session')) as { decision?: string } | undefined)?.decision);
+        assert.equal(await stop('other'), undefined);
+      }
+      assert.deepEqual(actions, [...Array(MAX_IDLE_STOP_ATTEMPTS - 1).fill('block'), undefined]);
+    });
   });
 });
 
