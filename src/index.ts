@@ -187,7 +187,7 @@ function waitingOnAsk(messages: readonly unknown[] | undefined) {
 /** Stop gate: block a stop while the owner session's run is running, and pause it after repeated idle stops. An interactive run waiting on an ask is allowed to stop. */
 export function stopDecision(run: Run, sessionId: string, previous: { count: number; events: number } | undefined, messages?: readonly unknown[]) {
   if (run.ownerSessionId !== sessionId || run.status !== 'running') return { action: 'allow' as const };
-  if (run.mode !== 'headless' && waitingOnAsk(messages)) return { action: 'allow' as const, clear: true };
+  if (run.mode !== 'headless' && waitingOnAsk(messages)) return { action: 'wait' as const };
   const count = previous?.events === run.events.length ? previous.count + 1 : 1;
   if (count >= MAX_IDLE_STOP_ATTEMPTS) return { action: 'pause' as const };
   return { action: 'block' as const, attempts: { count, events: run.events.length } };
@@ -658,8 +658,9 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
       return;
     }
     const decision = stopDecision(run, event.session_id, stopAttempts.get(feature), event.messages);
-    if (decision.action === 'allow') {
-      if ('clear' in decision) stopAttempts.delete(feature);
+    if (decision.action === 'allow') return;
+    if (decision.action === 'wait') {
+      stopAttempts.delete(feature);
       return;
     }
     if (decision.action === 'pause') {

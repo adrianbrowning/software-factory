@@ -82,8 +82,8 @@ describe('stopDecision', () => {
     const result = (name: string) => ({ role: 'toolResult', toolCallId: name, toolName: name, content: [] });
     const askMessages = [{ role: 'user', content: 'go' }, toolCall('bash'), result('bash'), toolCall('ask'), result('ask')];
 
-    it('allows an interactive stop whose latest tool call is ask', () => {
-      assert.equal(stopDecision(run(), 'owner', undefined, askMessages).action, 'allow');
+    it('waits on an interactive stop whose latest tool call is ask', () => {
+      assert.equal(stopDecision(run(), 'owner', undefined, askMessages).action, 'wait');
     });
 
     it('keeps blocking when another tool call follows the ask', () => {
