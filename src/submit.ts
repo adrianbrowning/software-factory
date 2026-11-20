@@ -13,6 +13,7 @@ import { redact } from './evidence.ts';
 import { gh, git } from './exec.ts';
 import { head, requireClean } from './repo.ts';
 import { addEvent, greenCommit, type Run, type Slice, type Workspace } from './run.ts';
+import { RELATED_MAX } from './source.ts';
 
 /** The part of `gh stack view --json` submit reads: the stack's branches, bottom (closest to trunk) first, with each branch's PR when it has one. */
 const stackView = z.object({ branches: z.array(z.object({ name: z.string(), pr: z.object({ number: z.number(), url: z.string().optional() }).optional() })) });
@@ -184,8 +185,7 @@ const MARKER = '… (truncated)';
 // Per-field clips. The body is redacted per field, before the clip, so a clip never cuts a credential in half and leaves
 // a prefix redact no longer recognizes; the whole body is redacted once more at the end as a guarantee.
 const ITEM_CLIP = 1_000;
-/** The most Related lines a PR body lists, and the most each line's URL and title take: at most about 9,000 characters in all, so the closing sections always fit. */
-const RELATED_MAX = 20;
+/** The most each Related line's URL and title take (the line count is capped by RELATED_MAX): at most about 9,000 characters in all, so the closing sections always fit. */
 const RELATED_CLIP = 200;
 const ID_CLIP = 100;
 const TITLE_CLIP = 500;

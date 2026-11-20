@@ -637,10 +637,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
         // The command starts the run itself, so its mode is headless whatever the model does next.
         const target = headlessTarget(argument);
         const feature = target.feature;
-        // Enforces the source schema's limit of 20 related refs before a run starts.
-        const parsed = sourceInputSchema.safeParse(target.source);
-        if (!parsed.success) throw new Error('--related takes at most 20 issue refs (the limit is 20).');
-        const source = parsed.data;
+        const source = target.source;
         await startOrResume({ feature, mode: 'headless', source }, { entry: await cachedRoot(ctx.cwd), ws }, ctx);
         sendContinuation(`A headless software-factory run "${feature}" is started for: ${argument}\nRead skill://software-factory and continue it from its next action (${nextAction(readRun(ws, feature))}).`);
         return;
