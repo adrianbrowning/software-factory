@@ -37,15 +37,15 @@ export const SEVERITIES = ['critical', 'high', 'observation'] as const;
 export const OBSERVATION_CATEGORIES = ['correctness', 'missing-test', 'misleading-doc', 'naming', 'structure', 'style'] as const;
 export type ObservationCategory = (typeof OBSERVATION_CATEGORIES)[number];
 
-/** Where a slice's batch of observations puts one by default: work that is wrong or unproven waits in the end queue, taste is left. The 'misleading-doc': 'end' entry is only the fallback used once the slice already has an observation placed as fixed; defaultChoice in place.ts returns 'fix' before that. */
+/** Where a slice's batch of observations puts one by default: work that is wrong or unproven waits in the end queue, taste is left. 'fix-once' fixes the observation in this slice while the slice has none placed as fixed (so a slice never loops on fix rounds), then it takes the end-queue default. */
 export const DEFAULT_PLACEMENT = {
   correctness: 'end',
-  'misleading-doc': 'end',
+  'misleading-doc': 'fix-once',
   'missing-test': 'end',
   naming: 'leave',
   structure: 'leave',
   style: 'leave',
-} as const satisfies Record<ObservationCategory, 'end' | 'leave'>;
+} as const satisfies Record<ObservationCategory, 'end' | 'fix-once' | 'leave'>;
 export const SOURCE_KINDS = ['github', 'jira', 'file', 'text'] as const;
 
 /** One finding in the cc-pr-review-ci review.json shape. */
