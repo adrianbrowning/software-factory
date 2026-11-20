@@ -209,6 +209,32 @@ describe('batched observation placement', () => {
     assert.doesNotMatch(fixFile, /green review 01-r1/);
   });
 
+  it('moves an observation of a red review, carried to a later slice by factory_place, on a later reslice after its own slice was split into differently titled children', async () => {
+    using dir = repo();
+    const { call, full, ws } = await interactive(dir.root);
+    await full([finding('security', 'high', 'leak'), observation('naming', 'correctness')]);
+    commit(ws, 'more.txt');
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    await full([]);
+    await full([]);
+    await call('factory_place', { placements: [{ id: 'thermo-naming', placement: 'carry', to: '02' }] });
+    assert.match(readRun(ws, 'demo').slices[1]?.carried.join('\n') ?? '', /From review 01-r1 of slice 01/);
+    await call('factory_reslice', { slices: [slice('Part one'), slice('Part two', ['Part one'])] });
+    for (const file of ['one.txt', 'two.txt']) {
+      commit(ws, file);
+      await withRun(ws, 'demo', run => runChecks(ws, run));
+      const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+      await review(ws, reviewId, []);
+      await withRun(ws, 'demo', run => recordReview(ws, run));
+      await withRun(ws, 'demo', run => completeSlice(ws, run));
+      await withRun(ws, 'demo', run => nextSlice(ws, run));
+    }
+    await call('factory_reslice', { slices: [slice('Late one'), { ...slice('Late two', ['Late one']), carried: ['01-r1:thermo-naming'] }] });
+    const run = readRun(ws, 'demo');
+    assert.deepEqual(run.slices.find(item => item.title === 'Late one')?.carried, []);
+    assert.match(run.slices.find(item => item.title === 'Late two')?.carried.join('\n') ?? '', /\[observation\] thermo-naming/);
+  });
+
   it('factory_place with a failing deferred sink keeps the placements made before the failure, leaves the rest unplaced and starts no fix round', async () => {
     using gh = fakeGh();
     using dir = repo({ deferred: { kind: 'github' } });
