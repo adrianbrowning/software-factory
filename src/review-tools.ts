@@ -207,14 +207,17 @@ export function registerReviewTools(tool: RunTool) {
     name: 'factory_complete_slice',
     schema: emptySchema,
     async run(_params, { feature, ws }) {
-      const done = await withRun(ws, feature, async run => {
+      const { finished, message: done } = await withRun(ws, feature, async run => {
         const reopened = activeSlice(run)?.doneSha !== undefined;
         const slice = await completeSlice(ws, run);
-        if (slice.status !== 'done') return `Slice ${slice.id} is back in fix: its default placement fixes observations in this slice. Fix file: ${slice.fixPath ?? 'unknown'}`;
+        if (slice.status !== 'done') {
+          if (slice.fixPath === undefined) throw new Error(`Slice ${slice.id} is back in fix without a fix file.`);
+          return { finished: false, message: `Slice ${slice.id} is back in fix: its default placement fixes observations in this slice. Fix file: ${slice.fixPath}` };
+        }
         const restacked = reopened ? ' Every later slice branch is rebased onto it and earns its checks and review again.' : '';
-        return `Slice ${slice.id} is done on ${slice.branch}.${restacked}`;
+        return { finished: true, message: `Slice ${slice.id} is done on ${slice.branch}.${restacked}` };
       });
-      const submitted = done.includes('is back in fix') ? '' : await submitHeadless(ws, feature);
+      const submitted = finished ? await submitHeadless(ws, feature) : '';
       return reply(`${done}${submitted}\nNext: ${nextAction(readRun(ws, feature))}`);
     },
   });

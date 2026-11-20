@@ -284,6 +284,8 @@ describe('batched observation placement', () => {
     assert.equal(run.slices[0]?.phase, 'fix');
     assert.equal(run.slices[0]?.fixRounds, 0);
     assert.equal(run.waiting.length, 1);
+    assert.ok(!text.includes('Draft PRs'), 'a slice back in fix opens no PRs');
+    assert.ok(!run.events.some(event => ['submit', 'submit-failed', 'submission-stop'].includes(event.kind) || event.detail.includes('gate submission')), 'a slice back in fix records no submission');
     assert.deepEqual(run.observations.map(entry => [entry.id, entry.placement]), [['thermo-gap', 'carried'], ['thermo-doc', 'fixed']]);
     commit(ws, 'doc.txt');
     await withRun(ws, 'demo', current => runChecks(ws, current));
