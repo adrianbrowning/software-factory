@@ -177,10 +177,13 @@ The issue-text, planning, stop-report, observation and retro rules of a headless
 
 To work through a backlog, `scripts/headless-backlog.sh <issue> [<issue> ...]` runs one headless run per issue, one
 after the other, in the current worktree. Each run plans on a fresh `origin/main` and opens its own stack of draft PRs; a
-run that fails or pauses does not stop the next one. A done run is skipped and a run that is not done is resumed, so
-running the script again continues the backlog. It prints each run's status and PR URLs, and exits 1 when any issue did
-not end with a done run. Set `OMP` (default `,omp`), `PLUGIN_DIR` (default the installed plugin), `MAX_COST` (default
-25) and `MAX_TIME` (default 5400); the logs go to `<git dir>/headless-backlog/`.
+run that fails or pauses does not stop the next one. A run that omp leaves `running` (at `--max-time` or `--max-cost`)
+stops the batch, because it blocks every new run in the worktree. A done run with open PRs is skipped, and a run that is
+not done is resumed, so running the script again continues the backlog. A done run with no PRs (a failed submission or
+`headless.submission: "stop"`) is reported and skipped; `/factory submit` opens its PRs. The script prints each run's
+status and PR URLs, and exits 1 when any issue did not end with a done run whose PRs are open. Set `OMP` (default
+`,omp`), `PLUGIN_DIR` (default the installed plugin), `MAX_COST` (default 25) and `MAX_TIME` (default 5400); the logs go
+to `<git dir>/headless-backlog/`.
 
 ### Land on an existing branch
 
