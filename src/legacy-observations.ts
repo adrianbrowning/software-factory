@@ -88,7 +88,7 @@ export function legacyObservations(carried: string[], deferred: LegacyDeferred[]
  * Moves the carried sections each child of a re-slice names (`carried` keys) from the first child to that child, whole.
  * Everything unnamed (sections, notes, sections without keys) stays with the first child. Throws, naming the key, for a
  * key the split slice does not carry, a key named twice, a key in a section without a keys line, or a key in a section
- * that lists several keys (from an older state file; it is not split); the children are built before it is called, so nothing is saved.
+ * that lists several keys or also holds a note (from an older state file; it is not split); the children are built before it is called, so nothing is saved.
  */
 export function moveCarried(active: CarriedSlice, inputs: { carried?: string[] | undefined; title: string }[], children: CarriedSlice[]) {
   const [first] = children;
@@ -109,6 +109,7 @@ export function moveCarried(active: CarriedSlice, inputs: { carried?: string[] |
     const holder = active.carried.find(section => carriesKey(section, key) === true);
     if (holder !== undefined) {
       if ((carriedKeys(holder)?.length ?? 0) > 1) throw new Error(`Carried key ${key} is in a section that lists several keys (from an older state file), so it cannot move; it stays with the first child.`);
+      if (!holder.split('\n\n')[1]?.startsWith('#### [observation] ')) throw new Error(`Carried key ${key} is in a section that also holds a note (from an older state file), so it cannot move; the note stays with the first child.`);
       continue;
     }
     const keyless = active.carried.some(section => carriesKey(section, key) === undefined && isCarriedSectionOf(section, key.slice(0, Math.max(key.indexOf(':'), 0))) && renderedObservation(section, key.slice(key.indexOf(':') + 1)) !== undefined);
