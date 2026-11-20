@@ -19,10 +19,11 @@ export function isCarriedSectionOf(section: string, reviewId: string) {
 }
 
 const KEYS_PREFIX = 'Carried keys: ';
+const NO_KEYS = '(none)';
 
-/** The last line of a carried-in section: the ledger keys it carries, which `carriesKey` reads whatever the header says. */
+/** The last line of a carried-in section: the ledger keys it carries, which `carriesKey` reads whatever the header says. No keys (a note) writes `(none)`, so the section is never taken for one from before keys lines. */
 export function carriedKeysLine(keys: string[]) {
-  return `${KEYS_PREFIX}${keys.map(key => `\`${key}\``).join(', ')}`;
+  return `${KEYS_PREFIX}${keys.length === 0 ? NO_KEYS : keys.map(key => `\`${key}\``).join(', ')}`;
 }
 
 /** The keys line of `section`: its last line, when it starts with the prefix; notes are written through `noteText`, so they never end in one. */
@@ -45,7 +46,9 @@ export function carriesKey(section: string, key: string) {
 /** The ledger keys listed on the carried keys line of `section`; `undefined` for a section without one. */
 export function carriedKeys(section: string) {
   const line = keysLine(section);
-  return line === undefined ? undefined : line.slice(KEYS_PREFIX.length).split(', ').map(key => key.slice(1, -1));
+  if (line === undefined) return undefined;
+  const listed = line.slice(KEYS_PREFIX.length);
+  return listed === NO_KEYS ? [] : listed.split(', ').map(key => key.slice(1, -1));
 }
 
 /** What a rendered finding (`renderFinding`) says of itself: its location, title and problem. Undefined when `section` holds no such observation. */
@@ -95,8 +98,8 @@ export function moveCarried(active: CarriedSlice, inputs: { carried?: string[] |
   const named = new Map<string, number>();
   inputs.forEach(input => {
     const at = children.findIndex(child => child.title === input.title);
-    for (const key of input.carried ?? []) {
-      if (named.has(key)) throw new Error(`Carried key ${key} is named by two children; give it to the one child that builds it.`);
+    for (const key of new Set(input.carried ?? [])) {
+      if (named.has(key)) throw new Error(`Carried key ${key} is named by two children; name it under the one child that builds it and call again.`);
       named.set(key, at);
     }
   });
@@ -108,14 +111,15 @@ export function moveCarried(active: CarriedSlice, inputs: { carried?: string[] |
   for (const key of named.keys()) {
     const holder = active.carried.find(section => carriesKey(section, key) === true);
     if (holder !== undefined) {
-      if ((carriedKeys(holder)?.length ?? 0) > 1) throw new Error(`Carried key ${key} is in a section that lists several keys (from an older state file), so it cannot move; it stays with the first child.`);
-      const heading = `#### [observation] ${key.slice(key.indexOf(':') + 1)}`;
-      const blocks = holder.split('\n\n');
-      if (blocks[1] !== heading || !blocks[2]?.startsWith('- Location: ')) throw new Error(`Carried key ${key} is in a section that also holds a note (from an older state file), so it cannot move; the note stays with the first child.`);
+      if ((carriedKeys(holder)?.length ?? 0) > 1) throw new Error(`Carried key ${key} is in a section that lists several keys (from an older state file), so it cannot move; drop it from \`carried\` and call again, the section stays with the first child.`);
+      // The header holds the split slice's title, which may hold blank lines, so find the heading by position, not by blocks.
+      const heading = `\n\n#### [observation] ${key.slice(key.indexOf(':') + 1)}\n\n- Location: `;
+      const at = holder.indexOf(heading);
+      if (at < 0 || !holder.startsWith('### From ') || holder.slice(0, at).includes('\n\n#### [')) throw new Error(`Carried key ${key} is in a section that also holds a note (from an older state file), so it cannot move; drop it from \`carried\` and call again, the section stays with the first child.`);
       continue;
     }
     const keyless = active.carried.some(section => carriesKey(section, key) === undefined && isCarriedSectionOf(section, key.slice(0, Math.max(key.indexOf(':'), 0))) && renderedObservation(section, key.slice(key.indexOf(':') + 1)) !== undefined);
-    throw new Error(keyless ? `Carried key ${key} is in a section without a Carried keys line, so it cannot move; it stays with the first child.` : `Slice ${active.id} does not carry ${key}.`);
+    throw new Error(keyless ? `Carried key ${key} is in a section without a Carried keys line, so it cannot move; drop it from \`carried\` and call again, the section stays with the first child.` : `Slice ${active.id} does not carry ${key}.`);
   }
   first.carried = active.carried.filter(section => destination(section) === 0);
   children.forEach((child, at) => {

@@ -729,7 +729,7 @@ describe('used-up fix budget', () => {
     assert.deepEqual(readRun(ws, 'demo').slices.map(item => ({ ...item, unplaced: [] })), before.map(item => ({ ...item, unplaced: [] })));
 
     const status = await call('factory_status', {});
-    assert.match(status.content[0]?.text ?? '', /"waiting": \[\n\s+"### From green review 01-r1 of slice 01 \\"Feature\\"\\n\\nLog the parse time\.",\n\s+"### From green review 01-r1 of slice 01 \\"Feature\\"\\n\\n#### \[observation\] thermo-naming/);
+    assert.match(status.content[0]?.text ?? '', /"waiting": \[\n\s+"### From green review 01-r1 of slice 01 \\"Feature\\"\\n\\nLog the parse time\.\\n\\nCarried keys: \(none\)",\n\s+"### From green review 01-r1 of slice 01 \\"Feature\\"\\n\\n#### \[observation\] thermo-naming/);
 
     await withRun(ws, 'demo', current => completeSlice(ws, current));
     await assert.rejects(call('factory_retro', { findings: [] }), /Carried items wait for the end of the run \(2\)\. Call factory_follow_up for them/);

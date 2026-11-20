@@ -15,7 +15,7 @@ export function renderFinding(finding: Finding, decisions: Decision[], heading =
 export function carriedSections(run: Run, review: { id: string }, slice: Pick<Slice, 'id' | 'title'>, observations: Finding[], note?: string, green = true) {
   const header = carriedHeader(review.id, slice, green);
   return [
-    ...(note === undefined ? [] : [`${header}\n\n${noteText(redact(note))}`]),
+    ...(note === undefined ? [] : [`${header}\n\n${noteText(redact(note))}\n\n${carriedKeysLine([])}`]),
     ...observations.map(finding => `${header}\n\n${renderFinding(finding, run.decisions, '####')}\n\n${carriedKeysLine([itemKey(review.id, finding.id)])}`),
   ];
 }
