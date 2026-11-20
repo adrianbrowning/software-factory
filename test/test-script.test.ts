@@ -7,8 +7,8 @@ import { after, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 // Seam: `pnpm run test [files...]` (package.json script -> scripts/test.sh): exit code and node test summary.
-// Named-file cases run pnpm in the real repo (real package.json, real git-env.ts preload) against temp fixture files.
-// The no-argument case runs pnpm in a temp copy of package.json + scripts/test.sh with a small test/ tree, so it never recurses into the real suite.
+// Everything runs pnpm in a temp project (copies of the real package.json, scripts/test.sh and test/git-env.ts) so a regressed script can never recurse into the real suite.
+// Named files are temp fixtures outside the project's test/ dir; the no-argument case uses the project's small test/ tree.
 const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
 
 const pass = (name: string) => `import { test } from 'node:test';\ntest('${name}', () => {});\n`;
@@ -43,7 +43,7 @@ before(() => {
   mkdirSync(join(project, 'test'));
   copyFileSync(join(repo, 'package.json'), join(project, 'package.json'));
   copyFileSync(join(repo, 'scripts', 'test.sh'), join(project, 'scripts', 'test.sh'));
-  writeFileSync(join(project, 'test', 'git-env.ts'), "process.env.GIT_CONFIG_GLOBAL = '/dev/null';\n");
+  copyFileSync(join(repo, 'test', 'git-env.ts'), join(project, 'test', 'git-env.ts'));
   writeFileSync(join(project, 'test', 'one.test.ts'), pass('one-test'));
   writeFileSync(join(project, 'test', 'two.test.ts'), pass('two-test'));
   writeFileSync(join(project, 'test', 'preload.test.ts'), preloadCheck);
@@ -56,20 +56,20 @@ after(() => {
 
 describe('pnpm run test', () => {
   it('runs only the named file, with the real git-env.ts preload active', () => {
-    const { status, out } = pnpmTest(repo, [join(fixtures, 'preload.test.ts')]);
+    const { status, out } = pnpmTest(project, [join(fixtures, 'preload.test.ts')]);
     assert.equal(status, 0, out);
     assert.match(out, /tests 1\b/);
     assert.match(out, /preload-active/);
   });
 
   it('runs several named files and nothing else', () => {
-    const { status, out } = pnpmTest(repo, [join(fixtures, 'a.test.ts'), join(fixtures, 'b.test.ts')]);
+    const { status, out } = pnpmTest(project, [join(fixtures, 'a.test.ts'), join(fixtures, 'b.test.ts')]);
     assert.equal(status, 0, out);
     assert.match(out, /tests 2\b/);
   });
 
   it('exits non-zero when a named file fails', () => {
-    const { status, out } = pnpmTest(repo, [join(fixtures, 'fail.test.ts')]);
+    const { status, out } = pnpmTest(project, [join(fixtures, 'fail.test.ts')]);
     assert.notEqual(status, 0, out);
     assert.match(out, /fail 1\b/);
   });
