@@ -432,16 +432,31 @@ describe('observation ledger', () => {
       assert.match(bodies[0] ?? '', /Part one\n[^]*carried: 01-r1:thermo-naming\n[^]*Part two\n[^]*carried: 01-r1:thermo-style\n/);
     });
 
-    it('moves a one-item section whose split slice title holds a blank line', async () => {
+    it('refuses to move a section whose split slice title holds a blank line, which stays with the first child', async () => {
       using dir = repo();
       const { call, ws } = await carriedToActive(dir.root, ['naming']);
       await withRun(ws, 'demo', run => {
         const active = run.slices.find(item => item.status === 'active') ?? assert.fail('no active slice');
         active.carried = active.carried.map(section => section.replace('"Feature"', '"Fea\n\nture"'));
       });
-      await call('factory_reslice', { slices: [slice('Part one'), { ...slice('Part two', ['Part one']), carried: ['01-r1:thermo-naming'] }] });
-      assert.match(ticketOf(ws, 'Part two').text, /\[observation\] thermo-naming/);
-      assert.deepEqual(ticketOf(ws, 'Part one').found.carried, []);
+      await assert.rejects(call('factory_reslice', { slices: [slice('Part one'), { ...slice('Part two', ['Part one']), carried: ['01-r1:thermo-naming'] }] }), /01-r1:thermo-naming/);
+      await call('factory_reslice', { slices: [slice('Part one'), slice('Part two', ['Part one'])] });
+      assert.match(ticketOf(ws, 'Part one').text, /\[observation\] thermo-naming/);
+      assert.deepEqual(ticketOf(ws, 'Part two').found.carried, []);
+    });
+
+    it('refuses a key in a legacy section whose note between the header and the item ends in a double quote', async () => {
+      using dir = repo();
+      const { call, ws } = await carriedToActive(dir.root, ['naming']);
+      await withRun(ws, 'demo', run => {
+        const active = run.slices.find(item => item.status === 'active') ?? assert.fail('no active slice');
+        const [one = ''] = active.carried;
+        const [header = '', ...rest] = one.split('\n\n');
+        active.carried = [[header, 'Mind "this"', ...rest].join('\n\n')];
+      });
+      const before = readRun(ws, 'demo');
+      await assert.rejects(call('factory_reslice', { slices: [slice('Part one'), { ...slice('Part two', ['Part one']), carried: ['01-r1:thermo-naming'] }] }), /01-r1:thermo-naming.*note/);
+      assert.deepEqual(readRun(ws, 'demo'), before);
     });
 
     it('takes a key one child lists twice, and refuses only a key two children name', async () => {

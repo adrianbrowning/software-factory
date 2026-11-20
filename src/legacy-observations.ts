@@ -26,7 +26,7 @@ export function carriedKeysLine(keys: string[]) {
   return `${KEYS_PREFIX}${keys.length === 0 ? NO_KEYS : keys.map(key => `\`${key}\``).join(', ')}`;
 }
 
-/** The keys line of `section`: its last line, when it starts with the prefix; notes are written through `noteText`, so they never end in one. */
+/** The keys line of `section`: its last line, when it starts with the prefix. A note's line is `(none)`; `noteText` indents keys-like lines inside note text so they are never last. */
 function keysLine(section: string) {
   const line = section.split('\n').at(-1);
   return line?.startsWith(KEYS_PREFIX) === true ? line : undefined;
@@ -37,7 +37,7 @@ export function noteText(note: string) {
   return note.replace(/^Carried keys: /gm, ' Carried keys: ');
 }
 
-/** Whether `section` lists `key` in its carried keys line. `undefined` for a section without one (a carried note, or a section from an older state file). */
+/** Whether `section` lists `key` in its carried keys line. `undefined` only for a section from an older state file without one; a note returns false. */
 export function carriesKey(section: string, key: string) {
   const line = keysLine(section);
   return line === undefined ? undefined : line.slice(KEYS_PREFIX.length).split(', ').includes(`\`${key}\``);
@@ -112,12 +112,12 @@ export function moveCarried(active: CarriedSlice, inputs: { carried?: string[] |
     const holder = active.carried.find(section => carriesKey(section, key) === true);
     if (holder !== undefined) {
       if ((carriedKeys(holder)?.length ?? 0) > 1) throw new Error(`Carried key ${key} is in a section that lists several keys (from an older state file), so it cannot move; drop it from \`carried\` and call again, the section stays with the first child.`);
-      // The header holds the split slice's title, which may hold blank lines, so find the heading by position, not by blocks.
-      const heading = `\n\n#### [observation] ${key.slice(key.indexOf(':') + 1)}\n\n- Location: `;
-      const at = holder.indexOf(heading);
+      // The section must be the whole one-line header, then the key's item heading; anything between them (a note) or a title with a newline is refused.
       const review = key.slice(0, Math.max(key.indexOf(':'), 0));
-      const header = at < 0 ? '' : holder.slice(0, at);
-      if (at < 0 || !isCarriedSectionOf(header, review) || !/^### From (?:green )?review \S+ of slice \S+ ".*"$/s.test(header) || header.includes('\n\n#### [')) throw new Error(`Carried key ${key} is in a section that also holds a note (from an older state file), so it cannot move; drop it from \`carried\` and call again, the section stays with the first child.`);
+      const heading = `\n\n#### [observation] ${key.slice(key.indexOf(':') + 1)}\n\n- Location: `;
+      const [headerLine = ''] = holder.split('\n');
+      const wellFormed = headerLine.endsWith('"') && isCarriedSectionOf(headerLine, review) && /^### From (?:green )?review \S+ of slice \S+ ".*"$/.test(headerLine) && holder.startsWith(`${headerLine}${heading}`);
+      if (!wellFormed) throw new Error(`Carried key ${key} is in a section that also holds a note or a slice title with a newline (from an older state file), so it cannot move; drop it from \`carried\` and call again, the section stays with the first child.`);
       continue;
     }
     const keyless = active.carried.some(section => carriesKey(section, key) === undefined && isCarriedSectionOf(section, key.slice(0, Math.max(key.indexOf(':'), 0))) && renderedObservation(section, key.slice(key.indexOf(':') + 1)) !== undefined);
