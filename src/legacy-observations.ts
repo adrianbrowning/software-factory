@@ -109,7 +109,9 @@ export function moveCarried(active: CarriedSlice, inputs: { carried?: string[] |
     const holder = active.carried.find(section => carriesKey(section, key) === true);
     if (holder !== undefined) {
       if ((carriedKeys(holder)?.length ?? 0) > 1) throw new Error(`Carried key ${key} is in a section that lists several keys (from an older state file), so it cannot move; it stays with the first child.`);
-      if (holder.split('\n\n')[1] !== `#### [observation] ${key.slice(key.indexOf(':') + 1)}`) throw new Error(`Carried key ${key} is in a section that also holds a note (from an older state file), so it cannot move; the note stays with the first child.`);
+      const heading = `#### [observation] ${key.slice(key.indexOf(':') + 1)}`;
+      const blocks = holder.split('\n\n');
+      if (blocks[1] !== heading || !blocks[2]?.startsWith('- Location: ') || blocks.filter(block => block === heading).length > 1) throw new Error(`Carried key ${key} is in a section that also holds a note (from an older state file), so it cannot move; the note stays with the first child.`);
       continue;
     }
     const keyless = active.carried.some(section => carriesKey(section, key) === undefined && isCarriedSectionOf(section, key.slice(0, Math.max(key.indexOf(':'), 0))) && renderedObservation(section, key.slice(key.indexOf(':') + 1)) !== undefined);

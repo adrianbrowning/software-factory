@@ -341,7 +341,7 @@ describe('observation ledger', () => {
         const active = run.slices.find(item => item.status === 'active') ?? assert.fail('no active slice');
         const [one = ''] = active.carried;
         const [header = '', ...rest] = one.split('\n\n');
-        active.carried = [[header, '#### [observation] thermo-naming\nMind this.', ...rest].join('\n\n')];
+        active.carried = [[header, '#### [observation] thermo-naming', 'Mind this.', ...rest].join('\n\n')];
       });
       const before = { run: readRun(ws, 'demo'), ticket: ticketOf(ws, 'Second').text };
       await assert.rejects(call('factory_reslice', { slices: [slice('Part one'), { ...slice('Part two', ['Part one']), carried: ['01-r1:thermo-naming'] }] }), /01-r1:thermo-naming.*note/);
