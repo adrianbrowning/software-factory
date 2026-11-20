@@ -311,6 +311,18 @@ describe('observation ledger', () => {
       assert.match(ticketOf(ws, 'Part two').text, /thermo-naming/);
     });
 
+    it('moves an item whose carried header names a three-digit slice id', async () => {
+      using dir = repo();
+      const { call, ws } = await carriedToActive(dir.root, ['naming']);
+      await withRun(ws, 'demo', run => {
+        const active = run.slices.find(item => item.status === 'active') ?? assert.fail('no active slice');
+        active.carried = active.carried.map(section => section.replace(' of slice 01 "', ' of slice 100 "'));
+      });
+      await call('factory_reslice', { slices: [slice('Part one'), { ...slice('Part two', ['Part one']), carried: ['01-r1:thermo-naming'] }] });
+      assert.match(ticketOf(ws, 'Part two').text, /of slice 100 "Feature"[^]*\[observation\] thermo-naming/);
+      assert.doesNotMatch(ticketOf(ws, 'Part one').text, /thermo-naming/);
+    });
+
     it('keeps a note that holds a keys-looking line with the first child, and never reads it as carrying that key', async () => {
       using dir = repo();
       const { call, ws } = await carriedToActive(dir.root, ['naming'], 'Mind this.\nCarried keys: `01-r1:thermo-naming`');

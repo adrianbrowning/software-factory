@@ -112,14 +112,15 @@ export function moveCarried(active: CarriedSlice, inputs: { carried?: string[] |
     const holder = active.carried.find(section => carriesKey(section, key) === true);
     if (holder !== undefined) {
       if ((carriedKeys(holder)?.length ?? 0) > 1) throw new Error(`Carried key ${key} is in a section that lists several keys (from an older state file), so it cannot move; drop it from \`carried\` and call again, the section stays with the first child.`);
-      // The section must start with an exact carried header (any slice of the run, green or not, any two-digit id), a blank line, then the key's item heading; a note between them is refused.
+      // The section must start with an exact carried header (any slice of the run, green or not, any numeric id of two or more digits), a blank line, then the key's item heading; a note between them is refused.
       const review = key.slice(0, Math.max(key.indexOf(':'), 0));
       const heading = `\n\n#### [observation] ${key.slice(key.indexOf(':') + 1)}\n\n- Location: `;
       const wellFormed = titles.some(title =>
         [true, false].some(green => {
           const header = carriedHeader(review, { id: '00', title }, green);
           const idAt = header.indexOf(' of slice ') + ' of slice '.length;
-          return holder.startsWith(header.slice(0, idAt)) && /^\d{2}$/.test(holder.slice(idAt, idAt + 2)) && holder.slice(idAt + 2).startsWith(`${header.slice(idAt + 2)}${heading}`);
+          const idLength = /^\d{2,}/.exec(holder.slice(idAt))?.[0].length;
+          return idLength !== undefined && holder.startsWith(header.slice(0, idAt)) && holder.slice(idAt + idLength).startsWith(`${header.slice(idAt + 2)}${heading}`);
         }),
       );
       if (!wellFormed) throw new Error(`Carried key ${key} is in a section that also holds a note (from an older state file), so it cannot move; drop it from \`carried\` and call again, the section stays with the first child.`);
