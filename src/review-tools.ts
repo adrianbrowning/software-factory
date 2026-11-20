@@ -170,7 +170,7 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
   tool({
     caller: 'main',
     description:
-      'After the slice\'s final full green review, place every unplaced observation of the slice in one batch, after the user agreed to the defaults and exceptions: fix (back to the fix loop, no fix budget used), carry to a pending slice (to), end (the queue for the next factory_follow_up slice), defer (the deferred sink) or leave. List only the exceptions; each other unplaced observation gets its default by category (correctness, missing-test to end; misleading-doc to fix in this slice, unless the slice already had an observation placed as fixed, then to end; naming, structure, style to leave). One confirm asks in an interactive run. Refuses an id already placed or not unplaced on the slice.',
+      'After the slice\'s final full green review, place every unplaced observation of the slice in one batch, after the user agreed to the defaults and exceptions: fix (back to the fix loop, no fix budget used), carry to a pending slice (to), end (the queue for the next factory_follow_up slice), defer (the deferred sink) or leave. List only the exceptions; each other unplaced observation gets its default by category (correctness, missing-test to end, except correctness on a follow-up slice built from end-queue items, which is fixed in this slice like misleading-doc; misleading-doc to fix in this slice, unless the slice already had an observation placed as fixed, then to end; naming, structure, style to leave). One confirm asks in an interactive run. Refuses an id already placed or not unplaced on the slice.',
     label: 'Factory: place observations',
     name: 'factory_place',
     schema: placeSchema,
@@ -202,7 +202,7 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
 
   tool({
     caller: 'main',
-    description: 'Mark the green slice done. Refuses while the slice has unplaced observations (factory_place); a headless run places them by default first, and when a default is a fix (misleading-doc) it starts the observation-only fix round, leaves the slice active in fix and names the fix file. HEAD must be the reviewed commit. A reopened slice rebases every later slice branch onto its fix.',
+    description: 'Mark the green slice done. Refuses while the slice has unplaced observations (factory_place); a headless run places them by default first, and when a default is a fix (misleading-doc, or correctness on a follow-up slice built from end-queue items) it starts the observation-only fix round, leaves the slice active in fix and names the fix file. HEAD must be the reviewed commit. A reopened slice rebases every later slice branch onto its fix.',
     label: 'Factory: complete slice',
     name: 'factory_complete_slice',
     schema: emptySchema,

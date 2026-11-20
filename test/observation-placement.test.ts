@@ -310,6 +310,51 @@ describe('batched observation placement', () => {
     assert.deepEqual(submitted, ['demo']);
   });
 
+  it('a correctness observation of a follow-up slice built from end-queue items defaults to fix until the slice has one placed as fixed', async () => {
+    using dir = repo();
+    const { full, ws } = await interactive(dir.root);
+    await full([observation('gap', 'correctness'), observation('test', 'missing-test')]);
+    const run = readRun(ws, 'demo');
+    const base = run.slices[0];
+    const gap = base?.unplaced.find(entry => entry.finding.id === 'thermo-gap');
+    const test = base?.unplaced.find(entry => entry.finding.id === 'thermo-test');
+    if (base === undefined || gap === undefined || test === undefined) throw new Error('missing');
+    const sink = { ...ws, config: { ...ws.config, deferred: { kind: 'github' as const } } };
+    const held = { id: 'x', key: 'k', location: 'a', placement: 'fixed' as const, problem: 'p', review: '01-r0', slice: base.id, title: 't' };
+    const after = { ...run, observations: [...run.observations, held] };
+    const follow = { ...base, fromEndQueue: true as const };
+    assert.equal(defaultChoice(ws, run, follow, gap), 'fix');
+    assert.equal(defaultChoice(sink, run, follow, gap), 'fix');
+    assert.equal(defaultChoice(sink, after, follow, gap), 'defer');
+    assert.equal(defaultChoice(ws, after, follow, gap), 'leave');
+    assert.equal(defaultChoice(ws, run, base, gap), 'end');
+    assert.equal(defaultChoice(ws, run, follow, test), 'leave');
+  });
+
+  it('a headless completion of a follow-up slice with a correctness observation starts the observation-only fix round', async () => {
+    using dir = repo();
+    const { call, ws } = await headlessSubmitRun(dir.root, ['Feature']);
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const first = await withRun(ws, 'demo', run => startReview(ws, run));
+    await review(ws, first.reviewId, [observation('gap', 'correctness')]);
+    await withRun(ws, 'demo', run => recordReview(ws, run));
+    await withRun(ws, 'demo', run => completeSlice(ws, run));
+    await withRun(ws, 'demo', run => addFollowUp(ws, run, slice('Follow up', [])));
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    commit(ws, 'follow.txt');
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const second = await withRun(ws, 'demo', run => startReview(ws, run));
+    await review(ws, second.reviewId, [{ ...observation('again', 'correctness'), path: 'follow.txt' }]);
+    await withRun(ws, 'demo', run => recordReview(ws, run));
+    const text = (await call('factory_complete_slice', {})).content[0]?.text ?? '';
+    assert.match(text, /Fix file: \S+/);
+    const run = readRun(ws, 'demo');
+    const active = run.slices.find(entry => entry.status === 'active');
+    assert.equal(active?.phase, 'fix');
+    assert.equal(active?.fixRounds, 0);
+    assert.equal(run.observations.find(entry => entry.id === 'thermo-again')?.placement, 'fixed');
+  });
+
   it('a headless completion whose observation fix round fails to start throws Invalidated, keeps the other defaults placed, leaves the slice unchanged, and the retry starts the round', async () => {
     using dir = repo();
     const { ws } = await headlessSubmitRun(dir.root, ['Feature']);
@@ -405,7 +450,7 @@ describe('batched observation placement', () => {
       await withRun(ws, 'demo', run => nextSlice(ws, run));
       commit(ws, 'follow.txt');
       await withRun(ws, 'demo', run => runChecks(ws, run));
-      const text = (await full([{ ...observation('again', 'correctness'), path: 'follow.txt' }])).content[0]?.text ?? '';
+      const text = (await full([{ ...observation('again', 'missing-test'), path: 'follow.txt' }])).content[0]?.text ?? '';
       assert.match(text, new RegExp(`thermo-again[\\s\\S]*Default placement: ${sink ? 'defer to the sink' : 'leave'}`));
       await call('factory_place', { placements: [] });
       const run = readRun(ws, 'demo');
@@ -428,7 +473,7 @@ describe('batched observation placement', () => {
     commit(ws, 'follow.txt');
     await withRun(ws, 'demo', run => runChecks(ws, run));
     const second = await withRun(ws, 'demo', run => startReview(ws, run));
-    await review(ws, second.reviewId, [{ ...observation('again', 'correctness'), path: 'follow.txt' }]);
+    await review(ws, second.reviewId, [{ ...observation('again', 'missing-test'), path: 'follow.txt' }]);
     await withRun(ws, 'demo', run => recordReview(ws, run));
     await withRun(ws, 'demo', run => completeSlice(ws, run));
     const run = readRun(ws, 'demo');
@@ -451,7 +496,7 @@ describe('batched observation placement', () => {
     commit(ws, 'follow.txt');
     await withRun(ws, 'demo', run => runChecks(ws, run));
     const second = await withRun(ws, 'demo', run => startReview(ws, run));
-    await review(ws, second.reviewId, [{ ...observation('again', 'correctness'), path: 'follow.txt' }]);
+    await review(ws, second.reviewId, [{ ...observation('again', 'missing-test'), path: 'follow.txt' }]);
     await withRun(ws, 'demo', run => recordReview(ws, run));
     await withRun(ws, 'demo', run => completeSlice(ws, run));
     const run = readRun(ws, 'demo');
