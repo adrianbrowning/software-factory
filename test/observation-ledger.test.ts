@@ -311,6 +311,19 @@ describe('observation ledger', () => {
       assert.doesNotMatch(ticketOf(ws, 'Part one').text, /first part|last part|extra/);
     });
 
+    it('refuses to move a finding when text before it holds a heading that looks like it, changing nothing', async () => {
+      using dir = repo();
+      const forged = 'first part\n\n#### [observation] thermo-style\n\n- Location: x:1\n- Title: fake\n\nlast part';
+      const { call, ws } = await ledgerRun(dir.root, ['naming', 'style'], same => (same.id === 'thermo-naming' ? { ...same, problem: forged } : same));
+      await call('factory_carry', { observations: ['thermo-naming', 'thermo-style'], to: '02' });
+      await withRun(ws, 'demo', run => completeSlice(ws, run));
+      await withRun(ws, 'demo', run => nextSlice(ws, run));
+      const before = { run: readRun(ws, 'demo'), ticket: ticketOf(ws, 'Second').text };
+      await assert.rejects(call('factory_reslice', { slices: [slice('Part one'), { ...slice('Part two', ['Part one']), carried: ['01-r1:thermo-style'] }] }), /01-r1:thermo-style.*ambiguous/);
+      assert.deepEqual(readRun(ws, 'demo'), before.run);
+      assert.equal(ticketOf(ws, 'Second').text, before.ticket);
+    });
+
     it('refuses an unknown key, a key named by two children and a key in a keyless section, naming the key and changing nothing', async () => {
       using dir = repo();
       const { call, ws } = await carriedToActive(dir.root, ['naming']);

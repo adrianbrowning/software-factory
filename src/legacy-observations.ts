@@ -47,6 +47,9 @@ export function splitCarried(section: string) {
   // A finding's text may hold a heading-shaped line of its own, so a candidate boundary counts only when its id is the next key's: any other chunk continues the item (or note) before it.
   const items: { id: string | undefined; text: string }[] = [];
   let next = 0;
+  // A continuation chunk headed with the id of one of the keys cannot be told from the real finding of that key: the section is ambiguous.
+  let ambiguous = false;
+  const keyIds = keys.map(key => key.slice(key.indexOf(':') + 1));
   for (const chunk of body === '' ? [] : body.split(/\n\n(?=#### \[[^\]\n]+\] [^\n]+\n\n- Location: )/)) {
     const id = /^#### \[[^\]\n]+\] ([^\n]+)/.exec(chunk)?.[1];
     const expected = keys[next];
@@ -55,9 +58,12 @@ export function splitCarried(section: string) {
       items.push({ id, text: chunk });
       next += 1;
     } else if (last === undefined) items.push({ id: undefined, text: chunk });
-    else last.text += `\n\n${chunk}`;
+    else {
+      last.text += `\n\n${chunk}`;
+      if (id !== undefined && keyIds.includes(id)) ambiguous = true;
+    }
   }
-  return { header, items, keys };
+  return { ambiguous: ambiguous || next !== keys.length, header, items, keys };
 }
 
 /** A carried-in section from the parts `splitCarried` returns, holding only `items` and `keys`. */
@@ -124,6 +130,10 @@ export function moveCarried(active: CarriedSlice, inputs: { carried?: string[] |
     if (carriedKeys.has(key)) continue;
     const keyless = active.carried.some(section => carriesKey(section, key) === undefined && isCarriedSectionOf(section, key.slice(0, Math.max(key.indexOf(':'), 0))) && renderedObservation(section, key.slice(key.indexOf(':') + 1)) !== undefined);
     throw new Error(keyless ? `Carried key ${key} is in a section without a Carried keys line, so it cannot move; it stays with the first child.` : `Slice ${active.id} does not carry ${key}.`);
+  }
+  for (const { parts } of sections) {
+    const unsafe = parts?.ambiguous === true ? parts.keys.find(key => named.has(key)) : undefined;
+    if (unsafe !== undefined) throw new Error(`Carried key ${unsafe} is ambiguous: its section holds text that looks like another finding's heading, so it cannot be moved safely.`);
   }
   const received = children.map((): string[] => []);
   first.carried = sections.flatMap(({ parts, section }) => {
