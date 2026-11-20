@@ -149,7 +149,7 @@ function firstFailureNames({ stderr, stdout }: CommandResult) {
   const section = lines.indexOf('✖ failing tests:');
   if (section >= 0) {
     for (let i = section + 1; i < lines.length; i++) {
-      const at = lines[i]?.match(/^test at (\S+)\s*$/);
+      const at = lines[i]?.match(/^test at (.+?)\s*$/);
       const name = lines[i + 1]?.match(/^✖ (.*?) \([\d.]+m?s\)\s*$/);
       if (at && name) names.add(evidenceLine(`${at[1]} ${name[1]}`));
     }
@@ -160,7 +160,7 @@ function firstFailureNames({ stderr, stdout }: CommandResult) {
   }
   if (names.size === 0) {
     const last = lines.findLast(line => line.trim() !== '');
-    return last === undefined ? '' : `; last output line: ${evidenceLine(last)}`;
+    return last === undefined ? '' : `; last output line: ${evidenceLine(last, 299)}`;
   }
   const listed = [...names].slice(0, MAX_NAMED_TESTS).join(', ');
   const rest = names.size - MAX_NAMED_TESTS;

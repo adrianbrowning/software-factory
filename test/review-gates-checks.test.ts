@@ -190,10 +190,10 @@ describe('slice loop gates: checks and the fix budget', { concurrency: 4 }, () =
 
   it('names the failing tests of a node:test spec first failure in the flaky line', async () => {
     const line = await flakyRun(
-      '✖ inner (1ms)\n✖ failing tests:\n\ntest at test/a.test.ts:12:3\n✖ alpha works (2.1ms)\n  Error: boom\n\ntest at test/b.test.ts:5:1\n✖ beta works (0.5ms)\n  Error: x\n\ntest at test/a.test.ts:12:3\n✖ alpha works (2.1ms)\n',
+      '✖ inner (1ms)\n✖ failing tests:\n\ntest at test/a.test.ts:12:3\n✖ alpha works (2.1ms)\n  Error: boom\n\ntest at test/my dir/b.test.ts:5:1\n✖ beta works (0.5ms)\n  Error: x\n\ntest at test/a.test.ts:12:3\n✖ alpha works (2.1ms)\n',
     );
     assert.match(line, /test\/a\.test\.ts:12:3 alpha works/);
-    assert.match(line, /test\/b\.test\.ts:5:1 beta works/);
+    assert.match(line, /test\/my dir\/b\.test\.ts:5:1 beta works/);
     assert.equal(line.split('alpha works').length, 2);
     assert.ok(!line.includes('inner'));
   });
@@ -214,6 +214,7 @@ describe('slice loop gates: checks and the fix budget', { concurrency: 4 }, () =
     assert.ok(!line.includes('something'));
     assert.ok(line.includes('x'.repeat(100)));
     assert.ok(!line.includes('x'.repeat(301)));
+    assert.ok(line.split('last output line: ')[1]!.replace(/\)$/, '').length <= 300);
   });
 
   it('runs a passing check once and does not rerun a timed-out check', async () => {
