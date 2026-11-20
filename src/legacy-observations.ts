@@ -115,7 +115,9 @@ export function moveCarried(active: CarriedSlice, inputs: { carried?: string[] |
       // The header holds the split slice's title, which may hold blank lines, so find the heading by position, not by blocks.
       const heading = `\n\n#### [observation] ${key.slice(key.indexOf(':') + 1)}\n\n- Location: `;
       const at = holder.indexOf(heading);
-      if (at < 0 || !holder.startsWith('### From ') || holder.slice(0, at).includes('\n\n#### [')) throw new Error(`Carried key ${key} is in a section that also holds a note (from an older state file), so it cannot move; drop it from \`carried\` and call again, the section stays with the first child.`);
+      const review = key.slice(0, Math.max(key.indexOf(':'), 0));
+      const header = at < 0 ? '' : holder.slice(0, at);
+      if (at < 0 || !isCarriedSectionOf(header, review) || !/^### From (?:green )?review \S+ of slice \S+ ".*"$/s.test(header) || header.includes('\n\n#### [')) throw new Error(`Carried key ${key} is in a section that also holds a note (from an older state file), so it cannot move; drop it from \`carried\` and call again, the section stays with the first child.`);
       continue;
     }
     const keyless = active.carried.some(section => carriesKey(section, key) === undefined && isCarriedSectionOf(section, key.slice(0, Math.max(key.indexOf(':'), 0))) && renderedObservation(section, key.slice(key.indexOf(':') + 1)) !== undefined);

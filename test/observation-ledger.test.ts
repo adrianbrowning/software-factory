@@ -349,6 +349,20 @@ describe('observation ledger', () => {
       assert.equal(ticketOf(ws, 'Second').text, before.ticket);
     });
 
+    it('refuses a key in a legacy section whose note sits between the header and the item', async () => {
+      using dir = repo();
+      const { call, ws } = await carriedToActive(dir.root, ['naming']);
+      await withRun(ws, 'demo', run => {
+        const active = run.slices.find(item => item.status === 'active') ?? assert.fail('no active slice');
+        const [one = ''] = active.carried;
+        const [header = '', ...rest] = one.split('\n\n');
+        active.carried = [[header, 'Mind this.', ...rest].join('\n\n')];
+      });
+      const before = readRun(ws, 'demo');
+      await assert.rejects(call('factory_reslice', { slices: [slice('Part one'), { ...slice('Part two', ['Part one']), carried: ['01-r1:thermo-naming'] }] }), /01-r1:thermo-naming.*note/);
+      assert.deepEqual(readRun(ws, 'demo'), before);
+    });
+
     it('refuses an unknown key, a key named by two children and a key in a keyless section, naming the key and changing nothing', async () => {
       using dir = repo();
       const { call, ws } = await carriedToActive(dir.root, ['naming']);
