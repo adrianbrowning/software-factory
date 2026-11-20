@@ -171,11 +171,11 @@ describe('slice loop gates: checks and the fix budget', { concurrency: 4 }, () =
     assert.equal(readRun(ws2, 'demo').slices[0]?.fixRounds, 1);
   });
 
-  async function flakyRun(output: string, redirect = '') {
+  async function flakyRun(output: string, redirect = '', emit?: (out: string) => string) {
     using counter = tempDir('factory-flaky-names-');
     using out = tempDir('factory-flaky-out-');
     writeFileSync(join(out.root, 'out.txt'), output);
-    const check = `if [ -f '${counter.root}/seen' ]; then exit 0; fi; touch '${counter.root}/seen'; cat '${out.root}/out.txt' ${redirect}; exit 1`;
+    const check = `if [ -f '${counter.root}/seen' ]; then exit 0; fi; touch '${counter.root}/seen'; ${emit ? emit(out.root) : `cat '${out.root}/out.txt' ${redirect}`}; exit 1`;
     using ws = workspace({ checks: [check] });
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
@@ -222,6 +222,11 @@ describe('slice loop gates: checks and the fix budget', { concurrency: 4 }, () =
     assert.match(line, /last stderr line: from stderr/);
     assert.ok(!line.includes('last stdout line'));
     assert.match(await flakyRun('from stdout\n'), /last stdout line: from stdout/);
+    const both = await flakyRun('', '', () => `printf 'earlier\\n' >&2; printf 'last\\n'`);
+    assert.match(both, /last stderr line: earlier/);
+    assert.ok(!both.includes('last stdout line'));
+    const blank = await flakyRun('', '', () => `printf ' \\n' >&2; printf 'last\\n'`);
+    assert.match(blank, /last stdout line: last/);
   });
 
   it('runs a passing check once and does not rerun a timed-out check', async () => {
