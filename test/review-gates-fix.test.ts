@@ -180,6 +180,15 @@ describe('slice loop gates: fixes', { concurrency: 4 }, () => {
     assert.doesNotMatch(fix, /\[truncated\]/);
   });
 
+  it('redacts a credential in the bug text before it reaches the fix file', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    await greenWithObservation(ws);
+    const fixed = await step(ws, run => fixObservations(ws, run, { bug: 'Fails on https://user:secret@example.com/x' }, 'Found while demoing.'));
+    const fix = readFileSync(fixed.fixPath, 'utf8');
+    assert.match(fix, /https:\/\/<REDACTED>@example\.com\/x/);
+    assert.doesNotMatch(fix, /secret/);
+  });
+
   it('writes both the bug and the chosen observations into one fix file', async () => {
     using ws = workspace({ maxRounds: 2 });
     await greenWithObservation(ws);
