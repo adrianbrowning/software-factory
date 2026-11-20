@@ -725,19 +725,19 @@ describe('used-up fix budget', () => {
 
     const queued = await call('factory_carry', { note: 'Log the parse time.', observations: ['thermo-naming'], to: 'end' }, yes);
     assert.match(asked[0] ?? '', /^Carry to the end of the run\?\n- Note: Log the parse time\.\n- thermo-naming: naming\n\nSlice 01 keeps its green review\. They wait on the run: the next factory_follow_up slice builds them/);
-    assert.match(queued.content[0]?.text ?? '', /^Queued the note, thermo-naming for the next factory_follow_up slice \(1 waiting\)\.\nNext: Call factory_complete_slice for slice 01/);
+    assert.match(queued.content[0]?.text ?? '', /^Queued the note, thermo-naming for the next factory_follow_up slice \(2 waiting\)\.\nNext: Call factory_complete_slice for slice 01/);
     assert.deepEqual(readRun(ws, 'demo').slices.map(item => ({ ...item, unplaced: [] })), before.map(item => ({ ...item, unplaced: [] })));
 
     const status = await call('factory_status', {});
-    assert.match(status.content[0]?.text ?? '', /"waiting": \[\n\s+"### From green review 01-r1 of slice 01 \\"Feature\\"\\n\\nLog the parse time\.\\n\\n#### \[observation\] thermo-naming/);
+    assert.match(status.content[0]?.text ?? '', /"waiting": \[\n\s+"### From green review 01-r1 of slice 01 \\"Feature\\"\\n\\nLog the parse time\.",\n\s+"### From green review 01-r1 of slice 01 \\"Feature\\"\\n\\n#### \[observation\] thermo-naming/);
 
     await withRun(ws, 'demo', current => completeSlice(ws, current));
-    await assert.rejects(call('factory_retro', { findings: [] }), /Carried items wait for the end of the run \(1\)\. Call factory_follow_up for them/);
+    await assert.rejects(call('factory_retro', { findings: [] }), /Carried items wait for the end of the run \(2\)\. Call factory_follow_up for them/);
 
     const followUp = { acceptance: ['logged'], estimateTokens: 500, seams: ['cli'], title: 'Polish', whatToBuild: 'Polish' };
     const added = await call('factory_follow_up', followUp, yes);
-    assert.match(asked[1] ?? '', /The slice also takes the carried items waiting on the run \(1\)\./);
-    assert.match(added.content[0]?.text ?? '', /^Slice 02 "Polish" is added on .*, with the waiting carried items \(1\)\.\nNext: Call factory_next/);
+    assert.match(asked[1] ?? '', /The slice also takes the carried items waiting on the run \(2\)\./);
+    assert.match(added.content[0]?.text ?? '', /^Slice 02 "Polish" is added on .*, with the waiting carried items \(2\)\.\nNext: Call factory_next/);
     const state = readRun(ws, 'demo');
     assert.deepEqual(state.waiting, []);
     assert.match(readFileSync(ticketPath(ws, 'demo', state.slices[1] ?? assert.fail('no slice')), 'utf8'), /## Carried-in work[\s\S]*Log the parse time\./);

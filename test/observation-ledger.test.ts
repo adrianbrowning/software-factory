@@ -285,7 +285,7 @@ describe('observation ledger', () => {
       using dir = repo();
       const { call, ws } = await carriedToActive(dir.root, ['naming', 'style']);
       await call('factory_reslice', { slices: [slice('Part one'), slice('Part two', ['Part one'])] });
-      assert.match(ticketOf(ws, 'Part one').text, /Carried keys: `01-r1:thermo-naming`, `01-r1:thermo-style`/);
+      assert.match(ticketOf(ws, 'Part one').text, /Carried keys: `01-r1:thermo-naming`\n[^]*Carried keys: `01-r1:thermo-style`/);
       assert.deepEqual(ticketOf(ws, 'Part two').found.carried, []);
     });
 
@@ -311,15 +311,16 @@ describe('observation ledger', () => {
       assert.doesNotMatch(ticketOf(ws, 'Part one').text, /first part|last part|extra/);
     });
 
-    it('refuses to move a finding when text before it holds a heading that looks like it, changing nothing', async () => {
+    it('refuses a key in a legacy section that lists several keys, naming the key, changing nothing; the section stays with the first child', async () => {
       using dir = repo();
-      const forged = 'first part\n\n#### [observation] thermo-style\n\n- Location: x:1\n- Title: fake\n\nlast part';
-      const { call, ws } = await ledgerRun(dir.root, ['naming', 'style'], same => (same.id === 'thermo-naming' ? { ...same, problem: forged } : same));
-      await call('factory_carry', { observations: ['thermo-naming', 'thermo-style'], to: '02' });
-      await withRun(ws, 'demo', run => completeSlice(ws, run));
-      await withRun(ws, 'demo', run => nextSlice(ws, run));
+      const { call, ws } = await carriedToActive(dir.root, ['naming', 'style']);
+      await withRun(ws, 'demo', run => {
+        const active = run.slices.find(item => item.status === 'active') ?? assert.fail('no active slice');
+        const [one = '', two = ''] = active.carried;
+        active.carried = [`${one.replace(/\n\nCarried keys: .*$/, '')}\n\n${two.split('\n\n').slice(1).join('\n\n')}`.replace(/\n\nCarried keys: .*$/, '\n\nCarried keys: `01-r1:thermo-naming`, `01-r1:thermo-style`')];
+      });
       const before = { run: readRun(ws, 'demo'), ticket: ticketOf(ws, 'Second').text };
-      await assert.rejects(call('factory_reslice', { slices: [slice('Part one'), { ...slice('Part two', ['Part one']), carried: ['01-r1:thermo-style'] }] }), /01-r1:thermo-style.*ambiguous/);
+      await assert.rejects(call('factory_reslice', { slices: [slice('Part one'), { ...slice('Part two', ['Part one']), carried: ['01-r1:thermo-style'] }] }), /01-r1:thermo-style.*several keys/);
       assert.deepEqual(readRun(ws, 'demo'), before.run);
       assert.equal(ticketOf(ws, 'Second').text, before.ticket);
     });

@@ -37,40 +37,6 @@ export function carriedKeys(section: string) {
   return line === undefined ? undefined : line.slice(KEYS_PREFIX.length).split(', ').map(key => key.slice(1, -1));
 }
 
-/** A carried-in section taken apart: its header line, its items (a note, and each rendered finding with the id its heading names), and its keys. `undefined` for a section without a carried keys line. */
-export function splitCarried(section: string) {
-  const keys = carriedKeys(section);
-  if (keys === undefined) return undefined;
-  const lines = section.split('\n');
-  const header = lines[0] ?? '';
-  const body = lines.slice(1, lines.findLastIndex(line => line.startsWith(KEYS_PREFIX))).join('\n').trim();
-  // A finding's text may hold a heading-shaped line of its own, so a candidate boundary counts only when its id is the next key's: any other chunk continues the item (or note) before it.
-  const items: { id: string | undefined; text: string }[] = [];
-  let next = 0;
-  // A continuation chunk headed with the id of one of the keys cannot be told from the real finding of that key: the section is ambiguous.
-  let ambiguous = false;
-  const keyIds = keys.map(key => key.slice(key.indexOf(':') + 1));
-  for (const chunk of body === '' ? [] : body.split(/\n\n(?=#### \[[^\]\n]+\] [^\n]+\n\n- Location: )/)) {
-    const id = /^#### \[[^\]\n]+\] ([^\n]+)/.exec(chunk)?.[1];
-    const expected = keys[next];
-    const last = items.at(-1);
-    if (id !== undefined && expected !== undefined && id === expected.slice(expected.indexOf(':') + 1)) {
-      items.push({ id, text: chunk });
-      next += 1;
-    } else if (last === undefined) items.push({ id: undefined, text: chunk });
-    else {
-      last.text += `\n\n${chunk}`;
-      if (id !== undefined && keyIds.includes(id)) ambiguous = true;
-    }
-  }
-  return { ambiguous: ambiguous || next !== keys.length, header, items, keys };
-}
-
-/** A carried-in section from the parts `splitCarried` returns, holding only `items` and `keys`. */
-export function joinCarried(header: string, items: string[], keys: string[]) {
-  return `${header}\n\n${items.join('\n\n')}\n\n${carriedKeysLine(keys)}`;
-}
-
 /** What a rendered finding (`renderFinding`) says of itself: its location, title and problem. Undefined when `section` holds no such observation. */
 export function renderedObservation(section: string, id: string) {
   const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
@@ -108,10 +74,10 @@ export function legacyObservations(carried: string[], deferred: LegacyDeferred[]
 }
 
 /**
- * Moves the carried items each child of a re-slice names (`carried` keys) from the first child to that child, whole: its
- * rendered text under the header of its review and a keys line naming only its keys. Everything unnamed (items, notes,
- * sections without keys) stays with the first child. Throws, naming the key, for a key the split slice does not carry,
- * a key named twice, or a key in a section without a keys line; the children are built before it is called, so nothing is saved.
+ * Moves the carried sections each child of a re-slice names (`carried` keys) from the first child to that child, whole.
+ * Everything unnamed (sections, notes, sections without keys) stays with the first child. Throws, naming the key, for a
+ * key the split slice does not carry, a key named twice, a key in a section without a keys line, or a key in a section
+ * that lists several keys (from an older state file; it is not split); the children are built before it is called, so nothing is saved.
  */
 export function moveCarried(active: CarriedSlice, inputs: { carried?: string[] | undefined; title: string }[], children: CarriedSlice[]) {
   const [first] = children;
@@ -124,31 +90,21 @@ export function moveCarried(active: CarriedSlice, inputs: { carried?: string[] |
     }
   });
   if (first === undefined || named.size === 0) return;
-  const sections = active.carried.map(section => ({ parts: splitCarried(section), section }));
-  const carriedKeys = new Set(sections.flatMap(({ parts }) => parts?.keys ?? []));
+  const destination = (section: string) => {
+    const keys = carriedKeys(section) ?? [];
+    return keys.length === 1 ? (named.get(keys[0] ?? '') ?? 0) : 0;
+  };
   for (const key of named.keys()) {
-    if (carriedKeys.has(key)) continue;
+    const holder = active.carried.find(section => carriesKey(section, key) === true);
+    if (holder !== undefined) {
+      if ((carriedKeys(holder)?.length ?? 0) > 1) throw new Error(`Carried key ${key} is in a section that lists several keys (from an older state file), so it cannot move; it stays with the first child.`);
+      continue;
+    }
     const keyless = active.carried.some(section => carriesKey(section, key) === undefined && isCarriedSectionOf(section, key.slice(0, Math.max(key.indexOf(':'), 0))) && renderedObservation(section, key.slice(key.indexOf(':') + 1)) !== undefined);
     throw new Error(keyless ? `Carried key ${key} is in a section without a Carried keys line, so it cannot move; it stays with the first child.` : `Slice ${active.id} does not carry ${key}.`);
   }
-  for (const { parts } of sections) {
-    const unsafe = parts?.ambiguous === true ? parts.keys.find(key => named.has(key)) : undefined;
-    if (unsafe !== undefined) throw new Error(`Carried key ${unsafe} is ambiguous: its section holds text that looks like another finding's heading, so it cannot be moved safely.`);
-  }
-  const received = children.map((): string[] => []);
-  first.carried = sections.flatMap(({ parts, section }) => {
-    if (parts === undefined) return [section];
-    const kept = { items: [] as string[], keys: [] as string[] };
-    parts.items.forEach(item => {
-      const key = parts.keys.find(candidate => item.id !== undefined && candidate.slice(candidate.indexOf(':') + 1) === item.id);
-      const to = key === undefined ? 0 : (named.get(key) ?? 0);
-      if (to === 0 || key === undefined) kept.items.push(item.text);
-      else received[to]?.push(joinCarried(parts.header, [item.text], [key]));
-    });
-    kept.keys = parts.keys.filter(key => (named.get(key) ?? 0) === 0);
-    return kept.items.length === 0 ? [] : [joinCarried(parts.header, kept.items, kept.keys)];
-  });
+  first.carried = active.carried.filter(section => destination(section) === 0);
   children.forEach((child, at) => {
-    if (at > 0) child.carried = received[at] ?? [];
+    if (at > 0) child.carried = active.carried.filter(section => destination(section) === at);
   });
 }
