@@ -258,6 +258,19 @@ describe('implementer sessions', () => {
       assert.equal(detail, `no progress after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts; latest tool: bash; last assistant text: ${snippet}`);
     });
 
+    it('names the newer tool call and newer assistant text, not the older ones', async () => {
+      const messages = [
+        { role: 'assistant', content: [{ type: 'toolCall', id: '1', name: 'read', arguments: {} }] },
+        { role: 'toolResult', toolCallId: '1', toolName: 'read', content: [] },
+        { role: 'assistant', content: [{ type: 'text', text: 'older words' }] },
+        { role: 'assistant', content: [{ type: 'toolCall', id: '2', name: 'bash', arguments: {} }] },
+        { role: 'toolResult', toolCallId: '2', toolName: 'bash', content: [] },
+        { role: 'assistant', content: [{ type: 'text', text: 'newer words' }] },
+      ];
+      const detail = await pauseDetail(messages);
+      assert.equal(detail, `no progress after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts; latest tool: bash; last assistant text: newer words`);
+    });
+
     it('says none when the session has no tool call and no assistant text, and still pauses', async () => {
       assert.equal(await pauseDetail([]), `no progress after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts; latest tool: none; last assistant text: none`);
     });
