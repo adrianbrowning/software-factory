@@ -4,6 +4,8 @@
  */
 import type { ObservationEntry } from './run.ts';
 
+type CarriedSlice = { carried: string[]; id: string; title: string };
+
 type LegacyDeferred = { body: string; id?: string | undefined; key: string; kind: string; review: string; slice: string };
 
 /** The header of a carried-in section made from the observations of review `reviewId` of `slice`; a green review's carries say so. The only place the header is written. */
@@ -97,4 +99,46 @@ export function legacyObservations(carried: string[], deferred: LegacyDeferred[]
     entries.push({ ...base, ...(renderedObservation(item.body, id) ?? { location: LEGACY_LOCATION, problem: LEGACY_PROBLEM, title: id }) });
   }
   return entries;
+}
+
+/**
+ * Moves the carried items each child of a re-slice names (`carried` keys) from the first child to that child, whole: its
+ * rendered text under the header of its review and a keys line naming only its keys. Everything unnamed (items, notes,
+ * sections without keys) stays with the first child. Throws, naming the key, for a key the split slice does not carry,
+ * a key named twice, or a key in a section without a keys line; the children are built before it is called, so nothing is saved.
+ */
+export function moveCarried(active: CarriedSlice, inputs: { carried?: string[] | undefined; title: string }[], children: CarriedSlice[]) {
+  const [first] = children;
+  const named = new Map<string, number>();
+  inputs.forEach(input => {
+    const at = children.findIndex(child => child.title === input.title);
+    for (const key of input.carried ?? []) {
+      if (named.has(key)) throw new Error(`Carried key ${key} is named by two children; give it to the one child that builds it.`);
+      named.set(key, at);
+    }
+  });
+  if (first === undefined || named.size === 0) return;
+  const sections = active.carried.map(section => ({ parts: splitCarried(section), section }));
+  const carriedKeys = new Set(sections.flatMap(({ parts }) => parts?.keys ?? []));
+  for (const key of named.keys()) {
+    if (carriedKeys.has(key)) continue;
+    const keyless = active.carried.some(section => carriesKey(section, key) === undefined && isCarriedSectionOf(section, key.slice(0, Math.max(key.indexOf(':'), 0))) && renderedObservation(section, key.slice(key.indexOf(':') + 1)) !== undefined);
+    throw new Error(keyless ? `Carried key ${key} is in a section without a Carried keys line, so it cannot move; it stays with the first child.` : `Slice ${active.id} does not carry ${key}.`);
+  }
+  const received = children.map((): string[] => []);
+  first.carried = sections.flatMap(({ parts, section }) => {
+    if (parts === undefined) return [section];
+    const kept = { items: [] as string[], keys: [] as string[] };
+    parts.items.forEach(item => {
+      const key = parts.keys.find(candidate => item.id !== undefined && candidate.slice(candidate.indexOf(':') + 1) === item.id);
+      const to = key === undefined ? 0 : (named.get(key) ?? 0);
+      if (to === 0 || key === undefined) kept.items.push(item.text);
+      else received[to]?.push(joinCarried(parts.header, [item.text], [key]));
+    });
+    kept.keys = parts.keys.filter(key => (named.get(key) ?? 0) === 0);
+    return kept.items.length === 0 ? [] : [joinCarried(parts.header, kept.items, kept.keys)];
+  });
+  children.forEach((child, at) => {
+    if (at > 0) child.carried = received[at] ?? [];
+  });
 }
