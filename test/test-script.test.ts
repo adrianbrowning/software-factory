@@ -6,66 +6,78 @@ import { dirname, join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-// Seam: the command line of scripts/test.sh (what `pnpm run test [files...]` runs): exit code and node test summary.
-// Runs in a temp project (copy of the script, a stub preload, fixture tests) so a no-argument run never recurses into the real suite.
-const script = join(dirname(fileURLToPath(import.meta.url)), '..', 'scripts', 'test.sh');
+// Seam: `pnpm run test [files...]` (package.json script -> scripts/test.sh): exit code and node test summary.
+// Named-file cases run pnpm in the real repo (real package.json, real git-env.ts preload) against temp fixture files.
+// The no-argument case runs pnpm in a temp copy of package.json + scripts/test.sh with a small test/ tree, so it never recurses into the real suite.
+const repo = join(dirname(fileURLToPath(import.meta.url)), '..');
 
-const passing = (name: string) =>
-  `import { test } from 'node:test';\ntest('${name}', () => {});\n`;
+const pass = (name: string) => `import { test } from 'node:test';\ntest('${name}', () => {});\n`;
+const fail = (name: string) =>
+  `import assert from 'node:assert/strict';\nimport { test } from 'node:test';\ntest('${name}', () => { assert.fail('boom'); });\n`;
+const preloadCheck = `import assert from 'node:assert/strict';
+import { test } from 'node:test';
+test('preload-active', () => { assert.equal(process.env.GIT_CONFIG_GLOBAL, '/dev/null'); });
+`;
 
-let root: string;
+let fixtures: string;
+let project: string;
 
-function runScript(args: string[]) {
+function pnpmTest(cwd: string, args: string[]) {
   const env = { ...process.env };
   delete env.NODE_TEST_CONTEXT; // otherwise the nested node --test reports as a child of this run
-  const r = spawnSync('sh', ['scripts/test.sh', ...args], { cwd: root, encoding: 'utf8', env });
+  delete env.GIT_CONFIG_GLOBAL; // only the git-env.ts preload may set it
+  const r = spawnSync('pnpm', ['run', 'test', ...args], { cwd, encoding: 'utf8', env });
+  assert.equal(r.error, undefined);
   return { status: r.status, out: r.stdout + r.stderr };
 }
 
 before(() => {
-  root = mkdtempSync(join(tmpdir(), 'test-script-'));
-  mkdirSync(join(root, 'scripts'));
-  mkdirSync(join(root, 'test'));
-  copyFileSync(script, join(root, 'scripts', 'test.sh'));
-  writeFileSync(join(root, 'test', 'git-env.ts'), "process.env.PRELOAD_MARKER = 'on';\n");
-  writeFileSync(join(root, 'test', 'a.test.ts'), passing('alpha-test'));
-  writeFileSync(join(root, 'test', 'b.test.ts'), passing('beta-test'));
-  writeFileSync(
-    join(root, 'test', 'preload.test.ts'),
-    "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\ntest('preload-active', () => { assert.equal(process.env.PRELOAD_MARKER, 'on'); });\n",
-  );
-  writeFileSync(
-    join(root, 'test', 'fail.test.ts'),
-    "import assert from 'node:assert/strict';\nimport { test } from 'node:test';\ntest('failing-test', () => { assert.fail('boom'); });\n",
-  );
+  fixtures = mkdtempSync(join(tmpdir(), 'test-script-fixtures-'));
+  writeFileSync(join(fixtures, 'a.test.ts'), pass('alpha-test'));
+  writeFileSync(join(fixtures, 'b.test.ts'), pass('beta-test'));
+  writeFileSync(join(fixtures, 'preload.test.ts'), preloadCheck);
+  writeFileSync(join(fixtures, 'fail.test.ts'), fail('failing-test'));
+
+  project = mkdtempSync(join(tmpdir(), 'test-script-project-'));
+  mkdirSync(join(project, 'scripts'));
+  mkdirSync(join(project, 'test'));
+  copyFileSync(join(repo, 'package.json'), join(project, 'package.json'));
+  copyFileSync(join(repo, 'scripts', 'test.sh'), join(project, 'scripts', 'test.sh'));
+  writeFileSync(join(project, 'test', 'git-env.ts'), "process.env.GIT_CONFIG_GLOBAL = '/dev/null';\n");
+  writeFileSync(join(project, 'test', 'one.test.ts'), pass('one-test'));
+  writeFileSync(join(project, 'test', 'two.test.ts'), pass('two-test'));
+  writeFileSync(join(project, 'test', 'preload.test.ts'), preloadCheck);
 });
 
-after(() => rmSync(root, { recursive: true, force: true }));
+after(() => {
+  rmSync(fixtures, { recursive: true, force: true });
+  rmSync(project, { recursive: true, force: true });
+});
 
-describe('scripts/test.sh', () => {
-  it('runs only the named file, with the preload active', () => {
-    const { status, out } = runScript(['test/preload.test.ts']);
+describe('pnpm run test', () => {
+  it('runs only the named file, with the real git-env.ts preload active', () => {
+    const { status, out } = pnpmTest(repo, [join(fixtures, 'preload.test.ts')]);
     assert.equal(status, 0, out);
     assert.match(out, /tests 1\b/);
     assert.match(out, /preload-active/);
-    assert.doesNotMatch(out, /alpha-test|beta-test/);
   });
 
   it('runs several named files and nothing else', () => {
-    const { status, out } = runScript(['test/a.test.ts', 'test/b.test.ts']);
+    const { status, out } = pnpmTest(repo, [join(fixtures, 'a.test.ts'), join(fixtures, 'b.test.ts')]);
     assert.equal(status, 0, out);
     assert.match(out, /tests 2\b/);
   });
 
   it('exits non-zero when a named file fails', () => {
-    const { status, out } = runScript(['test/fail.test.ts']);
+    const { status, out } = pnpmTest(repo, [join(fixtures, 'fail.test.ts')]);
     assert.notEqual(status, 0, out);
     assert.match(out, /fail 1\b/);
   });
 
   it('runs every test/*.test.ts file when given no arguments', () => {
-    const { out } = runScript([]);
-    assert.match(out, /tests 4\b/);
-    for (const name of ['alpha-test', 'beta-test', 'preload-active', 'failing-test']) assert.match(out, new RegExp(name));
+    const { status, out } = pnpmTest(project, []);
+    assert.equal(status, 0, out);
+    assert.match(out, /tests 3\b/);
+    for (const name of ['one-test', 'two-test', 'preload-active']) assert.match(out, new RegExp(name));
   });
 });
