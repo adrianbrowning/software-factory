@@ -330,9 +330,10 @@ describe('batched observation placement', () => {
     await review(ws, first.reviewId, [observation('doc', 'misleading-doc'), observation('gap', 'correctness')]);
     await withRun(ws, 'demo', run => recordReview(ws, run));
     mkdirSync(join(runDir(ws, 'demo'), 'fixes', '01-f1.md'), { recursive: true });
-    const before = structuredClone(readRun(ws, 'demo'));
-    await assert.rejects(withRun(ws, 'demo', run => fixObservations(ws, run, { observations: ['thermo-doc', 'thermo-gap'] }, 'Chosen.')));
-    assert.deepEqual(readRun(ws, 'demo'), before);
+    const run = readRun(ws, 'demo');
+    const before = structuredClone(run);
+    assert.throws(() => fixObservations(ws, run, { observations: ['thermo-doc', 'thermo-gap'] }, 'Chosen.'));
+    assert.deepEqual(run, before);
   });
 
   it('a carried red-review observation is marked as carried to the receiving slice', async () => {
