@@ -42,7 +42,19 @@ export function splitCarried(section: string) {
   const lines = section.split('\n');
   const header = lines[0] ?? '';
   const body = lines.slice(1, lines.findLastIndex(line => line.startsWith(KEYS_PREFIX))).join('\n').trim();
-  const items = body === '' ? [] : body.split(/\n\n(?=#### \[[^\]\n]+\] [^\n]+\n\n- Location: )/).map(text => ({ id: /^#### \[[^\]\n]+\] ([^\n]+)/.exec(text)?.[1], text }));
+  // A finding's text may hold a heading-shaped line of its own, so a candidate boundary counts only when its id is the next key's: any other chunk continues the item (or note) before it.
+  const items: { id: string | undefined; text: string }[] = [];
+  let next = 0;
+  for (const chunk of body === '' ? [] : body.split(/\n\n(?=#### \[[^\]\n]+\] [^\n]+\n\n- Location: )/)) {
+    const id = /^#### \[[^\]\n]+\] ([^\n]+)/.exec(chunk)?.[1];
+    const expected = keys[next];
+    const last = items.at(-1);
+    if (id !== undefined && expected !== undefined && id === expected.slice(expected.indexOf(':') + 1)) {
+      items.push({ id, text: chunk });
+      next += 1;
+    } else if (last === undefined) items.push({ id: undefined, text: chunk });
+    else last.text += `\n\n${chunk}`;
+  }
   return { header, items, keys };
 }
 

@@ -298,6 +298,19 @@ describe('observation ledger', () => {
       assert.match(ticketOf(ws, 'Part two').text, /thermo-naming/);
     });
 
+    it('moves a finding whole when its problem holds a heading-shaped line of its own', async () => {
+      using dir = repo();
+      const forged = 'first part\n\n#### [observation] extra\n\n- Location: x:1\n- Title: fake\n\nlast part';
+      const { call, ws } = await ledgerRun(dir.root, ['naming', 'style'], same => (same.id === 'thermo-style' ? { ...same, problem: forged } : same));
+      await call('factory_carry', { observations: ['thermo-naming', 'thermo-style'], to: '02' });
+      await withRun(ws, 'demo', run => completeSlice(ws, run));
+      await withRun(ws, 'demo', run => nextSlice(ws, run));
+      await call('factory_reslice', { slices: [slice('Part one'), { ...slice('Part two', ['Part one']), carried: ['01-r1:thermo-style'] }] });
+      const two = ticketOf(ws, 'Part two').text;
+      assert.ok(two.includes(forged) && two.includes('- Fix: '));
+      assert.doesNotMatch(ticketOf(ws, 'Part one').text, /first part|last part|extra/);
+    });
+
     it('refuses an unknown key, a key named by two children and a key in a keyless section, naming the key and changing nothing', async () => {
       using dir = repo();
       const { call, ws } = await carriedToActive(dir.root, ['naming']);
