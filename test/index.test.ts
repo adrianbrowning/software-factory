@@ -173,17 +173,20 @@ describe('implementer sessions', () => {
     const sha = git(root, 'rev-parse', 'HEAD').toString().trim();
     const otherSha = git(root, 'rev-parse', 'HEAD~1').toString().trim();
     const report = (commits: string[], open: string[] = []) => ({ behaviors: [], commits, open });
-    const stored = await call('factory_implementer_report', report([`${sha.slice(0, 7)} work done`], ['first']), implementer);
-    assert.match(stored, /Stored the report/);
-    const file = /: (\S+\.md)/.exec(stored)?.[1] ?? '';
-
+    const file = join(root, '.scratch', 'demo', 'reports', '01.md');
     await assert.rejects(call('factory_implementer_report', report(['(see git log)'], ['second']), implementer), (error: Error) => {
       assert.match(error.message, /\(see git log\)/);
       assert.ok(error.message.includes(`${sha.slice(0, 7)} work done`));
       return true;
     });
+    assert.equal(existsSync(file), false);
+
+    const stored = await call('factory_implementer_report', report([`${sha.slice(0, 7)} work done`], ['first']), implementer);
+    assert.match(stored, /Stored the report/);
+    const before = readFileSync(file, 'utf8');
+    await assert.rejects(call('factory_implementer_report', report(['(see git log)'], ['second']), implementer), /\(see git log\)/);
     await assert.rejects(call('factory_implementer_report', report([`${otherSha.slice(0, 7)} base`], ['second']), implementer), /base/);
-    assert.match(readFileSync(file, 'utf8'), /first/);
+    assert.equal(readFileSync(file, 'utf8'), before);
     assert.match(await call('factory_implementer_report', report([], ['third']), implementer), /Replaced the stored report/);
   });
 
