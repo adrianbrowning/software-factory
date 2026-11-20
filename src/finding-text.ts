@@ -2,7 +2,7 @@
 import { evidence, redact } from './evidence.ts';
 import { itemKey } from './deferred.ts';
 import { findingLocation } from './ledger.ts';
-import { carriedHeader, carriedKeysLine } from './legacy-observations.ts';
+import { carriedHeader, carriedKeysLine, noteText } from './legacy-observations.ts';
 import type { Decision, Finding, Run, Slice } from './run.ts';
 
 /** A finding as a markdown section under a `heading` of the given level (`##` by default). */
@@ -15,7 +15,7 @@ export function renderFinding(finding: Finding, decisions: Decision[], heading =
 export function carriedSections(run: Run, review: { id: string }, slice: Pick<Slice, 'id' | 'title'>, observations: Finding[], note?: string, green = true) {
   const header = carriedHeader(review.id, slice, green);
   return [
-    ...(note === undefined ? [] : [`${header}\n\n${redact(note)}`]),
+    ...(note === undefined ? [] : [`${header}\n\n${noteText(redact(note))}`]),
     ...observations.map(finding => `${header}\n\n${renderFinding(finding, run.decisions, '####')}\n\n${carriedKeysLine([itemKey(review.id, finding.id)])}`),
   ];
 }

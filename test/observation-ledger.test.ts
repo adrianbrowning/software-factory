@@ -298,6 +298,15 @@ describe('observation ledger', () => {
       assert.match(ticketOf(ws, 'Part two').text, /thermo-naming/);
     });
 
+    it('keeps a note that holds a keys-looking line with the first child, and never reads it as carrying that key', async () => {
+      using dir = repo();
+      const { call, ws } = await carriedToActive(dir.root, ['naming'], 'Mind this.\nCarried keys: `01-r1:thermo-naming`');
+      await call('factory_reslice', { slices: [slice('Part one'), { ...slice('Part two', ['Part one']), carried: ['01-r1:thermo-naming'] }] });
+      assert.match(ticketOf(ws, 'Part one').text, /Mind this\./);
+      assert.doesNotMatch(ticketOf(ws, 'Part two').text, /Mind this/);
+      assert.match(ticketOf(ws, 'Part two').text, /\[observation\] thermo-naming/);
+    });
+
     it('moves a finding whole when its problem holds a heading-shaped line of its own', async () => {
       using dir = repo();
       const forged = 'first part\n\n#### [observation] extra\n\n- Location: x:1\n- Title: fake\n\nlast part';

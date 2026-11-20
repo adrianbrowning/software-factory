@@ -25,15 +25,26 @@ export function carriedKeysLine(keys: string[]) {
   return `${KEYS_PREFIX}${keys.map(key => `\`${key}\``).join(', ')}`;
 }
 
+/** The keys line of `section`: its last line, when it starts with the prefix; notes are written through `noteText`, so they never end in one. */
+function keysLine(section: string) {
+  const line = section.split('\n').at(-1);
+  return line?.startsWith(KEYS_PREFIX) === true ? line : undefined;
+}
+
+/** A carried note with any line that looks like a keys line indented, so a note is never read as carrying keys. */
+export function noteText(note: string) {
+  return note.replace(/^Carried keys: /gm, ' Carried keys: ');
+}
+
 /** Whether `section` lists `key` in its carried keys line. `undefined` for a section without one (from before they were written). */
 export function carriesKey(section: string, key: string) {
-  const line = section.split('\n').findLast(candidate => candidate.startsWith(KEYS_PREFIX));
+  const line = keysLine(section);
   return line === undefined ? undefined : line.slice(KEYS_PREFIX.length).split(', ').includes(`\`${key}\``);
 }
 
 /** The ledger keys listed on the carried keys line of `section`; `undefined` for a section without one. */
 export function carriedKeys(section: string) {
-  const line = section.split('\n').findLast(candidate => candidate.startsWith(KEYS_PREFIX));
+  const line = keysLine(section);
   return line === undefined ? undefined : line.slice(KEYS_PREFIX.length).split(', ').map(key => key.slice(1, -1));
 }
 
