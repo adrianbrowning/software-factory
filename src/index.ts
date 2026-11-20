@@ -374,7 +374,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
   tool({
     caller: 'main',
     description:
-      'Split the active slice into smaller vertical slices when it outgrows the context budget. The user approves the split; committed work carries into the first child.',
+      'Split the active slice into smaller vertical slices when it outgrows the context budget. The user approves the split; committed work carries into the first child, and so does the work carried in from earlier reviews. To give a later child a carried item it builds, name its key (`<review id>:<observation id>`, as listed on the split slice\'s `Carried keys:` lines) in that child\'s `carried` list: the item moves, whole, from the first child to that child. Unnamed items, carried notes and carried sections without a `Carried keys:` line stay with the first child; an unknown key, a key named twice or a key in a section without keys is refused.',
     label: 'Factory: re-slice',
     name: 'factory_reslice',
     schema: resliceSchema,

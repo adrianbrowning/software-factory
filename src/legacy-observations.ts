@@ -29,6 +29,28 @@ export function carriesKey(section: string, key: string) {
   return line === undefined ? undefined : line.slice(KEYS_PREFIX.length).split(', ').includes(`\`${key}\``);
 }
 
+/** The ledger keys listed on the carried keys line of `section`; `undefined` for a section without one. */
+export function carriedKeys(section: string) {
+  const line = section.split('\n').findLast(candidate => candidate.startsWith(KEYS_PREFIX));
+  return line === undefined ? undefined : line.slice(KEYS_PREFIX.length).split(', ').map(key => key.slice(1, -1));
+}
+
+/** A carried-in section taken apart: its header line, its items (a note, and each rendered finding with the id its heading names), and its keys. `undefined` for a section without a carried keys line. */
+export function splitCarried(section: string) {
+  const keys = carriedKeys(section);
+  if (keys === undefined) return undefined;
+  const lines = section.split('\n');
+  const header = lines[0] ?? '';
+  const body = lines.slice(1, lines.findLastIndex(line => line.startsWith(KEYS_PREFIX))).join('\n').trim();
+  const items = body === '' ? [] : body.split(/\n\n(?=#### \[[^\]\n]+\] [^\n]+\n\n- Location: )/).map(text => ({ id: /^#### \[[^\]\n]+\] ([^\n]+)/.exec(text)?.[1], text }));
+  return { header, items, keys };
+}
+
+/** A carried-in section from the parts `splitCarried` returns, holding only `items` and `keys`. */
+export function joinCarried(header: string, items: string[], keys: string[]) {
+  return `${header}\n\n${items.join('\n\n')}\n\n${carriedKeysLine(keys)}`;
+}
+
 /** What a rendered finding (`renderFinding`) says of itself: its location, title and problem. Undefined when `section` holds no such observation. */
 export function renderedObservation(section: string, id: string) {
   const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
