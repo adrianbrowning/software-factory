@@ -80,8 +80,8 @@ const leaveSchema = z.object({
     .describe('Ids of observations from the active slice\'s green review, that the user chose to leave as they are, for example "thermo-naming". Ids the run already placed (carried, deferred, fixed or left) are refused, and so are all ids until the slice\'s last green review is a full one'),
 });
 
-/** Registers the review, completion and observation-placement tools. */
-export function registerReviewTools(tool: RunTool) {
+/** Registers the review, completion and observation-placement tools. `submit` is a headless run's own submission; tests replace it. */
+export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless = submitHeadless) {
   tool({
     caller: 'main',
     description: `Freeze the reviewed state and write the review data file. Then spawn one factory-reviewer per domain. The factory skips react-ts, test-validity, and devops by changed paths unless kept; skip any other domain the diff gives nothing to review, with a reason. ${REQUIRED_REVIEW_DOMAINS.join(' and ')} always review, and testing does too for a slice with test seams. After a red review the review is targeted: the factory picks the domains, call it with no skips; skip and keep apply to a full review only.`,
@@ -217,7 +217,7 @@ export function registerReviewTools(tool: RunTool) {
         const restacked = reopened ? ' Every later slice branch is rebased onto it and earns its checks and review again.' : '';
         return { finished: true, message: `Slice ${slice.id} is done on ${slice.branch}.${restacked}` };
       });
-      const submitted = finished ? await submitHeadless(ws, feature) : '';
+      const submitted = finished ? await submit(ws, feature) : '';
       return reply(`${done}${submitted}\nNext: ${nextAction(readRun(ws, feature))}`);
     },
   });
