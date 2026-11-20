@@ -428,7 +428,7 @@ export function planReslice(ws: Workspace, run: Run, proposed: unknown): Reslice
   first.status = 'active';
   // Carried-in work goes to the first child; moveCarried then hands each later child the items it names in `carried`.
   first.carried = active.carried;
-  moveCarried(active, childInputs, slices.slice(index, index + children.length), [...run.slices.map(slice => slice.title), ...childTitles]);
+  moveCarried(active, childInputs, slices.slice(index, index + children.length), run.slices.map(slice => slice.title));
   // Unplaced observations of the split slice (red reviews' too) go with its work to the first child.
   first.unplaced = active.unplaced;
   const remap = renumbering(run, active, slices);

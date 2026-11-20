@@ -13,7 +13,7 @@ export function carriedHeader(reviewId: string, slice: { id: string; title: stri
   return `### From ${green ? 'green ' : ''}review ${reviewId} of slice ${slice.id} "${slice.title}"`;
 }
 
-/** Whether `section` is a carried-in section made from review `reviewId`, read from its header. It attributes a section without a keys line (see `carriedKeysLine`), and `moveCarried` uses it to check a keyed section's header. */
+/** Whether `section` is a carried-in section made from review `reviewId`, read from its header. It attributes a section without a keys line (see `carriedKeysLine`). */
 export function isCarriedSectionOf(section: string, reviewId: string) {
   return section.startsWith(`### From green review ${reviewId} of slice `) || section.startsWith(`### From review ${reviewId} of slice `);
 }

@@ -459,6 +459,20 @@ describe('observation ledger', () => {
       assert.deepEqual(readRun(ws, 'demo'), before);
     });
 
+    it('refuses a note even when a proposed child title would make the note part of the header', async () => {
+      using dir = repo();
+      const { call, ws } = await carriedToActive(dir.root, ['naming']);
+      await withRun(ws, 'demo', run => {
+        const active = run.slices.find(item => item.status === 'active') ?? assert.fail('no active slice');
+        const [one = ''] = active.carried;
+        const [header = '', ...rest] = one.split('\n\n');
+        active.carried = [[header, 'Mind "this"', ...rest].join('\n\n')];
+      });
+      const before = readRun(ws, 'demo');
+      await assert.rejects(call('factory_reslice', { slices: [slice('Part one'), { ...slice('Part two', ['Part one']), carried: ['01-r1:thermo-naming'] }, slice('Feature"\n\nMind "this', ['Part one'])] }), /01-r1:thermo-naming.*note/);
+      assert.deepEqual(readRun(ws, 'demo'), before);
+    });
+
     it('takes a key one child lists twice, and refuses only a key two children name', async () => {
       using dir = repo();
       const { call, ws } = await carriedToActive(dir.root, ['naming']);
