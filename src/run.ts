@@ -37,7 +37,7 @@ export const SEVERITIES = ['critical', 'high', 'observation'] as const;
 export const OBSERVATION_CATEGORIES = ['correctness', 'missing-test', 'misleading-doc', 'naming', 'structure', 'style'] as const;
 export type ObservationCategory = (typeof OBSERVATION_CATEGORIES)[number];
 
-/** Where a slice's batch of observations puts one by default: work that is wrong or unproven waits in the end queue, taste is left. 'fix-once' fixes the observation in this slice while the slice has none placed as fixed (so a slice never loops on fix rounds), then it takes the end-queue default. */
+/** Where a slice's batch of observations puts one by default: work that is wrong or unproven waits in the end queue, taste is left. 'fix-once' fixes the observation in this slice while the slice has none placed as fixed (so a slice never loops on fix rounds), then it takes the end-queue default. The same fix-once rule holds for 'correctness' on a follow-up slice built from end-queue items (slice.fromEndQueue), which defaultChoice in place.ts applies; such a slice then defers to the sink or leaves, never the end queue. */
 export const DEFAULT_PLACEMENT = {
   correctness: 'end',
   'misleading-doc': 'fix-once',

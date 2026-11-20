@@ -22,10 +22,11 @@ export const placementSchema = z.object({
 });
 export type PlaceRequest = { placements: z.infer<typeof placementSchema>[] };
 
-/** The placement an observation gets when the user names none: by its category (a misleading-doc observation is fixed in this slice while the slice has none placed as fixed, so a slice never loops on fix rounds), with a leave sent to the deferred sink in a headless run that has one (the Record slice defers nothing). A follow-up slice that built end-queue items, or the Record slice, never puts its end-default observations back into the end queue (in any run mode): they go to the sink when the slice may defer to it, else they are left. */
+/** The placement an observation gets when the user names none: by its category (a misleading-doc observation, and a correctness observation of a follow-up slice built from end-queue items, is fixed in this slice while the slice has none placed as fixed, so a slice never loops on fix rounds), with a leave sent to the deferred sink in a headless run that has one (the Record slice defers nothing). A follow-up slice that built end-queue items, or the Record slice, never puts its end-default observations back into the end queue (in any run mode): they go to the sink when the slice may defer to it, else they are left. A fixable observation (see above) takes that route only once the slice has one placed as fixed. */
 export function defaultChoice(ws: Workspace, run: Run, slice: Slice, entry: Unplaced): PlaceChoice {
   const rule = DEFAULT_PLACEMENT[entry.category];
-  if (rule === 'fix-once' && !run.observations.some(held => held.slice === slice.id && held.placement === 'fixed')) return 'fix';
+  const fixable = rule === 'fix-once' || (entry.category === 'correctness' && slice.fromEndQueue === true);
+  if (fixable && !run.observations.some(held => held.slice === slice.id && held.placement === 'fixed')) return 'fix';
   const sinkSet = ws.config.deferred !== undefined && !isRecordSlice(slice);
   if (rule === 'end' || rule === 'fix-once') {
     if (slice.fromEndQueue === true || isRecordSlice(slice)) return sinkSet ? 'defer' : 'leave';

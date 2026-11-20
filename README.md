@@ -240,7 +240,7 @@ confirm:
 Every observation a reviewer reports has a category: correctness, missing-test, misleading-doc, naming, structure or
 style; `factory_review_submit` refuses an observation without one. The slice collects the kept observations of all its
 reviews, red ones too. The reply of the slice's final full green review lists them with their default placement:
-correctness and missing-test to the end queue, misleading-doc to fix in this slice (an observation-only fix round that uses no fix budget; once the slice has an observation placed as fixed, misleading-doc falls back to the end queue), naming, structure and style to leave. `factory_place`
+correctness and missing-test to the end queue, misleading-doc to fix in this slice (an observation-only fix round that uses no fix budget; once the slice has an observation placed as fixed, misleading-doc falls back to the end queue; correctness on a follow-up slice built from end-queue items defaults to the same fix, then falls back to the sink or leave), naming, structure and style to leave. `factory_place`
 takes the exceptions (fix, carry to a pending slice, end, defer, leave; `placements: []` takes every default), asks one
 confirm in an interactive run, applies them all and records each in the ledger. `factory_complete_slice` refuses while
 the slice has an unplaced observation. A headless run places the defaults with no dialog when it completes the slice, starts the observation-only fix round for the fix defaults (the slice stays active in fix and the reply names the fix file),
