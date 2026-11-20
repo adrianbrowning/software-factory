@@ -349,7 +349,7 @@ describe('batched observation placement', () => {
     mkdirSync(join(runDir(ws, 'demo'), 'fixes', '01-f1.md'), { recursive: true });
     const run = readRun(ws, 'demo');
     const before = structuredClone(run);
-    assert.throws(() => fixObservations(ws, run, { observations: ['thermo-doc', 'thermo-gap'] }, 'Chosen.'));
+    assert.throws(() => fixObservations(ws, run, { observations: ['thermo-doc', 'thermo-gap'] }, 'Chosen.'), /01-f1\.md|EISDIR/);
     assert.deepEqual(run, before);
   });
 
