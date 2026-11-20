@@ -237,6 +237,32 @@ describe('implementer sessions', () => {
     assert.deepEqual(await decisions(MAX_IDLE_STOP_ATTEMPTS, []), [...Array(MAX_IDLE_STOP_ATTEMPTS - 1).fill('block'), undefined]);
   });
 
+  describe('stop gate pause event', () => {
+    const pauseDetail = async (messages: unknown[]) => {
+      using repo = emptyRepo();
+      const { call, handlers, main } = await startedRun(repo.root);
+      for (let i = 0; i < MAX_IDLE_STOP_ATTEMPTS; i += 1) await handlers.get('session_stop')?.({ session_id: 'session', messages, type: 'session_stop' }, main);
+      const status = JSON.parse(await call('factory_status', {}, main)) as { content: { text: string }[] };
+      return /no progress after \d+ stop attempts[^"]*/.exec(status.content[0]?.text ?? '')?.[0];
+    };
+
+    it('records the latest tool call name and the collapsed, cut last assistant text', async () => {
+      const long = `first   line\n\nsecond ${'x'.repeat(300)}`;
+      const messages = [
+        { role: 'assistant', content: [{ type: 'toolCall', id: '1', name: 'bash', arguments: {} }] },
+        { role: 'toolResult', toolCallId: '1', toolName: 'bash', content: [] },
+        { role: 'assistant', content: [{ type: 'text', text: long }] },
+      ];
+      const detail = await pauseDetail(messages);
+      const snippet = `first line second ${'x'.repeat(200)}`.slice(0, 200);
+      assert.equal(detail, `no progress after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts; latest tool: bash; last assistant text: ${snippet}`);
+    });
+
+    it('says none when the session has no tool call and no assistant text, and still pauses', async () => {
+      assert.equal(await pauseDetail([]), `no progress after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts; latest tool: none; last assistant text: none`);
+    });
+  });
+
   describe('stop gate, guard for existing behavior', () => {
     it('keeps the owner idle count when another session stops in between', async () => {
       using repo = emptyRepo();

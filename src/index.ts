@@ -184,6 +184,21 @@ function waitingOnAsk(messages: readonly unknown[] | undefined) {
   return false;
 }
 
+/** Why a session stopped idle: the name of its latest tool call and a snippet (whitespace collapsed, at most 200 characters) of its last assistant text, each 'none' when absent. */
+function describeStop(messages: readonly unknown[] | undefined) {
+  let tool: string | undefined;
+  let text: string | undefined;
+  for (const message of (messages ?? []).toReversed()) {
+    const { content, role } = message as { content?: unknown; role?: string };
+    if (role !== 'assistant') continue;
+    const parts = typeof content === 'string' ? [{ text: content, type: 'text' }] : Array.isArray(content) ? (content as { name?: string; text?: string; type?: string }[]) : [];
+    tool ??= parts.findLast(part => part.type === 'toolCall')?.name;
+    text ??= parts.filter(part => part.type === 'text' && typeof part.text === 'string').map(part => part.text).join(' ').replaceAll(/\s+/g, ' ').trim().slice(0, 200) || undefined;
+    if (tool !== undefined && text !== undefined) break;
+  }
+  return `latest tool: ${tool ?? 'none'}; last assistant text: ${text ?? 'none'}`;
+}
+
 /** Stop gate: block a stop while the owner session's run is running, and pause it after repeated idle stops. An interactive run waiting on an ask is allowed to stop. */
 export function stopDecision(run: Run, sessionId: string, previous: { count: number; events: number } | undefined, messages?: readonly unknown[]) {
   if (run.ownerSessionId !== sessionId || run.status !== 'running') return { action: 'allow' as const };
@@ -665,7 +680,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
     }
     if (decision.action === 'pause') {
       stopAttempts.delete(feature);
-      await withRun(ws, feature, current => pauseRun(current, `no progress after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts`));
+      await withRun(ws, feature, current => pauseRun(current, `no progress after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts; ${describeStop(event.messages)}`));
       ctx.ui.notify(`Software factory paused "${feature}": no progress. /factory resume ${feature} continues.`, 'warning');
       return;
     }
