@@ -141,6 +141,10 @@ async function foreignCommits(ws: Workspace, run: Run, slice: Slice, own: string
 }
 
 const MAX_NAMED_TESTS = 10;
+/** Longer lines are not matched for test names: a check can print a megabyte-long whitespace line. */
+const MAX_PARSED_LINE = 2_000;
+
+const parsable = (line: string | undefined) => (line !== undefined && line.length <= MAX_PARSED_LINE ? line : undefined);
 
 /** What a check's first failure reported: its failing tests (node:test spec `✖ failing tests:` entries, TAP `not ok` lines), else its last non-empty output line. */
 function firstFailureNames({ lastStream, stderr, stdout }: CommandResult) {
@@ -149,9 +153,11 @@ function firstFailureNames({ lastStream, stderr, stdout }: CommandResult) {
   const section = lines.indexOf('✖ failing tests:');
   if (section >= 0) {
     for (let i = section + 1; i < lines.length; i++) {
-      const at = lines[i]?.match(/^test at (.+?)\s*$/);
-      const name = lines[i + 1]?.match(/^✖ (.*?) \([\d.]+m?s\)\s*$/);
-      if (at && name) names.add(evidenceLine(`${at[1]} ${name[1]}`));
+      const at = parsable(lines[i])?.match(/^test at (.+)$/);
+      const name = parsable(lines[i + 1])?.match(/^✖ (.*?) \([\d.]+m?s\)\s*$/);
+      // The rest of the line, trimmed: a lazy group before `\s*$` backtracks quadratically on a long run of spaces.
+      const where = at?.[1]?.trim();
+      if (where && name) names.add(evidenceLine(`${where} ${name[1]}`));
     }
   }
   for (const line of lines) {

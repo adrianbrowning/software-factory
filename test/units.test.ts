@@ -241,6 +241,14 @@ describe('evidence', () => {
     });
   }
 
+  it('redacts quoted JSON-style credential assignments, whole quoted values included', () => {
+    assert.equal(evidenceLine('{"token": "s3cr3t"}'), '{"token=<REDACTED>}');
+    assert.equal(evidenceLine(`{'password': 'hunter 2 "x"', "ok": 1}`), `{'password=<REDACTED>, "ok": 1}`);
+    assert.equal(evidenceLine('{"apiKey":"a\\"b c","n":2}'), '{"apiKey=<REDACTED>,"n":2}');
+    assert.equal(evidenceLine('{"client_secret" : "s3cr3t", "id": 7}'), '{"client_secret=<REDACTED>, "id": 7}');
+    assert.equal(evidenceLine('token=abc,def}'), 'token=<REDACTED>');
+  });
+
   it('keeps the tail of long output', () => {
     assert.equal(evidence('xxxxxxxxxxEND', 5), '...[truncated]\nxxEND');
   });

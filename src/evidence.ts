@@ -5,7 +5,7 @@ const REDACTIONS: [RegExp, string][] = [
   [/\bxox[baprs]-[A-Za-z0-9-]{10,}/gi, '<REDACTED>'],
   [/(Bearer|Basic)\s+\S+/gi, '$1 <REDACTED>'],
   [/(Cookie|Set-Cookie):\s*[^\r\n]+/gi, '$1: <REDACTED>'],
-  [/\b([A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|COOKIE|DATABASE_URL)[A-Z0-9_]*)\s*[:=]\s*\S+/gi, '$1=<REDACTED>'],
+  [/\b([A-Z0-9_]*(?:TOKEN|KEY|SECRET|PASSWORD|CREDENTIAL|COOKIE|DATABASE_URL)[A-Z0-9_]*)["']?\s*[:=]\s*(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|\S+)/gi, '$1=<REDACTED>'],
   [/(https?:\/\/)[^\s/:@]+:[^\s/@]+@/gi, '$1<REDACTED>@'],
 ];
 
