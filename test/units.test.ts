@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
 import { describe, it } from 'node:test';
 import { checksPrompt, detectChecks, loadConfig, parseChecks, runCommands, suggestChecks } from '../src/config.ts';
-import { evidence, evidenceLine } from '../src/evidence.ts';
+import { evidence, evidenceLine, redact } from '../src/evidence.ts';
 import { runShell } from '../src/exec.ts';
 import { tempDir, workspace } from './helpers.ts';
 
@@ -247,6 +247,22 @@ describe('evidence', () => {
     assert.equal(evidenceLine('{"apiKey":"a\\"b c","n":2}'), '{"apiKey=<REDACTED>,"n":2}');
     assert.equal(evidenceLine('{"client_secret" : "s3cr3t", "id": 7}'), '{"client_secret=<REDACTED>, "id": 7}');
     assert.equal(evidenceLine('token=abc,def}'), 'token=<REDACTED>');
+  });
+
+  it('redacts backslash-escaped JSON credentials and shell-concatenated quoted values whole', () => {
+    assert.doesNotMatch(evidenceLine('body: "{\\"token\\":\\"s3cr3t\\"}"'), /s3cr3t/);
+    assert.equal(evidenceLine('{\\"token\\":\\"s3cr3t\\"}'), '{\\"token=<REDACTED>}');
+    assert.equal(evidenceLine('PASSWORD="abc"def'), 'PASSWORD=<REDACTED>');
+    assert.equal(evidenceLine("TOKEN='a'b"), 'TOKEN=<REDACTED>');
+  });
+
+  it('redacts a long repeated-keyword word in linear time and still redacts long names', () => {
+    const started = Date.now();
+    redact('KEY'.repeat(200_000));
+    redact(`${'KEY'.repeat(200_000)}=secret`);
+    assert.ok(Date.now() - started < 1000);
+    assert.equal(redact(`TOKEN${'_'.repeat(65)}=hunter2`), `TOKEN${'_'.repeat(65)}=<REDACTED>`);
+    assert.equal(redact('MY_API_KEY=abc and {"token": "s3cr3t"}'), 'MY_API_KEY=<REDACTED> and {"token=<REDACTED>}');
   });
 
   it('keeps the tail of long output', () => {
