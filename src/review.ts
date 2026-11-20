@@ -159,8 +159,9 @@ function firstFailureNames({ stderr, stdout }: CommandResult) {
     if (tap) names.add(evidenceLine(tap[1] ?? ''));
   }
   if (names.size === 0) {
-    const last = lines.findLast(line => line.trim() !== '');
-    return last === undefined ? '' : `; last output line: ${evidenceLine(last, 299)}`;
+    const fromStderr = stderr.split(/\r?\n/).findLast(line => line.trim() !== '');
+    const last = fromStderr ?? stdout.split(/\r?\n/).findLast(line => line.trim() !== '');
+    return last === undefined ? '' : `; last ${fromStderr === undefined ? 'stdout' : 'stderr'} line: ${evidenceLine(last, 299)}`;
   }
   const listed = [...names].slice(0, MAX_NAMED_TESTS).join(', ');
   const rest = names.size - MAX_NAMED_TESTS;
