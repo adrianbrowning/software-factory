@@ -141,7 +141,7 @@ async function foreignCommits(ws: Workspace, run: Run, slice: Slice, own: string
 }
 
 const MAX_NAMED_TESTS = 10;
-/** Longer lines are not matched for test names: a check can print a megabyte-long whitespace line. */
+/** Spec entries (`test at`, `✖ name`) longer than this are skipped: a check can print a megabyte-long whitespace line. TAP `not ok` lines are not length-limited. */
 const MAX_PARSED_LINE = 2_000;
 
 const parsable = (line: string | undefined) => (line !== undefined && line.length <= MAX_PARSED_LINE ? line : undefined);
