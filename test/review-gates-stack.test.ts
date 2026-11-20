@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, it } from 'node:test';
-import { readRun, ticketPath } from '../src/run.ts';
+import { readRun, reportPath, ticketPath, writeAtomic } from '../src/run.ts';
 import { submitImplementerReport } from '../src/report.ts';
 import { completeSlice, recordDecisions, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextAction, nextSlice, planSlices, reopenSlice, resolveBase } from '../src/workflow.ts';
@@ -134,7 +134,8 @@ describe('slice loop gates: stacking and review data', { concurrency: 4 }, () =>
     const report = (...commits: string[]) =>
       step(ws, async run => submitImplementerReport(ws, run, { behaviors: [], commits, fixItems: [], open: [] }));
 
-    await report(`${first.slice(0, 7)} add a.txt`, `${second.slice(0, 6)} add ok`);
+    // The tool refuses a short prefix, so write the stored report directly to prove the checks gate ignores it.
+    writeAtomic(reportPath(ws, 'demo', readRun(ws, 'demo').slices[0]!), `Implementer report:\nCommits:\n- ${first.slice(0, 7)} add a.txt\n- ${second.slice(0, 6)} add ok\n`);
     await assert.rejects(step(ws, run => runChecks(ws, run)), (error: Error) => {
       assert.match(error.message, /does not list:\n[0-9a-f]+ add ok\nMessage the implementer[\s\S]*Implementer report:/);
       return true;

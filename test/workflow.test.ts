@@ -200,10 +200,11 @@ describe('implementer report', () => {
     const path = join(ws.root, '.scratch', 'demo', 'reports', '01.md');
     assert.equal(red.report, `No implementer report was submitted for slice 01 (factory_implementer_report). Once it is, read it at ${path}`);
 
+    const firstSha = sh(ws.root, 'rev-parse', '--short=12', 'HEAD');
     const first = await step(ws, run =>
       submitImplementerReport(ws, run, {
         behaviors: [{ test: 'old test', behavior: 'old behavior', seenRed: false }],
-        commits: ['abc1234 01: first try'],
+        commits: [`${firstSha} 01: first try`],
         fixItems: [],
         open: [],
       }),
@@ -216,7 +217,7 @@ describe('implementer report', () => {
     const second = await step(ws, run =>
       submitImplementerReport(ws, run, {
         behaviors: [{ test: 'writes ok', behavior: 'checks pass', seenRed: true, red: 'ok was missing' }],
-        commits: ['abc1234 01: first try', `${head} 01: add ok`],
+        commits: [`${firstSha} 01: first try`, `${head} 01: add ok`],
         fixItems: [`check-f1-1: fixed in ${head}`],
         open: [],
       }),
@@ -225,7 +226,7 @@ describe('implementer report', () => {
     const passed = await step(ws, run => runChecks(ws, run));
     assert.equal(
       passed.report,
-      `Implementer report:\nCommits:\n- abc1234 01: first try\n- ${head} 01: add ok\nFix file items:\n- check-f1-1: fixed in ${head}\nBehaviors:\n- writes ok → checks pass (seen red: yes — ok was missing)\nOpen:\n- none\nReport file: ${path}`,
+      `Implementer report:\nCommits:\n- ${firstSha} 01: first try\n- ${head} 01: add ok\nFix file items:\n- check-f1-1: fixed in ${head}\nBehaviors:\n- writes ok → checks pass (seen red: yes — ok was missing)\nOpen:\n- none\nReport file: ${path}`,
     );
 
     await green(ws);
@@ -355,7 +356,8 @@ describe('re-slice', () => {
     await newRun(ws, [slice('Big')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
-    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: ['abc1234 01: partial'], open: ['SLICE TOO BIG: part two'] }));
+    const partial = sh(ws.root, 'rev-parse', '--short=12', 'HEAD');
+    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [`${partial} 01: partial`], open: ['SLICE TOO BIG: part two'] }));
 
     await step(ws, run => applyReslice(ws, run, planReslice(ws, run, [slice('Part one'), slice('Part two', ['Part one'])])));
     const checks = await step(ws, run => runChecks(ws, run));
