@@ -5,7 +5,7 @@
 import { rmSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { z } from 'zod';
-import { evidence, redact } from './evidence.ts';
+import { evidence, evidenceLine, redact } from './evidence.ts';
 import { deferItems, draftOf, isRecordSlice, itemKey } from './deferred.ts';
 import { CARRIED_HERE, renderKnownObservations } from './ledger.ts';
 import { git, runShell, type CommandResult } from './exec.ts';
@@ -140,6 +140,32 @@ async function foreignCommits(ws: Workspace, run: Run, slice: Slice, own: string
   return own.filter(sha => !unique.has(sha));
 }
 
+const MAX_NAMED_TESTS = 10;
+
+/** What a check's first failure reported: its failing tests (node:test spec `✖ failing tests:` entries, TAP `not ok` lines), else its last non-empty output line. */
+function firstFailureNames({ stderr, stdout }: CommandResult) {
+  const lines = `${stdout}\n${stderr}`.split(/\r?\n/);
+  const names = new Set<string>();
+  const section = lines.indexOf('✖ failing tests:');
+  if (section >= 0) {
+    for (let i = section + 1; i < lines.length; i++) {
+      const at = lines[i]?.match(/^test at (\S+)\s*$/);
+      const name = lines[i + 1]?.match(/^✖ (.*?) \([\d.]+m?s\)\s*$/);
+      if (at && name) names.add(evidenceLine(`${at[1]} ${name[1]}`));
+    }
+  }
+  for (const line of lines) {
+    const tap = line.match(/^\s*not ok \d+ - (.+)$/);
+    if (tap) names.add(evidenceLine(tap[1] ?? ''));
+  }
+  if (names.size === 0) {
+    const last = lines.findLast(line => line.trim() !== '');
+    return last === undefined ? '' : `; last output line: ${evidenceLine(last)}`;
+  }
+  const listed = [...names].slice(0, MAX_NAMED_TESTS).join(', ');
+  const rest = names.size - MAX_NAMED_TESTS;
+  return `; failing tests: ${listed}${rest > 0 ? ` and ${rest} more` : ''}`;
+}
 export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   const slice = requireActive(run);
   const sha = await requireOnBranchClean(ws.root, slice, 'Checks run on committed work only');
@@ -210,7 +236,7 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   const failed = results.filter(({ result }) => result.exitCode !== 0 || result.timedOut);
   const describe = ({ command, first, result }: { command: string; first?: CommandResult; result: CommandResult }) => {
     if (first === undefined) return describeCheck(command, result);
-    if (result.exitCode === 0 && !result.timedOut) return `${command}: passed on rerun, flaky (first failed (exit ${first.exitCode}) in ${first.durationMs}ms)`;
+    if (result.exitCode === 0 && !result.timedOut) return `${command}: passed on rerun, flaky (first failed (exit ${first.exitCode}) in ${first.durationMs}ms${firstFailureNames(first)})`;
     return `${describeCheck(command, result)} on rerun (first failed (exit ${first.exitCode}) in ${first.durationMs}ms)`;
   };
   const summary = results.map(describe);

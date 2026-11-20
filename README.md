@@ -324,7 +324,7 @@ confirm:
 Optional `.omp/factory.json` in the target repository. Commit it on the base branch: every gate needs a clean
 working tree, and unknown keys are rejected.
 
-`factory_checks` reruns each failed check command once, as a whole command. A rerun that passes counts as passed: the summary marks the check flaky with the first failure's exit code and duration, and no fix file or fix round is used. A rerun that fails goes into the fix file and counts as a fix round. A timed-out check is not rerun, and a command-not-found check is refused as an environment error without a rerun.
+`factory_checks` reruns each failed check command once, as a whole command. A rerun that passes counts as passed: the summary marks the check flaky with the first failure's exit code and duration and names the failing tests of that first run (node:test `✖ failing tests:` entries with file:line, TAP `not ok` lines; redacted, at most 10 and a count of the rest; with no test named, the last non-empty output line instead), and no fix file or fix round is used. A rerun that fails goes into the fix file and counts as a fix round. A timed-out check is not rerun, and a command-not-found check is refused as an environment error without a rerun.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
