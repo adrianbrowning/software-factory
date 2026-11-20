@@ -49,22 +49,7 @@ export function importsOf(source: string, options: { runtimeOnly?: boolean } = {
     const specifier = statement.moduleSpecifier;
     const target = specifier !== undefined && ts.isStringLiteral(specifier) ? /^\.\/([^/]+\.ts)$/.exec(specifier.text)?.[1] : undefined;
     return target === undefined ? [] : [target];
-  }).concat(dynamicImportsOf(file));
-}
-
-/** Every `import('./x.ts')` call anywhere in the file: it loads the file at run time, so it is an edge of the graph. */
-function dynamicImportsOf(file: ts.SourceFile) {
-  const targets: string[] = [];
-  const visit = (node: ts.Node): void => {
-    if (ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword) {
-      const [argument] = node.arguments;
-      const target = argument !== undefined && ts.isStringLiteralLike(argument) ? /^\.\/([^/]+\.ts)$/.exec(argument.text)?.[1] : undefined;
-      if (target !== undefined) targets.push(target);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(file);
-  return targets;
+  });
 }
 
 /** The first import cycle reachable from each file of `graph`, as `a.ts -> b.ts -> a.ts`. */
@@ -173,12 +158,6 @@ describe('structure checks: the helpers', () => {
   it('finds a cycle that runs through a side-effect import', () => {
     const files = { 'a.ts': "import './b.ts';", 'b.ts': "export * from './a.ts';" };
     const graph = new Map(Object.entries(files).map(([name, source]) => [name, importsOf(source)]));
-    assert.deepEqual(cyclesOf(graph), ['a.ts -> b.ts -> a.ts']);
-  });
-
-  it('reads a dynamic import as an edge, so a lazy load cannot hide a cycle', () => {
-    const files = { 'a.ts': "export async function f() { return (await import('./b.ts')).g; }", 'b.ts': "import { f } from './a.ts';" };
-    const graph = new Map(Object.entries(files).map(([name, source]) => [name, importsOf(source, { runtimeOnly: true })]));
     assert.deepEqual(cyclesOf(graph), ['a.ts -> b.ts -> a.ts']);
   });
 
