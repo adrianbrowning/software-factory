@@ -72,9 +72,12 @@ describe('slice loop gates: queued follow-up work', { concurrency: 4 }, () => {
   it('refuses the retro while items wait, and runs it once the follow-up slice took them', async () => {
     using ws = workspace({ maxRounds: 2 });
     await queuedRun(ws);
-    assert.throws(() => parseRetro(ws, readRun(ws, 'demo'), []), (error: Error) => /Finish the pending slices first/.test(error.message) && !/Call factory_follow_up/.test(error.message));
+    assert.throws(
+      () => parseRetro(ws, readRun(ws, 'demo'), []),
+      (error: Error) => /^Carried items wait for the end of the run \(2\), and the retro waits for them\. Call factory_complete_slice for slice 01/.test(error.message) && !/Call factory_follow_up/.test(error.message),
+    );
     await step(ws, run => completeSlice(ws, run));
-    assert.throws(() => parseRetro(ws, readRun(ws, 'demo'), []), /Carried items wait for the end of the run \(2\)\. Call factory_follow_up for them/);
+    assert.throws(() => parseRetro(ws, readRun(ws, 'demo'), []), (error: Error) => error.message === nextAction(readRun(ws, 'demo')));
     await assert.rejects(step(ws, run => recordRetro(ws, run, { apply: [], file: [], findings: [], ordinal: 1 })), /Carried items wait for the end of the run \(2\)/);
     await step(ws, run => addFollowUp(ws, run, followUp));
     await step(ws, run => nextSlice(ws, run));
@@ -117,7 +120,10 @@ describe('slice loop gates: queued follow-up work', { concurrency: 4 }, () => {
     await step(ws, run => pauseRun(run, 'test'));
     assert.throws(
       () => parseRetro(ws, readRun(ws, 'demo'), []),
-      (error: Error) => /Tell the user to \/factory resume demo first/.test(error.message) && !/Call factory_follow_up/.test(error.message),
+      (error: Error) =>
+        /Carried items wait for the end of the run \(2\)/.test(error.message) &&
+        error.message.includes('The run is paused. When the user asks to continue, call factory_start with resume "demo"') &&
+        !/Call factory_follow_up/.test(error.message),
     );
   });
 
