@@ -24,9 +24,10 @@ export type PlaceRequest = { placements: z.infer<typeof placementSchema>[] };
 
 /** The placement an observation gets when the user names none: by its category (a misleading-doc observation is fixed in this slice while the slice has none placed as fixed, so a slice never loops on fix rounds), with a leave sent to the deferred sink in a headless run that has one (the Record slice defers nothing). A follow-up slice that built end-queue items, or the Record slice, never puts its end-default observations back into the end queue (in any run mode): they go to the sink when the slice may defer to it, else they are left. */
 export function defaultChoice(ws: Workspace, run: Run, slice: Slice, entry: Unplaced): PlaceChoice {
-  if (entry.category === 'misleading-doc' && !run.observations.some(held => held.slice === slice.id && held.placement === 'fixed')) return 'fix';
+  const rule = DEFAULT_PLACEMENT[entry.category];
+  if (rule === 'fix-once' && !run.observations.some(held => held.slice === slice.id && held.placement === 'fixed')) return 'fix';
   const sinkSet = ws.config.deferred !== undefined && !isRecordSlice(slice);
-  if (DEFAULT_PLACEMENT[entry.category] === 'end') {
+  if (rule === 'end' || rule === 'fix-once') {
     if (slice.fromEndQueue === true || isRecordSlice(slice)) return sinkSet ? 'defer' : 'leave';
     return 'end';
   }
