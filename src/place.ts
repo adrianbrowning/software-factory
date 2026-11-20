@@ -9,7 +9,7 @@ import { draftOf, deferItems, isRecordSlice, itemKey, requireSink } from './defe
 import { evidenceHead, evidenceLine } from './evidence.ts';
 import { findingLocation, findUnplaced, placeObservations } from './ledger.ts';
 import { carriedSection, renderFinding } from './finding-text.ts';
-import { addEvent, DEFAULT_PLACEMENT, greenCommit, Invalidated, requireActive, type Finding, type Run, type Slice, type Unplaced, type Workspace } from './run.ts';
+import { addEvent, DEFAULT_PLACEMENT, fixesOnceInSlice, greenCommit, Invalidated, requireActive, type Finding, type Run, type Slice, type Unplaced, type Workspace } from './run.ts';
 import { needsFullReview, writeTicket } from './workflow.ts';
 
 export const PLACE_CHOICES = ['fix', 'carry', 'end', 'defer', 'leave'] as const;
@@ -22,10 +22,10 @@ export const placementSchema = z.object({
 });
 export type PlaceRequest = { placements: z.infer<typeof placementSchema>[] };
 
-/** The placement an observation gets when the user names none: by its category (a misleading-doc observation, and a correctness observation of a follow-up slice built from end-queue items, is fixed in this slice while the slice has none placed as fixed, so a slice never loops on fix rounds), with a leave sent to the deferred sink in a headless run that has one (the Record slice defers nothing). A follow-up slice that built end-queue items, or the Record slice, never puts its end-default observations back into the end queue (in any run mode): they go to the sink when the slice may defer to it, else they are left. A fixable observation (see above) takes that route only once the slice has one placed as fixed. */
+/** The placement an observation gets when the user names none: by its category (see `DEFAULT_PLACEMENT`; `fixesOnceInSlice` owns which categories are fixed once in this slice, so a slice never loops on fix rounds), with a leave sent to the deferred sink in a headless run that has one (the Record slice defers nothing). A follow-up slice that built end-queue items, or the Record slice, never puts its end-default observations back into the end queue (in any run mode): they go to the sink when the slice may defer to it, else they are left. A fix-once observation takes that route only once the slice has one placed as fixed. */
 export function defaultChoice(ws: Workspace, run: Run, slice: Slice, entry: Unplaced): PlaceChoice {
   const rule = DEFAULT_PLACEMENT[entry.category];
-  const fixable = rule === 'fix-once' || (entry.category === 'correctness' && slice.fromEndQueue === true);
+  const fixable = fixesOnceInSlice(entry.category, slice);
   if (fixable && !run.observations.some(held => held.slice === slice.id && held.placement === 'fixed')) return 'fix';
   const sinkSet = ws.config.deferred !== undefined && !isRecordSlice(slice);
   if (rule === 'end' || rule === 'fix-once') {
