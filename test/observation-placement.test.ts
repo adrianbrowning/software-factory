@@ -539,7 +539,7 @@ describe('batched observation placement', () => {
     });
     await withRun(ws, 'demo', run => runChecks(ws, run));
     const second = await withRun(ws, 'demo', run => startReview(ws, run));
-    await review(ws, second.reviewId, [{ ...observation('again', 'correctness'), path: 'follow.txt' }]);
+    await review(ws, second.reviewId, [{ ...observation('again', 'missing-test'), path: 'follow.txt' }]);
     await withRun(ws, 'demo', run => recordReview(ws, run));
     await withRun(ws, 'demo', run => completeSlice(ws, run));
     assert.equal(readRun(ws, 'demo').waiting.length, 0);
