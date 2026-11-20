@@ -13,7 +13,7 @@ export function carriedHeader(reviewId: string, slice: { id: string; title: stri
   return `### From ${green ? 'green ' : ''}review ${reviewId} of slice ${slice.id} "${slice.title}"`;
 }
 
-/** Whether `section` is a carried-in section made from review `reviewId`, read from its header. Only for sections from before they listed their keys (see `carriedKeysLine`). */
+/** Whether `section` is a carried-in section made from review `reviewId`, read from its header. It attributes a section without a keys line (see `carriedKeysLine`), and `moveCarried` uses it to check a keyed section's header. */
 export function isCarriedSectionOf(section: string, reviewId: string) {
   return section.startsWith(`### From green review ${reviewId} of slice `) || section.startsWith(`### From review ${reviewId} of slice `);
 }
@@ -93,7 +93,7 @@ export function legacyObservations(carried: string[], deferred: LegacyDeferred[]
  * key the split slice does not carry, a key named twice, a key in a section without a keys line, or a key in a section
  * that lists several keys or also holds a note (from an older state file; it is not split); the children are built before it is called, so nothing is saved.
  */
-export function moveCarried(active: CarriedSlice, inputs: { carried?: string[] | undefined; title: string }[], children: CarriedSlice[]) {
+export function moveCarried(active: CarriedSlice, inputs: { carried?: string[] | undefined; title: string }[], children: CarriedSlice[], titles: string[]) {
   const [first] = children;
   const named = new Map<string, number>();
   inputs.forEach(input => {
@@ -112,12 +112,17 @@ export function moveCarried(active: CarriedSlice, inputs: { carried?: string[] |
     const holder = active.carried.find(section => carriesKey(section, key) === true);
     if (holder !== undefined) {
       if ((carriedKeys(holder)?.length ?? 0) > 1) throw new Error(`Carried key ${key} is in a section that lists several keys (from an older state file), so it cannot move; drop it from \`carried\` and call again, the section stays with the first child.`);
-      // The section must be the whole one-line header, then the key's item heading; anything between them (a note) or a title with a newline is refused.
+      // The section must start with an exact carried header (any slice of the run, green or not, any two-digit id), a blank line, then the key's item heading; a note between them is refused.
       const review = key.slice(0, Math.max(key.indexOf(':'), 0));
       const heading = `\n\n#### [observation] ${key.slice(key.indexOf(':') + 1)}\n\n- Location: `;
-      const [headerLine = ''] = holder.split('\n');
-      const wellFormed = headerLine.endsWith('"') && isCarriedSectionOf(headerLine, review) && /^### From (?:green )?review \S+ of slice \S+ ".*"$/.test(headerLine) && holder.startsWith(`${headerLine}${heading}`);
-      if (!wellFormed) throw new Error(`Carried key ${key} is in a section that also holds a note or a slice title with a newline (from an older state file), so it cannot move; drop it from \`carried\` and call again, the section stays with the first child.`);
+      const wellFormed = titles.some(title =>
+        [true, false].some(green => {
+          const header = carriedHeader(review, { id: '00', title }, green);
+          const idAt = header.indexOf(' of slice ') + ' of slice '.length;
+          return holder.startsWith(header.slice(0, idAt)) && /^\d{2}$/.test(holder.slice(idAt, idAt + 2)) && holder.slice(idAt + 2).startsWith(`${header.slice(idAt + 2)}${heading}`);
+        }),
+      );
+      if (!wellFormed) throw new Error(`Carried key ${key} is in a section that also holds a note (from an older state file), so it cannot move; drop it from \`carried\` and call again, the section stays with the first child.`);
       continue;
     }
     const keyless = active.carried.some(section => carriesKey(section, key) === undefined && isCarriedSectionOf(section, key.slice(0, Math.max(key.indexOf(':'), 0))) && renderedObservation(section, key.slice(key.indexOf(':') + 1)) !== undefined);
