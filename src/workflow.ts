@@ -655,8 +655,12 @@ export function needsFullReview(slice: Slice) {
  * `counted` is false (observation-only rounds from factory_fix).
  */
 export function requestFix(ws: Workspace, run: Run, slice: Slice, sha: string, records: FixRecord[], counted = true) {
-  slice.fixFiles += 1;
-  const round = slice.fixFiles;
+  return startFix(run, slice, sha, writeFixFile(ws, run, slice, records), counted);
+}
+
+/** The fix file of the slice's next round, written without touching the run or the slice: a failed write leaves them as they were. */
+export function writeFixFile(ws: Workspace, run: Run, slice: Slice, records: FixRecord[]) {
+  const round = slice.fixFiles + 1;
   let checks = 0;
   const items = records.map(({ item }) => {
     if ('id' in item) return item;
@@ -677,6 +681,13 @@ export function requestFix(ws: Workspace, run: Run, slice: Slice, sha: string, r
   ].join('\n');
   const listed = items.map(item => `- \`${item.id}\`: ${item.summary}`).join('\n');
   writeAtomic(fixPath, `# Fix slice ${slice.id}: ${slice.title}\n\n${context}\n\n${UNTRUSTED_NOTE}\n\n## Fix items\n\n${listed}\n\n${parts.join('\n\n')}\n`);
+  return { fixPath, items, round };
+}
+
+/** Moves the slice to `fix` for a round `writeFixFile` wrote. See requestFix for `counted`. */
+export function startFix(run: Run, slice: Slice, sha: string, written: ReturnType<typeof writeFixFile>, counted: boolean) {
+  const { fixPath, items, round } = written;
+  slice.fixFiles = round;
   slice.fixItems.push(...items.map(item => ({ ...item, path: fixPath, round })));
   slice.fixPath = fixPath;
   slice.fixFromSha = sha;

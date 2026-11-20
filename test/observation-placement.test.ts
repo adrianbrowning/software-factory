@@ -10,6 +10,7 @@ import { carriedKeysLine, carriesKey } from '../src/legacy-observations.ts';
 import { Invalidated, type Finding, readRun, REVIEW_DOMAINS, runDir, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { defaultChoice } from '../src/place.ts';
 import { keptFindings, validationSchema } from '../src/review-record.ts';
+import { fixObservations } from '../src/observations.ts';
 import { completeSlice, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
 import { addFollowUp, applyReslice, approvePlan, nextAction, nextSlice, planReslice, planSlices } from '../src/workflow.ts';
 import { CHECKS_OK, commit, fakeGh, finding, headlessSubmitRun, noFixItems, retroDoneRun, review, reviewActive, slice, submitGreenWithObservation, tempRepo } from './helpers.ts';
@@ -319,6 +320,19 @@ describe('batched observation placement', () => {
     assert.match(readFileSync(retried.slices[0]?.fixPath ?? 'missing', 'utf8'), /thermo-doc/);
     assert.equal(retried.waiting.length, 1);
     assert.equal(retried.events.filter(event => event.kind === 'fix-observations').length, 1);
+  });
+
+  it('fixObservations leaves the run exactly as it was when the fix file cannot be written', async () => {
+    using dir = repo();
+    const { ws } = await headlessSubmitRun(dir.root, ['Feature']);
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const first = await withRun(ws, 'demo', run => startReview(ws, run));
+    await review(ws, first.reviewId, [observation('doc', 'misleading-doc'), observation('gap', 'correctness')]);
+    await withRun(ws, 'demo', run => recordReview(ws, run));
+    mkdirSync(join(runDir(ws, 'demo'), 'fixes', '01-f1.md'), { recursive: true });
+    const before = structuredClone(readRun(ws, 'demo'));
+    await assert.rejects(withRun(ws, 'demo', run => fixObservations(ws, run, { observations: ['thermo-doc', 'thermo-gap'] }, 'Chosen.')));
+    assert.deepEqual(readRun(ws, 'demo'), before);
   });
 
   it('a carried red-review observation is marked as carried to the receiving slice', async () => {
