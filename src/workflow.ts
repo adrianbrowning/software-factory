@@ -8,36 +8,10 @@ import { git } from './exec.ts';
 import { isRecordSlice, recordFailed, waitsForRecord } from './deferred.ts';
 import { RELATED_MAX, type SourceInput } from './source.ts';
 import {
-  activeSlice,
-  addEvent,
-  builtBy,
-  discardReview,
-  clearFullGreen,
-  dropPass,
-  greenCommit,
-  hasPass,
-  outdatedGreenCount,
-  reportPath,
-  runDir,
-  type Run,
-  reviewDomains,
-  reviewPaths,
-  saveRun,
-  type Slice,
-  type SliceInput,
-  resliceItemSchema,
-  sliceInputSchema,
-  standingChecks,
-  type Source,
-  sourceSchema,
-  statePath,
-  reviewDir,
-  ticketPath,
-  type Workspace,
-  requireActive,
-  requireNotStalled,
-  stallNotice,
-  writeAtomic,
+  activeSlice, addEvent, builtBy, discardReview, clearFullGreen, dropPass, greenCommit, hasPass, outdatedGreenCount,
+  reportPath, runDir, type Run, reviewDomains, reviewPaths, saveRun, type Slice, type SliceInput, resliceItemSchema,
+  sliceInputSchema, standingChecks, type Source, sourceSchema, statePath, reviewDir, ticketPath, type Workspace,
+  requireActive, requireNotStalled, stallNotice, writeAtomic,
 } from './run.ts';
 import { head, requireClean, requireOnBranchClean, snapshot } from './repo.ts';
 
@@ -658,7 +632,7 @@ export function requestFix(ws: Workspace, run: Run, slice: Slice, sha: string, r
   return startFix(run, slice, sha, writeFixFile(ws, run, slice, records), counted);
 }
 
-/** The fix file of the slice's next round, written without touching the run or the slice: a failed write leaves them as they were. */
+/** Writes the next round's fix file, touching neither run nor slice, so a failed write changes nothing. */
 export function writeFixFile(ws: Workspace, run: Run, slice: Slice, records: FixRecord[]) {
   const round = slice.fixFiles + 1;
   let checks = 0;
