@@ -426,7 +426,7 @@ export function planReslice(ws: Workspace, run: Run, proposed: unknown): Reslice
   const first = slices[index];
   if (first === undefined) throw new Error('Re-slice produced no slices');
   first.status = 'active';
-  // Carried-in work goes with the split slice to its first child (moveCarried then hands named sections to later children), and stays on each later slice.
+  // Carried-in work goes to the first child; moveCarried then hands each later child the items it names in `carried`.
   first.carried = active.carried;
   moveCarried(active, childInputs, slices.slice(index, index + children.length));
   // Unplaced observations of the split slice (red reviews' too) go with its work to the first child.

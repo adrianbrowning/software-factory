@@ -36,7 +36,7 @@ export function noteText(note: string) {
   return note.replace(/^Carried keys: /gm, ' Carried keys: ');
 }
 
-/** Whether `section` lists `key` in its carried keys line. `undefined` for a section without one (from before they were written). */
+/** Whether `section` lists `key` in its carried keys line. `undefined` for a section without one (a carried note, or a section from an older state file). */
 export function carriesKey(section: string, key: string) {
   const line = keysLine(section);
   return line === undefined ? undefined : line.slice(KEYS_PREFIX.length).split(', ').includes(`\`${key}\``);
