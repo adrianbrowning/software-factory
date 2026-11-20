@@ -49,7 +49,7 @@ import { fixObservations } from './observations.ts';
 import { collectObservations, placeDefaults } from './place.ts';
 import { changedLines, changedPaths, targetedReview } from './targeted.ts';
 import { reportListsCommit, storedBehaviors, storedReport } from './report.ts';
-import { head, porcelain, requireOnBranchClean, snapshot } from './repo.ts';
+import { head, ownCommits, porcelain, requireOnBranchClean, snapshot } from './repo.ts';
 import {
   needsFullReview,
   type FixRecord,
@@ -138,18 +138,6 @@ async function foreignCommits(ws: Workspace, run: Run, slice: Slice, own: string
       .filter(Boolean),
   );
   return own.filter(sha => !unique.has(sha));
-}
-
-/** The slice's commits past its parent, newest first: each full sha with its `--oneline` line (short sha and subject). */
-async function ownCommits(ws: Workspace, slice: Slice) {
-  const log = await git(ws.root, 'log', '--no-show-signature', '--no-color', '--format=%H %h %s', `${slice.parentBranch}..HEAD`);
-  return log
-    .split('\n')
-    .filter(Boolean)
-    .map(line => {
-      const [sha = '', ...oneline] = line.split(' ');
-      return { oneline: oneline.join(' '), sha };
-    });
 }
 
 export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {

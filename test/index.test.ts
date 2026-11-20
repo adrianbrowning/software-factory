@@ -163,6 +163,30 @@ describe('implementer sessions', () => {
     assert.match(await call('factory_implementer_report', { behaviors: [], commits: [], open: [] }, implementer), /Stored the report/);
   });
 
+  it('refuses commits items that are not slice commits, lists the slice commits, and keeps the stored report', async () => {
+    using repo = emptyRepo();
+    const { root } = repo;
+    const { call, implementer } = await startedRun(root);
+    writeFileSync(join(root, 'work.txt'), 'x\n');
+    git(root, 'add', '.');
+    git(root, 'commit', '-qm', 'work done');
+    const sha = git(root, 'rev-parse', 'HEAD').toString().trim();
+    const otherSha = git(root, 'rev-parse', 'HEAD~1').toString().trim();
+    const report = (commits: string[], open: string[] = []) => ({ behaviors: [], commits, open });
+    const stored = await call('factory_implementer_report', report([`${sha.slice(0, 7)} work done`], ['first']), implementer);
+    assert.match(stored, /Stored the report/);
+    const file = /: (\S+\.md)/.exec(stored)?.[1] ?? '';
+
+    await assert.rejects(call('factory_implementer_report', report(['(see git log)'], ['second']), implementer), (error: Error) => {
+      assert.match(error.message, /\(see git log\)/);
+      assert.ok(error.message.includes(`${sha.slice(0, 7)} work done`));
+      return true;
+    });
+    await assert.rejects(call('factory_implementer_report', report([`${otherSha.slice(0, 7)} base`], ['second']), implementer), /base/);
+    assert.match(readFileSync(file, 'utf8'), /first/);
+    assert.match(await call('factory_implementer_report', report([], ['third']), implementer), /Replaced the stored report/);
+  });
+
   it('rejects a report item that spans more than one line', async () => {
     using repo = emptyRepo();
     const { call, implementer } = await startedRun(repo.root);
