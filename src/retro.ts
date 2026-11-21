@@ -3,8 +3,8 @@ import { z } from 'zod';
 import { retroDraft, retroKey } from './deferred.ts';
 import { evidence } from './evidence.ts';
 import { gh } from './exec.ts';
-import { activeSlice, addEvent, runDir, type Run, type Slice, stallNotice, type Workspace, writeAtomic } from './run.ts';
-import { planAppend, pushSlice, settle, waitingNotice } from './workflow.ts';
+import { addEvent, runDir, type Run, type Slice, type Workspace, writeAtomic } from './run.ts';
+import { nextAction, planAppend, pushSlice, settle, waitingNotice } from './workflow.ts';
 
 export const RETRO_CATEGORIES = [
   'navigation',
@@ -33,18 +33,11 @@ export type RetroFinding = z.infer<typeof retroFindingSchema>;
 export const retroSchema = z.object({ findings: z.array(retroFindingSchema) });
 
 function requireRetroOpen(run: Run) {
-  const finished = run.slices.length > 0 && run.slices.every(slice => slice.status === 'done');
   if (run.waiting.length > 0) {
-    if (finished && (run.status === 'running' || run.status === 'done')) throw new Error(waitingNotice(run));
-    const slice = activeSlice(run);
-    const first =
-      run.status === 'running'
-        ? 'Finish the pending slices first.'
-        : slice?.stalled
-          ? stallNotice(run, slice)
-          : `Tell the user to /factory resume ${run.feature} first.`;
-    throw new Error(`Carried items wait for the end of the run (${run.waiting.length}), and the retro waits for them. ${first} factory_follow_up takes them once every slice is done.`);
+    const next = nextAction(run);
+    throw new Error(next === waitingNotice(run) ? next : `Carried items wait for the end of the run (${run.waiting.length}), and the retro waits for them. ${next}`);
   }
+  const finished = run.slices.length > 0 && run.slices.every(slice => slice.status === 'done');
   if (!finished && run.status !== 'stalled') throw new Error('Retro runs when every slice is done or the run is stalled.');
   if (run.retroRecorded) throw new Error('The retro for this run is already recorded.');
 }
