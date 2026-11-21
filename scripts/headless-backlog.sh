@@ -1,13 +1,20 @@
 #!/bin/sh
-# Runs one headless factory run per issue, one after the other, in the current worktree. Each run opens its own stack of
-# draft PRs on the default base; merging stays manual. A run that fails or pauses does not stop the next one.
-# Usage: scripts/headless-backlog.sh <issue> [<issue> ...]   (issue: 102, #102 or a GitHub issue URL)
+# Runs one headless factory run per issue, one after the other, in the current worktree, chained into one stack: the first
+# run starts without --base, and each later new run starts with `--base <top slice branch of the run before it>` (the last
+# slice in that run's state.json), so its PRs stack on the run before. A listed issue whose run is already done with a
+# submit is skipped and its top branch is the base of the next run. The batch stops at the first run that does not end
+# done with a submit (paused, stalled, failed, running, or done with no PRs), names it in the summary and exits 1.
+# With --separate as the first argument, no run gets --base: each opens its own stack of draft PRs on the default base,
+# and a run that fails or pauses does not stop the next one. Merging stays manual.
+# Usage: scripts/headless-backlog.sh [--separate] <issue> [<issue> ...]   (issue: 102, #102 or a GitHub issue URL)
 # Env: OMP (default ,omp), PLUGIN_DIR (default the installed plugin), MAX_COST (USD, default 25),
 #      MAX_TIME (seconds, default 5400), LOG_DIR (default <git dir>/headless-backlog, so no log makes the tree dirty).
-# A run that exists and is not done is resumed (`/factory resume`); a submitted done run is skipped. Run the script again
-# to continue. Exits 1 when any issue did not end with a done run whose PRs are open.
+# A run that exists and is not done is resumed (`/factory resume`, which takes no --base); a submitted done run is
+# skipped. Run the script again to continue. Exits 1 when any issue did not end with a done run whose PRs are open.
 set -u
-[ $# -gt 0 ] || { echo 'usage: headless-backlog.sh <issue> [<issue> ...]' >&2; exit 2; }
+separate=0
+if [ "${1:-}" = --separate ]; then separate=1; shift; fi
+[ $# -gt 0 ] || { echo 'usage: headless-backlog.sh [--separate] <issue> [<issue> ...]' >&2; exit 2; }
 omp=${OMP:-,omp}
 plugin=${PLUGIN_DIR:-$HOME/.omp/plugins/node_modules/software-factory}
 command -v "$omp" >/dev/null || { echo "$omp is not on PATH; set OMP to the omp command" >&2; exit 2; }
@@ -21,6 +28,8 @@ logs=${LOG_DIR:-$(git rev-parse --absolute-git-dir)/headless-backlog}
 mkdir -p "$logs"
 summary=''
 failed=0
+# The top slice branch of the last run that ended done with a submit; empty before the first run. Used only when chained.
+base=''
 
 # The run's status, or "done, no PRs (<event>)" when a done run's last submission event is not a submit.
 run_status() {
@@ -29,24 +38,43 @@ run_status() {
     | if $s == "done" and $k != "submit" then "done, no PRs (\($k // "not submitted"); /factory submit opens them)" else $s end' "$1"
 }
 
+# The branch of the last slice in the run's state.json.
+top_branch() { jq -r '.slices[-1].branch // empty' "$1"; }
+
+# Ends a chained batch at $1, a run or issue that did not end done with a submit, so the next run has no base to stack on.
+chain_stop() { summary="${summary}Stopped: $1 did not end done with a submit, so no later issue is started.\n"; }
+
 for ref in "$@"; do
   n=$(printf '%s\n' "$ref" | sed -nE 's@^#?([0-9]+)$@\1@p; s@^https://github\.com/[^/]+/[^/]+/issues/([0-9]+)/?$@\1@p')
   if [ -z "$n" ]; then
     summary="$summary$ref: skipped, not an issue number or GitHub issue URL\n"
     failed=1
-    continue
+    [ "$separate" = 1 ] && continue
+    chain_stop "$ref"
+    break
   fi
   feature="issue-$n"
   state=$scratch/$feature/state.json
   log=$logs/$feature.log
   status=$(run_status "$state")
   case $status in
-    done) summary="$summary$ref: skipped, run already done\n"; continue ;;
-    done,*) summary="$summary$ref: skipped, run $status\n"; failed=1; continue ;;
-    'no run') prompt="/factory headless $ref" ;;
+    done)
+      summary="$summary$ref: skipped, run already done\n"
+      [ "$separate" = 1 ] || base=$(top_branch "$state")
+      continue
+      ;;
+    done,*)
+      summary="$summary$ref: skipped, run $status\n"
+      failed=1
+      [ "$separate" = 1 ] && continue
+      chain_stop "$feature"
+      break
+      ;;
+    'no run') prompt="/factory headless $ref${base:+ --base $base}" ;;
     *) prompt="/factory resume $feature" ;;
   esac
-  # Each run plans on the current origin/main, so it sees what merged while earlier runs worked.
+  # The first run in a chain, and every run with --separate, plans on the current origin/main, so it sees what merged
+  # while earlier runs worked; a later run in a chain branches from the top branch of the run before it.
   git fetch -q origin || echo "git fetch failed; $ref plans on the last fetched origin" >&2
   echo "== $ref: $prompt (log: $log)"
   "$omp" -p --wait-async --no-extensions -e "$plugin" --max-cost "${MAX_COST:-25}" --max-time "${MAX_TIME:-5400}" "$prompt" >"$log" 2>&1
@@ -61,6 +89,12 @@ for ref in "$@"; do
     summary="${summary}Stopped: $feature is still running; run the script again to resume it.\n"
     break
   fi
+  [ "$separate" = 1 ] && continue
+  if [ "$status" != done ]; then
+    chain_stop "$feature"
+    break
+  fi
+  base=$(top_branch "$state")
 done
 
 printf '\nSummary:\n%b' "$summary"
