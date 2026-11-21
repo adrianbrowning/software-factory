@@ -55,7 +55,8 @@ run_status() {
   [ "$st" = done ] || { echo "$st"; return; }
   k=$(submission_kind "$1")
   [ "$k" = submit ] && { echo done; return; }
-  echo "done, no PRs (${k/none/not submitted}; /factory submit opens them)"
+  [ "$k" = none ] && k="not submitted"
+  echo "done, no PRs ($k; /factory submit opens them)"
 }
 
 # Chain check 1's name, shared by chain_check and chain_next.
