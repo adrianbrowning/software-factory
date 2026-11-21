@@ -198,7 +198,8 @@ after the other, in the current worktree, chained into one stack of draft PRs: t
 and each later new run starts with `--base <top slice branch of the run before it>` (the last slice in that run's
 state.json), so its PRs stack on the run before. A listed issue whose run is already done with a submit is skipped, and
 its top branch is the base of the next run. A run that is not done is resumed (`/factory resume`, which takes no
-`--base`). Before a done run (one the script just finished or one it skips) becomes the base of the next run, the script
+`--base`) only if check (3) below passes first, so a paused run that started on another base never submits onto the
+wrong stack. Before a done run (one the script just finished or one it skips) becomes the base of the next run, the script
 checks it, in this order: (1) its last submission event is a submit and each slice branch has an open or merged PR
 (`gh pr list --head <branch> --state all`; a failing `gh` call fails the check with its message); (2) its top slice branch, on origin (`git ls-remote origin`) and locally (the next run's `--base` pins the local
 branch), is still at the top slice's green commit; (3) its recorded `baseBranch` is the top slice branch of the run

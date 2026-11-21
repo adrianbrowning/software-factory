@@ -188,6 +188,20 @@ describe('scripts/headless-backlog.sh', () => {
     assert.deepEqual(result.prompts, ['/factory resume issue-4', '/factory headless 5 --base issue-4/01']);
   });
 
+  for (const [name, existing, reason] of [
+    ['a baseBranch that is not the top branch of the run before it', { 3: submitted(3, ['01']), 4: state('paused', undefined, ['issue-4/01'], 'issue-9/01') }, 'issue-4 failed chain check 3 .*its baseBranch is issue-9\\/01, expected issue-3\\/01'],
+    ['a baseBranch as the first run', { 4: state('paused', undefined, ['issue-4/01'], 'issue-9/01') }, 'issue-4 failed chain check 3 .*its baseBranch is issue-9\\/01, expected absent'],
+    ['a baseRef that is not the default base as the first run', { 4: state('paused', undefined, ['issue-4/01'], undefined, true, 'origin/other') }, 'issue-4 failed chain check 3 .*its baseRef is origin\\/other, expected origin\\/main'],
+  ] as const) {
+    it(`chained, does not resume a paused run with ${name}, and starts nothing after it`, () => {
+      const fake = `  "/factory resume issue-4") ${writeState(4, submitted(4, ['01'], 'issue-9/01'))} ;;`;
+      const result = runBacklog(existing, fake, Object.keys(existing).concat('5'));
+      assert.equal(result.status, 1, result.stderr);
+      assert.deepEqual(result.prompts, []);
+      assert.match(result.summary, new RegExp(`^Stopped: ${reason}\\. No later issue is started`, 'm'));
+    });
+  }
+
   for (const [name, outcome, reason] of [
     ['paused', state('paused', undefined, ['issue-4/01']), 'run paused'],
     ['done with no PRs', state('done', 'submission-stop', ['issue-4/01']), 'run done, no PRs \\(submission-stop;'],
