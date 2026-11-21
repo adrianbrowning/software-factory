@@ -169,8 +169,8 @@ for ref in "$@"; do
   git fetch -q origin || echo "git fetch failed; $ref plans on the last fetched origin" >&2
   echo "== $ref: $prompt (log: $log)"
   # shellcheck disable=SC2086 # OMP_ARGS splits into flags on purpose. shortcut: no flag value may hold a space.
-  "$omp" -p --wait-async --no-extensions -e "$plugin" --max-cost "${MAX_COST:-25}" --max-time "${MAX_TIME:-5400}" \
-    ${OMP_ARGS-} "$prompt" >"$log" 2>&1
+#  "$omp" -p --wait-async --no-extensions -e "$plugin" --max-cost "${MAX_COST:-25}" --max-time "${MAX_TIME:-5400}" \
+  "$omp" -p --wait-async --no-extensions -e "$plugin" ${OMP_ARGS-} "$prompt" >"$log" 2>&1
   code=$?
   status=$(run_status "$state")
   prs=$(grep -oE 'https://github\.com/[^ )]+/pull/[0-9]+' "$log" | sort -u | tr '\n' ' ')
