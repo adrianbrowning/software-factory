@@ -231,6 +231,19 @@ describe('observation ledger', () => {
     assert.match(await knownOf(ws, call, 'second.txt'), /- `01-r1:thermo-naming` \(carried; carried to this slice: check it\): /);
   });
 
+  it('moves a carried item on a later reslice after the slice it was carried from was split into differently titled children', async () => {
+    using dir = repo();
+    const { call, ws } = await ledgerRun(dir.root, ['naming']);
+    await call('factory_carry', { observations: ['thermo-naming'], to: '02' });
+    await call('factory_reslice', { slices: [slice('Part one'), slice('Part two', ['Part one'])] });
+    await finishActive(ws, 'one.txt');
+    await finishActive(ws, 'two.txt');
+    await call('factory_reslice', { slices: [slice('Late one'), { ...slice('Late two', ['Late one']), carried: ['01-r1:thermo-naming'] }] });
+    const run = readRun(ws, 'demo');
+    assert.deepEqual(run.slices.find(item => item.title === 'Late one')?.carried, []);
+    assert.match(run.slices.find(item => item.title === 'Late two')?.carried.join('\n') ?? '', /\[observation\] thermo-naming/);
+  });
+
   describe('factory_reslice with carried keys', () => {
     /** Slice 01 done with the thermo observations `names` carried to slice 02, which is active and about to be split. */
     const carriedToActive = async (root: string, names: string[], note?: string) => {
@@ -298,6 +311,18 @@ describe('observation ledger', () => {
       assert.match(ticketOf(ws, 'Part two').text, /thermo-naming/);
     });
 
+    it('moves an item whose carried header names a three-digit slice id', async () => {
+      using dir = repo();
+      const { call, ws } = await carriedToActive(dir.root, ['naming']);
+      await withRun(ws, 'demo', run => {
+        const active = run.slices.find(item => item.status === 'active') ?? assert.fail('no active slice');
+        active.carried = active.carried.map(section => section.replace(' of slice 01 "', ' of slice 100 "'));
+      });
+      await call('factory_reslice', { slices: [slice('Part one'), { ...slice('Part two', ['Part one']), carried: ['01-r1:thermo-naming'] }] });
+      assert.match(ticketOf(ws, 'Part two').text, /of slice 100 "Feature"[^]*\[observation\] thermo-naming/);
+      assert.doesNotMatch(ticketOf(ws, 'Part one').text, /thermo-naming/);
+    });
+
     it('keeps a note that holds a keys-looking line with the first child, and never reads it as carrying that key', async () => {
       using dir = repo();
       const { call, ws } = await carriedToActive(dir.root, ['naming'], 'Mind this.\nCarried keys: `01-r1:thermo-naming`');
@@ -349,6 +374,20 @@ describe('observation ledger', () => {
       assert.equal(ticketOf(ws, 'Second').text, before.ticket);
     });
 
+    it('refuses a key in a legacy section whose note sits between the header and the item', async () => {
+      using dir = repo();
+      const { call, ws } = await carriedToActive(dir.root, ['naming']);
+      await withRun(ws, 'demo', run => {
+        const active = run.slices.find(item => item.status === 'active') ?? assert.fail('no active slice');
+        const [one = ''] = active.carried;
+        const [header = '', ...rest] = one.split('\n\n');
+        active.carried = [[header, 'Mind this.', ...rest].join('\n\n')];
+      });
+      const before = readRun(ws, 'demo');
+      await assert.rejects(call('factory_reslice', { slices: [slice('Part one'), { ...slice('Part two', ['Part one']), carried: ['01-r1:thermo-naming'] }] }), /01-r1:thermo-naming.*note/);
+      assert.deepEqual(readRun(ws, 'demo'), before);
+    });
+
     it('refuses an unknown key, a key named by two children and a key in a keyless section, naming the key and changing nothing', async () => {
       using dir = repo();
       const { call, ws } = await carriedToActive(dir.root, ['naming']);
@@ -358,7 +397,15 @@ describe('observation ledger', () => {
       await assert.rejects(call('factory_reslice', split(['01-r1:thermo-naming'], ['01-r1:thermo-naming'])), /01-r1:thermo-naming.*two children/);
       assert.deepEqual(readRun(ws, 'demo'), before.run);
       assert.equal(ticketOf(ws, 'Second').text, before.ticket);
+      await call('factory_reslice', split([], ['01-r1:thermo-naming']));
+      assert.match(ticketOf(ws, 'Part two').text, /\[observation\] thermo-naming/);
+      assert.doesNotMatch(ticketOf(ws, 'Part one').text, /thermo-naming/);
+    });
 
+    it('refuses a key in a keyless section, naming the key and changing nothing', async () => {
+      using dir = repo();
+      const { call, ws } = await carriedToActive(dir.root, ['naming']);
+      const split = (one: string[], two: string[]) => ({ slices: [{ ...slice('Part one'), carried: one }, { ...slice('Part two', ['Part one']), carried: two }] });
       await withRun(ws, 'demo', run => {
         const active = run.slices.find(item => item.status === 'active') ?? assert.fail('no active slice');
         active.carried = active.carried.map(section => section.split('\n').filter(line => !line.startsWith('Carried keys: ')).join('\n'));
@@ -367,6 +414,109 @@ describe('observation ledger', () => {
       await assert.rejects(call('factory_reslice', split([], ['01-r1:thermo-naming'])), /01-r1:thermo-naming.*without a Carried keys line/);
       assert.deepEqual(readRun(ws, 'demo'), keyless.run);
       assert.equal(ticketOf(ws, 'Second').text, keyless.ticket);
+    });
+
+    it('after a refusal for a section that cannot move, the call without that key goes through and the section stays with the first child', async () => {
+      using dir = repo();
+      const { call, ws } = await carriedToActive(dir.root, ['naming']);
+      await withRun(ws, 'demo', run => {
+        const active = run.slices.find(item => item.status === 'active') ?? assert.fail('no active slice');
+        active.carried = active.carried.map(section => section.split('\n').filter(line => !line.startsWith('Carried keys: ')).join('\n'));
+      });
+      await assert.rejects(call('factory_reslice', { slices: [slice('Part one'), { ...slice('Part two', ['Part one']), carried: ['01-r1:thermo-naming'] }] }), /drop it from `carried`/);
+      await call('factory_reslice', { slices: [slice('Part one'), slice('Part two', ['Part one'])] });
+      assert.match(ticketOf(ws, 'Part one').text, /\[observation\] thermo-naming/);
+      assert.deepEqual(ticketOf(ws, 'Part two').found.carried, []);
+    });
+
+    it('moves every item out of the first child to later children, one to the third child', async () => {
+      using dir = repo();
+      const { call, ws } = await carriedToActive(dir.root, ['naming', 'style']);
+      await call('factory_reslice', {
+        slices: [slice('Part one'), { ...slice('Part two', ['Part one']), carried: ['01-r1:thermo-naming'] }, { ...slice('Part three', ['Part two']), carried: ['01-r1:thermo-style'] }],
+      });
+      const one = ticketOf(ws, 'Part one');
+      const two = ticketOf(ws, 'Part two');
+      const three = ticketOf(ws, 'Part three');
+      assert.deepEqual(one.found.carried, []);
+      assert.doesNotMatch(one.text, /thermo-|Carried keys/);
+      assert.equal(two.found.carried.length, 1);
+      assert.match(two.text, /\[observation\] thermo-naming[^]*Carried keys: `01-r1:thermo-naming`\n/);
+      assert.doesNotMatch(two.text, /thermo-style/);
+      assert.equal(three.found.carried.length, 1);
+      assert.match(three.text, /\[observation\] thermo-style[^]*Carried keys: `01-r1:thermo-style`\n/);
+      assert.doesNotMatch(three.text, /thermo-naming/);
+    });
+
+    it('lists the carried keys each child holds in the approval dialog', async () => {
+      using dir = repo();
+      const { call } = await carriedToActive(dir.root, ['naming', 'style']);
+      const bodies: string[] = [];
+      await call('factory_reslice', { slices: [slice('Part one'), { ...slice('Part two', ['Part one']), carried: ['01-r1:thermo-style'] }] }, { confirm: async (_title, body) => (bodies.push(body), true) });
+      assert.equal(bodies.length, 1);
+      assert.match(bodies[0] ?? '', /Part one\n[^]*carried: 01-r1:thermo-naming\n[^]*Part two\n[^]*carried: 01-r1:thermo-style\n/);
+    });
+
+    it('moves a section whose carried-from slice title holds a blank line to the child that names it', async () => {
+      using dir = repo();
+      const { call, ws } = await carriedToActive(dir.root, ['naming']);
+      await withRun(ws, 'demo', run => {
+        const active = run.slices.find(item => item.status === 'active') ?? assert.fail('no active slice');
+        active.carried = active.carried.map(section => section.replace('"Feature"', '"Fea\n\nture"'));
+        for (const item of run.slices) if (item.title === 'Feature') item.title = 'Fea\n\nture';
+      });
+      await call('factory_reslice', { slices: [slice('Part one'), { ...slice('Part two', ['Part one']), carried: ['01-r1:thermo-naming'] }] });
+      assert.match(ticketOf(ws, 'Part two').text, /\[observation\] thermo-naming/);
+      assert.deepEqual(ticketOf(ws, 'Part one').found.carried, []);
+    });
+
+    it('refuses a key in a legacy section whose note between the header and the item ends in a double quote', async () => {
+      using dir = repo();
+      const { call, ws } = await carriedToActive(dir.root, ['naming']);
+      await withRun(ws, 'demo', run => {
+        const active = run.slices.find(item => item.status === 'active') ?? assert.fail('no active slice');
+        const [one = ''] = active.carried;
+        const [header = '', ...rest] = one.split('\n\n');
+        active.carried = [[header, 'Mind "this"', ...rest].join('\n\n')];
+      });
+      const before = readRun(ws, 'demo');
+      await assert.rejects(call('factory_reslice', { slices: [slice('Part one'), { ...slice('Part two', ['Part one']), carried: ['01-r1:thermo-naming'] }] }), /01-r1:thermo-naming.*note/);
+      assert.deepEqual(readRun(ws, 'demo'), before);
+    });
+
+    it('refuses a note even when a proposed child title would make the note part of the header', async () => {
+      using dir = repo();
+      const { call, ws } = await carriedToActive(dir.root, ['naming']);
+      await withRun(ws, 'demo', run => {
+        const active = run.slices.find(item => item.status === 'active') ?? assert.fail('no active slice');
+        const [one = ''] = active.carried;
+        const [header = '', ...rest] = one.split('\n\n');
+        active.carried = [[header, 'Mind "this"', ...rest].join('\n\n')];
+      });
+      const before = readRun(ws, 'demo');
+      await assert.rejects(call('factory_reslice', { slices: [slice('Part one'), { ...slice('Part two', ['Part one']), carried: ['01-r1:thermo-naming'] }, slice('Feature"\n\nMind "this', ['Part one'])] }), /01-r1:thermo-naming.*note/);
+      assert.deepEqual(readRun(ws, 'demo'), before);
+    });
+
+    it('takes a key one child lists twice, and refuses only a key two children name', async () => {
+      using dir = repo();
+      const { call, ws } = await carriedToActive(dir.root, ['naming']);
+      await call('factory_reslice', { slices: [slice('Part one'), { ...slice('Part two', ['Part one']), carried: ['01-r1:thermo-naming', '01-r1:thermo-naming'] }] });
+      assert.match(ticketOf(ws, 'Part two').text, /\[observation\] thermo-naming/);
+    });
+
+    it('does not mark a finding carried in the first child when only a carried note quotes it', async () => {
+      using dir = repo();
+      const quoted = renderFinding({ ...finding('thermo', 'observation', 'naming'), problem: problemOf('naming') }, [], '####');
+      const { call, ws } = await ledgerRun(dir.root, ['naming']);
+      await call('factory_carry', { note: quoted, observations: ['thermo-naming'], to: '02' });
+      await withRun(ws, 'demo', run => completeSlice(ws, run));
+      await withRun(ws, 'demo', run => nextSlice(ws, run));
+      await call('factory_reslice', { slices: [slice('Part one'), { ...slice('Part two', ['Part one']), carried: ['01-r1:thermo-naming'] }] });
+      const run = readRun(ws, 'demo');
+      const marked = (title: string) => renderKnownObservations(run, run.slices.find(item => item.title === title) ?? assert.fail(title));
+      assert.match(marked('Part one'), /`01-r1:thermo-naming` \(carried\):/);
+      assert.match(marked('Part two'), /`01-r1:thermo-naming` \(carried; carried to this slice: check it\)/);
     });
   });
 

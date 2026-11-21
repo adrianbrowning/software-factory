@@ -6,6 +6,7 @@ import { bindRun } from './active-run.ts';
 import { auditChild, IMPLEMENTER, resetAudit, SPAWN_ROLES } from './agents.ts';
 import { CONFIG_PATH, describeModels, loadConfig, requireAvailableModels, requireOrchestrator, type RoleModels, routeSpawn } from './config.ts';
 import { gitArchWarning } from './git-arch.ts';
+import { carriedKeys } from './legacy-observations.ts';
 import { deferItems } from './deferred.ts';
 import { chooseChecks, ensureChecks, gate, loadSource } from './gates.ts';
 import {
@@ -166,10 +167,12 @@ async function runForCwd(cwd: string) {
 
 function planSummary(slices: Run['slices']) {
   return slices
-    .map(
-      slice =>
-        `${slice.id}. ${slice.title}\n   blocked by: ${slice.blockedBy.join('; ') || 'none'}\n   seams: ${slice.seams.join('; ') || `none (${slice.noTestReason})`}\n${slice.ownsDecisions.length > 0 ? `   builds decisions: ${slice.ownsDecisions.join(', ')}\n` : ''}   ~${slice.estimateTokens} tokens`,
-    )
+    .map(slice => {
+      const keys = slice.carried.flatMap(section => carriedKeys(section) ?? []);
+      const other = slice.carried.filter(section => (carriedKeys(section) ?? []).length === 0).length;
+      const carried = [...keys, ...(other > 0 ? [`${other} note/other`] : [])];
+      return `${slice.id}. ${slice.title}\n   blocked by: ${slice.blockedBy.join('; ') || 'none'}\n   seams: ${slice.seams.join('; ') || `none (${slice.noTestReason})`}\n${slice.ownsDecisions.length > 0 ? `   builds decisions: ${slice.ownsDecisions.join(', ')}\n` : ''}${carried.length > 0 ? `   carried: ${carried.join(', ')}\n` : ''}   ~${slice.estimateTokens} tokens`;
+    })
     .join('\n');
 }
 

@@ -389,6 +389,8 @@ const runSchema = z.object({
   retroRecorded: z.boolean(),
   slices: z.array(legacySliceSchema),
   source: sourceSchema,
+  /** Titles of slices factory_reslice split away, so a carried section's header still names a known slice after its slice was split. Empty in runs from before it was kept. */
+  splitTitles: z.array(text).default([]),
   status: z.enum(['done', 'intake', 'paused', 'running', 'stalled']),
   trunk: text,
   /**
