@@ -140,7 +140,7 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
     urls = await setPrTexts(ws.root, run, slices, stop, progress);
   } catch (caught) {
     failed = new Error(
-      `The stack and its PRs were submitted, but the PR titles were not set: ${caught instanceof Error ? caught.message : String(caught)}\nRunning /factory submit again sets them.`,
+      `The stack and its PRs were submitted, but not all PR titles were set: ${caught instanceof Error ? caught.message : String(caught)}\nRunning /factory submit again sets them.`,
       { cause: caught },
     );
   } finally {
