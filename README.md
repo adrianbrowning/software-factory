@@ -58,6 +58,11 @@ While `/factory submit` runs, it shows each step as a notification and in the st
 A second `/factory submit`, for example after a follow-up slice, adds the new slice branches to the existing gh stack
 with `gh stack add` and submits again. It refuses, and changes nothing, when that stack holds branches outside the run
 or holds the run's branches in another order; the error names those branches.
+A headless run started with `--base <branch>` adopts no new stack: its first submit adds the slice branches with
+`gh stack add` on top of the gh stack whose top branch is that base branch, and only the run's own PRs get the factory
+title and body. It refuses, and changes nothing, when the base branch is in no gh stack or is not the top of its stack.
+Its re-submit accepts the stack whose branches below slice 01 end with the base branch and adds only the missing slice branches;
+a stack with any other branch outside the run is refused as above.
 
 ## Install
 

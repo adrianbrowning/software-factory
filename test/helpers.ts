@@ -248,6 +248,8 @@ export interface FakeGh {
   stack: string[] | string | undefined;
   /** How `stack checkout` fails without a stack; by default gh-stack's real "no stack" exit and stderr. */
   checkoutFailure?: { code: number; stderr: string };
+  /** Branches whose `stack checkout` fails as without a stack, though the served stack exists (a branch that is in no stack while another is). */
+  unstacked?: string[];
   /** The subcommand (such as `stack submit`) that runs `onFail` and exits 1. */
   fail?: string;
   onFail?: string;
@@ -269,7 +271,7 @@ export const prCalls = (count: number) =>
  * With a stack, `stack checkout <branch>` switches to that branch, as gh-stack does; `stack init` switches to its last
  * (top) branch, `stack top` to the stack's top branch, and `stack add <branch>` to the branch it adds.
  */
-export function submitFakeGh({ stack, checkoutFailure = NO_STACK, fail = '', onFail = ':', onSubmit = ':', submitted }: FakeGh) {
+export function submitFakeGh({ stack, checkoutFailure = NO_STACK, unstacked = [], fail = '', onFail = ':', onSubmit = ':', submitted }: FakeGh) {
   const temp = tempDir('factory-gh-');
   const dir = temp.root;
   const log = join(dir, 'calls');
@@ -288,7 +290,7 @@ export function submitFakeGh({ stack, checkoutFailure = NO_STACK, fail = '', onF
     '#!/bin/sh',
     // A newline in an argument (a PR body) is logged as \\036, so each call stays one line.
     `printf '%s\\n' "$(printf '%s' "$*" | tr '\\n' '\\036')" >> '${log}'`,
-    `if [ "$1 $2" = "stack checkout" ] && [ ! -f '${view}' ]; then echo "${checkoutFailure.stderr}" >&2; exit ${checkoutFailure.code}; fi`,
+    `if [ "$1 $2" = "stack checkout" ] && { [ ! -f '${view}' ] || case "$3" in ${unstacked.length === 0 ? '"")' : unstacked.join('|') + ')'} true;; *) false;; esac; }; then echo "${checkoutFailure.stderr}" >&2; exit ${checkoutFailure.code}; fi`,
     `if [ "$1 $2" = "stack checkout" ]; then git switch -q "$3" || exit 1; fi`,
     `if [ "$1 $2" = "stack view" ]; then cat '${view}' || exit 1; fi`,
     `if [ "$1 $2" = "stack init" ]; then eval "git switch -q \\"\\\${$#}\\"" || exit 1; fi`,

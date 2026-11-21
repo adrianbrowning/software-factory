@@ -18,19 +18,43 @@ import { RELATED_MAX } from './source.ts';
 /** The part of `gh stack view --json` submit reads: the stack's branches, bottom (closest to trunk) first, with each branch's PR when it has one. */
 const stackView = z.object({ branches: z.array(z.object({ name: z.string(), pr: z.object({ number: z.number(), url: z.string().optional() }).optional() })) });
 
-export type SubmitPlan = { kind: 'init' } | { kind: 'refuse'; outside: string[]; unordered: string[] } | { kind: 'add'; missing: string[] };
+export type SubmitPlan =
+  | { kind: 'init' }
+  | { kind: 'refuse'; outside: string[]; unordered: string[]; base?: string }
+  | { kind: 'refuse-base'; reason: string }
+  | { kind: 'add'; missing: string[]; onto?: string };
+
+/** The base branch of a run started with `--base`, and the gh stack that holds it (undefined: it is in no stack); read only when slice 01 is in no stack. */
+export type SubmitBase = { branch: string; stack: string[] | undefined };
 
 /**
  * Decides what submit does with the gh stack that holds slice 01: `stacked` is that stack's branches (bottom first), or
  * undefined when slice 01 is in no stack. A stack must hold a prefix of the run's `branches`, in run order; submit then
  * adds the branches it lacks (possibly none).
+ * A run with a `base` branch never adopts a new stack: when slice 01 is in no stack, the base must be the top of its
+ * own stack and the run's branches are added on top of it. When slice 01 is stacked, the branches below it must hold no
+ * run branch and end with the base branch.
  */
-export function planSubmit(stacked: string[] | undefined, branches: string[]): SubmitPlan {
-  if (stacked === undefined) return { kind: 'init' };
-  const outside = stacked.filter(name => !branches.includes(name));
-  const unordered = stacked.filter((name, index) => branches.includes(name) && branches[index] !== name);
-  if (outside.length > 0 || unordered.length > 0) return { kind: 'refuse', outside, unordered };
-  return { kind: 'add', missing: branches.slice(stacked.length) };
+export function planSubmit(stacked: string[] | undefined, branches: string[], base?: SubmitBase): SubmitPlan {
+  if (stacked === undefined) {
+    if (base === undefined) return { kind: 'init' };
+    if (base.stack === undefined) return { kind: 'refuse-base', reason: `the base branch ${base.branch} is in no gh stack, so the run cannot be stacked on it` };
+    if (base.stack.at(-1) !== base.branch) {
+      return { kind: 'refuse-base', reason: `the base branch ${base.branch} is not the top of its gh stack (${base.stack.join(', ')}); the run can only be stacked on the top branch` };
+    }
+    return { kind: 'add', missing: branches, onto: base.branch };
+  }
+  // Without a base branch the whole stack must be the run's; with one, the run's part starts at slice 01.
+  const from = base === undefined ? 0 : Math.max(0, stacked.indexOf(branches[0] ?? ''));
+  const below = stacked.slice(0, from);
+  const own = stacked.slice(from);
+  const outside = own.filter(name => !branches.includes(name));
+  const unordered = [...below, ...own].filter((name, index) => branches.includes(name) && branches[index - from] !== name);
+  const baseBelow = base !== undefined && below.at(-1) !== base.branch ? base.branch : undefined;
+  if (outside.length > 0 || unordered.length > 0 || baseBelow !== undefined) {
+    return { kind: 'refuse', outside, unordered, ...(baseBelow === undefined ? {} : { base: baseBelow }) };
+  }
+  return { kind: 'add', missing: branches.slice(own.length) };
 }
 
 /**
@@ -56,6 +80,10 @@ export type Submission = { output: string; failure?: Error };
 /**
  * Submits the reviewed stack. On a first submit it adopts every slice branch into one gh-stack stack and opens draft
  * PRs; on a re-submit, when slice 01 is already stacked, it adds only the slice branches that stack lacks.
+ * A run with `baseBranch` (started with `--base`) adopts nothing: its first submit adds the slice branches with
+ * `gh stack add` on top of the gh stack whose top is the base branch, and it refuses a base branch that is in no stack
+ * or not the top of its stack. Its re-submit accepts the stack whose branches below slice 01 end with the base branch.
+ * Only the run's own PRs get titles and bodies; the PRs of the branches below are left as they are.
  * A run with `landOn` instead fast-forwards that local branch to the top slice; no PRs are opened. Never merges.
  * The user-invoked `/factory submit` command calls this, and so does a headless run's own submission (`submitHeadless`);
  * with `stop`, a paused headless run submits only the done slices below the stopped one. `progress` names each step
@@ -96,22 +124,28 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
   let output: string;
   const added: string[] = [];
   try {
-    const plan = planSubmit(await readStack(ws.root, bottom), branches);
+    const stacked = await readStack(ws.root, bottom);
+    const base = run.baseBranch === undefined ? undefined : { branch: run.baseBranch, stack: stacked === undefined ? await readStack(ws.root, run.baseBranch) : undefined };
+    const plan = planSubmit(stacked, branches, base);
     if (plan.kind === 'init') {
       progress(`adopting ${branches.length} branches into a gh stack onto ${run.trunk}`);
       await gh(ws.root, 'stack', 'init', '--base', run.trunk, ...branches);
+    } else if (plan.kind === 'refuse-base') {
+      throw new Error(`Cannot stack run "${run.feature}" on its base branch: ${plan.reason}. Nothing was submitted; fix the stack with gh stack, then submit again.`);
     } else if (plan.kind === 'refuse') {
       const problems = [
+        plan.base === undefined ? '' : `the branches below ${bottom} do not end with the base branch ${plan.base}`,
         plan.outside.length > 0 ? `branches outside the run: ${plan.outside.join(', ')}` : '',
         plan.unordered.length > 0 ? `run branches out of run order: ${plan.unordered.join(', ')}` : '',
       ].filter(Boolean);
       throw new Error(`The gh stack holding ${bottom} has ${problems.join('; ')}. Nothing was submitted; fix the stack with gh stack, then submit again.`);
     } else {
-      const { missing } = plan;
+      const { missing, onto } = plan;
+      const target = onto === undefined ? 'to the existing gh stack' : `onto the gh stack whose top is ${onto}`;
       progress(missing.length === 0
         ? `the gh stack already holds all ${branches.length} slice branches`
-        : `adding ${missing.length} ${missing.length === 1 ? 'branch' : 'branches'} to the existing gh stack: ${missing.join(', ')}`);
-      // `gh stack checkout` left the bottom slice checked out; move to the top so a submit always ends on the top slice, even when no branch is added.
+        : `adding ${missing.length} ${missing.length === 1 ? 'branch' : 'branches'} ${target}: ${missing.join(', ')}`);
+      // `gh stack checkout` left the bottom slice (or, onto a base branch, the base branch) checked out; move to the top so a submit always ends on the top slice, even when no branch is added.
       await gh(ws.root, 'stack', 'top');
       for (const branch of missing) {
         await gh(ws.root, 'stack', 'add', branch);
