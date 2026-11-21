@@ -171,6 +171,67 @@ describe('slice loop gates: checks and the fix budget', { concurrency: 4 }, () =
     assert.equal(readRun(ws2, 'demo').slices[0]?.fixRounds, 1);
   });
 
+  async function flakyRun(output: string, redirect = '', emit?: (out: string) => string) {
+    using counter = tempDir('factory-flaky-names-');
+    using out = tempDir('factory-flaky-out-');
+    writeFileSync(join(out.root, 'out.txt'), output);
+    const check = `if [ -f '${counter.root}/seen' ]; then exit 0; fi; touch '${counter.root}/seen'; ${emit ? emit(out.root) : `cat '${out.root}/out.txt' ${redirect}`}; exit 1`;
+    using ws = workspace({ checks: [check] });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'work.txt');
+    const result = await step(ws, run => runChecks(ws, run));
+    assert.ok(result.passed);
+    const line = result.summary.find(l => /flaky/.test(l)) ?? '';
+    const event = readRun(ws, 'demo').events.find(e => e.kind === 'checks-pass');
+    assert.ok(event?.detail.includes(line));
+    return line.slice(check.length);
+  }
+
+  it('names the failing tests of a node:test spec first failure in the flaky line', async () => {
+    const line = await flakyRun(
+      '✖ inner (1ms)\n✖ failing tests:\n\ntest at test/a.test.ts:12:3\n✖ alpha works (2.1ms)\n  Error: boom\n\ntest at test/my dir/b.test.ts:5:1\n✖ beta works (0.5ms)\n  Error: x\n\ntest at test/a.test.ts:12:3\n✖ alpha works (2.1ms)\n',
+    );
+    assert.match(line, /test\/a\.test\.ts:12:3 alpha works/);
+    assert.match(line, /test\/my dir\/b\.test\.ts:5:1 beta works/);
+    assert.equal(line.split('alpha works').length, 2);
+    assert.ok(!line.includes('inner'));
+  });
+
+  it('names TAP not ok tests, caps at 10 and counts the rest, and redacts secrets in names', async () => {
+    const tap = Array.from({ length: 12 }, (_, i) => `not ok ${i + 1} - case${i + 1}${i === 0 ? ' token=sekret123' : ''}`).join('\n');
+    const line = await flakyRun(`ok 0 - fine\n${tap}\n`);
+    assert.match(line, /case10/);
+    assert.ok(!line.includes('case11'));
+    assert.match(line, /2 more/);
+    assert.ok(!line.includes('sekret123'));
+  });
+
+  it('keeps the last non-empty output line, redacted and capped at 300 characters, when no test is named', async () => {
+    const line = await flakyRun(`something\nGITHUB_TOKEN=abc123xyz ${'x'.repeat(400)}\n\n`);
+    assert.match(line, /GITHUB_TOKEN=<REDACTED>/);
+    assert.ok(!line.includes('abc123xyz'));
+    assert.ok(!line.includes('something'));
+    assert.ok(line.includes('x'.repeat(100)));
+    assert.ok(!line.includes('x'.repeat(301)));
+    assert.ok(line.split('last stdout line: ')[1]!.replace(/\)$/, '').length <= 300);
+  });
+
+  it('names the stream that received the last non-blank output as the fallback line', async () => {
+    const line = await flakyRun('from stderr\n', '>&2');
+    assert.match(line, /last stderr line: from stderr/);
+    assert.ok(!line.includes('last stdout line'));
+    assert.match(await flakyRun('from stdout\n'), /last stdout line: from stdout/);
+    const stdoutLast = await flakyRun('', '', () => `printf 'earlier\\n' >&2; sleep 0.2; printf 'last\\n'`);
+    assert.match(stdoutLast, /last stdout line: last/);
+    assert.ok(!stdoutLast.includes('earlier'));
+    const stderrLast = await flakyRun('', '', () => `printf 'earlier\\n'; sleep 0.2; printf 'last\\n' >&2`);
+    assert.match(stderrLast, /last stderr line: last/);
+    assert.ok(!stderrLast.includes('earlier'));
+    const blank = await flakyRun('', '', () => `printf 'last\\n'; sleep 0.2; printf ' \\n' >&2`);
+    assert.match(blank, /last stdout line: last/);
+  });
+
   it('runs a passing check once and does not rerun a timed-out check', async () => {
     using counter = tempDir('factory-once-');
     using ws = workspace({ checks: [`echo x >> '${counter.root}/n'`] });

@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 
-export type CommandResult = { durationMs: number; exitCode: number; stderr: string; stdout: string; timedOut: boolean };
+export type CommandResult = { durationMs: number; exitCode: number; lastStream: 'stderr' | 'stdout' | undefined; stderr: string; stdout: string; timedOut: boolean };
 
 /** Bytes kept per stream. The tail is kept because failure summaries print last. */
 const MAX_CAPTURE_BYTES = 1_000_000;
@@ -36,6 +36,7 @@ export function runShell(command: string, cwd: string, timeoutMs: number, signal
   const { promise, resolve } = Promise.withResolvers<CommandResult>();
   const stdout = new Tail();
   const stderr = new Tail();
+  let lastStream: CommandResult['lastStream'];
   let timedOut = false;
   let settled = false;
   const child = spawn('sh', ['-c', command], { cwd, detached: true, env, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -58,8 +59,14 @@ export function runShell(command: string, cwd: string, timeoutMs: number, signal
     stop();
   }, timeoutMs);
   signal?.addEventListener('abort', stop, { once: true });
-  child.stdout.on('data', (chunk: Buffer) => stdout.push(chunk));
-  child.stderr.on('data', (chunk: Buffer) => stderr.push(chunk));
+  child.stdout.on('data', (chunk: Buffer) => {
+    stdout.push(chunk);
+    if (chunk.toString().trim() !== '') lastStream = 'stdout';
+  });
+  child.stderr.on('data', (chunk: Buffer) => {
+    stderr.push(chunk);
+    if (chunk.toString().trim() !== '') lastStream = 'stderr';
+  });
   const finish = (exitCode: number, extraError = '') => {
     if (settled) return;
     settled = true;
@@ -67,7 +74,7 @@ export function runShell(command: string, cwd: string, timeoutMs: number, signal
     clearTimeout(forceKill);
     clearTimeout(drain);
     signal?.removeEventListener('abort', stop);
-    resolve({ durationMs: Date.now() - started, exitCode, stderr: stderr.text() + extraError, stdout: stdout.text(), timedOut });
+    resolve({ durationMs: Date.now() - started, exitCode, lastStream, stderr: stderr.text() + extraError, stdout: stdout.text(), timedOut });
   };
   child.on('error', error => finish(127, error.message));
   child.on('exit', () => {
