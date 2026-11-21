@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { z } from 'zod';
+import { ownCommits } from './repo.ts';
 import { activeSlice, reportPath, requireActive, type Run, type Slice, type Workspace, writeAtomic } from './run.ts';
 
 // One line each, so an item cannot add lines that read as factory output in the factory_checks reply.
@@ -44,12 +45,27 @@ function renderReport(report: ImplementerReport) {
   ].join('\n');
 }
 
+/** The lowercase hex prefix (7 to 40 characters) a commits item starts with, or undefined. */
+function commitPrefix(item: string) {
+  return /^[0-9a-f]{7,40}/i.exec(item)?.[0].toLowerCase();
+}
+
 /** Stores the implementer's report for the active slice in the run dir; a later call replaces it. */
-export function submitImplementerReport(ws: Workspace, run: Run, report: ImplementerReport) {
+export async function submitImplementerReport(ws: Workspace, run: Run, report: ImplementerReport) {
   const slice = requireActive(run);
   if (slice.phase === 'fix' && report.fixItems === undefined) {
     throw new Error(
       `Slice ${slice.id} is in fix mode: list every fix file item in fixItems, each with \`fixed in <sha>\`, \`already fixed\`, or \`not a defect: <why>\`.`,
+    );
+  }
+  const own = await ownCommits(ws, slice);
+  const rejected = report.commits.filter(item => {
+    const prefix = commitPrefix(item);
+    return prefix === undefined || !own.some(commit => commit.sha.startsWith(prefix));
+  });
+  if (rejected.length > 0) {
+    throw new Error(
+      `Nothing stored. These commits items do not start with the sha of a commit on slice ${slice.id} past ${slice.parentBranch}:\n${rejected.join('\n')}\nThe slice's commits:\n${own.map(commit => commit.oneline).join('\n') || '(none)'}\nList each as \`<short sha> <subject>\`.`,
     );
   }
   const path = reportPath(ws, run.feature, slice);
@@ -88,7 +104,7 @@ export function storedBehaviors(ws: Workspace, run: Run, slice: Slice) {
 /** Whether the stored report's Commits section lists `sha`: an item starting with a hex prefix of it, at least 7 characters. */
 export function reportListsCommit(ws: Workspace, run: Run, slice: Slice, sha: string) {
   return (reportSection(ws, run, slice, 'Commits') ?? []).some(item => {
-    const prefix = /^[0-9a-f]{7,40}/i.exec(item)?.[0].toLowerCase();
+    const prefix = commitPrefix(item);
     return prefix !== undefined && sha.startsWith(prefix);
   });
 }

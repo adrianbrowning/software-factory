@@ -13,13 +13,14 @@ describe('review data file: implementer behaviors', { concurrency: 4 }, () => {
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
+    const first = sh(ws.root, 'rev-parse', '--short=12', 'HEAD');
     await step(ws, async run =>
       submitImplementerReport(ws, run, {
         behaviors: [
           { behavior: 'does a', red: 'a threw', seenRed: true, test: 'a' },
           { behavior: 'does b', seenRed: false, test: 'b' },
         ],
-        commits: ['abc1234 01: secret-commit-subject'],
+        commits: [`${first} 01: secret-commit-subject`],
         open: ['NEEDS SEAM: secret-open-item'],
       }),
     );
