@@ -33,13 +33,13 @@ import { submitStack } from './submit.ts';
 import { decisionInputSchema, planDecisions, recordDecisions, runChecks } from './review.ts';
 import { recordSelfHostWarning, setLoadedPlugin } from './self-host.ts';
 import { registerReviewTools } from './review-tools.ts';
+import { headlessTarget, requireFeatureName } from './headless-target.ts';
 import { decideStall, emptySchema, reply, STALL_DESCRIPTION } from './tool-replies.ts';
 import {
   addFollowUp,
   amendSeams,
   applyReslice,
   approvePlan,
-  headlessTarget,
   headlessBase,
   localBranchSha,
   markPaused,
@@ -51,7 +51,6 @@ import {
   planSlices,
   reopenSlice,
   repoChecks,
-  requireFeatureName,
   resolveBase,
   resolveStall,
   resumeRun,

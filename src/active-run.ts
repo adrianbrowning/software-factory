@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import { parseConfig } from './config.ts';
 import { type Workspace, writeAtomic } from './run.ts';
-import { requireFeatureName } from './workflow.ts';
+import { requireFeatureName } from './headless-target.ts';
 
 /** The run a repository checkout is bound to, with the workspace it started or resumed with and the agent id of the main session that bound it. */
 export type ActiveRun = { feature: string; mainId: string; ws: Workspace };
