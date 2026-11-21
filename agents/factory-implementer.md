@@ -51,6 +51,8 @@ Submit the report with `factory_implementer_report` before your final message: `
 
 Once you have committed and submitted `factory_implementer_report`, never amend, rebase, squash or reset those commits. Any later change (for example after an advisor note or a follow-up turn) is a new commit, followed by a new complete `factory_implementer_report`. Rewriting HEAD after `factory_checks` has run makes `factory_review_start` refuse and the checks run again.
 
+A correction commit made before `factory_checks` has run, with no fix file (for example after an advisor note or another follow-up turn in build mode), uses the build-mode subject `NN: <summary>`, never `fix rN`. The `NN: fix rN <summary>` subject is only for fix mode, where `N` comes from the fix file name. The new complete `factory_implementer_report` lists that correction commit in `commits`, and the final **Commits** section lists it too.
+
 Then end your final message with these sections, every time, in this order:
 
 1. **Commits**: each commit you made, as `<short sha> <subject>` (from `git log --oneline <parent>..HEAD`). "None" if you made none.

@@ -34,10 +34,13 @@ describe('scripts/headless-backlog.sh', () => {
     writeFileSync(join(bin, ',omp'), fakeOmp);
     chmodSync(join(bin, ',omp'), 0o755);
     const calls = join(dir.root, 'calls');
+    // OMP stays pinned to the fake, so a local OMP or a changed script default can never start the real omp.
+    // LOG_DIR is removed, so the test sees the default log dir.
+    const { LOG_DIR: _log, ...inherited } = process.env;
     const result = spawnSync('sh', [script, '3', 'https://github.com/o/other/issues/4', '#5', '6', '7', '9'], {
       cwd: repo,
       encoding: 'utf8',
-      env: { ...process.env, CALLS: calls, OMP: ',omp', PATH: `${bin}:${process.env.PATH}`, PLUGIN_DIR: dir.root },
+      env: { ...inherited, CALLS: calls, OMP: join(bin, ',omp'), PATH: `${bin}:${process.env.PATH}`, PLUGIN_DIR: dir.root },
     });
     assert.equal(result.status, 1, result.stderr);
     assert.deepEqual(readFileSync(calls, 'utf8').trim().split('\n'), [
