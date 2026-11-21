@@ -3,9 +3,10 @@
 # run starts without --base, and each later new run starts with `--base <top slice branch of the run before it>` (the last
 # slice in that run's state.json), so its PRs stack on the run before. A listed issue whose run is already done with a
 # submit is skipped and its top branch is the base of the next run. The batch stops at the first run that does not end
-# done with a submit (paused, stalled, failed, running, or done with no PRs), names it in the summary and exits 1.
+# done with a submit (paused, stalled, failed, running, or done with no PRs), names it in the summary and exits 1. It
+# also stops at a listed ref that is not an issue number or GitHub issue URL, and at a done run with no slice branch.
 # With --separate as the first argument, no run gets --base: each opens its own stack of draft PRs on the default base,
-# and a run that fails or pauses does not stop the next one. Merging stays manual.
+# a bad ref is skipped, and a run that fails or pauses does not stop the next one. Merging stays manual.
 # Usage: scripts/headless-backlog.sh [--separate] <issue> [<issue> ...]   (issue: 102, #102 or a GitHub issue URL)
 # Env: OMP (default ,omp), PLUGIN_DIR (default the installed plugin), MAX_COST (USD, default 25),
 #      MAX_TIME (seconds, default 5400), LOG_DIR (default <git dir>/headless-backlog, so no log makes the tree dirty).
