@@ -68,7 +68,12 @@ async function readStack(root: string, branch: string) {
     if (error instanceof Error && 'stderr' in error && String(error.stderr).includes('no local or remote stack found for')) return undefined;
     throw error;
   }
-  return stackView.parse(JSON.parse(await gh(root, 'stack', 'view', '--json'))).branches.map(item => item.name);
+  return (await viewStack(root)).map(item => item.name);
+}
+
+/** Runs `gh stack view --json` and parses it: the one place the stack view is read. */
+async function viewStack(root: string) {
+  return stackView.parse(JSON.parse(await gh(root, 'stack', 'view', '--json'))).branches;
 }
 
 /**
@@ -339,16 +344,19 @@ export function prBody(run: Run, slice: Slice, submitted: Slice[], stop?: Stop) 
  */
 async function setPrTexts(root: string, run: Run, slices: Slice[], stop: Stop | undefined, progress: (step: string) => void) {
   progress('setting the slice PR titles and bodies');
-  const view = stackView.parse(JSON.parse(await gh(root, 'stack', 'view', '--json')));
-  const prs = new Map(view.branches.map(item => [item.name, item.pr?.number]));
-  const missing = slices.filter(slice => prs.get(slice.branch) === undefined).map(slice => slice.branch);
+  const view = await viewStack(root);
+  const byName = new Map(view.map(item => [item.name, item.pr]));
+  const pairs = slices.map(slice => ({ slice, pr: byName.get(slice.branch) }));
+  const missing = pairs.filter(pair => pair.pr === undefined).map(pair => pair.slice.branch);
   if (missing.length > 0) throw new Error(`gh stack submit left these slice branches with no PR: ${missing.join(', ')}.`);
-  for (const slice of slices) {
-    const endpoint = `repos/{owner}/{repo}/pulls/${prs.get(slice.branch)}`;
+  const urls: string[] = [];
+  for (const { slice, pr } of pairs) {
+    if (pr === undefined) continue;
+    const endpoint = `repos/{owner}/{repo}/pulls/${pr.number}`;
     await gh(root, 'api', '-X', 'PATCH', endpoint, '-f', `title=${run.feature}: ${slice.id} ${slice.title}`, '-f', `body=${prBody(run, slice, slices, stop)}`);
+    if (pr.url !== undefined) urls.push(pr.url);
   }
-  const urls = new Map(view.branches.map(item => [item.name, item.pr?.url]));
-  return slices.flatMap(slice => urls.get(slice.branch) ?? []);
+  return urls;
 }
 
 /**
