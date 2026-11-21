@@ -35,9 +35,10 @@ const writeState = (n: number, body: string) => `mkdir -p work/issue-${n}; echo 
  * The repo has a local origin and a fake gh: every slice branch named in `existing` or `cases` is on origin at the green
  * commit (GREEN) and has an open PR, except as `world` says: `noPr` has no PR, `closedPr` only a closed one, `mergedPr`
  * a merged one, `ghFails` makes `gh pr list` fail for it, `moved` is on origin at another commit and `unpushed` is not on origin. Every slice branch also exists locally at GREEN, except `localMoved` (at another commit) and `localMissing` (absent).
- * `options.noGh` leaves gh off PATH. `options.baseRef` sets baseRef in .omp/factory.json; `options.originHead` points refs/remotes/origin/HEAD at that branch.
+ * `options.noGh` leaves gh off PATH. `options.baseRef` sets baseRef in .omp/factory.json; `options.originHead` points refs/remotes/origin/HEAD at that branch. `options.ompArgs` sets OMP_ARGS (empty by default).
+ * Besides the prompts, the fake logs its whole argument list as `argv`.
  */
-function runBacklog(existing: Record<number, string>, cases: string, args: string[], world: Partial<Record<'closedPr' | 'ghFails' | 'localMissing' | 'localMoved' | 'mergedPr' | 'moved' | 'noPr' | 'unpushed', readonly string[]>> = {}, options: { noGh?: boolean; ghStderr?: Record<string, string>; baseRef?: string; originHead?: string } = {}) {
+function runBacklog(existing: Record<number, string>, cases: string, args: string[], world: Partial<Record<'closedPr' | 'ghFails' | 'localMissing' | 'localMoved' | 'mergedPr' | 'moved' | 'noPr' | 'unpushed', readonly string[]>> = {}, options: { noGh?: boolean; ghStderr?: Record<string, string>; baseRef?: string; originHead?: string; ompArgs?: string } = {}) {
   using dir = tempDir('backlog-');
   const repo = join(dir.root, 'repo');
   mkdirSync(repo);
@@ -66,7 +67,7 @@ function runBacklog(existing: Record<number, string>, cases: string, args: strin
   }
   const bin = join(dir.root, 'bin');
   mkdirSync(bin);
-  writeFileSync(join(bin, ',omp'), `#!/bin/sh\nfor a; do last=$a; done\necho "$last" >> "$CALLS"\ncase "$last" in\n${cases}\nesac\n`);
+  writeFileSync(join(bin, ',omp'), `#!/bin/sh\necho "$*" >> "$CALLS.args"\nfor a; do last=$a; done\necho "$last" >> "$CALLS"\ncase "$last" in\n${cases}\nesac\n`);
   chmodSync(join(bin, ',omp'), 0o755);
   // The fake gh answers only `gh pr list --head <branch> ...`, with the PRs the world gave that branch: only the OPEN ones
   // unless `--state all` is passed, as real gh does. A branch in `ghFails` makes it exit 1.
@@ -94,15 +95,18 @@ function runBacklog(existing: Record<number, string>, cases: string, args: strin
   const result = spawnSync('sh', [script, ...args], {
     cwd: repo,
     encoding: 'utf8',
-    env: { ...inherited, CALLS: calls, OMP: join(bin, ',omp'), PATH: path, PLUGIN_DIR: dir.root },
+    env: { ...inherited, CALLS: calls, OMP: join(bin, ',omp'), OMP_ARGS: options.ompArgs ?? '', PATH: path, PLUGIN_DIR: dir.root },
   });
   let prompts: string[] = [];
+  let argv: string[] = [];
   try {
     prompts = readFileSync(calls, 'utf8').trim().split('\n');
+    argv = readFileSync(`${calls}.args`, 'utf8').trim().split('\n');
   } catch {
     // The fake was never called.
   }
   return {
+    argv,
     logs: existsSync(join(repo, '.git', 'headless-backlog')) ? readdirSync(join(repo, '.git', 'headless-backlog')) : [],
     prompts,
     status: result.status,
@@ -186,6 +190,15 @@ describe('scripts/headless-backlog.sh', () => {
     const result = runBacklog({ 3: submitted(3, ['01']), 4: state('paused', undefined, ['issue-4/01'], 'issue-3/01') }, fake, ['3', '4', '5']);
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(result.prompts, ['/factory resume issue-4', '/factory headless 5 --base issue-4/01']);
+  });
+
+  it('puts OMP_ARGS before the prompt, and shows the pause reason of a paused run on one line', () => {
+    const paused = JSON.stringify({ events: [{ kind: 'pause', detail: 'Checks red:\n  test x fails \\n' }], slices: [], status: 'paused' });
+    // The fake leaves the state as it is, so the resumed run stays paused with this reason.
+    const result = runBacklog({ 3: paused }, '', ['--separate', '3'], {}, { ompArgs: '--advisor --model m' });
+    assert.equal(result.status, 1, result.stderr);
+    assert.match(result.argv[0]!, / --advisor --model m \/factory resume issue-3$/);
+    assert.match(result.summary, /^3: exit 0, run paused\n {2}reason: Checks red: test x fails \\n$/m);
   });
 
   for (const [name, existing, reason] of [
