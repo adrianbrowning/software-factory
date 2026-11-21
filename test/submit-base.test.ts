@@ -20,9 +20,16 @@ const runPrCalls = (count: number, first: number) =>
   prCalls(count).map((call, index) => call.replace(`pulls/${101 + index} `, `pulls/${first + index} `));
 
 describe('planSubmit with a base branch and a stack without slice 01', () => {
+  const branches = ['b1', 'b2', 'b3'];
+  const base = { branch: 'B', stack: undefined };
   it('refuses instead of treating slice 01 as index 0', () => {
-    const plan = planSubmit(['A', 'B', 'b2'], ['b1', 'b2', 'b3'], { branch: 'B', stack: undefined });
-    assert.equal(plan.kind, 'refuse');
+    assert.deepEqual(planSubmit(['A', 'B', 'b2'], branches, base), { kind: 'refuse', outside: ['A', 'B'], unordered: ['b2'], base: 'B' });
+  });
+  it('refuses an empty stack', () => {
+    assert.deepEqual(planSubmit([], branches, base), { kind: 'refuse', outside: [], unordered: [], base: 'B' });
+  });
+  it('combines a run branch below slice 01 with an outside branch above it', () => {
+    assert.deepEqual(planSubmit(['b3', 'B', 'b1', 'X'], branches, base), { kind: 'refuse', outside: ['X'], unordered: ['b3'] });
   });
 });
 
