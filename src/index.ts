@@ -173,30 +173,33 @@ function planSummary(slices: Run['slices']) {
     .join('\n');
 }
 
-/** Whether the latest tool call in the session is the omp `ask` tool: the orchestrator waits on the user's answer. */
-function waitingOnAsk(messages: readonly unknown[] | undefined) {
+/** The name of the last tool call in the latest assistant message that has one; undefined when there is none. */
+function latestToolCallName(messages: readonly unknown[] | undefined) {
   for (const message of (messages ?? []).toReversed()) {
     const { content, role } = message as { content?: unknown; role?: string };
     if (role !== 'assistant' || !Array.isArray(content)) continue;
     const calls = (content as { name?: string; type?: string }[]).filter(part => part.type === 'toolCall');
-    if (calls.length > 0) return calls.at(-1)?.name === 'ask';
+    if (calls.length > 0) return calls.at(-1)?.name;
   }
-  return false;
+  return undefined;
+}
+
+/** Whether the latest tool call in the session is the omp `ask` tool: the orchestrator waits on the user's answer. */
+function waitingOnAsk(messages: readonly unknown[] | undefined) {
+  return latestToolCallName(messages) === 'ask';
 }
 
 /** Why a session stopped idle: the name of its latest tool call and a snippet (whitespace collapsed, at most 200 characters) of its last assistant text, each 'none' when absent. */
 function describeStop(messages: readonly unknown[] | undefined) {
-  let tool: string | undefined;
   let text: string | undefined;
   for (const message of (messages ?? []).toReversed()) {
     const { content, role } = message as { content?: unknown; role?: string };
     if (role !== 'assistant') continue;
-    const parts = typeof content === 'string' ? [{ text: content, type: 'text' }] : Array.isArray(content) ? (content as { name?: string; text?: string; type?: string }[]) : [];
-    tool ??= parts.findLast(part => part.type === 'toolCall')?.name;
-    text ??= parts.filter(part => part.type === 'text' && typeof part.text === 'string').map(part => part.text).join(' ').replaceAll(/\s+/g, ' ').trim().slice(0, 200) || undefined;
-    if (tool !== undefined && text !== undefined) break;
+    const parts = typeof content === 'string' ? [{ text: content, type: 'text' }] : Array.isArray(content) ? (content as { text?: string; type?: string }[]) : [];
+    text = parts.filter(part => part.type === 'text' && typeof part.text === 'string').map(part => part.text).join(' ').replaceAll(/\s+/g, ' ').trim().slice(0, 200) || undefined;
+    if (text !== undefined) break;
   }
-  return `latest tool: ${tool ?? 'none'}; last assistant text: ${text ?? 'none'}`;
+  return `latest tool: ${latestToolCallName(messages) ?? 'none'}; last assistant text: ${text ?? 'none'}`;
 }
 
 /** Stop gate: block a stop while the owner session's run is running, and pause it after repeated idle stops. An interactive run waiting on an ask is allowed to stop. */
