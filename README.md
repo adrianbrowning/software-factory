@@ -51,6 +51,7 @@ the review rounds, the autonomous decisions, the accepted-unresolved findings, a
 A headless run opens its draft PRs when it becomes ready, and the reply names the PR URLs. When a headless run pauses on red
 checks, the done slices below the red one are submitted as draft PRs whose bodies say the stack stopped at that slice and
 why; the red slice is not submitted. `headless.submission: "stop"` keeps a headless run from submitting: the run keeps its status; once it is done, `/factory submit` opens the PRs, and a run paused on red checks needs `/factory resume` to finish the stack first.
+`/factory submit` sets each slice PR title to `<feature>: NN <slice title>`, overwriting a title edited by hand.
 A run planned with `landOn` opens no PRs: `/factory submit`
 fast-forwards that existing local branch to the top slice, without a checkout or a merge commit.
 While `/factory submit` runs, it shows each step as a notification and in the status line, for example the
