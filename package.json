@@ -9,7 +9,7 @@
     "extensions": ["./src/index.ts"]
   },
   "scripts": {
-    "test": "node --import ./test/git-env.ts --test test/*.test.ts",
+    "test": "sh scripts/test.sh",
     "typecheck": "tsc --noEmit"
   },
   "engines": {
