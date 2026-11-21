@@ -19,6 +19,13 @@ async function baseRun(ws: Workspace, count: number, base: string) {
 const runPrCalls = (count: number, first: number) =>
   prCalls(count).map((call, index) => call.replace(`pulls/${101 + index} `, `pulls/${first + index} `));
 
+describe('planSubmit with a base branch and a stack without slice 01', () => {
+  it('refuses instead of treating slice 01 as index 0', () => {
+    const plan = planSubmit(['A', 'B', 'b2'], ['b1', 'b2', 'b3'], { branch: 'B', stack: undefined });
+    assert.equal(plan.kind, 'refuse');
+  });
+});
+
 describe('planSubmit with a base branch', () => {
   const branches = ['b1', 'b2', 'b3'];
   it('adds every run branch on top of the base branch when slice 01 is in no stack and the base is the top of its stack', () => {
