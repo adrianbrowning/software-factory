@@ -149,8 +149,8 @@ for ref in "$@"; do
   n=$(printf '%s\n' "$ref" | sed -nE 's@^#?([0-9]+)$@\1@p; s@^https://github\.com/[^/]+/[^/]+/issues/([0-9]+)/?$@\1@p')
   if [ -z "$n" ]; then
     summary="$summary$ref: skipped, not an issue number or GitHub issue URL\n"
-    failed=1
     chain_next "$ref" invalid || break
+    failed=1
     continue
   fi
   feature="issue-$n"
@@ -165,8 +165,8 @@ for ref in "$@"; do
       ;;
     done,*)
       summary="$summary$ref: skipped, run $status\n"
-      failed=1
       chain_next "$feature" "$status" || break
+      failed=1
       continue
       ;;
     'no run') prompt="/factory headless $ref${base:+ --base $base}" ;;
@@ -190,13 +190,14 @@ for ref in "$@"; do
   [ "$status" = paused ] && reason=$(pause_reason "$state")
   summary="$summary$ref: exit $code, run $status${prs:+, PRs: $prs}${reason:+\n  reason: $reason}\n"
   echo "== $ref: exit $code, run $status"
-  [ "$status" = done ] || failed=1
   # A run left running (omp hit --max-time or --max-cost) blocks every new run in this worktree.
   if [ "$status" = running ]; then
+    failed=1
     summary="${summary}Stopped: $feature is still running; run the script again to resume it.\n"
     break
   fi
   chain_next "$feature" "$status" || break
+  [ "$status" = done ] || failed=1
 done
 
 printf '\nSummary:\n%b' "$summary"
