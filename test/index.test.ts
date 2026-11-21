@@ -98,6 +98,12 @@ describe('stopDecision', () => {
     it('keeps blocking in a headless run even when the latest tool call is ask', () => {
       assert.equal(stopDecision(run({ mode: 'headless' }), 'owner', undefined, askMessages).action, 'block');
     });
+
+    it('uses the last toolCall part of one message: not waiting when ask comes first, waiting when ask comes last', () => {
+      const calls = (...names: string[]) => [{ role: 'assistant', content: names.map((name, i) => ({ type: 'toolCall', id: String(i), name, arguments: {} })) }];
+      assert.equal(stopDecision(run(), 'owner', undefined, calls('ask', 'bash')).action, 'block');
+      assert.equal(stopDecision(run(), 'owner', undefined, calls('bash', 'ask')).action, 'wait');
+    });
   });
 });
 
@@ -278,9 +284,10 @@ describe('implementer sessions', () => {
   });
 
   describe('stop gate pause event', () => {
-    const pauseDetail = async (messages: unknown[]) => {
+    const pauseDetail = async (messages: unknown[], headless = false) => {
       using repo = emptyRepo();
       const { call, handlers, main } = await startedRun(repo.root);
+      if (headless) await withRun({ config: loadConfig(repo.root), root: repo.root }, 'demo', run => { run.mode = 'headless'; });
       for (let i = 0; i < MAX_IDLE_STOP_ATTEMPTS; i += 1) await handlers.get('session_stop')?.({ session_id: 'session', messages, type: 'session_stop' }, main);
       const status = JSON.parse(await call('factory_status', {}, main)) as { content: { text: string }[] };
       return /no progress after \d+ stop attempts[^"]*/.exec(status.content[0]?.text ?? '')?.[0];
@@ -313,6 +320,13 @@ describe('implementer sessions', () => {
 
     it('says none when the session has no tool call and no assistant text, and still pauses', async () => {
       assert.equal(await pauseDetail([]), `no progress after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts; latest tool: none; last assistant text: none`);
+    });
+
+    it('names the last toolCall part of a message that holds several, in both orders', async () => {
+      const calls = (...names: string[]) => [{ role: 'assistant', content: names.map((name, i) => ({ type: 'toolCall', id: String(i), name, arguments: {} })) }];
+      assert.match((await pauseDetail(calls('ask', 'bash'))) ?? '', /latest tool: bash;/);
+      assert.match((await pauseDetail(calls('bash', 'ask'), true)) ?? '', /latest tool: ask;/);
+      assert.match((await pauseDetail(calls('ask', 'bash'), true)) ?? '', /latest tool: bash;/);
     });
   });
 
