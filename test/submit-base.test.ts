@@ -21,7 +21,7 @@ const runPrCalls = (count: number, first: number) =>
 
 describe('planSubmit with a base branch and a stack without slice 01', () => {
   const branches = ['b1', 'b2', 'b3'];
-  const base = { branch: 'B', stack: undefined };
+  const base = { branch: 'B' };
   it('refuses instead of treating slice 01 as index 0', () => {
     assert.deepEqual(planSubmit(['X', 'b2'], branches, base), { kind: 'refuse', outside: ['X'], unordered: ['b2'], base: 'B' });
   });
@@ -39,10 +39,13 @@ describe('planSubmit with a base branch', () => {
     assert.deepEqual(planSubmit(undefined, branches, { branch: 'B', stack: ['A', 'B'] }), { kind: 'add', missing: branches, onto: 'B' });
   });
   it('refuses a base branch that is in no stack', () => {
-    assert.deepEqual(planSubmit(undefined, branches, { branch: 'B', stack: undefined }), {
+    assert.deepEqual(planSubmit(undefined, branches, { branch: 'B', stack: null }), {
       kind: 'refuse-base',
       reason: 'the base branch B is in no gh stack, so the run cannot be stacked on it',
     });
+  });
+  it('throws when slice 01 is in no stack and the base stack was not read', () => {
+    assert.throws(() => planSubmit(undefined, branches, { branch: 'B' }), Error);
   });
   it('refuses a base branch that is not the top of its stack', () => {
     assert.deepEqual(planSubmit(undefined, branches, { branch: 'B', stack: ['A', 'B', 'C'] }), {
@@ -51,19 +54,19 @@ describe('planSubmit with a base branch', () => {
     });
   });
   it('accepts a stack that ends with the base branch below slice 01 and adds the run branches it lacks', () => {
-    assert.deepEqual(planSubmit(['A', 'B', 'b1'], branches, { branch: 'B', stack: undefined }), { kind: 'add', missing: ['b2', 'b3'] });
+    assert.deepEqual(planSubmit(['A', 'B', 'b1'], branches, { branch: 'B' }), { kind: 'add', missing: ['b2', 'b3'] });
   });
   it('adds nothing when the stack holds the base branch and every run branch', () => {
-    assert.deepEqual(planSubmit(['B', ...branches], branches, { branch: 'B', stack: undefined }), { kind: 'add', missing: [] });
+    assert.deepEqual(planSubmit(['B', ...branches], branches, { branch: 'B' }), { kind: 'add', missing: [] });
   });
   it('refuses a stack whose branches below slice 01 do not end with the base branch', () => {
-    assert.deepEqual(planSubmit(['A', 'X', 'b1'], branches, { branch: 'B', stack: undefined }), { kind: 'refuse', outside: [], unordered: [], base: 'B' });
+    assert.deepEqual(planSubmit(['A', 'X', 'b1'], branches, { branch: 'B' }), { kind: 'refuse', outside: [], unordered: [], base: 'B' });
   });
   it('refuses a stack with an outside branch above slice 01', () => {
-    assert.deepEqual(planSubmit(['B', 'b1', 'X'], branches, { branch: 'B', stack: undefined }), { kind: 'refuse', outside: ['X'], unordered: [] });
+    assert.deepEqual(planSubmit(['B', 'b1', 'X'], branches, { branch: 'B' }), { kind: 'refuse', outside: ['X'], unordered: [] });
   });
   it('refuses a run branch below slice 01 and run branches out of order', () => {
-    assert.deepEqual(planSubmit(['B', 'b3', 'b1', 'b2'], branches, { branch: 'B', stack: undefined }), { kind: 'refuse', outside: [], unordered: ['b3'], base: 'B' });
+    assert.deepEqual(planSubmit(['B', 'b3', 'b1', 'b2'], branches, { branch: 'B' }), { kind: 'refuse', outside: [], unordered: ['b3'], base: 'B' });
   });
   it('plans a run without a base branch as before', () => {
     assert.deepEqual(planSubmit(undefined, branches), { kind: 'init' });
