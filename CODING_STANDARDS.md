@@ -21,3 +21,7 @@ A refusal or error message that names a next step must name a step that works in
 ## Review data sections in tests
 
 Tests that assert on a section of a review data file extract it with `dataSection` or `fixItems` from `test/helpers.ts`, not with an inline regex that names the next section. Adding a section then breaks no test.
+
+## Tests for a changed branch
+
+When a change alters a default or a branch condition, search the tests for the input that the changed branch reads. Check each test that sets that input. Each such test must still prove the behavior its name gives, or you update it. Example: `defaultChoice` changed so that a correctness observation on a `fromEndQueue` slice defaults to fix. Three sibling follow-up tests moved to `missing-test`, but the re-sliced follow-up test was missed, and it then passed for the wrong reason.
