@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { beforeEach, describe, it } from 'node:test';
 import { type Command, ctx, load } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
-import { forgetRun, readRun, runDir, statePath } from '../src/run.ts';
+import { forgetRun, readRun, runDir, saveRun, statePath } from '../src/run.ts';
 import { loadSource } from '../src/gates.ts';
 import { resetModuleState } from '../src/index.ts';
 import { headlessTarget } from '../src/workflow.ts';
@@ -461,15 +461,34 @@ describe('/factory headless --base', () => {
     const ws = { config: loadConfig(repo.root), root: repo.root };
     assert.equal(readRun(ws, 'ticket').baseBranch, undefined);
     assert.match(await call('factory_plan', { slices: [slice('One')] }), /Plan approved/);
-    assert.equal(readRun(ws, 'ticket').baseRef, 'main');
+    assert.equal(readRun(ws, 'ticket').baseSha, sh(repo.root, 'rev-parse', 'main'));
+    assert.equal(readRun(ws, 'ticket').trunk, 'main');
+  });
+
+  it('refuses factory_plan of a run with baseBranch and no baseSha, naming the lost pinned commit', async () => {
+    using repo = tempRepo('factory-headless-base-', CHECKS_OK);
+    sh(repo.root, 'branch', 'feat/base');
+    const { call, command } = session(repo.root);
+    await command('headless ticket.md --base feat/base');
+    const ws = { config: loadConfig(repo.root), root: repo.root };
+    const { baseSha: _lost, ...rest } = readRun(ws, 'ticket');
+    saveRun(ws, rest);
+    await assert.rejects(call('factory_plan', { slices: [slice('One')] }), /lost the pinned commit of feat\/base/);
   });
 
   it('lets an interactive run use baseRef, landOn and trunk', async () => {
     using repo = tempRepo('factory-headless-base-', CHECKS_OK);
     sh(repo.root, 'branch', 'feat/base');
+    sh(repo.root, 'switch', '-q', '-c', 'feat/top', 'feat/base');
+    sh(repo.root, 'commit', '-q', '--allow-empty', '-m', 'top');
+    sh(repo.root, 'switch', '-q', 'main');
     const { call } = session(repo.root);
     await call('factory_start', { feature: 'demo', source: SOURCE });
-    assert.match(await call('factory_plan', { baseRef: 'main', landOn: 'feat/base', slices: [slice('One')], trunk: 'main' }), /Plan approved/);
+    assert.match(await call('factory_plan', { baseRef: 'feat/top', landOn: 'feat/base', slices: [slice('One')], trunk: 'feat/base' }), /Plan approved/);
+    const run = readRun({ config: loadConfig(repo.root), root: repo.root }, 'demo');
+    assert.equal(run.baseRef, 'feat/top');
+    assert.equal(run.landOn, 'feat/base');
+    assert.equal(run.trunk, 'feat/base');
   });
 });
 

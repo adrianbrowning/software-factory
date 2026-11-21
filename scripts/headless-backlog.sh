@@ -6,7 +6,7 @@
 # done with a submit (paused, stalled, failed, running), names it in the summary and exits 1. A done run (just finished,
 # or skipped) must also pass three chain checks, in this order, before it is the base of the next run: (1) its last
 # submission event is a submit and each of its slice branches has an open or merged PR (`gh pr list --head <branch>
-# --state all`; a done run with no submit fails here); (2) its top slice branch on origin (`git ls-remote origin`) is at
+# --state all`; a done run with no submit, or a failing `gh pr list`, fails here); (2) its top slice branch on origin (`git ls-remote origin`) is at
 # the top slice's green commit; (3) its recorded baseBranch is the top branch of the run before it in the list, and
 # absent for the first. A failed check names the run and the check in the summary, starts no later issue and exits 1, and
 # so does a done run with no slice branch and a listed ref that is not an issue number or GitHub issue URL. A rerun
@@ -68,11 +68,12 @@ chain_check() {
   c1='last submission is a submit and each slice branch has an open or merged PR'
   [ "$kind" = submit ] || { chain_fail "$1" 1 "$c1" "its last submission event is $kind, not submit"; return; }
   for b in $(jq -r '.slices[].branch' "$s"); do
-    open=$(gh pr list --head "$b" --state all --json state 2>/dev/null | jq '[.[] | select(.state == "OPEN" or .state == "MERGED")] | length' 2>/dev/null)
+    prs=$(gh pr list --head "$b" --state all --json state 2>&1) || { chain_fail "$1" 1 "$c1" "gh pr list failed for $b: $prs"; return; }
+    open=$(printf '%s' "$prs" | jq '[.[] | select(.state == "OPEN" or .state == "MERGED")] | length' 2>/dev/null)
     [ "${open:-0}" -gt 0 ] || { chain_fail "$1" 1 "$c1" "$b has no open or merged PR"; return; }
   done
   c2='top slice branch on origin is at the top slice'\''s green commit'
-  green=$(jq -r '.slices[-1].checked.sha // empty' "$s")
+  green=$(jq -r '.slices[-1] | select(.green != null) | .checked.sha // empty' "$s")
   remote=$(git ls-remote origin "refs/heads/$2" 2>/dev/null | cut -f1)
   [ -n "$green" ] && [ "$remote" = "$green" ] || { chain_fail "$1" 2 "$c2" "origin has ${remote:-no} $2, the green commit is ${green:-missing}"; return; }
   c3="baseBranch is the top slice branch of the run before it in the list, absent for the first"
