@@ -98,6 +98,12 @@ describe('stopDecision', () => {
     it('keeps blocking in a headless run even when the latest tool call is ask', () => {
       assert.equal(stopDecision(run({ mode: 'headless' }), 'owner', undefined, askMessages).action, 'block');
     });
+
+    it('uses the last toolCall part of one message: not waiting when ask comes first, waiting when ask comes last', () => {
+      const calls = (...names: string[]) => [{ role: 'assistant', content: names.map((name, i) => ({ type: 'toolCall', id: String(i), name, arguments: {} })) }];
+      assert.equal(stopDecision(run(), 'owner', undefined, calls('ask', 'bash')).action, 'block');
+      assert.equal(stopDecision(run(), 'owner', undefined, calls('bash', 'ask')).action, 'wait');
+    });
   });
 });
 
@@ -313,6 +319,13 @@ describe('implementer sessions', () => {
 
     it('says none when the session has no tool call and no assistant text, and still pauses', async () => {
       assert.equal(await pauseDetail([]), `no progress after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts; latest tool: none; last assistant text: none`);
+    });
+
+    it('names the last toolCall part of a message that holds several, in both orders', async () => {
+      const calls = (...names: string[]) => [{ role: 'assistant', content: names.map((name, i) => ({ type: 'toolCall', id: String(i), name, arguments: {} })) }];
+      assert.match((await pauseDetail(calls('ask', 'bash'))) ?? '', /latest tool: bash;/);
+      assert.match((await pauseDetail(calls('bash', 'read'))) ?? '', /latest tool: read;/);
+      assert.match((await pauseDetail(calls('read', 'bash'))) ?? '', /latest tool: bash;/);
     });
   });
 
