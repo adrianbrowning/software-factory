@@ -200,7 +200,7 @@ state.json), so its PRs stack on the run before. A listed issue whose run is alr
 its top branch is the base of the next run. A run that is not done is resumed (`/factory resume`, which takes no
 `--base`). Before a done run (one the script just finished or one it skips) becomes the base of the next run, the script
 checks it, in this order: (1) its last submission event is a submit and each slice branch has an open or merged PR
-(`gh pr list --head <branch> --state all`); (2) its top slice branch on origin is still at the top slice's green commit
+(`gh pr list --head <branch> --state all`; a failing `gh` call fails the check with its message); (2) its top slice branch on origin is still at the top slice's green commit
 (`git ls-remote origin`); (3) its recorded `baseBranch` is the top slice branch of the run before it in the list, and is
 absent for the first. A skipped run and a resumed middle run are checked the same way, so a rerun continues past a
 resumed run only when it passes. The batch stops at the first failed check, or at the first run that does not end done
