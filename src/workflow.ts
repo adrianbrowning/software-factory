@@ -122,7 +122,7 @@ export async function headlessBase(ws: Workspace, run: Run, params: { baseRef?: 
     if (params[name] !== undefined) throw new Error(`A headless run's base is fixed at start, so factory_plan takes no ${name}. Call factory_plan again without it; the plan uses ${run.baseBranch ?? 'the configured base'}.`);
   }
   if (run.baseBranch === undefined) return resolveBase(ws);
-  if (run.baseSha === undefined) throw new Error(`The run state lost the pinned commit of ${run.baseBranch}, so factory_plan cannot plan on it. Delete the run's state and start it again with --base ${run.baseBranch}.`);
+  if (run.baseSha === undefined) throw new Error(`The run state lost the pinned commit of ${run.baseBranch}, so factory_plan cannot plan on it.`);
   return { baseRef: run.baseRef, baseSha: run.baseSha, trunk: run.trunk };
 }
 
