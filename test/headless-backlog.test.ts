@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { initRepo, sh, tempDir } from './helpers.ts';
@@ -9,12 +9,18 @@ const script = join(import.meta.dirname, '..', 'scripts', 'headless-backlog.sh')
 /** Stands for the commit the fixture repo's slice branches are green at; runBacklog swaps in the real sha. */
 const GREEN = '@green';
 
-/** A run state: its status, its last submission event (if any), its slice branches (bottom first, each green at GREEN) and its baseBranch (if any). */
-const state = (status: string, kind?: string, branches: string[] = [], baseBranch?: string) =>
+/** The green commit of a lower slice: never on origin, and unlike the top slice's. */
+const LOWER = '0'.repeat(40);
+
+/** A run state: its status, its last submission event (if any), its slice branches (bottom first; the top is green at GREEN, a lower one at LOWER) and its baseBranch (if any). */
+const state = (status: string, kind?: string, branches: string[] = [], baseBranch?: string, topGreen = true) =>
   JSON.stringify({
     baseBranch,
     events: kind === undefined ? [] : [{ kind }],
-    slices: branches.map(branch => ({ branch, checked: { results: [], sha: GREEN }, green: {} })),
+    slices: branches.map((branch, i) => {
+      const top = i === branches.length - 1;
+      return { branch, checked: { results: [], sha: top ? GREEN : LOWER }, ...(top && !topGreen ? {} : { green: {} }) };
+    }),
     status,
   });
 
@@ -27,9 +33,10 @@ const writeState = (n: number, body: string) => `mkdir -p work/issue-${n}; echo 
  * leads to and may print PR URLs. The fake logs the prompts it got.
  * The repo has a local origin and a fake gh: every slice branch named in `existing` or `cases` is on origin at the green
  * commit (GREEN) and has an open PR, except as `world` says: `noPr` has no PR, `closedPr` only a closed one, `mergedPr`
- * a merged one, `moved` is on origin at another commit and `unpushed` is not on origin.
+ * a merged one, `ghFails` makes `gh pr list` fail for it, `moved` is on origin at another commit and `unpushed` is not on origin.
+ * `options.noGh` leaves gh off PATH.
  */
-function runBacklog(existing: Record<number, string>, cases: string, args: string[], world: Partial<Record<'closedPr' | 'mergedPr' | 'moved' | 'noPr' | 'unpushed', readonly string[]>> = {}) {
+function runBacklog(existing: Record<number, string>, cases: string, args: string[], world: Partial<Record<'closedPr' | 'ghFails' | 'mergedPr' | 'moved' | 'noPr' | 'unpushed', readonly string[]>> = {}, options: { noGh?: boolean; ghStderr?: Record<string, string> } = {}) {
   using dir = tempDir('backlog-');
   const repo = join(dir.root, 'repo');
   mkdirSync(repo);
@@ -46,6 +53,8 @@ function runBacklog(existing: Record<number, string>, cases: string, args: strin
     if (!world.unpushed?.includes(branch)) sh(repo, 'push', '-q', 'origin', `${world.moved?.includes(branch) ? moved : 'HEAD'}:refs/heads/${branch}`);
     const prState = world.mergedPr?.includes(branch) ? 'MERGED' : world.closedPr?.includes(branch) ? 'CLOSED' : 'OPEN';
     if (!world.noPr?.includes(branch)) writeFileSync(join(prs, branch.replace('/', '_')), JSON.stringify([{ state: prState }]));
+    if (world.ghFails?.includes(branch)) writeFileSync(join(prs, `${branch.replace('/', '_')}.fail`), '');
+    if (options.ghStderr?.[branch]) writeFileSync(join(prs, `${branch.replace('/', '_')}.err`), options.ghStderr[branch]);
   }
   cases = cases.replaceAll(GREEN, green);
   for (const [n, body] of Object.entries(existing)) {
@@ -56,9 +65,25 @@ function runBacklog(existing: Record<number, string>, cases: string, args: strin
   mkdirSync(bin);
   writeFileSync(join(bin, ',omp'), `#!/bin/sh\nfor a; do last=$a; done\necho "$last" >> "$CALLS"\ncase "$last" in\n${cases}\nesac\n`);
   chmodSync(join(bin, ',omp'), 0o755);
-  // The fake gh answers only `gh pr list --head <branch> ...`, with the PRs the world gave that branch.
-  writeFileSync(join(bin, 'gh'), `#!/bin/sh\n[ "$1 $2" = 'pr list' ] || exit 1\nf="${prs}/$(printf %s "$4" | tr / _)"\nif [ -f "$f" ]; then cat "$f"; else echo '[]'; fi\n`);
-  chmodSync(join(bin, 'gh'), 0o755);
+  // The fake gh answers only `gh pr list --head <branch> ...`, with the PRs the world gave that branch: only the OPEN ones
+  // unless `--state all` is passed, as real gh does. A branch in `ghFails` makes it exit 1.
+  const f = `${prs}/$(printf %s "$4" | tr / _)`;
+  const gh = `#!/bin/sh\n[ "$1 $2" = 'pr list' ] || exit 1\nf="${f}"\n[ -f "$f.err" ] && cat "$f.err" >&2\n[ -f "$f.fail" ] && { [ -f "$f.err" ] || echo 'gh: not logged in' >&2; exit 1; }\n[ -f "$f" ] || { echo '[]'; exit 0; }\ncase " $* " in *' --state all '*) cat "$f" ;; *) jq -c '[.[] | select(.state == "OPEN")]' "$f" ;; esac\n`;
+  // Without gh, PATH holds links to every other command, so jq, git and sh still resolve and gh does not.
+  let path = `${bin}:${process.env.PATH}`;
+  if (options.noGh) {
+    const tools = join(dir.root, 'tools');
+    mkdirSync(tools);
+    for (const d of (process.env.PATH ?? '').split(':')) {
+      try {
+        for (const name of readdirSync(d)) if (name !== 'gh') try { symlinkSync(join(d, name), join(tools, name)); } catch { /* an earlier PATH entry has it */ }
+      } catch { /* not a directory */ }
+    }
+    path = `${bin}:${tools}`;
+  } else {
+    writeFileSync(join(bin, 'gh'), gh);
+    chmodSync(join(bin, 'gh'), 0o755);
+  }
   const calls = join(dir.root, 'calls');
   // OMP stays pinned to the fake, so a local OMP or a changed script default can never start the real omp.
   // LOG_DIR is removed, so the test sees the default log dir.
@@ -66,7 +91,7 @@ function runBacklog(existing: Record<number, string>, cases: string, args: strin
   const result = spawnSync('sh', [script, ...args], {
     cwd: repo,
     encoding: 'utf8',
-    env: { ...inherited, CALLS: calls, OMP: join(bin, ',omp'), PATH: `${bin}:${process.env.PATH}`, PLUGIN_DIR: dir.root },
+    env: { ...inherited, CALLS: calls, OMP: join(bin, ',omp'), PATH: path, PLUGIN_DIR: dir.root },
   });
   let prompts: string[] = [];
   try {
@@ -75,7 +100,7 @@ function runBacklog(existing: Record<number, string>, cases: string, args: strin
     // The fake was never called.
   }
   return {
-    logs: readdirSync(join(repo, '.git', 'headless-backlog')),
+    logs: existsSync(join(repo, '.git', 'headless-backlog')) ? readdirSync(join(repo, '.git', 'headless-backlog')) : [],
     prompts,
     status: result.status,
     stderr: result.stderr,
@@ -150,6 +175,16 @@ describe('scripts/headless-backlog.sh', () => {
     assert.deepEqual(result.prompts, ['/factory resume issue-3', '/factory headless 4 --base issue-3/02']);
   });
 
+  it('chains a resumed run after an earlier run set the base: the resume prompt has no --base and the next run gets the resumed top branch', () => {
+    const fake = [
+      `  "/factory resume issue-4") ${writeState(4, submitted(4, ['01'], 'issue-3/01'))} ;;`,
+      `  "/factory headless 5 --base issue-4/01") ${writeState(5, submitted(5, ['01'], 'issue-4/01'))} ;;`,
+    ].join('\n');
+    const result = runBacklog({ 3: submitted(3, ['01']), 4: state('paused', undefined, ['issue-4/01'], 'issue-3/01') }, fake, ['3', '4', '5']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(result.prompts, ['/factory resume issue-4', '/factory headless 5 --base issue-4/01']);
+  });
+
   for (const [name, outcome, reason] of [
     ['paused', state('paused', undefined, ['issue-4/01']), 'run paused'],
     ['done with no PRs', state('done', 'submission-stop', ['issue-4/01']), 'run done, no PRs \\(submission-stop;'],
@@ -186,6 +221,36 @@ describe('scripts/headless-backlog.sh chain checks', () => {
       assert.deepEqual(result.prompts, ['/factory headless 3']);
       assert.match(result.summary, /^Stopped: issue-3 failed chain check 1 \(last submission is a submit and each slice branch has an open or merged PR\): issue-3\/02 has no open or merged PR\. No later issue is started/m);
     }
+  });
+
+  it('stops at a done run whose top slice has no green marker even when checked.sha matches origin', () => {
+    const result = runBacklog({ 3: state('done', 'submit', ['issue-3/01'], undefined, false) }, '', ['3', '4']);
+    assert.equal(result.status, 1, result.stderr);
+    assert.deepEqual(result.prompts, []);
+    assert.match(result.summary, /^Stopped: issue-3 failed chain check 2 .*the green commit is missing\. No later issue is started/m);
+  });
+
+  it('stops at a failing gh pr list with a check 1 reason naming the gh failure, not a missing PR', () => {
+    const fake = `  "/factory headless 3") ${writeState(3, submitted(3, ['01']))} ;;`;
+    const result = runBacklog({}, fake, ['3', '4'], { ghFails: ['issue-3/01'] });
+    assert.equal(result.status, 1, result.stderr);
+    assert.deepEqual(result.prompts, ['/factory headless 3']);
+    assert.match(result.summary, /^Stopped: issue-3 failed chain check 1 .*: gh pr list failed for issue-3\/01: gh: not logged in\. No later issue is started/m);
+    assert.doesNotMatch(result.summary, /no open or merged PR/);
+  });
+
+  it('continues past a successful gh pr list that also writes a warning to stderr', () => {
+    const fake = `  "/factory headless 3") ${writeState(3, submitted(3, ['01']))} ;;\n  "/factory headless 4 --base issue-3/01") ${writeState(4, submitted(4, ['01']))} ;;`;
+    const result = runBacklog({}, fake, ['3', '4'], {}, { ghStderr: { 'issue-3/01': 'A new release of gh is available' } });
+    assert.deepEqual(result.prompts, ['/factory headless 3', '/factory headless 4 --base issue-3/01']);
+    assert.doesNotMatch(result.summary, /Stopped: issue-3/);
+  });
+
+  it('reports a failing gh with multiline, backslash stderr as one literal summary line', () => {
+    const fake = `  "/factory headless 3") ${writeState(3, submitted(3, ['01']))} ;;`;
+    const result = runBacklog({}, fake, ['3', '4'], { ghFails: ['issue-3/01'] }, { ghStderr: { 'issue-3/01': 'bad\\nthing C:\\dir\nsecond line\n' } });
+    assert.deepEqual(result.prompts, ['/factory headless 3']);
+    assert.match(result.summary, /^Stopped: issue-3 failed chain check 1 .*: gh pr list failed for issue-3\/01: bad\\nthing C:\\dir second line\. No later issue is started\.$/m);
   });
 
   it('stops at a skipped done run with a slice branch that has no PR', () => {
@@ -264,17 +329,17 @@ describe('scripts/headless-backlog.sh chain checks', () => {
       assert.deepEqual(result.prompts, ['/factory resume issue-4', '/factory headless 5 --base issue-4/01']);
     });
 
-    for (const [name, resumed, world] of [
-      ['has a slice branch with no PR', submitted(4, ['01'], 'issue-3/01'), { noPr: ['issue-4/01'] }],
-      ['has a top branch not at its green commit', submitted(4, ['01'], 'issue-3/01'), { moved: ['issue-4/01'] }],
-      ['has a baseBranch that is not the top branch of the run before it', submitted(4, ['01'], 'issue-9/01'), {}],
+    for (const [name, check, resumed, world] of [
+      ['has a slice branch with no PR', 1, submitted(4, ['01'], 'issue-3/01'), { noPr: ['issue-4/01'] }],
+      ['has a top branch not at its green commit', 2, submitted(4, ['01'], 'issue-3/01'), { moved: ['issue-4/01'] }],
+      ['has a baseBranch that is not the top branch of the run before it', 3, submitted(4, ['01'], 'issue-9/01'), {}],
     ] as const) {
       it(`stops at it when it ${name}`, () => {
         const fake = `  "/factory resume issue-4") ${writeState(4, resumed)} ;;\n${next}`;
         const result = runBacklog(existing, fake, ['3', '4', '5'], world);
         assert.equal(result.status, 1, result.stderr);
         assert.deepEqual(result.prompts, ['/factory resume issue-4']);
-        assert.match(result.summary, /^Stopped: issue-4 failed chain check [123] /m);
+        assert.match(result.summary, new RegExp(`^Stopped: issue-4 failed chain check ${check} `, 'm'));
         assert.doesNotMatch(result.summary, /^5:/m);
       });
     }
@@ -305,5 +370,21 @@ describe('scripts/headless-backlog.sh with a ref that is no issue', () => {
     assert.deepEqual(result.prompts, []);
     assert.match(result.summary, /^nope: skipped, not an issue number/m);
     assert.match(result.summary, /^Stopped: nope did not end done with a submit/m);
+  });
+});
+
+describe('scripts/headless-backlog.sh without gh on PATH', () => {
+  it('chained, exits 2 with the gh message and calls no omp', () => {
+    const result = runBacklog({}, '', ['3'], {}, { noGh: true });
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /gh is required/);
+    assert.deepEqual(result.prompts, []);
+  });
+
+  it('with --separate, is not refused', () => {
+    const fake = `  "/factory headless 3") ${writeState(3, state('done', 'submit'))} ;;`;
+    const result = runBacklog({}, fake, ['--separate', '3'], {}, { noGh: true });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(result.prompts, ['/factory headless 3']);
   });
 });
