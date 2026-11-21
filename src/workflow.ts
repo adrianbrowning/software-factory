@@ -155,8 +155,8 @@ export async function startRun(ws: Workspace, input: { annotate?: ((run: Run) =>
   }
   const source = sourceSchema.parse(input.source);
   const checks = checksSchema.parse(repoChecks(ws));
-  // The base is resolved and pinned at plan approval, where the user can still pick a different one; the plan
-  // event records it.
+  // Without input.base the base is resolved and pinned at plan approval, where the user can still pick a
+  // different one; the plan event records it. With input.base (headless --base) it is pinned here and never changes.
   const configured = await configuredBase(ws);
   const trunk = ws.config.trunk ?? (await branchName(ws.root, configured));
   const baseRef = input.base?.branch ?? configured;
