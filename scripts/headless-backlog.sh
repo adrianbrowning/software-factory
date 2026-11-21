@@ -95,6 +95,13 @@ chain_check() {
   [ -n "$green" ] && [ "$remote" = "$green" ] || { chain_fail "$1" 2 "$c2" "origin has ${remote:-no} $2, the green commit is ${green:-missing}"; return; }
   local=$(git rev-parse --verify --quiet "refs/heads/$2^{commit}")
   [ "$local" = "$green" ] || { chain_fail "$1" 2 "$c2" "local $2 is at ${local:-missing}, the green commit is $green"; return; }
+  base_check "$1"
+}
+
+# Chain check 3 of run $1: its recorded base is $base (the top branch of the run before it), or the default base for the
+# first run. A paused run gets this check before it is resumed, so it never submits onto another stack. Returns 1 on failure.
+base_check() {
+  s=$scratch/$1/state.json
   c3="baseBranch is the top slice branch of the run before it in the list, absent for the first"
   have=$(jq -r '.baseBranch // empty' "$s")
   [ "$have" = "$base" ] || { chain_fail "$1" 3 "$c3" "its baseBranch is ${have:-absent}, expected ${base:-absent}"; return; }
@@ -145,7 +152,10 @@ for ref in "$@"; do
       break
       ;;
     'no run') prompt="/factory headless $ref${base:+ --base $base}" ;;
-    *) prompt="/factory resume $feature" ;;
+    *)
+      [ "$separate" = 1 ] || base_check "$feature" || break
+      prompt="/factory resume $feature"
+      ;;
   esac
   # The first run in a chain, and every run with --separate, plans on the configured base (by default origin's default
   # branch), as last fetched, so it sees what merged while earlier runs worked; a later new run in a chain branches from
