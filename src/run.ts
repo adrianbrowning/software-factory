@@ -37,7 +37,7 @@ export const SEVERITIES = ['critical', 'high', 'observation'] as const;
 export const OBSERVATION_CATEGORIES = ['correctness', 'missing-test', 'misleading-doc', 'naming', 'structure', 'style'] as const;
 export type ObservationCategory = (typeof OBSERVATION_CATEGORIES)[number];
 
-/** Where a slice's batch of observations puts one by default: work that is wrong or unproven waits in the end queue, taste is left. 'fix-once' fixes the observation in this slice while the slice has none placed as fixed (so a slice never loops on fix rounds), then it takes the end-queue default. The same fix-once rule holds for 'correctness' on a follow-up slice built from end-queue items (slice.fromEndQueue), which defaultChoice in place.ts applies; such a slice then defers to the sink or leaves, never the end queue. */
+/** Where a slice's batch of observations puts one by default: work that is wrong or unproven waits in the end queue, taste is left. 'fix-once' fixes the observation in this slice while the slice has none placed as fixed (so a slice never loops on fix rounds), then it takes the end-queue default. `fixesOnceInSlice` is the one owner of whether a category is fixed once in a given slice: the table's 'fix-once' rows, plus 'correctness' on a follow-up slice built from end-queue items (slice.fromEndQueue). defaultChoice in place.ts reads it and holds no category rule of its own; a fixed-once observation then defers to the sink or leaves on a follow-up slice, never the end queue. */
 export const DEFAULT_PLACEMENT = {
   correctness: 'end',
   'misleading-doc': 'fix-once',
@@ -46,6 +46,12 @@ export const DEFAULT_PLACEMENT = {
   structure: 'leave',
   style: 'leave',
 } as const satisfies Record<ObservationCategory, 'end' | 'fix-once' | 'leave'>;
+
+/** Whether an observation of this category is fixed once in this slice (see `DEFAULT_PLACEMENT`). */
+export function fixesOnceInSlice(category: ObservationCategory, slice: Pick<Slice, 'fromEndQueue'>): boolean {
+  return DEFAULT_PLACEMENT[category] === 'fix-once' || (category === 'correctness' && slice.fromEndQueue === true);
+}
+
 export const SOURCE_KINDS = ['github', 'jira', 'file', 'text'] as const;
 
 /** One finding in the cc-pr-review-ci review.json shape. */
