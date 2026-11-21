@@ -147,7 +147,7 @@ describe('scripts/headless-backlog.sh', () => {
     assert.deepEqual(result.prompts, ['/factory headless 3', '/factory headless 4']);
     assert.match(result.summary, /^3: exit 0, run paused$/m);
     assert.match(result.summary, /^4: exit 0, run done$/m);
-    assert.doesNotMatch(result.summary, /Stopped: issue-3/);
+    assert.doesNotMatch(result.summary, /Stopped/);
   });
 
   it('chains runs: the first has no --base, a skipped done run hands its top branch on, and each new run gets the top branch before it', () => {
@@ -162,7 +162,7 @@ describe('scripts/headless-backlog.sh', () => {
     assert.deepEqual(result.prompts, ['/factory headless 3', '/factory headless 4 --base issue-3/02', '/factory headless 6 --base issue-5/03']);
     assert.match(result.summary, /^5: skipped, run already done$/m);
     assert.match(result.summary, /^6: exit 0, run done$/m);
-    assert.doesNotMatch(result.summary, /Stopped: issue-3/);
+    assert.doesNotMatch(result.summary, /Stopped/);
   });
 
   it('chains a resumed run without --base, then hands its top branch to the next run', () => {
