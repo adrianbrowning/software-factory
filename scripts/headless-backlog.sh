@@ -151,7 +151,7 @@ chain_next() {
   [ "$separate" = 1 ] && return 0
   case $2 in
     done) next_base "$1" ;;
-    done,*) chain_fail "$1" 1 "$check1" "its last submission event is $(submission_kind "$scratch/$1/state.json"), not submit" ;; # a done run with no submit has no PRs to stack on
+    done,*) chain_fail "$1" 1 "$check1" "its last submission event is $(submission_kind "$scratch/$1/state.json"), not submit" ;; # check 1 fails: the last submission event is not submit (PRs may still exist after submit-failed)
     *) failed=1; chain_stop "$1"; return 1 ;;
   esac
 }
