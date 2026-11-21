@@ -3,7 +3,7 @@ import { beforeEach, describe, it } from 'node:test';
 import { resetModuleState } from '../src/index.ts';
 import { planSubmit, submitStack } from '../src/submit.ts';
 import { sh, step, workspace, withPrs, prCalls, submitFakeGh as fakeGh, submitDoneRun as doneRun } from './helpers.ts';
-import type { Workspace } from '../src/run.ts';
+import { readRun, type Workspace } from '../src/run.ts';
 
 beforeEach(() => resetModuleState());
 
@@ -80,6 +80,7 @@ describe('submit: a run on a base branch', () => {
       ...runPrCalls(2, 201),
     ]);
     assert.ok(steps.includes(`adding 2 branches onto the gh stack whose top is B: ${branches.join(', ')}`), steps.join('\n'));
+    assert.equal(readRun(ws, 'demo').events.find(event => event.kind === 'submit')?.detail, `added ${branches.join(', ')} onto the gh stack whose top is B and submitted; draft PRs opened or updated`);
     assert.deepEqual(gh.stackAtSubmit(), ['A', 'B', ...branches]);
     assert.equal(sh(ws.root, 'branch', '--show-current'), branches.at(-1));
   });

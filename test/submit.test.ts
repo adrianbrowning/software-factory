@@ -100,6 +100,7 @@ describe('submit', () => {
     await step(ws, run => submitStack(ws, run, message => steps.push(message)));
     assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, `stack init --base main ${branches.join(' ')}`, 'stack submit --auto', 'stack view --json', ...prCalls(3)]);
     assert.ok(steps.includes('adopting 3 branches into a gh stack onto main'), steps.join('\n'));
+    assert.equal(readRun(ws, 'demo').events.find(event => event.kind === 'submit')?.detail, 'adopted 3 branches onto main and submitted; draft PRs opened or updated');
     assert.equal(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'a first submit ends on the top slice');
   });
 
