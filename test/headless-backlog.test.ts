@@ -258,6 +258,14 @@ describe('scripts/headless-backlog.sh', () => {
     assert.match(result.summary, /^3: skipped, run done, no PRs \(submit-failed;/m);
     assert.match(result.summary, /^Stopped: issue-3 failed chain check 1 \(last submission is a submit.*submission event is submit-failed, not submit/m);
   });
+
+  it('chained, stops at a listed run that is done with no submission event, naming none', () => {
+    const result = runBacklog({ 3: state('done', undefined, ['issue-3/01']) }, '', ['3', '4']);
+    assert.equal(result.status, 1, result.stderr);
+    assert.deepEqual(result.prompts, []);
+    assert.match(result.summary, /^3: skipped, run done, no PRs \(not submitted;/m);
+    assert.match(result.summary, /^Stopped: issue-3 failed chain check 1 \(last submission is a submit.*submission event is none, not submit/m);
+  });
 });
 
 describe('scripts/headless-backlog.sh chain checks', () => {
