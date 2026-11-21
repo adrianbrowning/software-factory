@@ -57,6 +57,14 @@ function requireFullForIds(run: Run, chosen: Set<string>, tool: string) {
   }
 }
 
+/** The free text (undefined when blank) and the chosen observation ids of a request; throws `empty` when it has neither. */
+function normalizeRequest(text: string | undefined, observations: string[] | undefined, empty: string) {
+  const trimmed = text?.trim() ? text : undefined;
+  const chosen = new Set(z.array(z.string().min(1)).parse(observations ?? []));
+  if (trimmed === undefined && chosen.size === 0) throw new Error(empty);
+  return { chosen, text: trimmed };
+}
+
 /**
  * What factory_carry takes: observation ids from the active slice's green review, a free-text note, or both, and where they go: a pending slice id, or "end" to wait on the run for the
  * next follow-up slice.
@@ -70,9 +78,7 @@ export type CarryRequest = { note?: string | undefined; observations?: string[] 
  * holds, and for a target that is neither "end" nor a pending slice. Does not change the run.
  */
 export function planCarry(ws: Workspace, run: Run, request: CarryRequest) {
-  const note = request.note?.trim() ? request.note : undefined;
-  const chosen = new Set(z.array(z.string().min(1)).parse(request.observations ?? []));
-  if (note === undefined && chosen.size === 0) throw new Error('factory_carry needs observation ids, a note, or both.');
+  const { text: note, chosen } = normalizeRequest(request.note, request.observations, 'factory_carry needs observation ids, a note, or both.');
   requireFullForIds(run, chosen, 'factory_carry');
   const green = greenObservations(ws, run, chosen, 'carry observations or a note');
   requireUnplaced(run, green.review.id, green.observations);
@@ -112,9 +118,7 @@ export type DeferRequest = { note?: string | undefined; observations?: string[] 
  */
 export function planDefer(ws: Workspace, run: Run, request: DeferRequest) {
   requireSink(ws);
-  const note = request.note?.trim() ? request.note : undefined;
-  const chosen = new Set(z.array(z.string().min(1)).parse(request.observations ?? []));
-  if (note === undefined && chosen.size === 0) throw new Error('factory_defer needs observation ids, a note, or both.');
+  const { text: note, chosen } = normalizeRequest(request.note, request.observations, 'factory_defer needs observation ids, a note, or both.');
   requireFullForIds(run, chosen, 'factory_defer');
   const { observations, review, slice } = greenObservations(ws, run, chosen, 'defer observations or a note');
   if (isRecordSlice(slice)) throw new Error(`Slice ${slice.id} "${slice.title}" writes the deferred sink file, so its review items are not deferred. They stay in the review itself (the green review observations, and for accepted-unresolved findings slice.unresolved and the accepted-unresolved event).`);
@@ -137,9 +141,7 @@ export function planDefer(ws: Workspace, run: Run, request: DeferRequest) {
  * review lists. Does not change the run.
  */
 export function planFix(ws: Workspace, run: Run, request: FixRequest) {
-  const bug = request.bug?.trim() ? request.bug : undefined;
-  const chosen = new Set(z.array(z.string().min(1)).parse(request.observations ?? []));
-  if (bug === undefined && chosen.size === 0) throw new Error('factory_fix needs a bug, observation ids, or both.');
+  const { text: bug, chosen } = normalizeRequest(request.bug, request.observations, 'factory_fix needs a bug, observation ids, or both.');
   const found = unplacedObservations(run, chosen) ?? { ...greenObservations(ws, run, chosen, 'fix observations or a bug'), groups: undefined };
   requireUnplaced(run, found.review.id, found.observations);
   return { bug, ...found, groups: found.groups ?? [{ observations: found.observations, review: found.review }] };
