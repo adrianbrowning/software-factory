@@ -45,7 +45,7 @@ describe('planSubmit with a base branch', () => {
     });
   });
   it('throws when slice 01 is in no stack and the base stack was not read', () => {
-    assert.throws(() => planSubmit(undefined, branches, { branch: 'B' }), Error);
+    assert.throws(() => planSubmit(undefined, branches, { branch: 'B' }), /slice 01 is in no stack but the stack of the base branch B was not read/);
   });
   it('refuses a base branch that is not the top of its stack', () => {
     assert.deepEqual(planSubmit(undefined, branches, { branch: 'B', stack: ['A', 'B', 'C'] }), {
