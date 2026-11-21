@@ -60,7 +60,7 @@ async function configuredBase(ws: Workspace) {
 }
 
 /**
- * The base slice 01 stacks on: the ref the user named, pinned to the commit it pointed at when the plan was approved.
+ * The base slice 01 stacks on: the ref the user named, pinned to the commit it pointed at when the plan was approved, or at start for a headless run started with `--base`.
  * `landOn` is set when the user wants the stack landed on an existing local branch instead of opened as PRs.
  */
 export type Base = { baseRef: string; baseSha: string; landOn?: string; trunk: string };

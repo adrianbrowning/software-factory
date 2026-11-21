@@ -363,7 +363,7 @@ const runSchema = z.object({
   /** Local branch a headless run started with `--base` builds on; `baseRef` and `baseSha` are fixed to it at start. Absent otherwise. */
   baseBranch: text.optional(),
   baseRef: text,
-  /** Commit `baseRef` pointed at when the plan was approved; slice 01 branches from it. */
+  /** Commit `baseRef` pointed at when the plan was approved (at start for a headless run started with `--base`); slice 01 branches from it. */
   baseSha: z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/).optional(),
   /** Legacy (see legacyObservations): observations carried to a slice or the end queue, as `review:id`, in a state file from before the ledger. Read once, never written. */
   carriedObservations: z.array(text).default([]),
