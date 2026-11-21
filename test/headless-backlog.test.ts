@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { initRepo, tempDir } from './helpers.ts';
+import { initRepo, sh, tempDir } from './helpers.ts';
 
 const script = join(import.meta.dirname, '..', 'scripts', 'headless-backlog.sh');
 const state = (status: string, kind?: string) => JSON.stringify({ events: kind === undefined ? [] : [{ kind }], status });
@@ -56,7 +56,6 @@ describe('scripts/headless-backlog.sh', () => {
     assert.match(summary, /^Stopped: issue-7 is still running/m);
     assert.doesNotMatch(summary, /^9:/m);
     assert.ok(readdirSync(join(repo, '.git', 'headless-backlog')).some((f) => f.endsWith('.log')));
-    const status = spawnSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: repo, encoding: 'utf8' }).stdout;
-    assert.doesNotMatch(status, /\.log$/m);
+    assert.doesNotMatch(sh(repo, 'status', '--porcelain', '--untracked-files=all'), /\.log$/m);
   });
 });
