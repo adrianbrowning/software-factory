@@ -12,10 +12,11 @@ const GREEN = '@green';
 /** The green commit of a lower slice: never on origin, and unlike the top slice's. */
 const LOWER = '0'.repeat(40);
 
-/** A run state: its status, its last submission event (if any), its slice branches (bottom first; the top is green at GREEN, a lower one at LOWER) and its baseBranch (if any). */
-const state = (status: string, kind?: string, branches: string[] = [], baseBranch?: string, topGreen = true) =>
+/** A run state: its status, its last submission event (if any), its slice branches (bottom first; the top is green at GREEN, a lower one at LOWER) and its baseBranch (if any); baseRef is the run's recorded base, by default the fixture's default base. */
+const state = (status: string, kind?: string, branches: string[] = [], baseBranch?: string, topGreen = true, baseRef = 'origin/main') =>
   JSON.stringify({
     baseBranch,
+    baseRef,
     events: kind === undefined ? [] : [{ kind }],
     slices: branches.map((branch, i) => {
       const top = i === branches.length - 1;
@@ -33,10 +34,10 @@ const writeState = (n: number, body: string) => `mkdir -p work/issue-${n}; echo 
  * leads to and may print PR URLs. The fake logs the prompts it got.
  * The repo has a local origin and a fake gh: every slice branch named in `existing` or `cases` is on origin at the green
  * commit (GREEN) and has an open PR, except as `world` says: `noPr` has no PR, `closedPr` only a closed one, `mergedPr`
- * a merged one, `ghFails` makes `gh pr list` fail for it, `moved` is on origin at another commit and `unpushed` is not on origin.
+ * a merged one, `ghFails` makes `gh pr list` fail for it, `moved` is on origin at another commit and `unpushed` is not on origin. Every slice branch also exists locally at GREEN, except `localMoved` (at another commit) and `localMissing` (absent).
  * `options.noGh` leaves gh off PATH.
  */
-function runBacklog(existing: Record<number, string>, cases: string, args: string[], world: Partial<Record<'closedPr' | 'ghFails' | 'mergedPr' | 'moved' | 'noPr' | 'unpushed', readonly string[]>> = {}, options: { noGh?: boolean; ghStderr?: Record<string, string> } = {}) {
+function runBacklog(existing: Record<number, string>, cases: string, args: string[], world: Partial<Record<'closedPr' | 'ghFails' | 'localMissing' | 'localMoved' | 'mergedPr' | 'moved' | 'noPr' | 'unpushed', readonly string[]>> = {}, options: { noGh?: boolean; ghStderr?: Record<string, string> } = {}) {
   using dir = tempDir('backlog-');
   const repo = join(dir.root, 'repo');
   mkdirSync(repo);
@@ -51,6 +52,7 @@ function runBacklog(existing: Record<number, string>, cases: string, args: strin
   const branches = new Set((JSON.stringify(existing) + cases).match(/issue-\d+\/\d+/g));
   for (const branch of branches) {
     if (!world.unpushed?.includes(branch)) sh(repo, 'push', '-q', 'origin', `${world.moved?.includes(branch) ? moved : 'HEAD'}:refs/heads/${branch}`);
+    if (!world.localMissing?.includes(branch)) sh(repo, 'branch', '-f', branch, world.localMoved?.includes(branch) ? moved : 'HEAD');
     const prState = world.mergedPr?.includes(branch) ? 'MERGED' : world.closedPr?.includes(branch) ? 'CLOSED' : 'OPEN';
     if (!world.noPr?.includes(branch)) writeFileSync(join(prs, branch.replace('/', '_')), JSON.stringify([{ state: prState }]));
     if (world.ghFails?.includes(branch)) writeFileSync(join(prs, `${branch.replace('/', '_')}.fail`), '');
@@ -110,7 +112,7 @@ function runBacklog(existing: Record<number, string>, cases: string, args: strin
 }
 
 /** A done run with a submit and the slice branches `issue-<n>/<id>` for each id, started on `baseBranch` (if any). */
-const submitted = (n: number, ids: string[], baseBranch?: string) => state('done', 'submit', ids.map(id => `issue-${n}/${id}`), baseBranch);
+const submitted = (n: number, ids: string[], baseBranch?: string, baseRef?: string) => state('done', 'submit', ids.map(id => `issue-${n}/${id}`), baseBranch, true, baseRef);
 
 describe('scripts/headless-backlog.sh', () => {
   it('with --separate, starts, skips and resumes runs in the configured scratch dir without --base, and stops at a run left running', () => {
@@ -269,8 +271,22 @@ describe('scripts/headless-backlog.sh chain checks', () => {
       const result = runBacklog({}, fake, ['3', '4'], world);
       assert.equal(result.status, 1, result.stderr);
       assert.deepEqual(result.prompts, ['/factory headless 3']);
-      assert.match(result.summary, /^Stopped: issue-3 failed chain check 2 \(top slice branch on origin is at the top slice's green commit\): origin has \S* issue-3\/02, the green commit is [0-9a-f]{40}\. No later issue is started/m);
+      assert.match(result.summary, /^Stopped: issue-3 failed chain check 2 \(top slice branch on origin and locally is at the top slice's green commit\): origin has \S* issue-3\/02, the green commit is [0-9a-f]{40}\. No later issue is started/m);
       if (name === 'is not on origin') assert.match(result.summary, /origin has no issue-3\/02/);
+    });
+  }
+
+  for (const [name, world] of [
+    ['is at another commit', { localMoved: ['issue-3/02'] }],
+    ['is missing', { localMissing: ['issue-3/02'] }],
+  ] as const) {
+    it(`stops at a run whose local top branch ${name} while origin is still green, and starts nothing after it`, () => {
+      const fake = `  "/factory headless 3") ${writeState(3, submitted(3, ['01', '02']))} ;;`;
+      const result = runBacklog({}, fake, ['3', '4'], world);
+      assert.equal(result.status, 1, result.stderr);
+      assert.deepEqual(result.prompts, ['/factory headless 3']);
+      assert.match(result.summary, /^Stopped: issue-3 failed chain check 2 .*local issue-3\/02 is at \S*, the green commit is [0-9a-f]{40}\. No later issue is started/m);
+      if (name === 'is missing') assert.match(result.summary, /local issue-3\/02 is at missing/);
     });
   }
 
@@ -308,6 +324,22 @@ describe('scripts/headless-backlog.sh chain checks', () => {
     assert.equal(result.status, 1, result.stderr);
     assert.deepEqual(result.prompts, []);
     assert.match(result.summary, /^Stopped: issue-3 failed chain check 3 .*its baseBranch is issue-9\/01, expected absent\. No later issue is started/m);
+  });
+
+  it('stops at a first run whose recorded baseRef is not the configured default base', () => {
+    const result = runBacklog({ 3: submitted(3, ['01'], undefined, 'origin/other') }, '', ['3', '4']);
+    assert.equal(result.status, 1, result.stderr);
+    assert.deepEqual(result.prompts, []);
+    assert.match(result.summary, /^Stopped: issue-3 failed chain check 3 .*its baseRef is origin\/other, expected origin\/main\. No later issue is started/m);
+  });
+
+  it('does not compare the baseRef of a later run, which is pinned to the branch before it', () => {
+    const fake = [
+      `  "/factory headless 3") ${writeState(3, submitted(3, ['01']))} ;;`,
+      `  "/factory headless 4 --base issue-3/01") ${writeState(4, submitted(4, ['01'], 'issue-3/01', 'issue-3/01'))} ;;`,
+    ].join('\n');
+    const result = runBacklog({}, fake, ['3', '4']);
+    assert.equal(result.status, 0, result.stderr);
   });
 
   it('stops at a skipped run whose baseBranch is not the top branch of the run before it', () => {

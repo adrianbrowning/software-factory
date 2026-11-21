@@ -6,9 +6,11 @@
 # done with a submit (paused, stalled, failed, running), names it in the summary and exits 1. A done run (just finished,
 # or skipped) must also pass three chain checks, in this order, before it is the base of the next run: (1) its last
 # submission event is a submit and each of its slice branches has an open or merged PR (`gh pr list --head <branch>
-# --state all`; a done run with no submit, or a failing `gh pr list`, fails here); (2) its top slice branch on origin (`git ls-remote origin`) is at
-# the top slice's green commit; (3) its recorded baseBranch is the top branch of the run before it in the list, and
-# absent for the first. A failed check names the run and the check in the summary, starts no later issue and exits 1, and
+# --state all`; a done run with no submit, or a failing `gh pr list`, fails here); (2) its top slice branch, on origin
+# (`git ls-remote origin`) and locally (the next run's --base pins the local branch), is at the top slice's green commit;
+# (3) its recorded baseBranch is the top branch of the run before it in the list, and absent for the first, whose
+# recorded baseRef must also be the configured default base (baseRef in .omp/factory.json, else the branch origin/HEAD
+# points at, else origin/main). A failed check names the run and the check in the summary, starts no later issue and exits 1, and
 # so does a done run with no slice branch and a listed ref that is not an issue number or GitHub issue URL. A rerun
 # checks a skipped or resumed middle run the same way, and continues past it only when it passes.
 # With --separate as the first argument, no run gets --base: each opens its own stack of draft PRs on the default base,
@@ -59,6 +61,15 @@ chain_fail() {
   return 1
 }
 
+# The base a run plans on when it names none, as the plugin resolves it: baseRef from .omp/factory.json, else the branch
+# origin/HEAD points at, else origin/main.
+default_base() {
+  ref=''
+  [ -f .omp/factory.json ] && ref=$(jq -r '.baseRef // empty' .omp/factory.json)
+  [ -n "$ref" ] || ref=$(git symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null | sed -n 's@^refs/remotes/@@p')
+  echo "${ref:-origin/main}"
+}
+
 # Checks run $1, a done run about to become the base of the next run, in order, and returns 1 at the first failure after
 # naming the run and the check in the summary. $2 is its top slice branch. $base still holds the top branch of the run
 # before it in the list (empty for the first).
@@ -78,14 +89,19 @@ chain_check() {
     open=$(printf '%s' "$prs" | jq '[.[] | select(.state == "OPEN" or .state == "MERGED")] | length' 2>/dev/null)
     [ "${open:-0}" -gt 0 ] || { chain_fail "$1" 1 "$c1" "$b has no open or merged PR"; return; }
   done
-  c2='top slice branch on origin is at the top slice'\''s green commit'
+  c2='top slice branch on origin and locally is at the top slice'\''s green commit'
   green=$(jq -r '.slices[-1] | select(.green != null) | .checked.sha // empty' "$s")
   remote=$(git ls-remote origin "refs/heads/$2" 2>/dev/null | cut -f1)
   [ -n "$green" ] && [ "$remote" = "$green" ] || { chain_fail "$1" 2 "$c2" "origin has ${remote:-no} $2, the green commit is ${green:-missing}"; return; }
+  local=$(git rev-parse --verify --quiet "refs/heads/$2^{commit}")
+  [ "$local" = "$green" ] || { chain_fail "$1" 2 "$c2" "local $2 is at ${local:-missing}, the green commit is $green"; return; }
   c3="baseBranch is the top slice branch of the run before it in the list, absent for the first"
   have=$(jq -r '.baseBranch // empty' "$s")
-  [ "$have" = "$base" ] && return 0
-  chain_fail "$1" 3 "$c3" "its baseBranch is ${have:-absent}, expected ${base:-absent}"
+  [ "$have" = "$base" ] || { chain_fail "$1" 3 "$c3" "its baseBranch is ${have:-absent}, expected ${base:-absent}"; return; }
+  [ -z "$base" ] || return 0
+  want=$(default_base)
+  have=$(jq -r '.baseRef // empty' "$s")
+  [ "$have" = "$want" ] || chain_fail "$1" 3 "$c3" "its baseRef is ${have:-absent}, expected $want"
 }
 
 # Checks run $1 (state.json of the run's feature), then sets base to its top slice branch. A done run with no slice branch
