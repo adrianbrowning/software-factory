@@ -248,7 +248,7 @@ export interface FakeGh {
   stack: string[] | string | undefined;
   /** How `stack checkout` fails without a stack; by default gh-stack's real "no stack" exit and stderr. */
   checkoutFailure?: { code: number; stderr: string };
-  /** Branches whose `stack checkout` fails as without a stack, though the served stack exists (a branch that is in no stack while another is). */
+  /** Branches whose `stack checkout` fails as without a stack, though the served stack exists (a branch that is in no stack while another is); `stack add` takes a branch off this list. */
   unstacked?: string[];
   /** The subcommand (such as `stack submit`) that runs `onFail` and exits 1. */
   fail?: string;
@@ -281,6 +281,11 @@ export function submitFakeGh({ stack, checkoutFailure = NO_STACK, unstacked = []
     writeFileSync(view, JSON.stringify({ branches: stack.map(name => ({ name })), currentBranch: stack[0], trunk: 'main' }));
     writeFileSync(join(dir, 'top'), stack.at(-1) ?? '');
   }
+  const loose = join(dir, 'unstacked');
+  writeFileSync(loose, unstacked.map(name => `${name}\n`).join(''));
+  const atSubmit = join(dir, 'at-submit.json');
+  // `stack add <branch>` appends the branch to the served stack, as gh-stack does, and the stack top moves to it.
+  const append = `const f=require('fs');try{const v=JSON.parse(f.readFileSync('${view}','utf8'));v.branches.push({name:process.argv[1]});f.writeFileSync('${view}',JSON.stringify(v));f.writeFileSync('${join(dir, 'top')}',process.argv[1])}catch{}`;
   const after = join(dir, 'submitted.json');
   if (submitted !== undefined) {
     const items = submitted.map(({ name, pr }) => (pr === undefined ? { name } : { name, pr: { number: pr, url: `https://example.test/pull/${pr}`, state: 'OPEN' } }));
@@ -290,14 +295,15 @@ export function submitFakeGh({ stack, checkoutFailure = NO_STACK, unstacked = []
     '#!/bin/sh',
     // A newline in an argument (a PR body) is logged as \\036, so each call stays one line.
     `printf '%s\\n' "$(printf '%s' "$*" | tr '\\n' '\\036')" >> '${log}'`,
-    `if [ "$1 $2" = "stack checkout" ] && { [ ! -f '${view}' ] || case "$3" in ${unstacked.length === 0 ? '"")' : unstacked.join('|') + ')'} true;; *) false;; esac; }; then echo "${checkoutFailure.stderr}" >&2; exit ${checkoutFailure.code}; fi`,
+    `if [ "$1 $2" = "stack checkout" ] && { [ ! -f '${view}' ] || grep -qx "$3" '${loose}'; }; then echo "${checkoutFailure.stderr}" >&2; exit ${checkoutFailure.code}; fi`,
     `if [ "$1 $2" = "stack checkout" ]; then git switch -q "$3" || exit 1; fi`,
     `if [ "$1 $2" = "stack view" ]; then cat '${view}' || exit 1; fi`,
     `if [ "$1 $2" = "stack init" ]; then eval "git switch -q \\"\\\${$#}\\"" || exit 1; fi`,
     `if [ "$1 $2" = "stack top" ]; then git switch -q "$(cat '${join(dir, 'top')}')" || exit 1; fi`,
-    `if [ "$1 $2" = "stack add" ]; then git switch -q "$3" || exit 1; fi`,
+    `if [ "$1 $2" = "stack add" ]; then git switch -q "$3" || exit 1; node -e "${append}" "$3"; grep -vx "$3" '${loose}' > '${loose}.tmp'; mv '${loose}.tmp' '${loose}'; fi`,
     `if [ "$1 $2" = '${fail}' ]; then ${onFail}; exit 1; fi`,
     `if [ "$1 $2" = "stack submit" ]; then ${onSubmit}; fi`,
+    `if [ "$1 $2" = "stack submit" ]; then cp '${view}' '${atSubmit}'; fi`,
     `if [ "$1 $2" = "stack submit" ] && [ -f '${after}' ]; then cp '${after}' '${view}'; fi`,
     'exit 0',
     '',
@@ -308,6 +314,8 @@ export function submitFakeGh({ stack, checkoutFailure = NO_STACK, unstacked = []
   const raw = () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').map(call => call.replaceAll('\x1e', '\n')) : []);
   return {
     calls: () => raw().map(call => call.replace(/ -f body=[\s\S]*/, ' -f body=…')),
+    /** The branch names of the stack the last `stack submit` pushed (the served stack, with each `stack add` applied), bottom first. */
+    stackAtSubmit: () => (JSON.parse(readFileSync(atSubmit, 'utf8')) as { branches: { name: string }[] }).branches.map(item => item.name),
     /** The body each PR (by number) was last given. */
     bodies: () => new Map(raw().map(call => /pulls\/(\d+) -f title=[^\n]* -f body=([\s\S]*)/.exec(call)).filter((match): match is RegExpExecArray => match !== null).map(match => [Number(match[1]), match[2] ?? ''] as const)),
     // Removes only this fake's PATH entry, so several fakes in one test clean up in any order.
