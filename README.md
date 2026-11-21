@@ -172,6 +172,17 @@ issue. It needs a GitHub primary issue, not an issue file.
 /factory headless 294 --related 260,#285,https://github.com/o/r/issues/209
 ```
 
+`/factory headless <issue> --base <branch>` builds the run on an existing local branch (as `git branch` lists it; a remote
+ref such as `origin/x`, a missing branch or any other revision is refused at start, before a run is created). The run pins
+the branch's commit at start and records the branch as `baseBranch`: slice 01 branches from that commit, also when the
+branch moves later, while the PRs still target the configured trunk, not the base branch. `--base` and `--related` can be
+given together in either order after the issue. A headless run's base is fixed at start, so `factory_plan` refuses
+`baseRef`, `landOn` and `trunk` in it; a run started without `--base` plans on the configured base.
+
+```text
+/factory headless 294 --base issue-293-top-slice --related 260
+```
+
 Run it from a worktree of the repository, with checks configured (a headless start refuses a repository with no checks).
 The issue-text, planning, stop-report, observation and retro rules of a headless run are in `skills/software-factory/SKILL.md`.
 

@@ -40,6 +40,8 @@ import {
   applyReslice,
   approvePlan,
   headlessTarget,
+  headlessBase,
+  localBranchSha,
   markPaused,
   nextAction,
   nextSlice,
@@ -228,7 +230,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
   }
 
   /** Shared by `factory_start` and `/factory headless`; only the command passes `mode`, because factory_start always creates interactive runs. */
-  async function startOrResume(params: z.infer<typeof startSchema> & { mode?: Run['mode'] }, { entry, ws }: { entry: RootEntry; ws: Workspace }, ctx: ExtensionContext) {
+  async function startOrResume(params: z.infer<typeof startSchema> & { base?: string; mode?: Run['mode'] }, { entry, ws }: { entry: RootEntry; ws: Workspace }, ctx: ExtensionContext) {
     const sessionId = ctx.sessionManager.getSessionId();
     let run: Run;
     const notes: string[] = [];
@@ -268,6 +270,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
       if (bound !== undefined && isRunning(bound)) {
         throw new Error(`Run "${bound.feature}" is still running in this repository. Finish or /factory pause it first.`);
       }
+      const pinned = params.base === undefined ? undefined : { branch: params.base, sha: await localBranchSha(ws, params.base) };
       requireAvailableModels(ws.config.models, spec => ctx.models.resolve(spec));
       requireOrchestratorSession(ws.config.models, ctx, 'start');
       const loaded = await loadSource(ctx, ws, params.source, mode);
@@ -277,6 +280,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
           for (const note of notes) addEvent(created, 'autonomous', note);
           warned = recordSelfHostWarning(created, ws.root);
         },
+        base: pinned,
         feature: params.feature,
         mode,
         sessionId,
@@ -342,8 +346,9 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
     name: 'factory_plan',
     schema: planToolSchema,
     async run(params, { feature, ws }, ctx) {
-      const base = await resolveBase(ws, { baseRef: params.baseRef, landOn: params.landOn, trunk: params.trunk });
-      const slices = planSlices(ws, readRun(ws, feature), params.slices, base);
+      const current = readRun(ws, feature);
+      const base = current.mode === 'headless' ? await headlessBase(ws, current, params) : await resolveBase(ws, { baseRef: params.baseRef, landOn: params.landOn, trunk: params.trunk });
+      const slices = planSlices(ws, current, params.slices, base);
       const target = base.landOn === undefined ? `PRs target ${base.trunk}` : `/factory submit fast-forwards ${base.landOn} to the top slice; no PRs`;
       const where = `Slice 01 branches from ${base.baseRef} (${base.baseSha.slice(0, 12)}); ${target}.`;
       if (!(await gate(ctx, ws, feature, 'plan', `Approve ${slices.length} slices for "${feature}"?`, `${where}\n\n${planSummary(slices)}`))) {
@@ -583,7 +588,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
   });
 
   pi.registerCommand('factory', {
-    description: 'Software factory: /factory <issue> | headless <issue> | resume <feature> | pause | status | checks | submit [feature]',
+    description: 'Software factory: /factory <issue> | headless <issue> [--related refs] [--base branch] | resume <feature> | pause | status | checks | submit [feature]',
     async handler(args, ctx) {
       const [verb = '', ...rest] = args.trim().split(/\s+/);
       const argument = rest.join(' ');
@@ -654,12 +659,12 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
         return;
       }
       if (verb === 'headless') {
-        if (argument === '') throw new Error('Usage: /factory headless <issue ref> [--related <ref>,<ref>,...]');
+        if (argument === '') throw new Error('Usage: /factory headless <issue ref> [--related <ref>,<ref>,...] [--base <local branch>]');
         // The command starts the run itself, so its mode is headless whatever the model does next.
         const target = headlessTarget(argument);
         const feature = target.feature;
         const source = target.source;
-        await startOrResume({ feature, mode: 'headless', source }, { entry: await cachedRoot(ctx.cwd), ws }, ctx);
+        await startOrResume({ ...(target.base === undefined ? {} : { base: target.base }), feature, mode: 'headless', source }, { entry: await cachedRoot(ctx.cwd), ws }, ctx);
         sendContinuation(`A headless software-factory run "${feature}" is started for: ${argument}\nRead skill://software-factory and continue it from its next action (${nextAction(readRun(ws, feature))}).`);
         return;
       }

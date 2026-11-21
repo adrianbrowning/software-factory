@@ -360,6 +360,8 @@ export type ObservationEntry = z.infer<typeof observationEntrySchema>;
 const runSchema = z.object({
   /** One record per factory agent or scout session the run's main session spawned. Empty in runs from before it was kept. */
   agents: z.array(agentRecordSchema).default([]),
+  /** Local branch a headless run started with `--base` builds on; `baseRef` and `baseSha` are fixed to it at start. Absent otherwise. */
+  baseBranch: text.optional(),
   baseRef: text,
   /** Commit `baseRef` pointed at when the plan was approved; slice 01 branches from it. */
   baseSha: z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/).optional(),

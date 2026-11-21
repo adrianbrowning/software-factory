@@ -26,11 +26,29 @@ export function requireFeatureName(feature: string) {
 }
 
 /**
- * What `/factory headless <issue ref> [--related <ref>,<ref>]` starts a run from, and the run's name. A GitHub issue (`102`, `#102`, or its
+ * What `/factory headless <issue ref> [--related <ref>,<ref>] [--base <branch>]` starts a run from, and the run's name. A GitHub issue (`102`, `#102`, or its
  * URL) is named `issue-<n>` after its number; anything else is an issue file, named after its file name in kebab-case.
- * `--related` adds issue refs (number, `#number` or issue URL) as `source.related`; it needs a GitHub primary ref.
+ * `--base` names the local branch the run builds on, returned as `base`. `--related` adds issue refs (number, `#number` or issue URL) as `source.related`; it needs a GitHub primary ref.
  */
-export function headlessTarget(argument: string): { feature: string; source: SourceInput } {
+export function headlessTarget(argument: string): { base?: string; feature: string; source: SourceInput } {
+  const { base, rest } = extractBase(argument);
+  const target = targetWithoutBase(rest);
+  return base === undefined ? target : { base, ...target };
+}
+
+/** Takes `--base <branch>` out of the argument, wherever it sits after the primary ref. */
+function extractBase(argument: string) {
+  const flag = /\s+--base(?=\s|$)(?:\s+(\S+))?/g;
+  const found = [...argument.matchAll(flag)];
+  if (found.length > 1) throw new Error('--base takes one branch; it was given more than once.');
+  const match = found[0];
+  if (match === undefined) return { rest: argument };
+  const base = match[1];
+  if (base === undefined || base.startsWith('--')) throw new Error('--base needs a value: the name of an existing local branch.');
+  return { base, rest: argument.slice(0, match.index) + argument.slice(match.index + match[0].length) };
+}
+
+function targetWithoutBase(argument: string): { feature: string; source: SourceInput } {
   const split = /^(.*?)\s+--related(?:\s+(.*))?$/s.exec(argument);
   const ref = split === null ? argument : split[1]!;
   const target = headlessPrimary(ref);
@@ -111,6 +129,16 @@ async function configuredBase(ws: Workspace) {
  */
 export type Base = { baseRef: string; baseSha: string; landOn?: string; trunk: string };
 
+/** The commit of the existing local branch `name`. An exact branch name, not a revision expression such as `main^{commit}` that rev-parse would also accept. */
+export async function localBranchSha(ws: Workspace, name: string) {
+  try {
+    await git(ws.root, 'check-ref-format', `refs/heads/${name}`);
+    return (await git(ws.root, 'show-ref', '--verify', '--hash', `refs/heads/${name}`)).trim();
+  } catch {
+    throw new Error(`"${name}" is not an existing local branch. Name it as \`git branch\` lists it.`);
+  }
+}
+
 /**
  * Resolves the run's base. `baseRef` overrides the configured base when the work builds on an unmerged branch; the
  * trunk then defaults to that branch, so the stack's PRs target it. `landOn` names an existing local branch that
@@ -122,16 +150,7 @@ export async function resolveBase(
   override: { baseRef?: string | undefined; landOn?: string | undefined; trunk?: string | undefined } = {},
 ): Promise<Base> {
   const { landOn } = override;
-  // An exact branch name, not a revision expression such as `main^{commit}` that rev-parse would also accept.
-  let landSha: string | undefined;
-  if (landOn !== undefined) {
-    try {
-      await git(ws.root, 'check-ref-format', `refs/heads/${landOn}`);
-      landSha = (await git(ws.root, 'show-ref', '--verify', '--hash', `refs/heads/${landOn}`)).trim();
-    } catch {
-      throw new Error(`"${landOn}" is not an existing local branch. Name it as \`git branch\` lists it.`);
-    }
-  }
+  const landSha = landOn === undefined ? undefined : await localBranchSha(ws, landOn);
   const chosen = override.baseRef ?? landOn;
   const baseRef = chosen ?? (await configuredBase(ws));
   const trunk = override.trunk ?? (chosen === undefined ? ws.config.trunk : undefined) ?? (await branchName(ws.root, baseRef));
@@ -158,6 +177,18 @@ export async function resolveBase(
   return { baseRef, baseSha, landOn, trunk };
 }
 
+/**
+ * The base of a headless run: fixed when the run started, so `factory_plan` refuses to change it. A run started with
+ * `--base` plans on the commit it pinned; the trunk stays the configured one. Otherwise the configured base, as now.
+ */
+export async function headlessBase(ws: Workspace, run: Run, params: { baseRef?: string | undefined; landOn?: string | undefined; trunk?: string | undefined }): Promise<Base> {
+  for (const name of ['baseRef', 'landOn', 'trunk'] as const) {
+    if (params[name] !== undefined) throw new Error(`A headless run's base is fixed at start, so factory_plan takes no ${name}. Call factory_plan again without it; the plan uses ${run.baseBranch ?? 'the configured base'}.`);
+  }
+  if (run.baseBranch === undefined || run.baseSha === undefined) return resolveBase(ws);
+  return { baseRef: run.baseRef, baseSha: run.baseSha, trunk: run.trunk };
+}
+
 const checksSchema = z.array(z.string().trim().min(1)).min(1, 'Choose at least one check command.');
 const checksPath = (ws: Workspace) => join(ws.root, ws.config.scratchDir, 'checks.json');
 
@@ -181,7 +212,7 @@ export async function saveChecks(ws: Workspace, checks: string[]) {
 }
 
 /** Creates the run and saves it once; `annotate` adds events to it before that first save, so they exist whenever the run does. */
-export async function startRun(ws: Workspace, input: { annotate?: ((run: Run) => void) | undefined; feature: string; mode?: Run['mode'] | undefined; sessionId: string; source: Source }) {
+export async function startRun(ws: Workspace, input: { annotate?: ((run: Run) => void) | undefined; feature: string; mode?: Run['mode'] | undefined; sessionId: string; source: Source; base?: { branch: string; sha: string } | undefined }) {
   requireFeatureName(input.feature);
   if (existsSync(statePath(ws, input.feature))) {
     throw new Error(`Run "${input.feature}" already exists. Use /factory resume ${input.feature}.`);
@@ -190,12 +221,14 @@ export async function startRun(ws: Workspace, input: { annotate?: ((run: Run) =>
   const checks = checksSchema.parse(repoChecks(ws));
   // The base is resolved and pinned at plan approval, where the user can still pick a different one; the plan
   // event records it.
-  const baseRef = await configuredBase(ws);
-  const trunk = ws.config.trunk ?? (await branchName(ws.root, baseRef));
+  const configured = await configuredBase(ws);
+  const trunk = ws.config.trunk ?? (await branchName(ws.root, configured));
+  const baseRef = input.base?.branch ?? configured;
   await excludeScratch(ws);
   const run: Run = {
     agents: [],
     baseRef,
+    ...(input.base === undefined ? {} : { baseBranch: input.base.branch, baseSha: input.base.sha }),
     checks,
     createdAt: new Date().toISOString(),
     decisions: [],

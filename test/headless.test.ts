@@ -9,7 +9,7 @@ import { forgetRun, readRun, runDir, statePath } from '../src/run.ts';
 import { loadSource } from '../src/gates.ts';
 import { resetModuleState } from '../src/index.ts';
 import { headlessTarget } from '../src/workflow.ts';
-import { issueGh, prependPath, tempDir, tempRepo } from './helpers.ts';
+import { issueGh, prependPath, sh, slice, tempDir, tempRepo } from './helpers.ts';
 
 const CHECKS_OK = { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }), 'ticket.md': '# Add the widget\n\nBuild it.\n' };
 
@@ -402,6 +402,77 @@ describe('factory_start related issue hardening', () => {
   });
 });
 
+describe('/factory headless --base', () => {
+  const runExists = (root: string) => existsSync(statePath({ config: loadConfig(root), root }, 'ticket'));
+
+  it('refuses a missing branch and a remote ref with the reason and creates no run', async () => {
+    using repo = tempRepo('factory-headless-base-', CHECKS_OK);
+    sh(repo.root, 'update-ref', 'refs/remotes/origin/x', 'HEAD');
+    for (const base of ['nope', 'origin/x', 'main^{commit}']) {
+      resetModuleState();
+      await assert.rejects(async () => session(repo.root).command(`headless ticket.md --base ${base}`), /is not an existing local branch/, base);
+      assert.equal(runExists(repo.root), false, base);
+    }
+  });
+
+  it('pins the branch commit at start, plans slice 01 from it after the branch moves, and keeps the configured trunk', async () => {
+    using repo = tempRepo('factory-headless-base-', CHECKS_OK);
+    sh(repo.root, 'switch', '-q', '-c', 'feat/base');
+    sh(repo.root, 'commit', '-q', '--allow-empty', '-m', 'on base');
+    const pinned = sh(repo.root, 'rev-parse', 'HEAD');
+    sh(repo.root, 'switch', '-q', 'main');
+    const { call, command } = session(repo.root);
+    await command('headless ticket.md --base feat/base');
+    const ws = { config: loadConfig(repo.root), root: repo.root };
+    const started = readRun(ws, 'ticket');
+    assert.equal(started.baseBranch, 'feat/base');
+    assert.equal(started.baseRef, 'feat/base');
+    assert.equal(started.baseSha, pinned);
+    sh(repo.root, 'switch', '-q', 'feat/base');
+    sh(repo.root, 'commit', '-q', '--allow-empty', '-m', 'moved');
+    sh(repo.root, 'switch', '-q', 'main');
+    assert.match(await call('factory_plan', { slices: [slice('One')] }), /Plan approved/);
+    const run = readRun(ws, 'ticket');
+    assert.equal(run.slices[0]?.parentBranch, pinned);
+    assert.equal(run.baseSha, pinned);
+    assert.equal(run.trunk, 'main');
+  });
+
+  it('refuses baseRef, landOn and trunk in factory_plan of a headless run, with and without --base', async () => {
+    using repo = tempRepo('factory-headless-base-', CHECKS_OK);
+    sh(repo.root, 'branch', 'feat/base');
+    const { call, command } = session(repo.root);
+    await command('headless ticket.md --base feat/base');
+    for (const param of ['baseRef', 'landOn', 'trunk']) {
+      await assert.rejects(call('factory_plan', { [param]: 'main', slices: [slice('One')] }), new RegExp(`fixed at start.*no ${param}`), param);
+    }
+    assert.equal(readRun({ config: loadConfig(repo.root), root: repo.root }, 'ticket').status, 'intake');
+    using plain = tempRepo('factory-headless-base-', CHECKS_OK);
+    resetModuleState();
+    const other = session(plain.root);
+    await other.command('headless ticket.md');
+    await assert.rejects(other.call('factory_plan', { baseRef: 'main', slices: [slice('One')] }), /fixed at start.*no baseRef/);
+  });
+
+  it('a run without --base has no baseBranch and plans on the configured base', async () => {
+    using repo = tempRepo('factory-headless-base-', CHECKS_OK);
+    const { call, command } = session(repo.root);
+    await command('headless ticket.md');
+    const ws = { config: loadConfig(repo.root), root: repo.root };
+    assert.equal(readRun(ws, 'ticket').baseBranch, undefined);
+    assert.match(await call('factory_plan', { slices: [slice('One')] }), /Plan approved/);
+    assert.equal(readRun(ws, 'ticket').baseRef, 'main');
+  });
+
+  it('lets an interactive run use baseRef, landOn and trunk', async () => {
+    using repo = tempRepo('factory-headless-base-', CHECKS_OK);
+    sh(repo.root, 'branch', 'feat/base');
+    const { call } = session(repo.root);
+    await call('factory_start', { feature: 'demo', source: SOURCE });
+    assert.match(await call('factory_plan', { baseRef: 'main', landOn: 'feat/base', slices: [slice('One')], trunk: 'main' }), /Plan approved/);
+  });
+});
+
 describe('headlessTarget', () => {
   it('keeps a GitHub issue URL as the ref and names the run after its number', () => {
     assert.deepEqual(headlessTarget('https://github.com/o/r/issues/102'), { feature: 'issue-102', source: { kind: 'github', ref: 'https://github.com/o/r/issues/102' } });
@@ -441,6 +512,20 @@ describe('headlessTarget', () => {
     const many = Array.from({ length: 20 }, (_, i) => String(100 + i)).join(',');
     assert.throws(() => headlessTarget(`294 --related ${many},bogus`), /"bogus" is not one/);
     assert.throws(() => headlessTarget(`294 --related ${many},`), /empty item/);
+  });
+
+  it('takes --base alone, with --related, and in either order', () => {
+    assert.deepEqual(headlessTarget('294 --base feat/x'), { base: 'feat/x', feature: 'issue-294', source: { kind: 'github', ref: '294' } });
+    const expected = { base: 'b', feature: 'issue-294', source: { kind: 'github', ref: '294', related: ['260', '285'] } };
+    assert.deepEqual(headlessTarget('294 --base b --related 260,285'), expected);
+    assert.deepEqual(headlessTarget('294 --related 260,285 --base b'), expected);
+    assert.deepEqual(headlessTarget('docs/My Ticket.md --base b'), { base: 'b', feature: 'my-ticket', source: { kind: 'file', ref: 'docs/My Ticket.md' } });
+  });
+
+  it('refuses --base without a value, or given twice', () => {
+    assert.throws(() => headlessTarget('294 --base'), /--base needs a value/);
+    assert.throws(() => headlessTarget('294 --base --related 260'), /--base needs a value/);
+    assert.throws(() => headlessTarget('294 --base a --base b'), /--base takes one branch/);
   });
 
   it('refuses invalid --related input', () => {

@@ -52,7 +52,7 @@ async function headlessRun(root: string, stage: Stage, policy: Record<string, st
 
 
 const GATED: { effect: (run: Run) => boolean; gate: (typeof GATES)[number]; params: unknown; stage: Stage; titles?: string[]; tool: string }[] = [
-  { effect: run => run.status === 'running' && run.slices.length === 1, gate: 'plan', params: { baseRef: 'main', slices: [slice('Feature')], trunk: 'main' }, stage: 'intake', tool: 'factory_plan' },
+  { effect: run => run.status === 'running' && run.slices.length === 1, gate: 'plan', params: { slices: [slice('Feature')] }, stage: 'intake', tool: 'factory_plan' },
   { effect: run => run.slices.length === 2, gate: 'reslice', params: { slices: [slice('Part one'), slice('Part two')] }, stage: 'active', tool: 'factory_reslice' },
   { effect: run => run.decisions.some(decision => decision.text === 'Accepted tradeoff.'), gate: 'decide', params: { decisions: ['Accepted tradeoff.'] }, stage: 'active', tool: 'factory_decide' },
   { effect: run => run.slices[0]?.seams.includes('new seam') === true, gate: 'seams', params: { seams: ['new seam'] }, stage: 'active', tool: 'factory_amend_seams' },
