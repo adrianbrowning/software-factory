@@ -13,11 +13,11 @@ const GREEN = '@green';
 const LOWER = '0'.repeat(40);
 
 /** A run state: its status, its last submission event (if any), its slice branches (bottom first; the top is green at GREEN, a lower one at LOWER) and its baseBranch (if any); baseRef is the run's recorded base, by default the fixture's default base. */
-const state = (status: string, kind?: string, branches: string[] = [], baseBranch?: string, topGreen = true, baseRef = 'origin/main') =>
+const state = (status: string, kind?: string | string[], branches: string[] = [], baseBranch?: string, topGreen = true, baseRef = 'origin/main') =>
   JSON.stringify({
     baseBranch,
     baseRef,
-    events: kind === undefined ? [] : [{ kind }],
+    events: kind === undefined ? [] : [kind].flat().map(k => ({ kind: k })),
     slices: branches.map((branch, i) => {
       const top = i === branches.length - 1;
       return { branch, checked: { results: [], sha: top ? GREEN : LOWER }, ...(top && !topGreen ? {} : { green: {} }) };
@@ -265,6 +265,23 @@ describe('scripts/headless-backlog.sh', () => {
     assert.deepEqual(result.prompts, []);
     assert.match(result.summary, /^3: skipped, run done, no PRs \(not submitted;/m);
     assert.match(result.summary, /^Stopped: issue-3 failed chain check 1 \(last submission is a submit.*submission event is none, not submit/m);
+  });
+
+  it('chained, takes the last submission event of a done run: [submit, submit-failed, pause] is submit-failed', () => {
+    const result = runBacklog({ 3: state('done', ['submit', 'submit-failed', 'pause'], ['issue-3/01']) }, '', ['3', '4']);
+    assert.equal(result.status, 1, result.stderr);
+    assert.deepEqual(result.prompts, []);
+    assert.match(result.summary, /^3: skipped, run done, no PRs \(submit-failed;/m);
+    assert.match(result.summary, /^Stopped: issue-3 failed chain check 1 \(.*\): its last submission event is submit-failed, not submit/m);
+  });
+
+  it('chained, takes the last submission event of a done run: [submit-failed, submit, unrelated] is submitted', () => {
+    const fake = `  "/factory headless 4 --base issue-3/01") ${writeState(4, submitted(4, ['01'], 'issue-3/01'))} ;;`;
+    const result = runBacklog({ 3: state('done', ['submit-failed', 'submit', 'pause'], ['issue-3/01']) }, fake, ['3', '4']);
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(result.prompts, ['/factory headless 4 --base issue-3/01']);
+    assert.match(result.summary, /^3: skipped, run already done$/m);
+    assert.doesNotMatch(result.summary, /Stopped/);
   });
 });
 
