@@ -16,8 +16,9 @@
 # With --separate as the first argument, no run gets --base: each opens its own stack of draft PRs on the default base,
 # a bad ref is skipped, and a run that fails or pauses does not stop the next one. Merging stays manual.
 # Usage: scripts/headless-backlog.sh [--separate] <issue> [<issue> ...]   (issue: 102, #102 or a GitHub issue URL)
-# Env: OMP (default ,omp), PLUGIN_DIR (default the installed plugin), MAX_COST (USD, default 25),
-#      MAX_TIME (seconds, default 5400), LOG_DIR (default <git dir>/headless-backlog, so no log makes the tree dirty).
+# Env: OMP (default ,omp), OMP_ARGS (extra omp flags, split on spaces, e.g. --advisor), PLUGIN_DIR (default the installed
+#      plugin), MAX_COST (USD, default 25), MAX_TIME (seconds, default 5400), LOG_DIR (default <git dir>/headless-backlog,
+#      so no log makes the tree dirty).
 # A run that exists and is not done is resumed (`/factory resume`, which takes no --base); a submitted done run is
 # skipped. Run the script again to continue. Exits 1 when any issue did not end with a done run whose PRs are open.
 set -u
@@ -46,6 +47,11 @@ run_status() {
   [ -f "$1" ] || { echo 'no run'; return; }
   jq -r '.status as $s | ([.events[] | select(.kind | test("^(submit|submit-failed|submission-stop)$"))] | last | .kind) as $k
     | if $s == "done" and $k != "submit" then "done, no PRs (\($k // "not submitted"); /factory submit opens them)" else $s end' "$1"
+}
+
+# The detail of the run's latest pause event, on one line, cut to 300 characters, with backslashes escaped for printf %b.
+pause_reason() {
+  jq -r '[.events[] | select(.kind == "pause")] | last | .detail // "" | gsub("\\s+"; " ") | .[:300] | gsub("\\\\"; "\\\\")' "$1"
 }
 
 # The branch of the last slice in the run's state.json.
@@ -162,11 +168,15 @@ for ref in "$@"; do
   # the top branch of the run before it, and a resumed run keeps the base it started with.
   git fetch -q origin || echo "git fetch failed; $ref plans on the last fetched origin" >&2
   echo "== $ref: $prompt (log: $log)"
-  "$omp" -p --wait-async --no-extensions -e "$plugin" --max-cost "${MAX_COST:-25}" --max-time "${MAX_TIME:-5400}" "$prompt" >"$log" 2>&1
+  # shellcheck disable=SC2086 # OMP_ARGS splits into flags on purpose. shortcut: no flag value may hold a space.
+  "$omp" -p --wait-async --no-extensions -e "$plugin" --max-cost "${MAX_COST:-25}" --max-time "${MAX_TIME:-5400}" \
+    ${OMP_ARGS-} "$prompt" >"$log" 2>&1
   code=$?
   status=$(run_status "$state")
   prs=$(grep -oE 'https://github\.com/[^ )]+/pull/[0-9]+' "$log" | sort -u | tr '\n' ' ')
-  summary="$summary$ref: exit $code, run $status${prs:+, PRs: $prs}\n"
+  reason=''
+  [ "$status" = paused ] && reason=$(pause_reason "$state")
+  summary="$summary$ref: exit $code, run $status${prs:+, PRs: $prs}${reason:+\n  reason: $reason}\n"
   echo "== $ref: exit $code, run $status"
   [ "$status" = done ] || failed=1
   # A run left running (omp hit --max-time or --max-cost) blocks every new run in this worktree.

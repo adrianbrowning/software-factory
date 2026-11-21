@@ -214,10 +214,11 @@ backlog. Give `--separate` as the first argument, before the issue refs, to keep
 `--base`, no chain check runs (and `gh` is not needed), each plans on the configured base (by default origin's default
 branch, as last fetched) and opens its own stack of draft PRs, a bad ref is skipped, and a run that fails or pauses
 does not stop the next one; only a run that omp leaves `running` (at `--max-time` or `--max-cost`) stops the batch,
-because it blocks every new run in the worktree. The script prints each run's status and PR URLs, and exits 1 when any
-issue did not end with a done run whose PRs are open. Set `OMP` (default `,omp`), `PLUGIN_DIR` (default the installed
-plugin), `MAX_COST` (default 25) and
-`MAX_TIME` (default 5400); the logs go to `<git dir>/headless-backlog/`.
+because it blocks every new run in the worktree. The script prints each run's status and PR URLs, and the reason of each
+paused run, and exits 1 when any issue did not end with a done run whose PRs are open. Set `OMP` (default `,omp`),
+`OMP_ARGS` (extra omp flags, split on spaces, for example `--advisor`), `PLUGIN_DIR` (default the installed plugin),
+`MAX_COST` (default 25) and `MAX_TIME` (default 5400); the logs go to `<git dir>/headless-backlog/`. Set these in the
+environment instead of editing the script: the script's test runs the working-tree copy.
 
 ### Land on an existing branch
 
