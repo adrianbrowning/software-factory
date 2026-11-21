@@ -196,6 +196,24 @@ describe('slice loop gates: checks and the fix budget', { concurrency: 4 }, () =
     assert.match(line, /test\/my dir\/b\.test\.ts:5:1 beta works/);
     assert.equal(line.split('alpha works').length, 2);
     assert.ok(!line.includes('inner'));
+    assert.ok(!/last (stdout|stderr) line/.test(line));
+  });
+
+  it('parses a whitespace-heavy test at line in well under a second and still names the other entries', async () => {
+    const spaces = ' '.repeat(500_000);
+    const started = Date.now();
+    const line = await flakyRun(`✖ failing tests:\n\ntest at ${spaces}x\n✖ huge (1ms)\n\ntest at test/a.test.ts:1:1\n✖ alpha works (2ms)\n\ntest at test/b.test.ts:2:2\n✖ beta${' '.repeat(3_000)}(1ms)\n`);
+    assert.ok(Date.now() - started < 10_000, 'a quadratic parse takes minutes');
+    assert.match(line, /test\/a\.test\.ts:1:1 alpha works/);
+  });
+
+  it('keeps a quoted JSON credential out of the flaky line, in a TAP name and in the last output line', async () => {
+    const tap = await flakyRun('not ok 1 - {"password": "hunter2"}\n');
+    assert.ok(!tap.includes('hunter2'));
+    assert.match(tap, /failing tests: .*password=<REDACTED>/);
+    const last = await flakyRun('{"token": "s3cr3t"}\n');
+    assert.ok(!last.includes('s3cr3t'));
+    assert.match(last, /last stdout line: .*token=<REDACTED>/);
   });
 
   it('names TAP not ok tests, caps at 10 and counts the rest, and redacts secrets in names', async () => {
@@ -205,6 +223,7 @@ describe('slice loop gates: checks and the fix budget', { concurrency: 4 }, () =
     assert.ok(!line.includes('case11'));
     assert.match(line, /2 more/);
     assert.ok(!line.includes('sekret123'));
+    assert.ok(!/last (stdout|stderr) line/.test(line));
   });
 
   it('keeps the last non-empty output line, redacted and capped at 300 characters, when no test is named', async () => {
@@ -217,18 +236,26 @@ describe('slice loop gates: checks and the fix budget', { concurrency: 4 }, () =
     assert.ok(line.split('last stdout line: ')[1]!.replace(/\)$/, '').length <= 300);
   });
 
+  /**
+   * A shell command that returns only after the parent has read what was written before it. It writes blank padding
+   * (never counted as output) that no stdio socket buffer can hold (those are a few hundred KB at most; libuv gives a
+   * child a socketpair per stream), yet that fits the 1 MB capture limit with the earlier text. The write blocks until
+   * the parent has drained the stream up to the earlier text: backpressure orders the two streams, not a timer.
+   */
+  const drained = (redirect: string) => `head -c 900000 /dev/zero | tr '\\0' ' ' ${redirect}`;
+
   it('names the stream that received the last non-blank output as the fallback line', async () => {
     const line = await flakyRun('from stderr\n', '>&2');
     assert.match(line, /last stderr line: from stderr/);
     assert.ok(!line.includes('last stdout line'));
     assert.match(await flakyRun('from stdout\n'), /last stdout line: from stdout/);
-    const stdoutLast = await flakyRun('', '', () => `printf 'earlier\\n' >&2; sleep 0.2; printf 'last\\n'`);
+    const stdoutLast = await flakyRun('', '', () => `printf 'earlier\\n' >&2; ${drained('>&2')}; printf 'last\\n'`);
     assert.match(stdoutLast, /last stdout line: last/);
     assert.ok(!stdoutLast.includes('earlier'));
-    const stderrLast = await flakyRun('', '', () => `printf 'earlier\\n'; sleep 0.2; printf 'last\\n' >&2`);
+    const stderrLast = await flakyRun('', '', () => `printf 'earlier\\n'; ${drained('')}; printf 'last\\n' >&2`);
     assert.match(stderrLast, /last stderr line: last/);
     assert.ok(!stderrLast.includes('earlier'));
-    const blank = await flakyRun('', '', () => `printf 'last\\n'; sleep 0.2; printf ' \\n' >&2`);
+    const blank = await flakyRun('', '', () => `printf 'last\\n'; ${drained('')}; printf ' \\n' >&2`);
     assert.match(blank, /last stdout line: last/);
   });
 
