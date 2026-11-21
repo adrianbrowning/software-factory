@@ -7,7 +7,7 @@ import { z } from 'zod';
 import { evidence, evidenceLine, redact } from './evidence.ts';
 import { draftOf, isRecordSlice, itemKey, requireSink } from './deferred.ts';
 import { findUnplaced, placeObservations, requireUnplaced } from './ledger.ts';
-import { carriedSection, renderFinding } from './finding-text.ts';
+import { carriedSections, renderFinding } from './finding-text.ts';
 import { findingRecord, keptFindings, readRecorded, recordedFindings, type Review, targetingAfter, validationFile, validationSchema } from './review-record.ts';
 import { addEvent, greenCommit, requireActive, type Finding, type Run, type Slice, type Workspace } from './run.ts';
 import { type FixRecord, needsFullReview, startFix, writeFixFile, writeTicket } from './workflow.ts';
@@ -97,11 +97,11 @@ export function planCarry(ws: Workspace, run: Run, request: CarryRequest) {
 export function carryObservations(ws: Workspace, run: Run, request: CarryRequest) {
   const planned = planCarry(ws, run, request);
   const { note, observations, review, slice, target } = planned;
-  const section = carriedSection(run, review, slice, observations, note);
+  const sections = carriedSections(run, review, slice, observations, note);
   placeObservations(run, review, slice, observations, 'carried', target?.id ?? 'end');
-  if (target === undefined) run.waiting.push(section);
+  if (target === undefined) run.waiting.push(...sections);
   else {
-    target.carried.push(section);
+    target.carried.push(...sections);
     writeTicket(ws, run, target);
   }
   addEvent(run, 'carry', `${review.id} to ${target === undefined ? 'the end of the run' : `slice ${target.id}`}: ${[...(note === undefined ? [] : ['note']), ...observations.map(finding => finding.id)].join(', ')}`, slice);

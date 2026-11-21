@@ -23,8 +23,9 @@ describe('slice loop gates: queued follow-up work', { concurrency: 4 }, () => {
     await step(ws, run => carryObservations(ws, run, { note: 'Also log the parse time.', observations: ['thermo-naming'], to: 'end' }));
     const after = readRun(ws, 'demo');
     assert.deepEqual(after.slices.map(item => ({ ...item, unplaced: [] })), before.slices.map(item => ({ ...item, unplaced: [] })), 'no slice changes');
-    assert.equal(after.waiting.length, 1);
-    assert.match(after.waiting[0] ?? '', /^### From green review 01-r1 of slice 01 "Feature"\n\nAlso log the parse time\.\n\n#### \[observation\] thermo-naming/);
+    assert.equal(after.waiting.length, 2);
+    assert.equal(after.waiting[0], '### From green review 01-r1 of slice 01 "Feature"\n\nAlso log the parse time.');
+    assert.match(after.waiting[1] ?? '', /^### From green review 01-r1 of slice 01 "Feature"\n\n#### \[observation\] thermo-naming/);
     await step(ws, run => completeSlice(ws, run));
     assert.equal(nextAction(readRun(ws, 'demo')), 'Call factory_next to start the next slice.', 'a pending slice comes before the follow-up');
   });

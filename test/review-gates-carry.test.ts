@@ -23,7 +23,7 @@ describe('slice loop gates: carried observations', { concurrency: 4 }, () => {
     const second = readRun(ws, 'demo').slices[1];
     assert.ok(second !== undefined);
     const ticket = readFileSync(ticketPath(ws, 'demo', second), 'utf8');
-    assert.match(ticket, /## Carried-in work\n[\s\S]*### From green review 01-r1 of slice 01 "Feature"\n\nAlso log the parse time\.\n\n#### \[observation\] thermo-naming\n\n- Location: ok:1/);
+    assert.match(ticket, /## Carried-in work\n[\s\S]*### From green review 01-r1 of slice 01 "Feature"\n\nAlso log the parse time\.\n\n### From green review 01-r1 of slice 01 "Feature"\n\n#### \[observation\] thermo-naming\n\n- Location: ok:1/);
     assert.doesNotMatch(ticket, /comments-stale/);
     const after = readRun(ws, 'demo').slices[0];
     assert.deepEqual({ ...after, unplaced: [] }, { ...before, unplaced: [] }, 'the active slice keeps its green review');

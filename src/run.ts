@@ -136,7 +136,12 @@ export const sliceInputSchema = z.object({
 });
 export type SliceInput = z.infer<typeof sliceInputSchema>;
 /** A slice from factory_reslice: split children claim no decisions; the split slice's decisions move to its last child. */
-export const resliceItemSchema = sliceInputSchema.omit({ ownsDecisions: true });
+export const resliceItemSchema = sliceInputSchema.omit({ ownsDecisions: true }).extend({
+  carried: z
+    .array(text)
+    .optional()
+    .describe('Keys (`<review id>:<observation id>`, as listed on the split slice\'s `Carried keys:` lines) of the carried items this child builds; each moves, with its full text, from the first child to this one'),
+});
 
 const phaseSchema = z.enum(['checks', 'fix', 'implement', 'ready', 'review']);
 

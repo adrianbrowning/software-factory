@@ -8,7 +8,7 @@ import { z } from 'zod';
 import { draftOf, deferItems, isRecordSlice, itemKey, requireSink } from './deferred.ts';
 import { evidenceHead, evidenceLine } from './evidence.ts';
 import { findingLocation, findUnplaced, placeObservations } from './ledger.ts';
-import { carriedSection, renderFinding } from './finding-text.ts';
+import { carriedSections, renderFinding } from './finding-text.ts';
 import { addEvent, DEFAULT_PLACEMENT, fixesOnceInSlice, greenCommit, Invalidated, requireActive, type Finding, type Run, type Slice, type Unplaced, type Workspace } from './run.ts';
 import { needsFullReview, writeTicket } from './workflow.ts';
 
@@ -104,11 +104,11 @@ export async function placeObservationBatch(ws: Workspace, run: Run, { items, sl
   const targets = new Set<Slice>();
   for (const target of new Set(carried.map(item => item.target))) {
     for (const group of byReview(carried.filter(item => item.target === target))) {
-      const section = carriedSection(run, group.review, slice, group.findings, undefined, group.review.id === lastReview);
+      const sections = carriedSections(run, group.review, slice, group.findings, undefined, group.review.id === lastReview);
       placeObservations(run, group.review, slice, group.findings, 'carried', target?.id ?? 'end');
-      if (target === undefined) run.waiting.push(section);
+      if (target === undefined) run.waiting.push(...sections);
       else {
-        target.carried.push(section);
+        target.carried.push(...sections);
         targets.add(target);
       }
     }
