@@ -284,9 +284,10 @@ describe('implementer sessions', () => {
   });
 
   describe('stop gate pause event', () => {
-    const pauseDetail = async (messages: unknown[]) => {
+    const pauseDetail = async (messages: unknown[], headless = false) => {
       using repo = emptyRepo();
       const { call, handlers, main } = await startedRun(repo.root);
+      if (headless) await withRun({ config: loadConfig(repo.root), root: repo.root }, 'demo', run => { run.mode = 'headless'; });
       for (let i = 0; i < MAX_IDLE_STOP_ATTEMPTS; i += 1) await handlers.get('session_stop')?.({ session_id: 'session', messages, type: 'session_stop' }, main);
       const status = JSON.parse(await call('factory_status', {}, main)) as { content: { text: string }[] };
       return /no progress after \d+ stop attempts[^"]*/.exec(status.content[0]?.text ?? '')?.[0];
@@ -324,8 +325,8 @@ describe('implementer sessions', () => {
     it('names the last toolCall part of a message that holds several, in both orders', async () => {
       const calls = (...names: string[]) => [{ role: 'assistant', content: names.map((name, i) => ({ type: 'toolCall', id: String(i), name, arguments: {} })) }];
       assert.match((await pauseDetail(calls('ask', 'bash'))) ?? '', /latest tool: bash;/);
-      assert.match((await pauseDetail(calls('bash', 'read'))) ?? '', /latest tool: read;/);
-      assert.match((await pauseDetail(calls('read', 'bash'))) ?? '', /latest tool: bash;/);
+      assert.match((await pauseDetail(calls('bash', 'ask'), true)) ?? '', /latest tool: ask;/);
+      assert.match((await pauseDetail(calls('ask', 'bash'), true)) ?? '', /latest tool: bash;/);
     });
   });
 
