@@ -22,7 +22,7 @@ describe('submit: returning to the starting branch after a gh failure', () => {
       assert.equal(sh(ws.root, 'branch', '--show-current'), before);
     }
     using gh = fakeGh({ fail: 'stack view', stack: branches });
-    await assert.rejects(step(ws, run => submitStack(ws, run)));
+    await assert.rejects(step(ws, run => submitStack(ws, run)), /Command failed: gh stack view --json/);
     assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, 'stack view --json']);
     assert.equal(sh(ws.root, 'branch', '--show-current'), before);
   });
