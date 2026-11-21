@@ -44,6 +44,16 @@ top_branch() { jq -r '.slices[-1].branch // empty' "$1"; }
 # Ends a chained batch at $1, a run or issue that did not end done with a submit, so the next run has no base to stack on.
 chain_stop() { summary="${summary}Stopped: $1 did not end done with a submit, so no later issue is started.\n"; }
 
+# Sets base to the top slice branch of run $1 (state.json of the run's feature). A done run with no slice branch has none
+# to stack on, so it ends the chained batch: returns 1.
+next_base() {
+  base=$(top_branch "$scratch/$1/state.json")
+  [ -n "$base" ] && return 0
+  failed=1
+  summary="${summary}Stopped: $1 has no slice branch to stack the next run on, so no later issue is started.\n"
+  return 1
+}
+
 for ref in "$@"; do
   n=$(printf '%s\n' "$ref" | sed -nE 's@^#?([0-9]+)$@\1@p; s@^https://github\.com/[^/]+/[^/]+/issues/([0-9]+)/?$@\1@p')
   if [ -z "$n" ]; then
@@ -60,7 +70,8 @@ for ref in "$@"; do
   case $status in
     done)
       summary="$summary$ref: skipped, run already done\n"
-      [ "$separate" = 1 ] || base=$(top_branch "$state")
+      [ "$separate" = 1 ] && continue
+      next_base "$feature" || break
       continue
       ;;
     done,*)
@@ -73,8 +84,9 @@ for ref in "$@"; do
     'no run') prompt="/factory headless $ref${base:+ --base $base}" ;;
     *) prompt="/factory resume $feature" ;;
   esac
-  # The first run in a chain, and every run with --separate, plans on the current origin/main, so it sees what merged
-  # while earlier runs worked; a later run in a chain branches from the top branch of the run before it.
+  # The first run in a chain, and every run with --separate, plans on the configured base (by default origin's default
+  # branch), as last fetched, so it sees what merged while earlier runs worked; a later new run in a chain branches from
+  # the top branch of the run before it, and a resumed run keeps the base it started with.
   git fetch -q origin || echo "git fetch failed; $ref plans on the last fetched origin" >&2
   echo "== $ref: $prompt (log: $log)"
   "$omp" -p --wait-async --no-extensions -e "$plugin" --max-cost "${MAX_COST:-25}" --max-time "${MAX_TIME:-5400}" "$prompt" >"$log" 2>&1
@@ -94,7 +106,7 @@ for ref in "$@"; do
     chain_stop "$feature"
     break
   fi
-  base=$(top_branch "$state")
+  next_base "$feature" || break
 done
 
 printf '\nSummary:\n%b' "$summary"

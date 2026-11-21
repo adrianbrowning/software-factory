@@ -147,6 +147,23 @@ describe('scripts/headless-backlog.sh', () => {
   });
 });
 
+describe('scripts/headless-backlog.sh with a done run that has no slice branch', () => {
+  it('chained, stops at a skipped done run with no slice branch instead of starting the next run without --base', () => {
+    const result = runBacklog({ 3: state('done', 'submit') }, '', ['3', '4']);
+    assert.equal(result.status, 1, result.stderr);
+    assert.deepEqual(result.prompts, []);
+    assert.match(result.summary, /^Stopped: issue-3 has no slice branch to stack the next run on/m);
+  });
+
+  it('chained, stops at a run that ends done with no slice branch instead of starting the next run without --base', () => {
+    const fake = `  "/factory headless 3") ${writeState(3, state('done', 'submit'))} ;;`;
+    const result = runBacklog({}, fake, ['3', '4']);
+    assert.equal(result.status, 1, result.stderr);
+    assert.deepEqual(result.prompts, ['/factory headless 3']);
+    assert.match(result.summary, /^Stopped: issue-3 has no slice branch to stack the next run on/m);
+  });
+});
+
 describe('scripts/headless-backlog.sh with a ref that is no issue', () => {
   it('chained, stops at it and starts nothing after it', () => {
     const result = runBacklog({}, '', ['nope', '4']);

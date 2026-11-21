@@ -202,9 +202,9 @@ its top branch is the base of the next run. A run that is not done is resumed (`
 done with no PRs, a failed submission or `headless.submission: "stop"`; `/factory submit` opens those PRs), names it in
 the summary and exits 1, with no later issue started. Running the script again continues the backlog. Give
 `--separate` as the first argument, before the issue refs, to keep one stack per run: no run gets `--base`, each plans
-on a fresh `origin/main` and opens its own stack of draft PRs, and a run that fails or pauses does not stop the next one;
-only a run that omp leaves `running` (at `--max-time` or `--max-cost`) stops the batch, because it blocks every new run
-in the worktree. The script prints each run's status and PR URLs, and exits 1 when any issue did not end with a done run
+on the configured base (by default origin's default branch, as last fetched) and opens its own stack of draft PRs, and a
+run that fails or pauses does not stop the next one; only a run that omp leaves `running` (at `--max-time` or
+`--max-cost`) stops the batch, because it blocks every new run in the worktree. The script prints each run's status and PR URLs, and exits 1 when any issue did not end with a done run
 whose PRs are open. Set `OMP` (default `,omp`), `PLUGIN_DIR` (default the installed plugin), `MAX_COST` (default 25) and
 `MAX_TIME` (default 5400); the logs go to `<git dir>/headless-backlog/`.
 
