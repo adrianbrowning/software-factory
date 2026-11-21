@@ -8,7 +8,7 @@ import { loadConfig } from '../src/config.ts';
 import { forgetRun, readRun, runDir, statePath } from '../src/run.ts';
 import { loadSource } from '../src/gates.ts';
 import { resetModuleState } from '../src/index.ts';
-import { headlessTarget } from '../src/headless-target.ts';
+import { headlessTarget } from '../src/workflow.ts';
 import { issueGh, prependPath, sh, slice, tempDir, tempRepo } from './helpers.ts';
 
 const CHECKS_OK = { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }), 'ticket.md': '# Add the widget\n\nBuild it.\n' };
