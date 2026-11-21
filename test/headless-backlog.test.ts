@@ -36,7 +36,7 @@ const writeState = (n: number, body: string) => `mkdir -p work/issue-${n}; echo 
  * a merged one, `ghFails` makes `gh pr list` fail for it, `moved` is on origin at another commit and `unpushed` is not on origin.
  * `options.noGh` leaves gh off PATH.
  */
-function runBacklog(existing: Record<number, string>, cases: string, args: string[], world: Partial<Record<'closedPr' | 'ghFails' | 'mergedPr' | 'moved' | 'noPr' | 'unpushed', readonly string[]>> = {}, options: { noGh?: boolean } = {}) {
+function runBacklog(existing: Record<number, string>, cases: string, args: string[], world: Partial<Record<'closedPr' | 'ghFails' | 'mergedPr' | 'moved' | 'noPr' | 'unpushed', readonly string[]>> = {}, options: { noGh?: boolean; ghStderr?: Record<string, string> } = {}) {
   using dir = tempDir('backlog-');
   const repo = join(dir.root, 'repo');
   mkdirSync(repo);
@@ -54,6 +54,7 @@ function runBacklog(existing: Record<number, string>, cases: string, args: strin
     const prState = world.mergedPr?.includes(branch) ? 'MERGED' : world.closedPr?.includes(branch) ? 'CLOSED' : 'OPEN';
     if (!world.noPr?.includes(branch)) writeFileSync(join(prs, branch.replace('/', '_')), JSON.stringify([{ state: prState }]));
     if (world.ghFails?.includes(branch)) writeFileSync(join(prs, `${branch.replace('/', '_')}.fail`), '');
+    if (options.ghStderr?.[branch]) writeFileSync(join(prs, `${branch.replace('/', '_')}.err`), options.ghStderr[branch]);
   }
   cases = cases.replaceAll(GREEN, green);
   for (const [n, body] of Object.entries(existing)) {
@@ -67,7 +68,7 @@ function runBacklog(existing: Record<number, string>, cases: string, args: strin
   // The fake gh answers only `gh pr list --head <branch> ...`, with the PRs the world gave that branch: only the OPEN ones
   // unless `--state all` is passed, as real gh does. A branch in `ghFails` makes it exit 1.
   const f = `${prs}/$(printf %s "$4" | tr / _)`;
-  const gh = `#!/bin/sh\n[ "$1 $2" = 'pr list' ] || exit 1\nf="${f}"\n[ -f "$f.fail" ] && { echo 'gh: not logged in' >&2; exit 1; }\n[ -f "$f" ] || { echo '[]'; exit 0; }\ncase " $* " in *' --state all '*) cat "$f" ;; *) jq -c '[.[] | select(.state == "OPEN")]' "$f" ;; esac\n`;
+  const gh = `#!/bin/sh\n[ "$1 $2" = 'pr list' ] || exit 1\nf="${f}"\n[ -f "$f.err" ] && cat "$f.err" >&2\n[ -f "$f.fail" ] && { [ -f "$f.err" ] || echo 'gh: not logged in' >&2; exit 1; }\n[ -f "$f" ] || { echo '[]'; exit 0; }\ncase " $* " in *' --state all '*) cat "$f" ;; *) jq -c '[.[] | select(.state == "OPEN")]' "$f" ;; esac\n`;
   // Without gh, PATH holds links to every other command, so jq, git and sh still resolve and gh does not.
   let path = `${bin}:${process.env.PATH}`;
   if (options.noGh) {
@@ -146,7 +147,7 @@ describe('scripts/headless-backlog.sh', () => {
     assert.deepEqual(result.prompts, ['/factory headless 3', '/factory headless 4']);
     assert.match(result.summary, /^3: exit 0, run paused$/m);
     assert.match(result.summary, /^4: exit 0, run done$/m);
-    assert.doesNotMatch(result.summary, /Stopped/);
+    assert.doesNotMatch(result.summary, /Stopped: issue-3/);
   });
 
   it('chains runs: the first has no --base, a skipped done run hands its top branch on, and each new run gets the top branch before it', () => {
@@ -161,7 +162,7 @@ describe('scripts/headless-backlog.sh', () => {
     assert.deepEqual(result.prompts, ['/factory headless 3', '/factory headless 4 --base issue-3/02', '/factory headless 6 --base issue-5/03']);
     assert.match(result.summary, /^5: skipped, run already done$/m);
     assert.match(result.summary, /^6: exit 0, run done$/m);
-    assert.doesNotMatch(result.summary, /Stopped/);
+    assert.doesNotMatch(result.summary, /Stopped: issue-3/);
   });
 
   it('chains a resumed run without --base, then hands its top branch to the next run', () => {
@@ -236,6 +237,20 @@ describe('scripts/headless-backlog.sh chain checks', () => {
     assert.deepEqual(result.prompts, ['/factory headless 3']);
     assert.match(result.summary, /^Stopped: issue-3 failed chain check 1 .*: gh pr list failed for issue-3\/01: gh: not logged in\. No later issue is started/m);
     assert.doesNotMatch(result.summary, /no open or merged PR/);
+  });
+
+  it('continues past a successful gh pr list that also writes a warning to stderr', () => {
+    const fake = `  "/factory headless 3") ${writeState(3, submitted(3, ['01']))} ;;\n  "/factory headless 4 --base issue-3/01") ${writeState(4, submitted(4, ['01']))} ;;`;
+    const result = runBacklog({}, fake, ['3', '4'], {}, { ghStderr: { 'issue-3/01': 'A new release of gh is available' } });
+    assert.deepEqual(result.prompts, ['/factory headless 3', '/factory headless 4 --base issue-3/01']);
+    assert.doesNotMatch(result.summary, /Stopped: issue-3/);
+  });
+
+  it('reports a failing gh with multiline, backslash stderr as one literal summary line', () => {
+    const fake = `  "/factory headless 3") ${writeState(3, submitted(3, ['01']))} ;;`;
+    const result = runBacklog({}, fake, ['3', '4'], { ghFails: ['issue-3/01'] }, { ghStderr: { 'issue-3/01': 'bad\\nthing C:\\dir\nsecond line\n' } });
+    assert.deepEqual(result.prompts, ['/factory headless 3']);
+    assert.match(result.summary, /^Stopped: issue-3 failed chain check 1 .*: gh pr list failed for issue-3\/01: bad\\nthing C:\\dir second line\. No later issue is started\.$/m);
   });
 
   it('stops at a skipped done run with a slice branch that has no PR', () => {
