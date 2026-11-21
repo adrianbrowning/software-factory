@@ -35,17 +35,18 @@ const writeState = (n: number, body: string) => `mkdir -p work/issue-${n}; echo 
  * The repo has a local origin and a fake gh: every slice branch named in `existing` or `cases` is on origin at the green
  * commit (GREEN) and has an open PR, except as `world` says: `noPr` has no PR, `closedPr` only a closed one, `mergedPr`
  * a merged one, `ghFails` makes `gh pr list` fail for it, `moved` is on origin at another commit and `unpushed` is not on origin. Every slice branch also exists locally at GREEN, except `localMoved` (at another commit) and `localMissing` (absent).
- * `options.noGh` leaves gh off PATH.
+ * `options.noGh` leaves gh off PATH. `options.baseRef` sets baseRef in .omp/factory.json; `options.originHead` points refs/remotes/origin/HEAD at that branch.
  */
-function runBacklog(existing: Record<number, string>, cases: string, args: string[], world: Partial<Record<'closedPr' | 'ghFails' | 'localMissing' | 'localMoved' | 'mergedPr' | 'moved' | 'noPr' | 'unpushed', readonly string[]>> = {}, options: { noGh?: boolean; ghStderr?: Record<string, string> } = {}) {
+function runBacklog(existing: Record<number, string>, cases: string, args: string[], world: Partial<Record<'closedPr' | 'ghFails' | 'localMissing' | 'localMoved' | 'mergedPr' | 'moved' | 'noPr' | 'unpushed', readonly string[]>> = {}, options: { noGh?: boolean; ghStderr?: Record<string, string>; baseRef?: string; originHead?: string } = {}) {
   using dir = tempDir('backlog-');
   const repo = join(dir.root, 'repo');
   mkdirSync(repo);
-  initRepo(repo, { '.omp/factory.json': '{"scratchDir":"work"}' });
+  initRepo(repo, { '.omp/factory.json': JSON.stringify({ scratchDir: 'work', ...options.baseRef && { baseRef: options.baseRef } }) });
   const green = sh(repo, 'rev-parse', 'HEAD');
   const origin = join(dir.root, 'origin.git');
   sh(dir.root, 'init', '-q', '--bare', origin);
   sh(repo, 'remote', 'add', 'origin', origin);
+  if (options.originHead) sh(repo, 'symbolic-ref', 'refs/remotes/origin/HEAD', `refs/remotes/origin/${options.originHead}`);
   const moved = sh(repo, 'commit-tree', 'HEAD^{tree}', '-p', 'HEAD', '-m', 'moved');
   const prs = join(dir.root, 'prs');
   mkdirSync(prs);
@@ -331,6 +332,33 @@ describe('scripts/headless-backlog.sh chain checks', () => {
     assert.equal(result.status, 1, result.stderr);
     assert.deepEqual(result.prompts, []);
     assert.match(result.summary, /^Stopped: issue-3 failed chain check 3 .*its baseRef is origin\/other, expected origin\/main\. No later issue is started/m);
+  });
+
+  describe('default base of the first run', () => {
+    const sources = {
+      'factory.json baseRef': { baseRef: 'origin/develop' },
+      'origin/HEAD': { originHead: 'develop' },
+      'factory.json baseRef over a different origin/HEAD': { baseRef: 'origin/develop', originHead: 'release' },
+    };
+    for (const [name, options] of Object.entries(sources)) {
+      it(`takes it from ${name}: a first run recorded with it passes`, () => {
+        const result = runBacklog({ 3: submitted(3, ['01'], undefined, 'origin/develop') }, '', ['3'], {}, options);
+        assert.equal(result.status, 0, result.stderr);
+      });
+
+      it(`takes it from ${name}: a first run recorded with origin/main stops, naming origin/develop`, () => {
+        const result = runBacklog({ 3: submitted(3, ['01'], undefined, 'origin/main') }, '', ['3', '4'], {}, options);
+        assert.equal(result.status, 1, result.stderr);
+        assert.deepEqual(result.prompts, []);
+        assert.match(result.summary, /^Stopped: issue-3 failed chain check 3 .*its baseRef is origin\/main, expected origin\/develop\. No later issue is started/m);
+      });
+    }
+
+    it('a first run recorded with the origin/HEAD branch stops when factory.json names another', () => {
+      const result = runBacklog({ 3: submitted(3, ['01'], undefined, 'origin/release') }, '', ['3'], {}, { baseRef: 'origin/develop', originHead: 'release' });
+      assert.equal(result.status, 1, result.stderr);
+      assert.match(result.summary, /its baseRef is origin\/release, expected origin\/develop/);
+    });
   });
 
   it('does not compare the baseRef of a later run, which is pinned to the branch before it', () => {
