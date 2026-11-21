@@ -68,7 +68,13 @@ chain_check() {
   c1='last submission is a submit and each slice branch has an open or merged PR'
   [ "$kind" = submit ] || { chain_fail "$1" 1 "$c1" "its last submission event is $kind, not submit"; return; }
   for b in $(jq -r '.slices[].branch' "$s"); do
-    prs=$(gh pr list --head "$b" --state all --json state 2>&1) || { chain_fail "$1" 1 "$c1" "gh pr list failed for $b: $prs"; return; }
+    err=$(mktemp)
+    if ! prs=$(gh pr list --head "$b" --state all --json state 2>"$err"); then
+      msg=$(tr '\n' ' ' <"$err" | sed 's/\\/\\\\/g; s/ *$//')
+      rm -f "$err"
+      chain_fail "$1" 1 "$c1" "gh pr list failed for $b: $msg"; return
+    fi
+    rm -f "$err"
     open=$(printf '%s' "$prs" | jq '[.[] | select(.state == "OPEN" or .state == "MERGED")] | length' 2>/dev/null)
     [ "${open:-0}" -gt 0 ] || { chain_fail "$1" 1 "$c1" "$b has no open or merged PR"; return; }
   done
