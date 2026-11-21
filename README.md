@@ -56,8 +56,15 @@ fast-forwards that existing local branch to the top slice, without a checkout or
 While `/factory submit` runs, it shows each step as a notification and in the status line, for example the
 `gh stack submit` push, which can take a few minutes.
 A second `/factory submit`, for example after a follow-up slice, adds the new slice branches to the existing gh stack
-with `gh stack add` and submits again. It refuses, and changes nothing, when that stack holds branches outside the run
-or holds the run's branches in another order; the error names those branches.
+with `gh stack add` and submits again. For a run without `--base` it refuses, and changes nothing, when that stack holds
+branches outside the run or holds the run's branches in another order; the error names those branches.
+A headless run started with `--base <branch>` adopts no new stack: its first submit adds the slice branches with
+`gh stack add` on top of the gh stack whose top branch is that base branch, and only the run's own PRs get the factory
+title and body. That first submit refuses, and changes nothing, when the base branch is in no gh stack or is not the top
+of its stack. Its re-submit instead accepts the stack whose branches below slice 01 end with the base branch (the base
+branch need not be the top of anything then) and adds only the missing slice branches. It refuses, and changes nothing,
+when the branches below slice 01 do not end with the base branch or hold a run branch, or when the stack holds
+other branches outside the run or the run's branches in another order.
 
 ## Install
 
