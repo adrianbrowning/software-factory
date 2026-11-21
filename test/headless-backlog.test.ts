@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { initRepo, tempDir } from './helpers.ts';
+import { initRepo, sh, tempDir } from './helpers.ts';
 
 const script = join(import.meta.dirname, '..', 'scripts', 'headless-backlog.sh');
 const state = (status: string, kind?: string) => JSON.stringify({ events: kind === undefined ? [] : [{ kind }], status });
@@ -55,5 +55,7 @@ describe('scripts/headless-backlog.sh', () => {
     assert.match(summary, /^6: skipped, run done, no PRs \(submit-failed;/m);
     assert.match(summary, /^Stopped: issue-7 is still running/m);
     assert.doesNotMatch(summary, /^9:/m);
+    assert.ok(readdirSync(join(repo, '.git', 'headless-backlog')).some((f) => f.endsWith('.log')));
+    assert.doesNotMatch(sh(repo, 'status', '--porcelain', '--untracked-files=all'), /\.log$/m);
   });
 });
