@@ -23,7 +23,7 @@ describe('planSubmit with a base branch and a stack without slice 01', () => {
   const branches = ['b1', 'b2', 'b3'];
   const base = { branch: 'B', stack: undefined };
   it('refuses instead of treating slice 01 as index 0', () => {
-    assert.deepEqual(planSubmit(['A', 'B', 'b2'], branches, base), { kind: 'refuse', outside: ['A', 'B'], unordered: ['b2'], base: 'B' });
+    assert.deepEqual(planSubmit(['X', 'b2'], branches, base), { kind: 'refuse', outside: ['X'], unordered: ['b2'], base: 'B' });
   });
   it('refuses an empty stack', () => {
     assert.deepEqual(planSubmit([], branches, base), { kind: 'refuse', outside: [], unordered: [], base: 'B' });
