@@ -3,8 +3,14 @@
 # run starts without --base, and each later new run starts with `--base <top slice branch of the run before it>` (the last
 # slice in that run's state.json), so its PRs stack on the run before. A listed issue whose run is already done with a
 # submit is skipped and its top branch is the base of the next run. The batch stops at the first run that does not end
-# done with a submit (paused, stalled, failed, running, or done with no PRs), names it in the summary and exits 1. It
-# also stops at a listed ref that is not an issue number or GitHub issue URL, and at a done run with no slice branch.
+# done with a submit (paused, stalled, failed, running), names it in the summary and exits 1. A done run (just finished,
+# or skipped) must also pass three chain checks, in this order, before it is the base of the next run: (1) its last
+# submission event is a submit and each of its slice branches has an open or merged PR (`gh pr list --head <branch>
+# --state all`; a done run with no submit fails here); (2) its top slice branch on origin (`git ls-remote origin`) is at
+# the top slice's green commit; (3) its recorded baseBranch is the top branch of the run before it in the list, and
+# absent for the first. A failed check names the run and the check in the summary, starts no later issue and exits 1, and
+# so does a done run with no slice branch and a listed ref that is not an issue number or GitHub issue URL. A rerun
+# checks a skipped or resumed middle run the same way, and continues past it only when it passes.
 # With --separate as the first argument, no run gets --base: each opens its own stack of draft PRs on the default base,
 # a bad ref is skipped, and a run that fails or pauses does not stop the next one. Merging stays manual.
 # Usage: scripts/headless-backlog.sh [--separate] <issue> [<issue> ...]   (issue: 102, #102 or a GitHub issue URL)
@@ -20,6 +26,7 @@ omp=${OMP:-,omp}
 plugin=${PLUGIN_DIR:-$HOME/.omp/plugins/node_modules/software-factory}
 command -v "$omp" >/dev/null || { echo "$omp is not on PATH; set OMP to the omp command" >&2; exit 2; }
 command -v jq >/dev/null || { echo 'jq is required' >&2; exit 2; }
+[ "$separate" = 1 ] || command -v gh >/dev/null || { echo 'gh is required for the chain checks (or use --separate)' >&2; exit 2; }
 [ -d "$plugin" ] || { echo "plugin dir $plugin does not exist; set PLUGIN_DIR" >&2; exit 2; }
 root=$(git rev-parse --show-toplevel) || exit 2
 cd "$root" || exit 2
@@ -45,14 +52,46 @@ top_branch() { jq -r '.slices[-1].branch // empty' "$1"; }
 # Ends a chained batch at $1, a run or issue that did not end done with a submit, so the next run has no base to stack on.
 chain_stop() { summary="${summary}Stopped: $1 did not end done with a submit, so no later issue is started.\n"; }
 
-# Sets base to the top slice branch of run $1 (state.json of the run's feature). A done run with no slice branch has none
-# to stack on, so it ends the chained batch: returns 1.
-next_base() {
-  base=$(top_branch "$scratch/$1/state.json")
-  [ -n "$base" ] && return 0
+# Ends a chained batch at run $1, which failed chain check $2 (named $3) for the reason $4: returns 1.
+chain_fail() {
   failed=1
-  summary="${summary}Stopped: $1 has no slice branch to stack the next run on, so no later issue is started.\n"
+  summary="${summary}Stopped: $1 failed chain check $2 ($3): $4. No later issue is started.\n"
   return 1
+}
+
+# Checks run $1, a done run about to become the base of the next run, in order, and returns 1 at the first failure after
+# naming the run and the check in the summary. $2 is its top slice branch. $base still holds the top branch of the run
+# before it in the list (empty for the first).
+chain_check() {
+  s=$scratch/$1/state.json
+  kind=$(jq -r '[.events[] | select(.kind | test("^(submit|submit-failed|submission-stop)$"))] | last | .kind // "none"' "$s")
+  c1='last submission is a submit and each slice branch has an open or merged PR'
+  [ "$kind" = submit ] || { chain_fail "$1" 1 "$c1" "its last submission event is $kind, not submit"; return; }
+  for b in $(jq -r '.slices[].branch' "$s"); do
+    open=$(gh pr list --head "$b" --state all --json state 2>/dev/null | jq '[.[] | select(.state == "OPEN" or .state == "MERGED")] | length' 2>/dev/null)
+    [ "${open:-0}" -gt 0 ] || { chain_fail "$1" 1 "$c1" "$b has no open or merged PR"; return; }
+  done
+  c2='top slice branch on origin is at the top slice'\''s green commit'
+  green=$(jq -r '.slices[-1].checked.sha // empty' "$s")
+  remote=$(git ls-remote origin "refs/heads/$2" 2>/dev/null | cut -f1)
+  [ -n "$green" ] && [ "$remote" = "$green" ] || { chain_fail "$1" 2 "$c2" "origin has ${remote:-no} $2, the green commit is ${green:-missing}"; return; }
+  c3="baseBranch is the top slice branch of the run before it in the list, absent for the first"
+  have=$(jq -r '.baseBranch // empty' "$s")
+  [ "$have" = "$base" ] && return 0
+  chain_fail "$1" 3 "$c3" "its baseBranch is ${have:-absent}, expected ${base:-absent}"
+}
+
+# Checks run $1 (state.json of the run's feature), then sets base to its top slice branch. A done run with no slice branch
+# has none to stack on, so it ends the chained batch: returns 1.
+next_base() {
+  top=$(top_branch "$scratch/$1/state.json")
+  if [ -z "$top" ]; then
+    failed=1
+    summary="${summary}Stopped: $1 has no slice branch to stack the next run on, so no later issue is started.\n"
+    return 1
+  fi
+  chain_check "$1" "$top" || return 1
+  base=$top
 }
 
 for ref in "$@"; do
@@ -79,7 +118,7 @@ for ref in "$@"; do
       summary="$summary$ref: skipped, run $status\n"
       failed=1
       [ "$separate" = 1 ] && continue
-      chain_stop "$feature"
+      chain_check "$feature" # fails at check 1: a done run with no submit has no PRs to stack on
       break
       ;;
     'no run') prompt="/factory headless $ref${base:+ --base $base}" ;;
@@ -104,7 +143,10 @@ for ref in "$@"; do
   fi
   [ "$separate" = 1 ] && continue
   if [ "$status" != done ]; then
-    chain_stop "$feature"
+    case $status in
+      done,*) chain_check "$feature" ;; # fails at check 1, as for a skipped done run with no submit
+      *) chain_stop "$feature" ;;
+    esac
     break
   fi
   next_base "$feature" || break
