@@ -12,12 +12,19 @@ describe('submit: returning to the starting branch after a gh failure', () => {
     const branches = await doneRun(ws, 2);
     const before = sh(ws.root, 'branch', '--show-current');
     assert.notEqual(before, branches[0], 'the submit starts off slice 01, so a checkout left behind shows');
-    for (const view of ['not json', JSON.stringify({ stacks: [] })]) {
+    for (const [view, message] of [
+      ['not json', /JSON/],
+      [JSON.stringify({ stacks: [] }), /branches/],
+    ] as const) {
       using gh = fakeGh({ stack: view });
-      await assert.rejects(step(ws, run => submitStack(ws, run)));
+      await assert.rejects(step(ws, run => submitStack(ws, run)), message);
       assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, 'stack view --json']);
       assert.equal(sh(ws.root, 'branch', '--show-current'), before);
     }
+    using gh = fakeGh({ fail: 'stack view', stack: branches });
+    await assert.rejects(step(ws, run => submitStack(ws, run)));
+    assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, 'stack view --json']);
+    assert.equal(sh(ws.root, 'branch', '--show-current'), before);
   });
 
   it('checks out the branch it started on when gh stack add or submit fails on a re-submit', async () => {
@@ -25,6 +32,7 @@ describe('submit: returning to the starting branch after a gh failure', () => {
     const branches = await doneRun(ws, 3);
     const before = sh(ws.root, 'branch', '--show-current');
     assert.notEqual(before, branches[0], 'the submit starts off slice 01, so a checkout left behind shows');
+    assert.notEqual(before, branches.at(-1), 'the submit starts off the top slice, so a checkout left behind shows');
     for (const [fail, message] of [
       ['stack add', /^(?![\s\S]*Already added)/],
       ['stack submit', new RegExp(`Already added to the gh stack: ${branches[2]}; run /factory submit again`)],

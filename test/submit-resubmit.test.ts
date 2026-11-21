@@ -19,6 +19,7 @@ describe('submit: re-submit', () => {
   it('adds only the slices the existing stack does not hold on a re-submit', async () => {
     using ws = workspace();
     const branches = await doneRun(ws, 6);
+    assert.notEqual(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'the submit starts off the top slice');
     using gh = fakeGh({ stack: branches.slice(0, 5), submitted: withPrs(branches) });
     const steps: string[] = [];
     await step(ws, run => submitStack(ws, run, message => steps.push(message)));
@@ -59,6 +60,7 @@ describe('submit: re-submit', () => {
   it('only submits when the existing stack holds every slice branch', async () => {
     using ws = workspace();
     const branches = await doneRun(ws, 2);
+    assert.notEqual(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'the submit starts off the top slice');
     using gh = fakeGh({ stack: branches, submitted: withPrs(branches) });
     const steps: string[] = [];
     await step(ws, run => submitStack(ws, run, message => steps.push(message)));
