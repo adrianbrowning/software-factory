@@ -34,10 +34,11 @@ describe('scripts/headless-backlog.sh', () => {
     writeFileSync(join(bin, ',omp'), fakeOmp);
     chmodSync(join(bin, ',omp'), 0o755);
     const calls = join(dir.root, 'calls');
+    const { OMP: _omp, LOG_DIR: _log, ...inherited } = process.env;
     const result = spawnSync('sh', [script, '3', 'https://github.com/o/other/issues/4', '#5', '6', '7', '9'], {
       cwd: repo,
       encoding: 'utf8',
-      env: { ...process.env, CALLS: calls, OMP: ',omp', LOG_DIR: join(dir.root, 'logs'), PATH: `${bin}:${process.env.PATH}`, PLUGIN_DIR: dir.root },
+      env: { ...inherited, CALLS: calls, PATH: `${bin}:${process.env.PATH}`, PLUGIN_DIR: dir.root },
     });
     assert.equal(result.status, 1, result.stderr);
     assert.deepEqual(readFileSync(calls, 'utf8').trim().split('\n'), [
