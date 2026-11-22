@@ -4,11 +4,23 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { type Finding, type FixVerdict, readRun, type Workspace } from '../src/run.ts';
 import { recordDecisions, recordReview, runChecks, startReview, submitDomain } from '../src/review.ts';
-import { fixAfterGreen } from '../src/observations.ts';
+import { fixAfterGreen, planFix } from '../src/observations.ts';
 import { nextSlice } from '../src/workflow.ts';
 import { commit, finding, fixItems, greenWithObservation, listInReport, newRun, review, sh, slice, step, workspace } from './helpers.ts';
 
 describe('fix items', { concurrency: 4 }, () => {
+  it('plans one ordered item list: the redacted bug first, then the observations', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    await greenWithObservation(ws);
+    const run = readRun(ws, 'demo');
+    assert.deepEqual(planFix(ws, run, { bug: 'Crash.', observations: ['thermo-naming'] }).items, [
+      { label: 'bug', line: '- Bug: Crash.' },
+      { label: 'thermo-naming', line: '- thermo-naming: naming' },
+    ]);
+    assert.deepEqual(planFix(ws, run, { observations: ['thermo-naming'] }).items, [{ label: 'thermo-naming', line: '- thermo-naming: naming' }]);
+    assert.deepEqual(planFix(ws, run, { bug: 'Crash.' }).items, [{ label: 'bug', line: '- Bug: Crash.' }]);
+  });
+
   it('numbers two failed checks of one round check-f1-1 and check-f1-2, in check order', async () => {
     using ws = workspace({ checks: ['test -f ok', 'test -f other'] });
     await newRun(ws, [slice('Feature')]);
