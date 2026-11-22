@@ -157,6 +157,24 @@ describe('scripts/headless-backlog.sh', () => {
     assert.doesNotMatch(result.summary, /Stopped/);
   });
 
+  it('with --separate, a bad ref fails the run but the next issue still runs without --base', () => {
+    const fake = `  "/factory headless 4") ${writeState(4, submitted(4, ['01']))} ;;`;
+    const result = runBacklog({}, fake, ['--separate', 'nope', '4']);
+    assert.equal(result.status, 1, result.stderr);
+    assert.deepEqual(result.prompts, ['/factory headless 4']);
+    assert.match(result.summary, /^nope: skipped, not an issue number/m);
+    assert.doesNotMatch(result.summary, /Stopped/);
+  });
+
+  it('with --separate, a skipped done run with no PRs fails the run but the next issue still runs', () => {
+    const fake = `  "/factory headless 4") ${writeState(4, submitted(4, ['01']))} ;;`;
+    const result = runBacklog({ 3: state('done', 'submit-failed') }, fake, ['--separate', '3', '4']);
+    assert.equal(result.status, 1, result.stderr);
+    assert.deepEqual(result.prompts, ['/factory headless 4']);
+    assert.match(result.summary, /^3: skipped, run done, no PRs/m);
+    assert.doesNotMatch(result.summary, /Stopped/);
+  });
+
   it('chains runs: the first has no --base, a skipped done run hands its top branch on, and each new run gets the top branch before it', () => {
     const fake = [
       `  "/factory headless 3") ${writeState(3, submitted(3, ['01', '02']))} ;;`,
