@@ -244,15 +244,11 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
       // Refuses a call with neither a bug nor observations, a slice without a green review, an id that is not one of
       // its observations, without a dialog.
       const planned = planFix(ws, readRun(ws, feature), params);
-      const items = [
-        ...(planned.bug === undefined ? [] : [`- Bug: ${redact(planned.bug)}`]),
-        ...planned.observations.map(finding => `- ${finding.id}: ${finding.title}`),
-      ];
-      const what = planned.labels.join(', ');
-      const shownBug = planned.bug === undefined ? undefined : redact(planned.bug);
-      const pointer = shownBug === undefined ? '' : `\n\n${confirmedTextLine(ws, feature, 'fix-bug', 'bug', shownBug)}`;
-      const body = `${params.reason}\n\n${items.join('\n')}\n\nThe green review ${planned.review.id} is dropped. The implementer fixes these in fix mode, then the slice gets checks and a new review again.${planned.bug === undefined ? '' : ' The round counts toward the fix budget.'}${pointer}`;
-      const title = planned.observations.length === 0 ? 'Fix a bug' : planned.bug === undefined ? 'Fix observations' : 'Fix a bug and observations';
+      const bugRound = planned.items.some(item => item.label === 'bug');
+      const what = planned.items.map(item => item.label).join(', ');
+      const pointer = planned.bug === undefined ? '' : `\n\n${confirmedTextLine(ws, feature, 'fix-bug', 'bug', redact(planned.bug))}`;
+      const body = `${params.reason}\n\n${planned.items.map(item => item.line).join('\n')}\n\nThe green review ${planned.review.id} is dropped. The implementer fixes these in fix mode, then the slice gets checks and a new review again.${bugRound ? ' The round counts toward the fix budget.' : ''}${pointer}`;
+      const title = !bugRound ? 'Fix observations' : planned.items.length === 1 ? 'Fix a bug' : 'Fix a bug and observations';
       if (!(await gate(ctx, ws, feature, 'fix', `${title} in slice ${planned.slice.id} "${planned.slice.title}"?`, body))) {
         return reply(`The user kept the green review. Ask how to handle the observations or the bug, or call factory_complete_slice.\nNext: ${nextAction(readRun(ws, feature))}`);
       }
