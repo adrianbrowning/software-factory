@@ -15,6 +15,7 @@
 # checks a skipped or resumed middle run the same way, and continues past it only when it passes.
 # With --separate as the first argument, no run gets --base: each opens its own stack of draft PRs on the default base,
 # a bad ref is skipped, and a run that fails or pauses does not stop the next one. Merging stays manual.
+# The chain-vs-separate decision at the end of each issue is made once, in chain_next.
 # Usage: scripts/headless-backlog.sh [--separate] <issue> [<issue> ...]   (issue: 102, #102 or a GitHub issue URL)
 # Env: OMP (default ,omp), OMP_ARGS (extra omp flags, split on spaces, e.g. --advisor), PLUGIN_DIR (default the installed
 #      plugin), MAX_COST (USD, default 25), MAX_TIME (seconds, default 5400), LOG_DIR (default <git dir>/headless-backlog,
@@ -130,14 +131,27 @@ next_base() {
   base=$top
 }
 
+# The one place the chain-vs-separate decision is made, for the end of an issue: $1 is its feature (or the listed ref when
+# it is no issue), $2 its outcome: done, "done, no PRs (...)", or any other run status (invalid for a bad ref). With
+# --separate it does nothing and returns 0. Chained, a done run is checked and becomes the base of the next run
+# (next_base); every other outcome ends the batch. Returns 1 when the batch ends, after recording the Stopped line and
+# setting failed=1 (here, chain_fail or next_base), so callers only `|| break`.
+chain_next() {
+  [ "$separate" = 1 ] && return 0
+  case $2 in
+    done) next_base "$1" ;;
+    done,*) chain_check "$1" ;; # fails at check 1: a done run with no submit has no PRs to stack on
+    *) failed=1; chain_stop "$1"; return 1 ;;
+  esac
+}
+
 for ref in "$@"; do
   n=$(printf '%s\n' "$ref" | sed -nE 's@^#?([0-9]+)$@\1@p; s@^https://github\.com/[^/]+/[^/]+/issues/([0-9]+)/?$@\1@p')
   if [ -z "$n" ]; then
     summary="$summary$ref: skipped, not an issue number or GitHub issue URL\n"
+    chain_next "$ref" invalid || break
     failed=1
-    [ "$separate" = 1 ] && continue
-    chain_stop "$ref"
-    break
+    continue
   fi
   feature="issue-$n"
   state=$scratch/$feature/state.json
@@ -146,16 +160,14 @@ for ref in "$@"; do
   case $status in
     done)
       summary="$summary$ref: skipped, run already done\n"
-      [ "$separate" = 1 ] && continue
-      next_base "$feature" || break
+      chain_next "$feature" "$status" || break
       continue
       ;;
     done,*)
       summary="$summary$ref: skipped, run $status\n"
+      chain_next "$feature" "$status" || break
       failed=1
-      [ "$separate" = 1 ] && continue
-      chain_check "$feature" # fails at check 1: a done run with no submit has no PRs to stack on
-      break
+      continue
       ;;
     'no run') prompt="/factory headless $ref${base:+ --base $base}" ;;
     *)
@@ -178,21 +190,14 @@ for ref in "$@"; do
   [ "$status" = paused ] && reason=$(pause_reason "$state")
   summary="$summary$ref: exit $code, run $status${prs:+, PRs: $prs}${reason:+\n  reason: $reason}\n"
   echo "== $ref: exit $code, run $status"
-  [ "$status" = done ] || failed=1
   # A run left running (omp hit --max-time or --max-cost) blocks every new run in this worktree.
   if [ "$status" = running ]; then
+    failed=1
     summary="${summary}Stopped: $feature is still running; run the script again to resume it.\n"
     break
   fi
-  [ "$separate" = 1 ] && continue
-  if [ "$status" != done ]; then
-    case $status in
-      done,*) chain_check "$feature" ;; # fails at check 1, as for a skipped done run with no submit
-      *) chain_stop "$feature" ;;
-    esac
-    break
-  fi
-  next_base "$feature" || break
+  chain_next "$feature" "$status" || break
+  [ "$status" = done ] || failed=1
 done
 
 printf '\nSummary:\n%b' "$summary"
