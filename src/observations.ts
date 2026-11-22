@@ -82,11 +82,12 @@ export function planCarry(ws: Workspace, run: Run, request: CarryRequest) {
   requireFullForIds(run, chosen, 'factory_carry');
   const green = greenObservations(ws, run, chosen, 'carry observations or a note');
   requireUnplaced(run, green.review.id, green.observations);
-  if (request.to === 'end') return { note, ...green, target: undefined };
+  const labels = [...(note === undefined ? [] : ['note']), ...green.observations.map(finding => finding.id)];
+  if (request.to === 'end') return { labels, note, ...green, target: undefined };
   const target = run.slices.find(candidate => candidate.id === request.to);
   if (target === undefined) throw new Error(`No slice ${request.to}. Slices: ${run.slices.map(candidate => candidate.id).join(', ')}.`);
   if (target.status !== 'pending') throw new Error(`Slice ${target.id} is ${target.status}; factory_carry takes a pending slice.`);
-  return { note, ...green, target };
+  return { labels, note, ...green, target };
 }
 
 /**
@@ -96,7 +97,7 @@ export function planCarry(ws: Workspace, run: Run, request: CarryRequest) {
  */
 export function carryObservations(ws: Workspace, run: Run, request: CarryRequest) {
   const planned = planCarry(ws, run, request);
-  const { note, observations, review, slice, target } = planned;
+  const { labels, note, observations, review, slice, target } = planned;
   const sections = carriedSections(run, review, slice, observations, note);
   placeObservations(run, review, slice, observations, 'carried', target?.id ?? 'end');
   if (target === undefined) run.waiting.push(...sections);
@@ -104,7 +105,7 @@ export function carryObservations(ws: Workspace, run: Run, request: CarryRequest
     target.carried.push(...sections);
     writeTicket(ws, run, target);
   }
-  addEvent(run, 'carry', `${review.id} to ${target === undefined ? 'the end of the run' : `slice ${target.id}`}: ${[...(note === undefined ? [] : ['note']), ...observations.map(finding => finding.id)].join(', ')}`, slice);
+  addEvent(run, 'carry', `${review.id} to ${target === undefined ? 'the end of the run' : `slice ${target.id}`}: ${labels.join(', ')}`, slice);
   return planned;
 }
 
@@ -144,7 +145,8 @@ export function planFix(ws: Workspace, run: Run, request: FixRequest) {
   const { text: bug, chosen } = normalizeRequest(request.bug, request.observations, 'factory_fix needs a bug, observation ids, or both.');
   const found = unplacedObservations(run, chosen) ?? { ...greenObservations(ws, run, chosen, 'fix observations or a bug'), groups: undefined };
   requireUnplaced(run, found.review.id, found.observations);
-  return { bug, ...found, groups: found.groups ?? [{ observations: found.observations, review: found.review }] };
+  const labels = [...(bug === undefined ? [] : ['bug']), ...found.observations.map(finding => finding.id)];
+  return { bug, labels, ...found, groups: found.groups ?? [{ observations: found.observations, review: found.review }] };
 }
 
 /**
@@ -171,8 +173,7 @@ function unplacedObservations(run: Run, chosen: Set<string>) {
  * does not, and never stalls. The slice earns checks and a new review before it completes.
  */
 export function fixObservations(ws: Workspace, run: Run, request: FixRequest, reason: string) {
-  const { bug, groups, observations, review, slice } = planFix(ws, run, request);
-  const ids = observations.map(finding => finding.id);
+  const { bug, groups, labels, observations, review, slice } = planFix(ws, run, request);
   const why = evidence(reason, 4_000);
   const records: FixRecord[] = [
     ...(bug === undefined
@@ -189,7 +190,7 @@ export function fixObservations(ws: Workspace, run: Run, request: FixRequest, re
   ];
   // The fix file is written before the run changes, so a failed write leaves the run as it was.
   const written = writeFixFile(ws, run, slice, records);
-  addEvent(run, 'fix-observations', `${groups.map(group => group.review.id).join(', ')}: ${[...(bug === undefined ? [] : ['bug']), ...ids].join(', ')}`, slice);
+  addEvent(run, 'fix-observations', `${groups.map(group => group.review.id).join(', ')}: ${labels.join(', ')}`, slice);
   for (const group of groups) placeObservations(run, group.review, slice, group.observations, 'fixed');
   // A bug round needs a full review; an observation-only round is reviewed only where it changed things (a targeted review).
   slice.targeting = bug === undefined ? targetingAfter(review, observations.map(finding => finding.domain)) : undefined;
