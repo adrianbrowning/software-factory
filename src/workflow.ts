@@ -45,6 +45,8 @@ async function branchName(root: string, ref: string) {
 /**
  * The base a run uses when `factory_plan` names none: `baseRef` from the config, else the remote default branch that
  * `origin/HEAD` points at (`origin/master` in a repository whose trunk is master), else `origin/main`.
+ * `default_base` in scripts/headless-backlog.sh repeats this order: a change to the order must be made in both, because
+ * chain check 3 compares a run's `baseRef` with `default_base` and would refuse correct first runs.
  */
 async function configuredBase(ws: Workspace) {
   if (ws.config.baseRef !== undefined) return ws.config.baseRef;
