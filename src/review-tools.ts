@@ -7,7 +7,7 @@ import { confirmInteractive, gate } from './gates.ts';
 import { placeObservations } from './ledger.ts';
 import { noteText } from './legacy-observations.ts';
 import { defaultChoice, describeChoice, describePlan, placeObservationBatch, placementSchema, planPlace } from './place.ts';
-import { carryObservations, fixObservations, leaveObservations, planCarry, planDefer, planFix, planLeave } from './observations.ts';
+import { carryObservations, fixAfterGreen, leaveObservations, planCarry, planDefer, planFix, planLeave } from './observations.ts';
 import { renderFinding } from './finding-text.ts';
 import { completeSlice, recordReview, startReview, submitDomain, submitValidation } from './review.ts';
 import { validationSchema } from './review-record.ts';
@@ -198,7 +198,7 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
         // Validate the fix round before anything is filed: a refusal after a deferral would roll the state back and keep the issue.
         if (chosen.length > 0) planFix(ws, run, { observations: chosen });
         const placed = await placeObservationBatch(ws, run, plan);
-        const fixed = placed.fixes.length === 0 ? undefined : fixObservations(ws, run, { observations: placed.fixes }, 'Chosen in the batched placement after the slice\'s final review.');
+        const fixed = placed.fixes.length === 0 ? undefined : fixAfterGreen(ws, run, { observations: placed.fixes }, 'Chosen in the batched placement after the slice\'s final review.');
         // Only what the ledger holds now was placed: a failed deferral and the fix round that waits on it are not.
         const done = plan.items.filter(item => run.observations.some(entry => entry.key === itemKey(item.entry.review, item.entry.finding.id)));
         return { failure: placed.failure, fixed, lines: done.map(item => `${item.entry.finding.id}: ${describeChoice(item.choice, item.target?.id)}`), rest: placed.slice.unplaced.map(entry => entry.finding.id) };
@@ -256,7 +256,7 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
       if (!(await gate(ctx, ws, feature, 'fix', `${title} in slice ${planned.slice.id} "${planned.slice.title}"?`, body))) {
         return reply(`The user kept the green review. Ask how to handle the observations or the bug, or call factory_complete_slice.\nNext: ${nextAction(readRun(ws, feature))}`);
       }
-      const result = await withRun(ws, feature, run => fixObservations(ws, run, params, params.reason));
+      const result = await withRun(ws, feature, run => fixAfterGreen(ws, run, params, params.reason));
       const stall = result.stalled ? await decideStall(ctx, ws, feature, 'other') : '';
       return reply(`Slice ${planned.slice.id} is back in fix for ${what}. Fix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
     },

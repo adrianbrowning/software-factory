@@ -624,15 +624,16 @@ describe('used-up fix budget', () => {
     assert.match(asked[0] ?? '', /^Fix a bug in slice 01 "Feature"\?\nFound while demoing\.\n\n- Bug: Empty input crashes the parser\./);
     assert.match(fixed.content[0]?.text ?? '', /Slice 01 is back in fix for bug\. Fix file: .*01-f1\.md/);
     assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'fix');
+    assert.match(readRun(ws, 'demo').events.find(event => event.kind === 'fix-after-green')?.detail ?? '', /: bug$/);
   });
 
-  it('lists the bug before the observation ids in the fix-observations event and the reply', async () => {
+  it('lists the bug before the observation ids in the fix-after-green event and the reply', async () => {
     using repo = budgetRepo();
     const { call, ws } = await budgetRun(repo.root, ['Feature']);
     await greenWithObservation(ws, 1);
     const fixed = await call('factory_fix', { bug: 'Crash.', observations: ['thermo-naming'], reason: 'tidy' }, { confirm: async () => true, select: async () => 'Pause the run' });
     assert.match(fixed.content[0]?.text ?? '', /Slice 01 is back in fix for bug, thermo-naming\./);
-    assert.match(readRun(ws, 'demo').events.find(event => event.kind === 'fix-observations')?.detail ?? '', /: bug, thermo-naming$/);
+    assert.match(readRun(ws, 'demo').events.find(event => event.kind === 'fix-after-green')?.detail ?? '', /: bug, thermo-naming$/);
   });
 
   it('factory_fix for observations only never stalls or mentions the fix budget, even at the round limit', async () => {

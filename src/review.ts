@@ -45,7 +45,7 @@ import {
 } from './run.ts';
 import { renderFinding } from './finding-text.ts';
 import { domainFile, findingRecord, keptFindings, readRecorded, recordedFindings, sha256, targetingAfter, type Validation, validationFile, validationSchema } from './review-record.ts';
-import { fixObservations } from './observations.ts';
+import { fixAfterGreen } from './observations.ts';
 import { collectObservations, placeDefaults } from './place.ts';
 import { changedLines, changedPaths, targetedReview } from './targeted.ts';
 import { reportListsCommit, storedBehaviors, storedReport } from './report.ts';
@@ -835,7 +835,7 @@ export async function completeSlice(ws: Workspace, run: Run) {
   const { fixes, placed: placedHere } = await placeDefaults(ws, run);
   if (fixes.length > 0) {
     try {
-      fixObservations(ws, run, { observations: fixes }, 'Default placement of the observations after the slice\'s final review.');
+      fixAfterGreen(ws, run, { observations: fixes }, 'Default placement of the observations after the slice\'s final review.');
     } catch (error) {
       if (!placedHere || error instanceof Invalidated) throw error;
       // The failed round changed nothing; what the defaults already placed stays (an issue may be filed), and a retry starts the round.
