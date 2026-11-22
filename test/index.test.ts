@@ -624,6 +624,7 @@ describe('used-up fix budget', () => {
     assert.match(asked[0] ?? '', /^Fix a bug in slice 01 "Feature"\?\nFound while demoing\.\n\n- Bug: Empty input crashes the parser\./);
     assert.match(fixed.content[0]?.text ?? '', /Slice 01 is back in fix for bug\. Fix file: .*01-f1\.md/);
     assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'fix');
+    assert.match(readRun(ws, 'demo').events.find(event => event.kind === 'fix-after-green')?.detail ?? '', /: bug$/);
   });
 
   it('lists the bug before the observation ids in the fix-after-green event and the reply', async () => {
