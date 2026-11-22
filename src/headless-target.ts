@@ -1,12 +1,6 @@
 import { basename } from 'node:path';
+import { requireFeatureName } from './feature-name.ts';
 import { RELATED_MAX, type SourceInput } from './source.ts';
-
-const FEATURE_PATTERN = /^[a-z0-9][a-z0-9-]{0,47}$/;
-
-export function requireFeatureName(feature: string) {
-  if (!FEATURE_PATTERN.test(feature)) throw new Error('feature must be kebab-case, at most 48 characters');
-  return feature;
-}
 
 /**
  * What `/factory headless <issue ref> [--related <ref>,<ref>] [--base <branch>]` starts a run from, and the run's name. A GitHub issue (`102`, `#102`, or its

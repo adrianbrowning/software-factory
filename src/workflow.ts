@@ -6,7 +6,7 @@ import { effectiveModels } from './config.ts';
 import { evidence, evidenceLine } from './evidence.ts';
 import { git } from './exec.ts';
 import { isRecordSlice, recordFailed, waitsForRecord } from './deferred.ts';
-import { requireFeatureName } from './headless-target.ts';
+import { requireFeatureName } from './feature-name.ts';
 import {
   activeSlice, addEvent, builtBy, discardReview, clearFullGreen, dropPass, greenCommit, hasPass, outdatedGreenCount,
   reportPath, runDir, type Run, reviewDomains, reviewPaths, saveRun, type Slice, type SliceInput, resliceItemSchema,
