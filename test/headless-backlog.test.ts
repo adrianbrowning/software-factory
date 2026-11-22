@@ -35,7 +35,7 @@ const NO_GH_TOOLS = ['sh', 'git', 'jq', 'sed', 'tr', 'cut', 'grep', 'sort', 'mkt
 function linkTools(tools: string): string {
   mkdirSync(tools);
   for (const name of NO_GH_TOOLS) {
-    const found = spawnSync('sh', ['-c', 'command -v "$1"', 'sh', name], { encoding: 'utf8' }).stdout.trim();
+    const found = spawnSync('/bin/sh', ['-c', 'command -v "$1"', 'sh', name], { encoding: 'utf8' }).stdout.trim();
     if (!found.startsWith('/')) throw new Error(`noGh setup: tool not found on PATH: ${name}`);
     symlinkSync(found, join(tools, name));
   }
