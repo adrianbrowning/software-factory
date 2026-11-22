@@ -237,7 +237,7 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
         ...(planned.bug === undefined ? [] : [`- Bug: ${evidenceHead(planned.bug, 1_000)}`]),
         ...planned.observations.map(finding => `- ${finding.id}: ${finding.title}`),
       ];
-      const what = [...(planned.bug === undefined ? [] : ['the bug']), ...planned.observations.map(finding => finding.id)].join(', ');
+      const what = planned.labels.join(', ');
       const body = `${params.reason}\n\n${items.join('\n')}\n\nThe green review ${planned.review.id} is dropped. The implementer fixes these in fix mode, then the slice gets checks and a new review again.${planned.bug === undefined ? '' : ' The round counts toward the fix budget.'}`;
       const title = planned.observations.length === 0 ? 'Fix a bug' : planned.bug === undefined ? 'Fix observations' : 'Fix a bug and observations';
       if (!(await gate(ctx, ws, feature, 'fix', `${title} in slice ${planned.slice.id} "${planned.slice.title}"?`, body))) {
@@ -264,7 +264,7 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
         ...(planned.note === undefined ? [] : [`- Note: ${evidenceHead(planned.note, 1_000)}`]),
         ...planned.observations.map(finding => `- ${finding.id}: ${finding.title}`),
       ];
-      const what = [...(planned.note === undefined ? [] : ['the note']), ...planned.observations.map(finding => finding.id)].join(', ');
+      const what = planned.labels.join(', ');
       const target = planned.target;
       const builder =
         target === undefined
