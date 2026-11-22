@@ -82,7 +82,8 @@ chain_fail() {
 }
 
 # The base a run plans on when it names none, as the plugin resolves it: baseRef from .omp/factory.json, else the branch
-# origin/HEAD points at, else origin/main.
+# origin/HEAD points at, else origin/main. Repeats the source order of configuredBase in src/workflow.ts; the two must
+# keep the same order.
 default_base() {
   ref=''
   [ -f .omp/factory.json ] && ref=$(jq -r '.baseRef // empty' .omp/factory.json)
