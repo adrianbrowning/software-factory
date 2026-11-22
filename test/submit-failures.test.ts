@@ -20,6 +20,8 @@ describe('submit: failed stack calls', () => {
     assert.ok(failure instanceof Error, 'the failure comes back in the result');
     assert.match(failure.message, new RegExp(`submitted.*not all PR titles were set.*${branches[1]}`, 's'));
     assert.match(failure.message, /\/factory submit again sets them/);
+    assert.ok(!failure.message.includes(branches[0] ?? ''), 'a branch with a PR is not named');
+    assert.ok(!failure.message.includes(branches[2] ?? ''), 'a branch with a PR is not named');
     assert.doesNotMatch(failure.message, /Already added/);
     assert.deepEqual(gh.calls().filter(call => call.startsWith('api')), [], 'no title is set when a slice has no PR');
     assert.equal(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'a failed title step stays on the top slice gh stack left');
