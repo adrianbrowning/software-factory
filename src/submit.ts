@@ -44,17 +44,31 @@ export function planSubmit(stacked: string[] | undefined, branches: string[], ba
     }
     return { kind: 'add', missing: branches, onto: base.branch };
   }
-  // Without a base branch the whole stack must be the run's; with one, the run's part starts at slice 01.
-  const from = base === undefined ? 0 : Math.max(0, stacked.indexOf(branches[0] ?? ''));
+  if (base === undefined) return checkRunStack(stacked, branches) ?? { kind: 'add', missing: branches.slice(stacked.length) };
+  // With a base branch the run's part starts at slice 01; an absent slice 01 is never treated as index 0.
+  const from = stacked.indexOf(branches[0] ?? '');
+  if (from < 0) return { kind: 'refuse', outside: stacked.filter(name => !branches.includes(name)), unordered: stacked.filter(name => branches.includes(name)), base: base.branch };
   const below = stacked.slice(0, from);
   const own = stacked.slice(from);
-  const outside = own.filter(name => !branches.includes(name));
-  const unordered = [...below, ...own].filter((name, index) => branches.includes(name) && branches[index - from] !== name);
-  const baseBelow = base !== undefined && below.at(-1) !== base.branch ? base.branch : undefined;
-  if (outside.length > 0 || unordered.length > 0 || baseBelow !== undefined) {
-    return { kind: 'refuse', outside, unordered, ...(baseBelow === undefined ? {} : { base: baseBelow }) };
+  const rest = checkRunStack(own, branches);
+  const belowRun = below.filter(name => branches.includes(name));
+  const baseBelow = below.at(-1) !== base.branch ? base.branch : undefined;
+  if (rest !== undefined || belowRun.length > 0 || baseBelow !== undefined) {
+    return {
+      kind: 'refuse',
+      outside: rest?.outside ?? [],
+      unordered: [...belowRun, ...(rest?.unordered ?? [])],
+      ...(baseBelow === undefined ? {} : { base: baseBelow }),
+    };
   }
   return { kind: 'add', missing: branches.slice(own.length) };
+}
+
+/** The original stacked check: refuses a stack holding a non-run branch or run branches out of run order; undefined when it is a prefix of the run. */
+function checkRunStack(stacked: string[], branches: string[]): { kind: 'refuse'; outside: string[]; unordered: string[] } | undefined {
+  const outside = stacked.filter(name => !branches.includes(name));
+  const unordered = stacked.filter((name, index) => branches.includes(name) && branches[index] !== name);
+  return outside.length > 0 || unordered.length > 0 ? { kind: 'refuse', outside, unordered } : undefined;
 }
 
 /**
