@@ -94,9 +94,9 @@ export function planCarry(ws: Workspace, run: Run, request: CarryRequest) {
 }
 
 /**
- * Carries the chosen observations and the note from the green review that lists them into the ticket of a pending
- * slice, whose implementer builds them and whose reviewers check them, or, for "end", onto the run's waiting queue
- * for the next follow-up slice. The slice keeps its green review.
+ * Carries the observations chosen from the active slice's green review, and the user's free-text note, into the
+ * ticket of a pending slice, whose implementer builds them and whose reviewers check them, or, for "end", onto the
+ * run's waiting queue for the next follow-up slice. The active slice keeps its green review.
  */
 export function carryObservations(ws: Workspace, run: Run, request: CarryRequest) {
   const planned = planCarry(ws, run, request);
