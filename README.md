@@ -250,7 +250,8 @@ After a red review the next review is targeted: the factory runs only the domain
 A green review can list non-blocking observations. When you want some of them fixed in the active slice, the
 orchestrator asks you which. When you find a bug in the active slice after its green review, tell the orchestrator.
 `factory_fix` (the observation ids, the bug as free text in `bug`, or both, and your `reason`) opens a dialog that
-shows them. After you confirm:
+shows them. A bug is written in full to a file under `confirmed/` before the dialog opens, and the dialog's last line
+names that file with its line and character counts. After you confirm:
 
 - The slice gets a fix file with those observations and a "Bug found after green review" section for the bug, and
   goes back to fix. The green review is dropped, so the slice goes through checks and a new review again before
@@ -266,8 +267,9 @@ shows them. After you confirm:
 
 When a green review lists observations that belong in a later slice, or you want extra work built there, the
 orchestrator asks you where they go. `factory_carry` (observation ids from the active slice's green review, a
-free-text `note`, or both, and `to`: the id of a pending slice, or `"end"`) opens a dialog that shows them. After you
-confirm:
+free-text `note`, or both, and `to`: the id of a pending slice, or `"end"`) opens a dialog that shows them. A note is
+written in full to a file under `confirmed/` before the dialog opens, and the dialog's last line names that file with
+its line and character counts. After you confirm:
 
 - With a slice id, the items are added to that slice's ticket under "Carried-in work". Its implementer builds them,
   and its review data file lists them, so its reviewers check them.
@@ -466,7 +468,7 @@ user or plugin agent named `scout`, which replaces omp's bundled `scout`, is rou
 `<scratchDir>/<feature>/` holds `state.json` (schema-validated on every read), `issue.md`, one ticket per slice
 under `issues/`, fix files under `fixes/`, the latest implementer report per slice under `reports/<slice>.md`, review
 data, per-domain findings, validation and `review.json` under
-`reviews/<slice>-r<n>/`, and `retro.md`. Each fix file lists its fix items under `## Fix items`: review findings by id,
+`reviews/<slice>-r<n>/`, `confirmed/` (the exact redacted note or bug text each `factory_carry` or `factory_fix` dialog shows, one file per distinct text), and `retro.md`. Each fix file lists its fix items under `## Fix items`: review findings by id,
 and factory-assigned ids for a bug (`bug-f<N>`), a reopen reason (`reopen-f<N>`), a failed check (`check-f<N>-<k>`),
 and a working tree the checks changed (`tree-f<N>`). The review data file lists the ticket, then a `## LATER SLICES`
 section with each not-done slice stacked after the reviewed one, in stack order (id, title, what to build, acceptance
