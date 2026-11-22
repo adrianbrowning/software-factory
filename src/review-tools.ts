@@ -1,8 +1,9 @@
 import { REVIEWER, VALIDATOR } from './agents.ts';
 import { deferItems, describeSink, itemKey, requireSink } from './deferred.ts';
-import { evidenceHead, evidenceLine } from './evidence.ts';
+import { evidenceHead, evidenceLine, redact } from './evidence.ts';
 import { confirmInteractive, gate } from './gates.ts';
 import { placeObservations } from './ledger.ts';
+import { noteText } from './legacy-observations.ts';
 import { defaultChoice, describeChoice, describePlan, placeObservationBatch, placementSchema, planPlace } from './place.ts';
 import { carryObservations, fixObservations, leaveObservations, planCarry, planDefer, planFix, planLeave } from './observations.ts';
 import { renderFinding } from './finding-text.ts';
@@ -234,7 +235,7 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
       // its observations, without a dialog.
       const planned = planFix(ws, readRun(ws, feature), params);
       const items = [
-        ...(planned.bug === undefined ? [] : [`- Bug: ${evidenceHead(planned.bug, 1_000)}`]),
+        ...(planned.bug === undefined ? [] : [`- Bug: ${redact(planned.bug)}`]),
         ...planned.observations.map(finding => `- ${finding.id}: ${finding.title}`),
       ];
       const what = planned.labels.join(', ');
@@ -261,7 +262,7 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
       // or a target that is neither "end" nor a pending slice, without a dialog.
       const planned = planCarry(ws, readRun(ws, feature), params);
       const items = [
-        ...(planned.note === undefined ? [] : [`- Note: ${evidenceHead(planned.note, 1_000)}`]),
+        ...(planned.note === undefined ? [] : [`- Note: ${noteText(redact(planned.note))}`]),
         ...planned.observations.map(finding => `- ${finding.id}: ${finding.title}`),
       ];
       const what = planned.labels.join(', ');
