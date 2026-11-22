@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
 import { resetModuleState } from '../src/index.ts';
 import { submitStack } from '../src/submit.ts';
+import { readRun } from '../src/run.ts';
 import { sh, step, workspace, withPrs, prCalls, submitFakeGh as fakeGh, submitDoneRun as doneRun } from './helpers.ts';
 
 beforeEach(() => resetModuleState());
@@ -31,6 +32,7 @@ describe('submit: re-submit', () => {
       ...prCalls(6),
     ]);
     assert.ok(steps.includes(`adding 1 branch to the existing gh stack: ${branches[5]}`), steps.join('\n'));
+    assert.equal(readRun(ws, 'demo').events.find(event => event.kind === 'submit')?.detail, `added ${branches[5]} to the existing gh stack and submitted; draft PRs opened or updated`);
     assert.equal(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'an add re-submit ends on the top slice');
   });
 
@@ -51,6 +53,7 @@ describe('submit: re-submit', () => {
       ...prCalls(3),
     ]);
     assert.ok(steps.includes(`adding 2 branches to the existing gh stack: ${branches[1]}, ${branches[2]}`), steps.join('\n'));
+    assert.equal(readRun(ws, 'demo').events.find(event => event.kind === 'submit')?.detail, `added ${branches[1]}, ${branches[2]} to the existing gh stack and submitted; draft PRs opened or updated`);
   });
 
   it('only submits when the existing stack holds every slice branch', async () => {
@@ -62,5 +65,6 @@ describe('submit: re-submit', () => {
     assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, 'stack view --json', 'stack top', 'stack submit --auto', 'stack view --json', ...prCalls(2)]);
     assert.equal(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'a full-stack re-submit ends on the top slice');
     assert.ok(steps.includes('the gh stack already holds all 2 slice branches'), steps.join('\n'));
+    assert.equal(readRun(ws, 'demo').events.find(event => event.kind === 'submit')?.detail, 're-submitted the existing gh stack; draft PRs opened or updated');
   });
 });

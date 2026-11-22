@@ -128,6 +128,7 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
   );
   let output: string;
   const added: string[] = [];
+  let path = '';
   try {
     const stacked = await readStack(ws.root, bottom);
     const base = run.baseBranch === undefined ? undefined : { branch: run.baseBranch, stack: stacked === undefined ? await readStack(ws.root, run.baseBranch) : undefined };
@@ -135,6 +136,7 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
     if (plan.kind === 'init') {
       progress(`adopting ${branches.length} branches into a gh stack onto ${run.trunk}`);
       await gh(ws.root, 'stack', 'init', '--base', run.trunk, ...branches);
+      path = `adopted ${branches.length} branches onto ${run.trunk} and submitted`;
     } else if (plan.kind === 'refuse-base') {
       throw new Error(`Cannot stack run "${run.feature}" on its base branch: ${plan.reason}. Nothing was submitted; fix the stack with gh stack, then submit again.`);
     } else if (plan.kind === 'refuse') {
@@ -156,6 +158,9 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
         await gh(ws.root, 'stack', 'add', branch);
         added.push(branch);
       }
+      path = missing.length === 0
+        ? 're-submitted the existing gh stack'
+        : `added ${missing.join(', ')} ${onto === undefined ? 'to the existing gh stack' : `onto the gh stack whose top is ${onto}`} and submitted`;
     }
     progress(`pushing ${slices.length} branches and opening or updating draft PRs (gh stack submit; this can take a few minutes)`);
     output = await gh(ws.root, 'stack', 'submit', '--auto');
@@ -170,7 +175,7 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
     if (switchFailure !== undefined) throw new Error(`${error instanceof Error ? error.message : String(error)}\n${switchFailure.message}`, { cause: error });
     throw error;
   }
-  addEvent(run, 'submit', 'stack submitted; draft PRs opened or updated');
+  addEvent(run, 'submit', `${path}; draft PRs opened or updated`);
   let urls: string[] = [];
   let failed: Error | undefined;
   // The stack and its PRs are now on GitHub; a title failure leaves the checkout where gh stack put it, except for a
