@@ -1,25 +1,26 @@
 #!/bin/sh
-# Runs one headless factory run per issue, one after the other, in the current worktree, chained into one stack: the first
-# run starts without --base, and each later new run starts with `--base <top slice branch of the run before it>` (the last
-# slice in that run's state.json), so its PRs stack on the run before. A listed issue whose run is already done with a
-# submit is skipped and its top branch is the base of the next run. The batch stops at the first run that does not end
-# done with a submit (paused, stalled, failed, running), names it in the summary and exits 1. A done run (just finished,
-# or skipped) must also pass three chain checks, in this order, before it is the base of the next run: (1) its last
-# submission event is a submit and each of its slice branches has an open or merged PR (`gh pr list --head <branch>
-# --state all`; a done run with no submit, or a failing `gh pr list`, fails here); (2) its top slice branch, on origin
-# (`git ls-remote origin`) and locally (the next run's --base pins the local branch), is at the top slice's green commit;
-# (3) its recorded baseBranch is the top branch of the run before it in the list, and absent for the first, whose
-# recorded baseRef must also be the configured default base (baseRef in .omp/factory.json, else the branch origin/HEAD
-# points at, else origin/main). A failed check names the run and the check in the summary, starts no later issue and exits 1, and
-# so does a done run with no slice branch and a listed ref that is not an issue number or GitHub issue URL. A rerun
-# checks a skipped or resumed middle run the same way, and continues past it only when it passes.
+# Runs one headless factory run per issue, one after the other, in the current worktree, chained into one stack: the
+# first run starts without --base, and each later new run starts with `--base <top slice branch of the run before it>`
+# (the last slice in that run's state.json), so its PRs stack on the run before. A listed issue whose run is already
+# done with a submit is skipped and its top branch is the base of the next run. The batch stops at the first run that
+# does not end done with a submit (paused, stalled, failed, running), names it in the summary and exits 1. A done run
+# (just finished, or skipped) must also pass three chain checks, in this order, before it is the base of the next run:
+# (1) its last submission event is a submit and each of its slice branches has an open or merged PR
+# (`gh pr list --head <branch> --state all`; a done run with no submit, or a failing `gh pr list`, fails here); (2) its
+# top slice branch, on origin (`git ls-remote origin`) and locally (the next run's --base pins the local branch), is at
+# the top slice's green commit; (3) its recorded baseBranch is the top branch of the run before it in the list, and
+# absent for the first, whose recorded baseRef must also be the configured default base (baseRef in .omp/factory.json,
+# else the branch origin/HEAD points at, else origin/main). A failed check names the run and the check in the summary,
+# starts no later issue and exits 1, and so does a done run with no slice branch and a listed ref that is not an issue
+# number or GitHub issue URL. A rerun checks a skipped or resumed middle run the same way, and continues past it only
+# when it passes.
 # With --separate as the first argument, no run gets --base: each opens its own stack of draft PRs on the default base,
 # a bad ref is skipped, and a run that fails or pauses does not stop the next one. Merging stays manual.
 # The chain-vs-separate decision at the end of each issue is made once, in chain_next.
 # Usage: scripts/headless-backlog.sh [--separate] <issue> [<issue> ...]   (issue: 102, #102 or a GitHub issue URL)
-# Env: OMP (default ,omp), OMP_ARGS (extra omp flags, split on spaces, e.g. --advisor), PLUGIN_DIR (default the installed
-#      plugin), MAX_COST (USD, default 25), MAX_TIME (seconds, default 5400), LOG_DIR (default <git dir>/headless-backlog,
-#      so no log makes the tree dirty).
+# Env: OMP (default ,omp), OMP_ARGS (extra omp flags, split on spaces, e.g. --advisor), PLUGIN_DIR (default the
+#      installed plugin), MAX_COST (USD, default 25), MAX_TIME (seconds, default 5400), LOG_DIR (default
+#      <git dir>/headless-backlog, so no log makes the tree dirty).
 # A run that exists and is not done is resumed (`/factory resume`, which takes no --base); a submitted done run is
 # skipped. Run the script again to continue. Exits 1 when any issue did not end with a done run whose PRs are open.
 set -u

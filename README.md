@@ -200,26 +200,27 @@ and each later new run starts with `--base <top slice branch of the run before i
 state.json), so its PRs stack on the run before. A listed issue whose run is already done with a submit is skipped, and
 its top branch is the base of the next run. A run that is not done is resumed (`/factory resume`, which takes no
 `--base`) only if check (3) below passes first, so a paused run that started on another base never submits onto the
-wrong stack. Before a done run (one the script just finished or one it skips) becomes the base of the next run, the script
-checks it, in this order: (1) its last submission event is a submit and each slice branch has an open or merged PR
-(`gh pr list --head <branch> --state all`; a failing `gh` call fails the check with its message); (2) its top slice branch, on origin (`git ls-remote origin`) and locally (the next run's `--base` pins the local
-branch), is still at the top slice's green commit; (3) its recorded `baseBranch` is the top slice branch of the run
-before it in the list, and is absent for the first, whose recorded `baseRef` must also be the configured default base
-(`baseRef` in .omp/factory.json, else the branch `origin/HEAD` points at, else `origin/main`). A skipped run and a resumed middle run are checked the same way, so a rerun continues past a
-resumed run only when it passes. The batch stops at the first failed check, or at the first run that does not end done
-with a submit (paused, stalled, failed, running, or done with no PRs, a failed submission or
-`headless.submission: "stop"`; `/factory submit` opens those PRs), names the run (and the check) in the summary and
-exits 1, with no later issue started. The batch also stops at a listed ref that is not an issue number or GitHub issue
-URL, and at a done, submitted run with no slice branch to stack the next run on. Running the script again continues the
-backlog. Give `--separate` as the first argument, before the issue refs, to keep one stack per run: no run gets
-`--base`, no chain check runs (and `gh` is not needed), each plans on the configured base (by default origin's default
-branch, as last fetched) and opens its own stack of draft PRs, a bad ref is skipped, and a run that fails or pauses
-does not stop the next one; only a run that omp leaves `running` (at `--max-time` or `--max-cost`) stops the batch,
-because it blocks every new run in the worktree. The script prints each run's status and PR URLs, and the reason of each
-paused run, and exits 1 when any issue did not end with a done run whose PRs are open. Set `OMP` (default `,omp`),
-`OMP_ARGS` (extra omp flags, split on spaces, for example `--advisor`), `PLUGIN_DIR` (default the installed plugin),
-`MAX_COST` (default 25) and `MAX_TIME` (default 5400); the logs go to `<git dir>/headless-backlog/`. Set these in the
-environment instead of editing the script: the script's test runs the working-tree copy.
+wrong stack. Before a done run (one the script just finished or one it skips) becomes the base of the next run, the
+script checks it, in this order: (1) its last submission event is a submit and each slice branch has an open or merged
+PR (`gh pr list --head <branch> --state all`; a failing `gh` call fails the check with its message); (2) its top slice
+branch, on origin (`git ls-remote origin`) and locally (the next run's `--base` pins the local branch), is still at the
+top slice's green commit; (3) its recorded `baseBranch` is the top slice branch of the run before it in the list, and is
+absent for the first, whose recorded `baseRef` must also be the configured default base (`baseRef` in .omp/factory.json,
+else the branch `origin/HEAD` points at, else `origin/main`). A skipped run and a resumed middle run are checked the
+same way, so a rerun continues past a resumed run only when it passes. The batch stops at the first failed check, or at
+the first run that does not end done with a submit (paused, stalled, failed, running, or done with no PRs, a failed
+submission or `headless.submission: "stop"`; `/factory submit` opens those PRs), names the run (and the check) in the
+summary and exits 1, with no later issue started. The batch also stops at a listed ref that is not an issue number or
+GitHub issue URL, and at a done, submitted run with no slice branch to stack the next run on. Running the script again
+continues the backlog. Give `--separate` as the first argument, before the issue refs, to keep one stack per run: no run
+gets `--base`, no chain check runs (and `gh` is not needed), each plans on the configured base (by default origin's
+default branch, as last fetched) and opens its own stack of draft PRs, a bad ref is skipped, and a run that fails or
+pauses does not stop the next one; only a run that omp leaves `running` (at `--max-time` or `--max-cost`) stops the
+batch, because it blocks every new run in the worktree. The script prints each run's status and PR URLs, and the reason
+of each paused run, and exits 1 when any issue did not end with a done run whose PRs are open. Set `OMP` (default
+`,omp`), `OMP_ARGS` (extra omp flags, split on spaces, for example `--advisor`), `PLUGIN_DIR` (default the installed
+plugin), `MAX_COST` (default 25) and `MAX_TIME` (default 5400); the logs go to `<git dir>/headless-backlog/`. Set these
+in the environment instead of editing the script: the script's test runs the working-tree copy.
 
 ### Land on an existing branch
 
