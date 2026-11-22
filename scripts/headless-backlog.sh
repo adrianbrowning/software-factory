@@ -112,8 +112,8 @@ chain_check() {
   green=$(jq -r '.slices[-1] | select(.green != null) | .checked.sha // empty' "$s")
   remote=$(git ls-remote origin "refs/heads/$2" 2>/dev/null | cut -f1)
   [ -n "$green" ] && [ "$remote" = "$green" ] || { chain_fail "$1" 2 "$c2" "origin has ${remote:-no} $2, the green commit is ${green:-missing}"; return; }
-  local=$(git rev-parse --verify --quiet "refs/heads/$2^{commit}")
-  [ "$local" = "$green" ] || { chain_fail "$1" 2 "$c2" "local $2 is at ${local:-missing}, the green commit is $green"; return; }
+  local_sha=$(git rev-parse --verify --quiet "refs/heads/$2^{commit}")
+  [ "$local_sha" = "$green" ] || { chain_fail "$1" 2 "$c2" "local $2 is at ${local_sha:-missing}, the green commit is $green"; return; }
   base_check "$1"
 }
 
@@ -126,8 +126,8 @@ base_check() {
   [ "$have" = "$base" ] || { chain_fail "$1" 3 "$c3" "its baseBranch is ${have:-absent}, expected ${base:-absent}"; return; }
   [ -z "$base" ] || return 0
   want=$(default_base)
-  have=$(jq -r '.baseRef // empty' "$s")
-  [ "$have" = "$want" ] || chain_fail "$1" 3 "$c3" "its baseRef is ${have:-absent}, expected $want"
+  have_ref=$(jq -r '.baseRef // empty' "$s")
+  [ "$have_ref" = "$want" ] || chain_fail "$1" 3 "$c3" "its baseRef is ${have_ref:-absent}, expected $want"
 }
 
 # Checks run $1 (state.json of the run's feature), then sets base to its top slice branch. A done run with no slice branch
