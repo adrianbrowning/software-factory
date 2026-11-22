@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { initRepo, sh, tempDir } from './helpers.ts';
@@ -52,7 +52,7 @@ function linkTools(tools: string, names: readonly string[] = NO_GH_TOOLS): strin
  * `options.noGh` leaves gh off PATH. `options.baseRef` sets baseRef in .omp/factory.json; `options.originHead` points refs/remotes/origin/HEAD at that branch. `options.ompArgs` sets OMP_ARGS (empty by default).
  * Besides the prompts, the fake logs its whole argument list as `argv`.
  */
-function runBacklog(existing: Record<number, string>, cases: string, args: string[], world: Partial<Record<'closedPr' | 'ghFails' | 'localMissing' | 'localMoved' | 'mergedPr' | 'moved' | 'noPr' | 'unpushed', readonly string[]>> = {}, options: { noGh?: boolean; ghStderr?: Record<string, string>; baseRef?: string; originHead?: string; ompArgs?: string } = {}) {
+function runBacklog(existing: Record<number, string>, cases: string, args: string[], world: Partial<Record<'closedPr' | 'ghFails' | 'localMissing' | 'localMoved' | 'mergedPr' | 'moved' | 'noPr' | 'unpushed', readonly string[]>> = {}, options: { noGh?: boolean; ghStderr?: Record<string, string>; baseRef?: string; originHead?: string; ompArgs?: string; worktreeScript?: boolean } = {}) {
   using dir = tempDir('backlog-');
   const repo = join(dir.root, 'repo');
   mkdirSync(repo);
@@ -98,7 +98,14 @@ function runBacklog(existing: Record<number, string>, cases: string, args: strin
   // OMP stays pinned to the fake, so a local OMP or a changed script default can never start the real omp.
   // LOG_DIR is removed, so the test sees the default log dir.
   const { LOG_DIR: _log, ...inherited } = process.env;
-  const result = spawnSync('sh', [script, ...args], {
+  // With worktreeScript the script runs from a copy at scripts/headless-backlog.sh in the test worktree, which the fake omp may rewrite.
+  let scriptPath = script;
+  if (options.worktreeScript) {
+    scriptPath = join(repo, 'scripts', 'headless-backlog.sh');
+    mkdirSync(join(repo, 'scripts'));
+    copyFileSync(script, scriptPath);
+  }
+  const result = spawnSync('sh', [scriptPath, ...args], {
     cwd: repo,
     encoding: 'utf8',
     env: { ...inherited, CALLS: calls, OMP: join(bin, ',omp'), OMP_ARGS: options.ompArgs ?? '', PATH: path, PLUGIN_DIR: dir.root },
@@ -288,6 +295,20 @@ describe('scripts/headless-backlog.sh', () => {
     assert.deepEqual(result.prompts, ['/factory headless 4 --base issue-3/01']);
     assert.match(result.summary, /^3: skipped, run already done$/m);
     assert.doesNotMatch(result.summary, /Stopped/);
+  });
+
+  it('runs to the end when a run replaces scripts/headless-backlog.sh in the worktree with a longer text', () => {
+    const longer = Array.from({ length: 400 }, (_, i) => `echo "replacement line ${i}" >&2`).join('\n');
+    const rewrite = `printf '%s\\n' '#!/bin/sh' '${longer}' > scripts/headless-backlog.sh`;
+    const fake = [
+      `  "/factory headless 3") ${writeState(3, submitted(3, ['01']))}; ${rewrite} ;;`,
+      `  "/factory headless 4 --base issue-3/01") ${writeState(4, submitted(4, ['01'], 'issue-3/01'))} ;;`,
+    ].join('\n');
+    const result = runBacklog({}, fake, ['3', '4'], {}, { worktreeScript: true });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(result.prompts, ['/factory headless 3', '/factory headless 4 --base issue-3/01']);
+    assert.match(result.summary, /^3: exit 0, run done$/m);
+    assert.match(result.summary, /^4: exit 0, run done$/m);
   });
 });
 
