@@ -120,8 +120,10 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
     return { output: await landStack(ws, run, run.landOn) };
   }
   progress(`reading the gh stack that holds ${bottom}`);
-  // `gh stack checkout` and the gh stack steps after it move HEAD; on a refusal or any failure, submit switches back to
-  // where it started, so a refused submit changes nothing. A successful submit stays where gh stack leaves it.
+  // `gh stack checkout` and the gh stack steps after it move HEAD. A refusal or any failure before `gh stack submit`
+  // finishes switches back to where submit started, so a refused submit changes nothing. After it, a PR title failure
+  // and a successful submit stay where gh stack leaves it, except a submit for a stopped run (`stop`), which switches
+  // back on every exit.
   const start = await git(ws.root, 'symbolic-ref', '-q', '--short', 'HEAD').then(
     name => [name.trim()],
     async () => ['--detach', await head(ws.root)],
