@@ -714,6 +714,20 @@ describe('used-up fix budget', () => {
     assert.equal(readFileSync(resolve(ws.root, match[3] ?? ''), 'utf8'), shown);
   });
 
+  it('keeps each factory_carry dialog file intact when another note is confirmed in between', async () => {
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature']);
+    commit(ws, 'ok');
+    await green(ws);
+    const paths: string[] = [];
+    const confirm = async (_title: string, body: string) => (paths.push(/: (\S+)$/.exec(body)?.[1] ?? ''), true);
+    await call('factory_carry', { note: 'First note.', to: 'end' }, { confirm });
+    await call('factory_carry', { note: 'Second note.', to: 'end' }, { confirm });
+    assert.notEqual(paths[0], paths[1]);
+    assert.equal(readFileSync(resolve(ws.root, paths[0] ?? ''), 'utf8'), noteText('First note.'));
+    assert.equal(readFileSync(resolve(ws.root, paths[1] ?? ''), 'utf8'), noteText('Second note.'));
+  });
+
   it('shows the same redacted note in the factory_carry dialog and the ticket of a pending slice', async () => {
     using repo = budgetRepo();
     const { call, ws } = await budgetRun(repo.root, ['Feature', 'Second']);
