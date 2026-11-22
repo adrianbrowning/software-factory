@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { readRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
-import { carryObservations, fixObservations, leaveObservations } from '../src/observations.ts';
+import { carryObservations, fixAfterGreen, leaveObservations } from '../src/observations.ts';
 import { nextSlice } from '../src/workflow.ts';
 import { commit, finding, newRun, review, slice, step, workspace } from './helpers.ts';
 
@@ -38,10 +38,10 @@ describe('slice loop gates: the same observation id in a done slice and the acti
   it('fixes the active slice\'s observations when a done slice\'s review lists the same ids', async () => {
     using ws = workspace({ maxRounds: 2 });
     await twoGreenSlices(ws);
-    await step(ws, run => fixObservations(ws, run, { observations: ['thermo-naming'] }, 'tidy'));
+    await step(ws, run => fixAfterGreen(ws, run, { observations: ['thermo-naming'] }, 'tidy'));
     const run = readRun(ws, 'demo');
-    assert.equal(run.events.some(event => event.kind === 'fix-observations' && event.slice === '02'), true);
-    assert.equal(run.events.some(event => event.kind === 'fix-observations' && event.slice === '01'), false);
+    assert.equal(run.events.some(event => event.kind === 'fix-after-green' && event.slice === '02'), true);
+    assert.equal(run.events.some(event => event.kind === 'fix-after-green' && event.slice === '01'), false);
     assert.equal(run.slices[0]?.status, 'done');
     assert.equal(run.slices[1]?.fixItems.some(item => item.id === 'thermo-naming'), true);
   });

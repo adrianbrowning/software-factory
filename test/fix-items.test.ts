@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { type Finding, type FixVerdict, readRun, type Workspace } from '../src/run.ts';
 import { recordDecisions, recordReview, runChecks, startReview, submitDomain } from '../src/review.ts';
-import { fixObservations } from '../src/observations.ts';
+import { fixAfterGreen } from '../src/observations.ts';
 import { nextSlice } from '../src/workflow.ts';
 import { commit, finding, fixItems, greenWithObservation, listInReport, newRun, review, sh, slice, step, workspace } from './helpers.ts';
 
@@ -33,7 +33,7 @@ describe('fix items', { concurrency: 4 }, () => {
     await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming')]);
     assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
 
-    await step(ws, run => fixObservations(ws, run, { bug: 'Crash.', observations: ['thermo-naming'] }, 'Fix both now.'));
+    await step(ws, run => fixAfterGreen(ws, run, { bug: 'Crash.', observations: ['thermo-naming'] }, 'Fix both now.'));
     commit(ws, 'ok', 'fixed\n');
     await step(ws, run => runChecks(ws, run));
     const items = fixItems((await step(ws, run => startReview(ws, run))).dataFile);
@@ -46,7 +46,7 @@ describe('fix items', { concurrency: 4 }, () => {
     using ws = workspace({ maxRounds: 2 });
     await greenWithObservation(ws);
     assert.equal(fixItems(join(ws.root, '.scratch', 'demo', 'reviews', '01-r1', 'data.md')), 'None.\n', 'a first review has no fix items');
-    const fixed = await step(ws, run => fixObservations(ws, run, { bug: 'Empty input\n  crashes.', observations: ['thermo-naming'] }, 'Fix both now.'));
+    const fixed = await step(ws, run => fixAfterGreen(ws, run, { bug: 'Empty input\n  crashes.', observations: ['thermo-naming'] }, 'Fix both now.'));
     const fixFile = readFileSync(fixed.fixPath, 'utf8');
     assert.match(fixFile, /## Fix items\n\n[^#]*`bug-f1`[^#]*`thermo-naming`/);
     assert.match(fixFile, /## Observations from green review 01-r1 the user chose to fix\n\nFix both now\.\n\n### \[observation\] thermo-naming\n/, 'observations sit at the level of blocking findings');
@@ -197,7 +197,7 @@ describe('fix item verdicts', { concurrency: 4 }, () => {
     const { reviewId } = await step(ws, run => startReview(ws, run));
     await review(ws, reviewId, [finding('thermo', 'observation', 'naming'), finding('thermo', 'observation', 'length')]);
     assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
-    const fixed = await step(ws, run => fixObservations(ws, run, { observations: ['thermo-naming', 'thermo-length'] }, 'Fix both now.'));
+    const fixed = await step(ws, run => fixAfterGreen(ws, run, { observations: ['thermo-naming', 'thermo-length'] }, 'Fix both now.'));
     const fix = readFileSync(fixed.fixPath, 'utf8');
     assert.equal(fix.match(/## Observations from green review 01-r1/g)?.length, 1);
     assert.match(fix, /## Observations from green review 01-r1 the user chose to fix\n\nFix both now\.\n\n### \[observation\] thermo-naming\n[\s\S]*\n\n### \[observation\] thermo-length\n/);

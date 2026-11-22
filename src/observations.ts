@@ -175,7 +175,7 @@ function unplacedObservations(run: Run, chosen: Set<string>) {
  * the user chose to fix in this slice. A round with a bug counts against the round limit; an observation-only round
  * does not, and never stalls. The slice earns checks and a new review before it completes.
  */
-export function fixObservations(ws: Workspace, run: Run, request: FixRequest, reason: string) {
+export function fixAfterGreen(ws: Workspace, run: Run, request: FixRequest, reason: string) {
   const { bug, groups, labels, observations, review, slice } = planFix(ws, run, request);
   const why = evidence(reason, 4_000);
   const records: FixRecord[] = [
@@ -193,7 +193,7 @@ export function fixObservations(ws: Workspace, run: Run, request: FixRequest, re
   ];
   // The fix file is written before the run changes, so a failed write leaves the run as it was.
   const written = writeFixFile(ws, run, slice, records);
-  addEvent(run, 'fix-observations', `${groups.map(group => group.review.id).join(', ')}: ${labels.join(', ')}`, slice);
+  addEvent(run, 'fix-after-green', `${groups.map(group => group.review.id).join(', ')}: ${labels.join(', ')}`, slice);
   for (const group of groups) placeObservations(run, group.review, slice, group.observations, 'fixed');
   // A bug round needs a full review; an observation-only round is reviewed only where it changed things (a targeted review).
   slice.targeting = bug === undefined ? targetingAfter(review, observations.map(finding => finding.domain)) : undefined;
