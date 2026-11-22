@@ -666,6 +666,23 @@ describe('used-up fix budget', () => {
     assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'fix');
   });
 
+  it('ends the factory_fix dialog with the file holding the whole bug, and its line and character counts', async () => {
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature']);
+    commit(ws, 'ok');
+    await green(ws);
+    const asked: string[] = [];
+    const bug = `Saving a draft loses the title.\n${'log line\n'.repeat(600)}END`;
+    await call('factory_fix', { bug, reason: 'Found while demoing.' }, { confirm: async (_title: string, body: string) => (asked.push(body), true) });
+    const shown = redact(bug);
+    const last = (asked[0] ?? '').split('\n').at(-1) ?? '';
+    const match = /^Full bug \((\d+) lines, (\d+) characters\): (\S+)$/.exec(last);
+    assert.ok(match, last);
+    assert.deepEqual([Number(match[1]), Number(match[2])], [shown.split('\n').length, shown.length]);
+    assert.ok(resolve(ws.root, match[3] ?? '').startsWith(resolve(ws.root, ws.config.scratchDir, 'demo')));
+    assert.equal(readFileSync(resolve(ws.root, match[3] ?? ''), 'utf8'), shown);
+  });
+
   it('shows the whole redacted note in the factory_carry dialog, as stored in the waiting queue', async () => {
     using repo = budgetRepo();
     const { call, ws } = await budgetRun(repo.root, ['Feature']);
@@ -678,6 +695,52 @@ describe('used-up fix budget', () => {
     assert.ok((asked[0] ?? '').includes(`- Note: ${shown}\n`));
     assert.doesNotMatch(asked[0] ?? '', /\.\.\.\[truncated\]|ghp_/);
     assert.ok((readRun(ws, 'demo').waiting[0] ?? '').includes(shown));
+  });
+
+  it('ends the factory_carry dialog with the file holding the whole note, and its line and character counts', async () => {
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature']);
+    commit(ws, 'ok');
+    await green(ws);
+    const asked: string[] = [];
+    const note = `Handle empty titles.\n${'detail line\n'.repeat(600)}END`;
+    await call('factory_carry', { note, to: 'end' }, { confirm: async (_title: string, body: string) => (asked.push(body), true) });
+    const shown = noteText(redact(note));
+    const last = (asked[0] ?? '').split('\n').at(-1) ?? '';
+    const match = /^Full note \((\d+) lines, (\d+) characters\): (\S+)$/.exec(last);
+    assert.ok(match, last);
+    assert.deepEqual([Number(match[1]), Number(match[2])], [shown.split('\n').length, shown.length]);
+    assert.ok(resolve(ws.root, match[3] ?? '').startsWith(resolve(ws.root, ws.config.scratchDir, 'demo')));
+    assert.equal(readFileSync(resolve(ws.root, match[3] ?? ''), 'utf8'), shown);
+  });
+
+  it('keeps each factory_carry dialog file intact when another note is confirmed in between', async () => {
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature']);
+    commit(ws, 'ok');
+    await green(ws);
+    const paths: string[] = [];
+    const confirm = async (_title: string, body: string) => (paths.push(/: (\S+)$/.exec(body)?.[1] ?? ''), true);
+    await call('factory_carry', { note: 'First note.', to: 'end' }, { confirm });
+    await call('factory_carry', { note: 'Second note.', to: 'end' }, { confirm });
+    assert.notEqual(paths[0], paths[1]);
+    assert.equal(readFileSync(resolve(ws.root, paths[0] ?? ''), 'utf8'), noteText('First note.'));
+    assert.equal(readFileSync(resolve(ws.root, paths[1] ?? ''), 'utf8'), noteText('Second note.'));
+  });
+
+  it('shows the same redacted note in the factory_carry dialog and the ticket of a pending slice', async () => {
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature', 'Second']);
+    await greenWithObservation(ws, 1);
+    const asked: string[] = [];
+    const note = `Handle empty titles. token=ghp_${'a'.repeat(30)}\n${'detail line\n'.repeat(600)}END`;
+    await call('factory_carry', { note, to: '02' }, { confirm: async (title: string, body: string) => (asked.push(`${title}\n${body}`), true) });
+    const shown = noteText(redact(note));
+    assert.ok((asked[0] ?? '').includes(`- Note: ${shown}\n`));
+    assert.doesNotMatch(asked[0] ?? '', /\.\.\.\[truncated\]|ghp_/);
+    const ticket = readFileSync(ticketPath(ws, 'demo', readRun(ws, 'demo').slices[1] ?? assert.fail('no slice')), 'utf8');
+    assert.ok(ticket.includes(shown));
+    assert.doesNotMatch(ticket, /\.\.\.\[truncated\]|ghp_/);
   });
 
   it('refuses factory_fix with neither a bug nor observations, before any dialog', async () => {
@@ -712,7 +775,7 @@ describe('used-up fix budget', () => {
     assert.deepEqual(readRun(ws, 'demo').slices[1]?.carried, []);
 
     const carried = await call('factory_carry', params, answer(true));
-    assert.match(asked[0] ?? '', /^Carry into slice 02 "Second"\?\n- Note: Log the parse time\.\n- thermo-naming: naming\n\nSlice 01 keeps its green review\. Slice 02 builds these, and its reviewers check them\.$/);
+    assert.match(asked[0] ?? '', /^Carry into slice 02 "Second"\?\n- Note: Log the parse time\.\n- thermo-naming: naming\n\nSlice 01 keeps its green review\. Slice 02 builds these, and its reviewers check them\.\n\nFull note \(\d+ lines, \d+ characters\): \S+$/);
     assert.match(carried.content[0]?.text ?? '', /Carried note, thermo-naming into slice 02 "Second"\. Ticket: .*02-second\.md\nNext: Call factory_complete_slice for slice 01/);
     const state = readRun(ws, 'demo');
     assert.match(state.events.find(event => event.kind === 'carry')?.detail ?? '', /^\S+ to slice 02: note, thermo-naming$/);
