@@ -24,8 +24,11 @@ export type SubmitPlan =
   | { kind: 'refuse-base'; reason: string }
   | { kind: 'add'; missing: string[]; onto?: string };
 
-/** The base branch of a run started with `--base`, and the gh stack that holds it (undefined: it is in no stack); read only when slice 01 is in no stack. */
-export type SubmitBase = { branch: string; stack: string[] | undefined };
+/**
+ * The base branch of a run started with `--base`. Without `stack` the base stack was not read (slice 01 is already
+ * stacked, a re-submit). With `stack`, slice 01 is in no stack and the base stack was read: null means the base branch is in no gh stack.
+ */
+export type SubmitBase = { branch: string } | { branch: string; stack: string[] | null };
 
 /**
  * Decides what submit does with the gh stack that holds slice 01: `stacked` is that stack's branches (bottom first), or
@@ -38,7 +41,8 @@ export type SubmitBase = { branch: string; stack: string[] | undefined };
 export function planSubmit(stacked: string[] | undefined, branches: string[], base?: SubmitBase): SubmitPlan {
   if (stacked === undefined) {
     if (base === undefined) return { kind: 'init' };
-    if (base.stack === undefined) return { kind: 'refuse-base', reason: `the base branch ${base.branch} is in no gh stack, so the run cannot be stacked on it` };
+    if (!('stack' in base)) throw new Error(`Cannot plan the submit: slice 01 is in no stack but the stack of the base branch ${base.branch} was not read`);
+    if (base.stack === null) return { kind: 'refuse-base', reason: `the base branch ${base.branch} is in no gh stack, so the run cannot be stacked on it` };
     if (base.stack.at(-1) !== base.branch) {
       return { kind: 'refuse-base', reason: `the base branch ${base.branch} is not the top of its gh stack (${base.stack.join(', ')}); the run can only be stacked on the top branch` };
     }
@@ -147,7 +151,11 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
   let path = '';
   try {
     const stacked = await readStack(ws.root, bottom);
-    const base = run.baseBranch === undefined ? undefined : { branch: run.baseBranch, stack: stacked === undefined ? await readStack(ws.root, run.baseBranch) : undefined };
+    let base: SubmitBase | undefined;
+    if (run.baseBranch !== undefined) {
+      base = { branch: run.baseBranch };
+      if (stacked === undefined) base = { branch: run.baseBranch, stack: (await readStack(ws.root, run.baseBranch)) ?? null };
+    }
     const plan = planSubmit(stacked, branches, base);
     if (plan.kind === 'init') {
       progress(`adopting ${branches.length} branches into a gh stack onto ${run.trunk}`);
