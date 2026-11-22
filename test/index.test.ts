@@ -981,9 +981,11 @@ describe('active run in a fresh extension copy', () => {
     const commands = new Map<string, Command>();
     load({ commands });
     const asked: string[] = [];
+    const messages: string[] = [];
     const ui = {
-      confirm: async (title: string) => {
+      confirm: async (title: string, message: string) => {
         asked.push(title);
+        messages.push(message);
         return false;
       },
       notify() {},
@@ -995,6 +997,7 @@ describe('active run in a fresh extension copy', () => {
 
     // It read the run from the original scratchDir to build the dialog, and created nothing under the moved one.
     assert.deepEqual(asked, ['Open draft PRs?']);
+    assert.match(messages[0] ?? '', /Each slice PR title is set to "<feature>: NN <slice title>", overwriting a title edited by hand\./);
     assert.equal(existsSync(join(repo.root, '.moved')), false);
   });
 });
