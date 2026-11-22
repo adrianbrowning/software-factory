@@ -32,9 +32,9 @@ const writeState = (n: number, body: string) => `mkdir -p work/issue-${n}; echo 
 const NO_GH_TOOLS = ['sh', 'git', 'jq', 'sed', 'tr', 'cut', 'grep', 'sort', 'mktemp', 'rm', 'mkdir', 'cat'];
 
 /** Links each of NO_GH_TOOLS, found with `command -v` on the test's PATH, into `tools` and returns it. Throws naming a missing tool. */
-function linkTools(tools: string): string {
+function linkTools(tools: string, names: readonly string[] = NO_GH_TOOLS): string {
   mkdirSync(tools);
-  for (const name of NO_GH_TOOLS) {
+  for (const name of names) {
     const found = spawnSync('/bin/sh', ['-c', 'command -v "$1"', 'sh', name], { encoding: 'utf8' }).stdout.trim();
     if (!found.startsWith('/')) throw new Error(`noGh setup: tool not found on PATH: ${name}`);
     symlinkSync(found, join(tools, name));
@@ -522,5 +522,19 @@ describe('scripts/headless-backlog.sh without gh on PATH', () => {
     const result = runBacklog({}, fake, ['--separate', '3'], {}, { noGh: true });
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(result.prompts, ['/factory headless 3']);
+  });
+});
+
+describe('linkTools', () => {
+  it('throws naming a tool that is not found', () => {
+    using dir = tempDir('tools-');
+    assert.throws(() => linkTools(join(dir.root, 'tools'), ['sh', 'no-such-tool-xyz']), /no-such-tool-xyz/);
+  });
+
+  it('links exactly NO_GH_TOOLS and no gh by default', () => {
+    using dir = tempDir('tools-');
+    const tools = linkTools(join(dir.root, 'tools'));
+    assert.deepEqual(readdirSync(tools).sort(), [...NO_GH_TOOLS].sort());
+    assert.ok(!readdirSync(tools).includes('gh'));
   });
 });
