@@ -28,6 +28,20 @@ const state = (status: string, kind?: string | string[], branches: string[] = []
 /** The shell line that makes the fake omp leave `body` as the state of issue `n`. */
 const writeState = (n: number, body: string) => `mkdir -p work/issue-${n}; echo '${body}' > work/issue-${n}/state.json`;
 
+/** Tools scripts/headless-backlog.sh and the fake omp run. gh is deliberately not among them. */
+const NO_GH_TOOLS = ['sh', 'git', 'jq', 'sed', 'tr', 'cut', 'grep', 'sort', 'mktemp', 'rm', 'mkdir', 'cat', 'head', 'ls'];
+
+/** Links each of NO_GH_TOOLS, found with `command -v` on the test's PATH, into `tools` and returns it. Throws naming a missing tool. */
+function linkTools(tools: string): string {
+  mkdirSync(tools);
+  for (const name of NO_GH_TOOLS) {
+    const found = spawnSync('sh', ['-c', 'command -v "$1"', 'sh', name], { encoding: 'utf8' }).stdout.trim();
+    if (!found.startsWith('/')) throw new Error(`noGh setup: tool not found on PATH: ${name}`);
+    symlinkSync(found, join(tools, name));
+  }
+  return tools;
+}
+
 /**
  * Runs the script in a temp repo with the scratch dir `work`. `existing` are the runs that exist before it starts
  * (issue number → state); `cases` is the body of the fake omp's `case "$last"`, which writes the run state each prompt
@@ -73,17 +87,9 @@ function runBacklog(existing: Record<number, string>, cases: string, args: strin
   // unless `--state all` is passed, as real gh does. A branch in `ghFails` makes it exit 1.
   const f = `${prs}/$(printf %s "$4" | tr / _)`;
   const gh = `#!/bin/sh\n[ "$1 $2" = 'pr list' ] || exit 1\nf="${f}"\n[ -f "$f.err" ] && cat "$f.err" >&2\n[ -f "$f.fail" ] && { [ -f "$f.err" ] || echo 'gh: not logged in' >&2; exit 1; }\n[ -f "$f" ] || { echo '[]'; exit 0; }\ncase " $* " in *' --state all '*) cat "$f" ;; *) jq -c '[.[] | select(.state == "OPEN")]' "$f" ;; esac\n`;
-  // Without gh, PATH holds links to every other command, so jq, git and sh still resolve and gh does not.
   let path = `${bin}:${process.env.PATH}`;
   if (options.noGh) {
-    const tools = join(dir.root, 'tools');
-    mkdirSync(tools);
-    for (const d of (process.env.PATH ?? '').split(':')) {
-      try {
-        for (const name of readdirSync(d)) if (name !== 'gh') try { symlinkSync(join(d, name), join(tools, name)); } catch { /* an earlier PATH entry has it */ }
-      } catch { /* not a directory */ }
-    }
-    path = `${bin}:${tools}`;
+    path = `${bin}:${linkTools(join(dir.root, 'tools'))}`;
   } else {
     writeFileSync(join(bin, 'gh'), gh);
     chmodSync(join(bin, 'gh'), 0o755);
