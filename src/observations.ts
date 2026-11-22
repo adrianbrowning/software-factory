@@ -71,8 +71,11 @@ function normalizeRequest(text: string | undefined, observations: string[] | und
  */
 export type CarryRequest = { note?: string | undefined; observations?: string[] | undefined; to: string };
 
+/** Where carried work goes: the run's waiting queue for the next follow-up slice, or the ticket of a pending slice. */
+export type CarryDestination = { kind: 'end' } | { kind: 'slice'; slice: Slice };
+
 /**
- * The target of `request.to` (a pending slice, or undefined for "end"), the observations chosen from the green review
+ * The destination of `request.to` (a pending slice, or "end"), the observations chosen from the green review
  * that lists them of the active slice, and the note. Throws for a request with neither,
  * for a slice without a green review, for ids its review does not list, for ids the ledger already
  * holds, and for a target that is neither "end" nor a pending slice. Does not change the run.
@@ -83,11 +86,11 @@ export function planCarry(ws: Workspace, run: Run, request: CarryRequest) {
   const green = greenObservations(ws, run, chosen, 'carry observations or a note');
   requireUnplaced(run, green.review.id, green.observations);
   const labels = [...(note === undefined ? [] : ['note']), ...green.observations.map(finding => finding.id)];
-  if (request.to === 'end') return { labels, note, ...green, target: undefined };
-  const target = run.slices.find(candidate => candidate.id === request.to);
-  if (target === undefined) throw new Error(`No slice ${request.to}. Slices: ${run.slices.map(candidate => candidate.id).join(', ')}.`);
-  if (target.status !== 'pending') throw new Error(`Slice ${target.id} is ${target.status}; factory_carry takes a pending slice.`);
-  return { labels, note, ...green, target };
+  if (request.to === 'end') return { labels, note, ...green, destination: { kind: 'end' } as CarryDestination };
+  const found = run.slices.find(candidate => candidate.id === request.to);
+  if (found === undefined) throw new Error(`No slice ${request.to}. Slices: ${run.slices.map(candidate => candidate.id).join(', ')}.`);
+  if (found.status !== 'pending') throw new Error(`Slice ${found.id} is ${found.status}; factory_carry takes a pending slice.`);
+  return { labels, note, ...green, destination: { kind: 'slice', slice: found } as CarryDestination };
 }
 
 /**
@@ -97,15 +100,15 @@ export function planCarry(ws: Workspace, run: Run, request: CarryRequest) {
  */
 export function carryObservations(ws: Workspace, run: Run, request: CarryRequest) {
   const planned = planCarry(ws, run, request);
-  const { labels, note, observations, review, slice, target } = planned;
+  const { labels, note, observations, review, slice, destination } = planned;
   const sections = carriedSections(run, review, slice, observations, note);
-  placeObservations(run, review, slice, observations, 'carried', target?.id ?? 'end');
-  if (target === undefined) run.waiting.push(...sections);
+  placeObservations(run, review, slice, observations, 'carried', destination.kind === 'end' ? 'end' : destination.slice.id);
+  if (destination.kind === 'end') run.waiting.push(...sections);
   else {
-    target.carried.push(...sections);
-    writeTicket(ws, run, target);
+    destination.slice.carried.push(...sections);
+    writeTicket(ws, run, destination.slice);
   }
-  addEvent(run, 'carry', `${review.id} to ${target === undefined ? 'the end of the run' : `slice ${target.id}`}: ${labels.join(', ')}`, slice);
+  addEvent(run, 'carry', `${review.id} to ${destination.kind === 'end' ? 'the end of the run' : `slice ${destination.slice.id}`}: ${labels.join(', ')}`, slice);
   return planned;
 }
 

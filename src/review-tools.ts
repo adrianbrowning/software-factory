@@ -265,22 +265,22 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
         ...planned.observations.map(finding => `- ${finding.id}: ${finding.title}`),
       ];
       const what = planned.labels.join(', ');
-      const target = planned.target;
+      const { destination } = planned;
       const builder =
-        target === undefined
+        destination.kind === 'end'
           ? 'They wait on the run: the next factory_follow_up slice builds them, and its reviewers check them. The retro waits until then.'
-          : `Slice ${target.id} builds these, and its reviewers check them.`;
+          : `Slice ${destination.slice.id} builds these, and its reviewers check them.`;
       const body = `${items.join('\n')}\n\nSlice ${planned.slice.id} keeps its green review. ${builder}`;
-      const title = target === undefined ? 'Carry to the end of the run?' : `Carry into slice ${target.id} "${target.title}"?`;
+      const title = destination.kind === 'end' ? 'Carry to the end of the run?' : `Carry into slice ${destination.slice.id} "${destination.slice.title}"?`;
       if (!(await gate(ctx, ws, feature, 'carry', title, body))) {
         return reply(`The user did not carry the work. Ask how to handle the observations or the note.\nNext: ${nextAction(readRun(ws, feature))}`);
       }
       return withRun(ws, feature, run => {
-        const carried = carryObservations(ws, run, params).target;
+        const carried = carryObservations(ws, run, params).destination;
         const where =
-          carried === undefined
+          carried.kind === 'end'
             ? `Queued ${what} for the next factory_follow_up slice (${run.waiting.length} waiting).`
-            : `Carried ${what} into slice ${carried.id} "${carried.title}". Ticket: ${ticketPath(ws, run.feature, carried)}`;
+            : `Carried ${what} into slice ${carried.slice.id} "${carried.slice.title}". Ticket: ${ticketPath(ws, run.feature, carried.slice)}`;
         return reply(`${where}\nNext: ${nextAction(run)}`);
       });
     },

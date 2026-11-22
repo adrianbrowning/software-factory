@@ -691,7 +691,7 @@ describe('used-up fix budget', () => {
     assert.deepEqual(readRun(ws, 'demo').slices[1]?.carried, []);
 
     const carried = await call('factory_carry', params, answer(true));
-    assert.match(asked[0] ?? '', /^Carry into slice 02 "Second"\?\n- Note: Log the parse time\.\n- thermo-naming: naming\n\nSlice 01 keeps its green review/);
+    assert.match(asked[0] ?? '', /^Carry into slice 02 "Second"\?\n- Note: Log the parse time\.\n- thermo-naming: naming\n\nSlice 01 keeps its green review\. Slice 02 builds these, and its reviewers check them\.$/);
     assert.match(carried.content[0]?.text ?? '', /Carried note, thermo-naming into slice 02 "Second"\. Ticket: .*02-second\.md\nNext: Call factory_complete_slice for slice 01/);
     const state = readRun(ws, 'demo');
     assert.match(state.events.find(event => event.kind === 'carry')?.detail ?? '', /^\S+ to slice 02: note, thermo-naming$/);
