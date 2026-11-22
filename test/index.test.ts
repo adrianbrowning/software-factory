@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs, { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { beforeEach, describe, it, mock } from 'node:test';
 import { type Command, ctx, type Handler, load, type TestContext } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
+import { redact } from '../src/evidence.ts';
 import { MAX_IDLE_STOP_ATTEMPTS, resetModuleState, stopDecision } from '../src/index.ts';
 import { readRun, type Run, reviewPaths, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
@@ -648,15 +649,34 @@ describe('used-up fix budget', () => {
     assert.deepEqual([slice?.stalled, slice?.fixRounds, slice?.phase], [false, 2, 'fix']);
   });
 
-  it('shows the start of a long bug in the factory_fix dialog', async () => {
+  it('shows the whole redacted bug in the factory_fix dialog, as stored in the fix file', async () => {
     using repo = budgetRepo();
     const { call, ws } = await budgetRun(repo.root, ['Feature']);
     commit(ws, 'ok');
     await green(ws);
     const asked: string[] = [];
-    await call('factory_fix', { bug: `Saving a draft loses the title.\n${'log line\n'.repeat(600)}`, reason: 'Found while demoing.' }, { confirm: async (title: string, body: string) => (asked.push(`${title}\n${body}`), true) });
-    assert.match(asked[0] ?? '', /- Bug: Saving a draft loses the title\.\n[\s\S]*\.\.\.\[truncated\]/);
+    const bug = `Saving a draft loses the title. token=ghp_${'a'.repeat(30)}\n${'log line\n'.repeat(600)}END`;
+    const fixed = await call('factory_fix', { bug, reason: 'Found while demoing.' }, { confirm: async (title: string, body: string) => (asked.push(`${title}\n${body}`), true) });
+    const shown = redact(bug);
+    assert.ok((asked[0] ?? '').includes(`- Bug: ${shown}\n`));
+    assert.doesNotMatch(asked[0] ?? '', /\.\.\.\[truncated\]|ghp_/);
+    const fixPath = /Fix file: (\S+)/.exec(fixed.content[0]?.text ?? '')?.[1] ?? '';
+    assert.ok(readFileSync(resolve(ws.root, fixPath), 'utf8').includes(shown));
     assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'fix');
+  });
+
+  it('shows the whole redacted note in the factory_carry dialog, as stored in the waiting queue', async () => {
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature']);
+    commit(ws, 'ok');
+    await green(ws);
+    const asked: string[] = [];
+    const note = `Handle empty titles. token=ghp_${'a'.repeat(30)}\n${'detail line\n'.repeat(600)}END`;
+    await call('factory_carry', { note, to: 'end' }, { confirm: async (title: string, body: string) => (asked.push(`${title}\n${body}`), true) });
+    const shown = redact(note);
+    assert.ok((asked[0] ?? '').includes(`- Note: ${shown}\n`));
+    assert.doesNotMatch(asked[0] ?? '', /\.\.\.\[truncated\]|ghp_/);
+    assert.ok((readRun(ws, 'demo').waiting[0] ?? '').includes(shown));
   });
 
   it('refuses factory_fix with neither a bug nor observations, before any dialog', async () => {
