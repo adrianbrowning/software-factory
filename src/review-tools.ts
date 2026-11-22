@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { REVIEWER, VALIDATOR } from './agents.ts';
 import { deferItems, describeSink, itemKey, requireSink } from './deferred.ts';
 import { evidenceHead, evidenceLine, redact } from './evidence.ts';
@@ -9,13 +10,20 @@ import { carryObservations, fixObservations, leaveObservations, planCarry, planD
 import { renderFinding } from './finding-text.ts';
 import { completeSlice, recordReview, startReview, submitDomain, submitValidation } from './review.ts';
 import { validationSchema } from './review-record.ts';
-import { activeSlice, addEvent, findingSchema, fixVerdictSchema, readRun, REQUIRED_REVIEW_DOMAINS, REVIEW_DOMAINS, skippedDomainsSchema, ticketPath, withRun } from './run.ts';
+import { activeSlice, addEvent, findingSchema, fixVerdictSchema, readRun, REQUIRED_REVIEW_DOMAINS, REVIEW_DOMAINS, runDir, skippedDomainsSchema, ticketPath, withRun, type Workspace, writeAtomic } from './run.ts';
 import { submitHeadless } from './headless-submit.ts';
 import type { RunTool } from './tool-scope.ts';
 import { nextAction } from './workflow.ts';
 import { decideStall, emptySchema, reply, STALL_DESCRIPTION } from './tool-replies.ts';
 import { recordSelfHostWarning } from './self-host.ts';
 import { z } from 'zod';
+
+/** Writes the exact text a dialog shows to a file under the run directory; returns the dialog's last line naming it. */
+function confirmedTextLine(ws: Workspace, feature: string, name: string, label: string, text: string) {
+  const path = join(runDir(ws, feature), 'confirmed', name);
+  writeAtomic(path, text);
+  return `Full ${label} (${text.split('\n').length} lines, ${text.length} characters): ${path}`;
+}
 
 const reviewStartSchema = z.object({
   keep: z
@@ -239,7 +247,9 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
         ...planned.observations.map(finding => `- ${finding.id}: ${finding.title}`),
       ];
       const what = planned.labels.join(', ');
-      const body = `${params.reason}\n\n${items.join('\n')}\n\nThe green review ${planned.review.id} is dropped. The implementer fixes these in fix mode, then the slice gets checks and a new review again.${planned.bug === undefined ? '' : ' The round counts toward the fix budget.'}`;
+      const shownBug = planned.bug === undefined ? undefined : redact(planned.bug);
+      const pointer = shownBug === undefined ? '' : `\n\n${confirmedTextLine(ws, feature, 'fix-bug.md', 'bug', shownBug)}`;
+      const body = `${params.reason}\n\n${items.join('\n')}\n\nThe green review ${planned.review.id} is dropped. The implementer fixes these in fix mode, then the slice gets checks and a new review again.${planned.bug === undefined ? '' : ' The round counts toward the fix budget.'}${pointer}`;
       const title = planned.observations.length === 0 ? 'Fix a bug' : planned.bug === undefined ? 'Fix observations' : 'Fix a bug and observations';
       if (!(await gate(ctx, ws, feature, 'fix', `${title} in slice ${planned.slice.id} "${planned.slice.title}"?`, body))) {
         return reply(`The user kept the green review. Ask how to handle the observations or the bug, or call factory_complete_slice.\nNext: ${nextAction(readRun(ws, feature))}`);
@@ -271,7 +281,9 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
         destination.kind === 'end'
           ? 'They wait on the run: the next factory_follow_up slice builds them, and its reviewers check them. The retro waits until then.'
           : `Slice ${destination.slice.id} builds these, and its reviewers check them.`;
-      const body = `${items.join('\n')}\n\nSlice ${planned.slice.id} keeps its green review. ${builder}`;
+      const stored = planned.note === undefined ? undefined : noteText(redact(planned.note));
+      const pointer = stored === undefined ? '' : `\n\n${confirmedTextLine(ws, feature, 'carry-note.md', 'note', stored)}`;
+      const body = `${items.join('\n')}\n\nSlice ${planned.slice.id} keeps its green review. ${builder}${pointer}`;
       const title = destination.kind === 'end' ? 'Carry to the end of the run?' : `Carry into slice ${destination.slice.id} "${destination.slice.title}"?`;
       if (!(await gate(ctx, ws, feature, 'carry', title, body))) {
         return reply(`The user did not carry the work. Ask how to handle the observations or the note.\nNext: ${nextAction(readRun(ws, feature))}`);
