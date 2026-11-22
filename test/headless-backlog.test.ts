@@ -29,7 +29,7 @@ const state = (status: string, kind?: string | string[], branches: string[] = []
 const writeState = (n: number, body: string) => `mkdir -p work/issue-${n}; echo '${body}' > work/issue-${n}/state.json`;
 
 /** Tools scripts/headless-backlog.sh and the fake omp run. gh is deliberately not among them. */
-const NO_GH_TOOLS = ['sh', 'git', 'jq', 'sed', 'tr', 'cut', 'grep', 'sort', 'mktemp', 'rm', 'mkdir', 'cat', 'head', 'ls'];
+const NO_GH_TOOLS = ['sh', 'git', 'jq', 'sed', 'tr', 'cut', 'grep', 'sort', 'mktemp', 'rm', 'mkdir', 'cat'];
 
 /** Links each of NO_GH_TOOLS, found with `command -v` on the test's PATH, into `tools` and returns it. Throws naming a missing tool. */
 function linkTools(tools: string): string {
