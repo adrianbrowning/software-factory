@@ -87,10 +87,10 @@ export function planCarry(ws: Workspace, run: Run, request: CarryRequest) {
   requireUnplaced(run, green.review.id, green.observations);
   const labels = [...(note === undefined ? [] : ['note']), ...green.observations.map(finding => finding.id)];
   if (request.to === 'end') return { labels, note, ...green, destination: { kind: 'end' } as CarryDestination };
-  const target = run.slices.find(candidate => candidate.id === request.to);
-  if (target === undefined) throw new Error(`No slice ${request.to}. Slices: ${run.slices.map(candidate => candidate.id).join(', ')}.`);
-  if (target.status !== 'pending') throw new Error(`Slice ${target.id} is ${target.status}; factory_carry takes a pending slice.`);
-  return { labels, note, ...green, destination: { kind: 'slice', slice: target } as CarryDestination };
+  const found = run.slices.find(candidate => candidate.id === request.to);
+  if (found === undefined) throw new Error(`No slice ${request.to}. Slices: ${run.slices.map(candidate => candidate.id).join(', ')}.`);
+  if (found.status !== 'pending') throw new Error(`Slice ${found.id} is ${found.status}; factory_carry takes a pending slice.`);
+  return { labels, note, ...green, destination: { kind: 'slice', slice: found } as CarryDestination };
 }
 
 /**
