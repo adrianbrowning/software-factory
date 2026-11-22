@@ -220,7 +220,9 @@ batch, because it blocks every new run in the worktree. The script prints each r
 of each paused run, and exits 1 when any issue did not end with a done run whose PRs are open. Set `OMP` (default
 `,omp`), `OMP_ARGS` (extra omp flags, split on spaces, for example `--advisor`), `PLUGIN_DIR` (default the installed
 plugin), `MAX_COST` (default 25) and `MAX_TIME` (default 5400); the logs go to `<git dir>/headless-backlog/`. Set these
-in the environment instead of editing the script: the script's test runs the working-tree copy.
+in the environment instead of editing the script: the script's test runs the working-tree copy. The script is safe to
+run from the worktree that the runs use, also when a run checks out a branch that changes `scripts/headless-backlog.sh`:
+the shell has read the whole script before the first run starts.
 
 ### Land on an existing branch
 

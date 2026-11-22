@@ -23,6 +23,10 @@
 #      <git dir>/headless-backlog, so no log makes the tree dirty).
 # A run that exists and is not done is resumed (`/factory resume`, which takes no --base); a submitted done run is
 # skipped. Run the script again to continue. Exits 1 when any issue did not end with a done run whose PRs are open.
+# The whole body is in main, called on the last line together with the exit, so the shell has read the entire script
+# before the first run: it is safe to run from the worktree the runs use, even when a run checks out a branch that
+# changes this file.
+main() {
 set -u
 separate=0
 if [ "${1:-}" = --separate ]; then separate=1; shift; fi
@@ -215,3 +219,6 @@ done
 
 printf '\nSummary:\n%b' "$summary"
 exit $failed
+}
+
+main "$@"; exit $?
