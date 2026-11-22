@@ -114,7 +114,7 @@ Present the candidates to the user in one `ask` call, most severe first, with th
 
 ## 6. Hand over
 
-Tell the user the branches in stack order and what `/factory submit` does: it opens one draft PR per slice through `gh stack`, or, for a run with `landOn`, fast-forwards that branch to the top slice. Opening and merging PRs is the user's decision, except in a headless run (below), which opens its own draft PRs; merging stays manual in every run.
+Tell the user the branches in stack order and what `/factory submit` does: it opens or updates one draft PR per slice through `gh stack`, or, for a run with `landOn`, fast-forwards that branch to the top slice. Opening and merging PRs is the user's decision, except in a headless run (below), which opens its own draft PRs; merging stays manual in every run.
 
 ## Headless runs
 

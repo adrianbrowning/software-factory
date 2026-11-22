@@ -157,7 +157,7 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
         added.push(branch);
       }
     }
-    progress(`pushing ${slices.length} branches and opening draft PRs (gh stack submit; this can take a few minutes)`);
+    progress(`pushing ${slices.length} branches and opening or updating draft PRs (gh stack submit; this can take a few minutes)`);
     output = await gh(ws.root, 'stack', 'submit', '--auto');
   } catch (caught) {
     const error = added.length === 0
@@ -170,7 +170,7 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
     if (switchFailure !== undefined) throw new Error(`${error instanceof Error ? error.message : String(error)}\n${switchFailure.message}`, { cause: error });
     throw error;
   }
-  addEvent(run, 'submit', 'stack submitted as draft PRs');
+  addEvent(run, 'submit', 'stack submitted; draft PRs opened or updated');
   let urls: string[] = [];
   let failed: Error | undefined;
   // The stack and its PRs are now on GitHub; a title failure leaves the checkout where gh stack put it, except for a
