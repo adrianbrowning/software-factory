@@ -624,6 +624,15 @@ describe('used-up fix budget', () => {
     assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'fix');
   });
 
+  it('lists the bug before the observation ids in the fix-observations event and the reply', async () => {
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature']);
+    await greenWithObservation(ws, 1);
+    const fixed = await call('factory_fix', { bug: 'Crash.', observations: ['thermo-naming'], reason: 'tidy' }, { confirm: async () => true, select: async () => 'Pause the run' });
+    assert.match(fixed.content[0]?.text ?? '', /Slice 01 is back in fix for bug, thermo-naming\./);
+    assert.match(readRun(ws, 'demo').events.find(event => event.kind === 'fix-observations')?.detail ?? '', /: bug, thermo-naming$/);
+  });
+
   it('factory_fix for observations only never stalls or mentions the fix budget, even at the round limit', async () => {
     using repo = budgetRepo();
     const { call, ws } = await budgetRun(repo.root, ['Feature']);
@@ -685,6 +694,7 @@ describe('used-up fix budget', () => {
     assert.match(asked[0] ?? '', /^Carry into slice 02 "Second"\?\n- Note: Log the parse time\.\n- thermo-naming: naming\n\nSlice 01 keeps its green review/);
     assert.match(carried.content[0]?.text ?? '', /Carried note, thermo-naming into slice 02 "Second"\. Ticket: .*02-second\.md\nNext: Call factory_complete_slice for slice 01/);
     const state = readRun(ws, 'demo');
+    assert.match(state.events.find(event => event.kind === 'carry')?.detail ?? '', /^\S+ to slice 02: note, thermo-naming$/);
     assert.equal(state.slices[0]?.phase, 'ready');
     assert.match(readFileSync(ticketPath(ws, 'demo', state.slices[1] ?? assert.fail('no slice')), 'utf8'), /## Carried-in work[\s\S]*Log the parse time\.[\s\S]*thermo-naming/);
   });
