@@ -43,12 +43,24 @@ failed=0
 # The top slice branch of the last run that ended done with a submit; empty before the first run. Used only when chained.
 base=''
 
+# The kind of the last submit, submit-failed or submission-stop event in state.json $1, or "none".
+submission_kind() {
+  jq -r '[.events[] | select(.kind | test("^(submit|submit-failed|submission-stop)$"))] | last | .kind // "none"' "$1"
+}
+
 # The run's status, or "done, no PRs (<event>)" when a done run's last submission event is not a submit.
 run_status() {
   [ -f "$1" ] || { echo 'no run'; return; }
-  jq -r '.status as $s | ([.events[] | select(.kind | test("^(submit|submit-failed|submission-stop)$"))] | last | .kind) as $k
-    | if $s == "done" and $k != "submit" then "done, no PRs (\($k // "not submitted"); /factory submit opens them)" else $s end' "$1"
+  st=$(jq -r .status "$1")
+  [ "$st" = done ] || { echo "$st"; return; }
+  k=$(submission_kind "$1")
+  [ "$k" = submit ] && { echo done; return; }
+  [ "$k" = none ] && k="not submitted"
+  echo "done, no PRs ($k; /factory submit opens them)"
 }
+
+# Chain check 1's name, shared by chain_check and chain_next.
+check1='last submission is a submit and each slice branch has an open or merged PR'
 
 # The detail of the run's latest pause event, on one line, cut to 300 characters, with backslashes escaped for printf %b.
 pause_reason() {
@@ -82,19 +94,18 @@ default_base() {
 # before it in the list (empty for the first).
 chain_check() {
   s=$scratch/$1/state.json
-  kind=$(jq -r '[.events[] | select(.kind | test("^(submit|submit-failed|submission-stop)$"))] | last | .kind // "none"' "$s")
-  c1='last submission is a submit and each slice branch has an open or merged PR'
-  [ "$kind" = submit ] || { chain_fail "$1" 1 "$c1" "its last submission event is $kind, not submit"; return; }
+  kind=$(submission_kind "$s")
+  [ "$kind" = submit ] || { chain_fail "$1" 1 "$check1" "its last submission event is $kind, not submit"; return; }
   for b in $(jq -r '.slices[].branch' "$s"); do
     err=$(mktemp)
     if ! prs=$(gh pr list --head "$b" --state all --json state 2>"$err"); then
       msg=$(tr '\n' ' ' <"$err" | sed 's/\\/\\\\/g; s/ *$//')
       rm -f "$err"
-      chain_fail "$1" 1 "$c1" "gh pr list failed for $b: $msg"; return
+      chain_fail "$1" 1 "$check1" "gh pr list failed for $b: $msg"; return
     fi
     rm -f "$err"
     open=$(printf '%s' "$prs" | jq '[.[] | select(.state == "OPEN" or .state == "MERGED")] | length' 2>/dev/null)
-    [ "${open:-0}" -gt 0 ] || { chain_fail "$1" 1 "$c1" "$b has no open or merged PR"; return; }
+    [ "${open:-0}" -gt 0 ] || { chain_fail "$1" 1 "$check1" "$b has no open or merged PR"; return; }
   done
   c2='top slice branch on origin and locally is at the top slice'\''s green commit'
   green=$(jq -r '.slices[-1] | select(.green != null) | .checked.sha // empty' "$s")
@@ -140,7 +151,7 @@ chain_next() {
   [ "$separate" = 1 ] && return 0
   case $2 in
     done) next_base "$1" ;;
-    done,*) chain_check "$1" ;; # fails at check 1: a done run with no submit has no PRs to stack on
+    done,*) chain_fail "$1" 1 "$check1" "its last submission event is $(submission_kind "$scratch/$1/state.json"), not submit" ;; # check 1 fails: the last submission event is not submit (PRs may still exist after submit-failed)
     *) failed=1; chain_stop "$1"; return 1 ;;
   esac
 }
