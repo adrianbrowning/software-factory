@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { type Finding, type FixVerdict, readRun, type Workspace } from '../src/run.ts';
 import { recordDecisions, recordReview, runChecks, startReview, submitDomain } from '../src/review.ts';
+import { redact } from '../src/evidence.ts';
 import { fixAfterGreen, planFix } from '../src/observations.ts';
 import { nextSlice } from '../src/workflow.ts';
 import { commit, finding, fixItems, greenWithObservation, listInReport, newRun, review, sh, slice, step, workspace } from './helpers.ts';
@@ -13,8 +14,12 @@ describe('fix items', { concurrency: 4 }, () => {
     using ws = workspace({ maxRounds: 2 });
     await greenWithObservation(ws);
     const run = readRun(ws, 'demo');
-    assert.deepEqual(planFix(ws, run, { bug: 'Crash.', observations: ['thermo-naming'] }).items, [
-      { label: 'bug', line: '- Bug: Crash.' },
+    const secret = `ghp_${'a'.repeat(30)}`;
+    const bug = `Crash. token=${secret}`;
+    const planned = planFix(ws, run, { bug, observations: ['thermo-naming'] }).items;
+    assert.doesNotMatch(planned[0]?.line ?? '', /ghp_/);
+    assert.deepEqual(planned, [
+      { label: 'bug', line: `- Bug: ${redact(bug)}` },
       { label: 'thermo-naming', line: '- thermo-naming: naming' },
     ]);
     assert.deepEqual(planFix(ws, run, { observations: ['thermo-naming'] }).items, [{ label: 'thermo-naming', line: '- thermo-naming: naming' }]);

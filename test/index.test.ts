@@ -631,7 +631,9 @@ describe('used-up fix budget', () => {
     using repo = budgetRepo();
     const { call, ws } = await budgetRun(repo.root, ['Feature']);
     await greenWithObservation(ws, 1);
-    const fixed = await call('factory_fix', { bug: 'Crash.', observations: ['thermo-naming'], reason: 'tidy' }, { confirm: async () => true, select: async () => 'Pause the run' });
+    const asked: string[] = [];
+    const fixed = await call('factory_fix', { bug: 'Crash.', observations: ['thermo-naming'], reason: 'tidy' }, { confirm: async (title: string, body: string) => (asked.push(`${title}\n${body}`), true), select: async () => 'Pause the run' });
+    assert.match(asked[0] ?? '', /^Fix a bug and observations in slice 01 "Feature"\?\n[^\n]*\n\n- Bug: Crash\.\n- thermo-naming: naming/);
     assert.match(fixed.content[0]?.text ?? '', /Slice 01 is back in fix for bug, thermo-naming\./);
     assert.match(readRun(ws, 'demo').events.find(event => event.kind === 'fix-after-green')?.detail ?? '', /: bug, thermo-naming$/);
   });
@@ -644,6 +646,7 @@ describe('used-up fix budget', () => {
     let selects = 0;
     const fixed = await call('factory_fix', { observations: ['thermo-naming'], reason: 'tidy' }, { confirm: async (title: string, body: string) => (asked.push(`${title}\n${body}`), true), select: async () => (selects++, 'Pause the run') });
     assert.equal(asked.length, 1);
+    assert.match(asked[0] ?? '', /^Fix observations in slice 01 "Feature"\?\n/);
     assert.doesNotMatch(asked[0] ?? '', /fix budget/);
     assert.doesNotMatch(fixed.content[0]?.text ?? '', /fix budget|used up/);
     assert.equal(selects, 0);
