@@ -73,7 +73,9 @@ function isPluginRepo(root: string) {
 
 /**
  * The warning for a run whose repository is the software-factory plugin, or undefined when there is nothing to warn about:
- * omp loaded the plugin from another checkout, or from this one before its src/ or agents/ changed. It never refuses:
+ * omp loaded the plugin from another checkout, or from this one while src/ or agents/ files on disk differ from the loaded
+ * content and the commits from `base` to HEAD did not change them (the subtraction is skipped when `base` is undefined or
+ * does not resolve). It never refuses:
  * callers add it to a reply and a run event.
  */
 export function selfHostWarning(repoRoot: string, loaded: LoadedPlugin = loadedPlugin, base?: string) {
