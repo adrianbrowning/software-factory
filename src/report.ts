@@ -70,9 +70,11 @@ function recordFixedObservations(run: Run, slice: Slice, fixItems: string[], own
     const entry = found.length === 1 ? found[0] : undefined;
     if (entry === undefined) continue;
     placeObservations(run, { id: entry.review }, slice, [entry.finding], 'fixed');
-    if (slice.fixPath !== undefined && !slice.fixItems.some(item => item.id === entry.finding.id && item.round === slice.fixFiles)) {
+    if (slice.fixPath !== undefined) {
       const { item } = findingRecord(entry.finding, '', run.decisions);
-      if ('id' in item) slice.fixItems.push({ id: item.id, path: slice.fixPath, round: slice.fixFiles, summary: item.summary });
+      // Two reviews can keep the same id: the later one is listed as `<review>:<id>`, so each gets its own verdict.
+      const id = slice.fixItems.some(existing => existing.id === entry.finding.id) ? `${entry.review}:${entry.finding.id}` : entry.finding.id;
+      slice.fixItems.push({ id, path: slice.fixPath, round: slice.fixFiles, summary: item.summary });
     }
     recorded.push(`${entry.review}:${entry.finding.id}`);
   }
