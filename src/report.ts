@@ -64,13 +64,16 @@ function recordFixedObservations(run: Run, slice: Slice, fixItems: string[], own
   const recorded: string[] = [];
   // Ids resolve against the list as the report found it, so an earlier line cannot make a later bare id unambiguous.
   const initial = { unplaced: [...slice.unplaced] };
+  const placed = new Set<string>();
   for (const line of fixItems) {
     const match = FIXED_LINE.exec(line);
     const prefix = match?.[3]?.toLowerCase();
     if (match === null || prefix === undefined || !own.some(commit => commit.sha.startsWith(prefix))) continue;
     const found = findUnplaced(initial, match[2] ?? '');
     const entry = found.length === 1 ? found[0] : undefined;
-    if (entry === undefined) continue;
+    const key = entry === undefined ? undefined : `${entry.review}:${entry.finding.id}`;
+    if (entry === undefined || key === undefined || placed.has(key)) continue;
+    placed.add(key);
     placeObservations(run, { id: entry.review }, slice, [entry.finding], 'fixed');
     if (slice.fixPath !== undefined) {
       const { item } = findingRecord(entry.finding, '', run.decisions);
@@ -78,7 +81,7 @@ function recordFixedObservations(run: Run, slice: Slice, fixItems: string[], own
       const id = slice.fixItems.some(existing => existing.id === entry.finding.id) ? `${entry.review}:${entry.finding.id}` : entry.finding.id;
       slice.fixItems.push({ id, path: slice.fixPath, round: slice.fixFiles, summary: item.summary });
     }
-    recorded.push(`${entry.review}:${entry.finding.id}`);
+    recorded.push(key);
   }
   return recorded;
 }

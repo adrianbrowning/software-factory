@@ -132,6 +132,16 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
     assert.deepEqual(state(ws).slice.unplaced.map(entry => entry.review), ['01-r0']);
   });
 
+  it('places an observation once when the report names it on several lines, bare and qualified', async () => {
+    using ws = workspace({ maxRounds: 3 });
+    const sha = await redWithObservation(ws);
+    const short = sha.slice(0, 7);
+    const result = await report(ws, sha, [`${OBSERVATION}: fixed in ${short}`, `${OBSERVATION}: fixed in ${short}`, `\`01-r1:${OBSERVATION}\` fixed in ${short}`]);
+    assert.deepEqual(result.fixed, ['01-r1:thermo-naming']);
+    assert.equal(state(ws).ledger.length, 1);
+    assert.equal(state(ws).slice.fixItems.filter(item => item.id === OBSERVATION && item.round === state(ws).slice.fixFiles).length, 1);
+  });
+
   it('does not undo a placement when a later report omits it, and adds nothing when a later report names it again', async () => {
     using ws = workspace({ maxRounds: 3 });
     const sha = await redWithObservation(ws);
