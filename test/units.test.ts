@@ -81,6 +81,30 @@ describe('runShell', () => {
     assert.ok(Buffer.byteLength(result.stdout) <= 1_000_000);
   });
 
+  it('reports stderr as the last stream when stderr gets the last non-whitespace output', async () => {
+    using temp = dir();
+    const result = await runShell('echo out; sleep 0.2; echo err >&2', temp.root, 10_000);
+    assert.equal(result.lastStream, 'stderr');
+  });
+
+  it('ignores a whitespace-only chunk on stderr after stdout output', async () => {
+    using temp = dir();
+    const result = await runShell(`echo out; sleep 0.2; printf ' \\t\\n\\r' >&2`, temp.root, 10_000);
+    assert.equal(result.lastStream, 'stdout');
+  });
+
+  it('reports no last stream when only whitespace is written', async () => {
+    using temp = dir();
+    const result = await runShell(`printf ' \\n'; printf '\\t\\n' >&2`, temp.root, 10_000);
+    assert.equal(result.lastStream, undefined);
+  });
+
+  it('counts a chunk of only non-ASCII whitespace (U+00A0) as output', async () => {
+    using temp = dir();
+    const result = await runShell(`echo out; sleep 0.2; printf '\\302\\240' >&2`, temp.root, 10_000);
+    assert.equal(result.lastStream, 'stderr');
+  });
+
   it('reports a missing working directory as exit 127', async () => {
     using temp = dir();
     const result = await runShell('true', join(temp.root, 'missing'), 1_000);
