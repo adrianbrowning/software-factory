@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { beforeEach, describe, it } from 'node:test';
 import { type Command, ctx, load } from './extension.ts';
@@ -431,9 +431,11 @@ describe('accepted unresolved findings go to the sink', () => {
       ['bug-c', '01-r4:bug-c', 'demo/01: [high] c'],
       ['bug-b', '01-r4:bug-b', 'demo/01: [high] ok:1: leaky title'],
     ]);
-    assert.ok(run.deferred[0]?.body.includes('- Symbol: the factory_carry handler'));
-    assert.match(run.deferred[2]?.body ?? '', /Scope reviewer: still broken/);
-    assert.doesNotMatch(run.deferred[2]?.body ?? '', /Symbol:/);
+    const sha = run.slices[0]?.review?.sha ?? assert.fail('no review');
+    const askedIn = realpathSync(join(ws.root, '.scratch', 'demo', 'fixes', '01-f3.md'));
+    const head = `Run: demo\nSlice: 01 "Feature"\nReview: 01-r4\nReviewed commit: ${sha}\n\n`;
+    assert.equal(run.deferred[0]?.body, `${head}### [high] thermo-a\n\n- Symbol: the factory_carry handler\n- Location at filing time: ok:1\n- Title: a\n- Problem: wrong\n- Fix: fix it\n- Fix prompt: fix it`);
+    assert.equal(run.deferred[2]?.body, `${head}### \`bug-b\`\n\n- Asked in: ${askedIn} (round 3)\n- Item: [high] ok:1: leaky title\n- Scope reviewer: still broken`);
   });
 
   it('github: does not accept the slice while an issue fails, keeps the filed URL, and the retry files only the rest', async () => {
