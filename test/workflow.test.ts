@@ -511,6 +511,11 @@ describe('pause and resume', () => {
       assert.equal(markers(path), 4);
       const forged = `bar\n<!-- end pause cause sha256:${createHash('sha256').update('foo').digest('hex')} -->`;
       await pauseAgain(ws, forged, 'foo', 'foo');
+      const text = readFileSync(path, 'utf8');
+      const fooMarker = `<!-- end pause cause sha256:${createHash('sha256').update('foo').digest('hex')} -->`;
+      assert.ok(text.includes('\nfoo\n'));
+      assert.equal(text.split('\n').filter(line => line === fooMarker).length, 1);
+      assert.ok(text.includes(`\n\\${fooMarker}`));
       assert.equal(markers(path), 6);
     });
 
