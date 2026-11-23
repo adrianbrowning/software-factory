@@ -197,6 +197,17 @@ describe('self-host warning', () => {
       assert.notEqual(first, second);
     });
 
+    it('labels the file-set id only when the listed files are truncated', () => {
+      using repo = tree();
+      const loaded = { hashes: pluginHashes(repo.root), root: repo.root };
+      for (const name of ['a', 'b', 'c', 'd', 'e']) write(repo.root, `src/${name}.ts`, name);
+      assert.doesNotMatch(selfHostWarning(repo.root, loaded) ?? assert.fail('no warning'), /file-set id/);
+      for (const name of ['f', 'g']) write(repo.root, `src/${name}.ts`, name);
+      const text = selfHostWarning(repo.root, loaded) ?? assert.fail('no warning');
+      assert.match(text, /and 2 more \(file-set id [0-9a-f]{7}\)/);
+      assert.doesNotMatch(text, /\(set /);
+    });
+
     it('names a src/ file removed since load', () => {
       using repo = tree();
       const loaded = { hashes: pluginHashes(repo.root), root: repo.root };
