@@ -299,7 +299,7 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
   tool({
     caller: 'main',
     description:
-      'Send green-review observations (observations), a free-text note (note), or both to the deferred sink set in .omp/factory.json: one GitHub issue per item (filed at once, URL stored), or the sink file, written later from the items queued on the run. Each item names the run, slice and review. Ids the run already placed (carried, deferred, fixed or left) are refused, and so are all ids until the slice\'s last green review is a full one (a note alone is not). The slice keeps its green review. Accepted-unresolved findings go to the sink by themselves.',
+      'Send green-review observations (observations), a free-text note (note), or both to the deferred sink set in .omp/factory.json: one GitHub issue per item (filed at once, URL stored), or the sink file, written later from the items queued on the run. Each item names the run, slice and review; an item filed from a finding also names its symbol first, the path:line as the location at filing time, and the commit the review was made on. Ids the run already placed (carried, deferred, fixed or left) are refused, and so are all ids until the slice\'s last green review is a full one (a note alone is not). The slice keeps its green review. Accepted-unresolved findings go to the sink by themselves.',
     label: 'Factory: defer to the sink',
     name: 'factory_defer',
     schema: deferSchema,
