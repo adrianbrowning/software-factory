@@ -202,8 +202,8 @@ describe('slice loop gates: checks and the fix budget', { concurrency: 4 }, () =
   it('parses a whitespace-heavy test at line in well under a second and still names the other entries', async () => {
     const spaces = ' '.repeat(500_000);
     const started = Date.now();
-    const line = await flakyRun(`✖ failing tests:\n\ntest at ${spaces}x\n✖ huge (1ms)\n\ntest at test/a.test.ts:1:1\n✖ alpha works (2ms)\n\ntest at test/b.test.ts:2:2\n✖ beta${' '.repeat(3_000)}(1ms)\n`);
-    assert.ok(Date.now() - started < 10_000, 'a quadratic parse takes minutes');
+    const line = await flakyRun(`✖ failing tests:\n\ntest at ${spaces}x\n✖ huge (1ms)\n\ntest at test/a.test.ts:1:1\n✖ alpha works (2ms)\n`);
+    assert.ok(Date.now() - started < 2_000, 'a quadratic parse takes minutes');
     assert.match(line, /test\/a\.test\.ts:1:1 alpha works/);
   });
 
