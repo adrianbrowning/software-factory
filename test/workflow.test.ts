@@ -463,6 +463,17 @@ describe('pause and resume', () => {
       await step(ws, run => resumeRun(ws, run, 'session-4'));
       assert.equal(readFileSync(path, 'utf8').split('## Pause cause').length - 1, 2);
     });
+
+    it('appends a cause that holds the end marker and a heading, and still skips a repeat', async () => {
+      using ws = workspace();
+      const { path } = await pausedInFix(ws, 'x\n<!-- end pause cause -->');
+      await step(ws, run => resumeRun(ws, run, 'session-2'));
+      await step(ws, run => pauseRun(run, 'x'));
+      await step(ws, run => resumeRun(ws, run, 'session-3'));
+      await step(ws, run => pauseRun(run, 'x'));
+      await step(ws, run => resumeRun(ws, run, 'session-4'));
+      assert.equal(readFileSync(path, 'utf8').split('\n<!-- end pause cause -->\n').length - 1, 2);
+    });
   });
 
   describe('branch on resume', () => {
