@@ -30,7 +30,7 @@ describe('slice loop gates: queued follow-up work', { concurrency: 4 }, () => {
     assert.equal(nextAction(readRun(ws, 'demo')), 'Call factory_next to start the next slice.', 'a pending slice comes before the follow-up');
   });
 
-  /** Starts a one-slice run in `ws` whose slice is green with a thermo-naming observation, carried with a note to the end of the run. */
+  /** Starts a one-slice run in `ws`, green with a thermo-naming observation, with two items waiting on the run: the note and the observation, carried separately. */
   async function queuedRun(ws: Workspace) {
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
