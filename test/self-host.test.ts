@@ -196,6 +196,28 @@ describe('self-host warning', () => {
       const second = selfHostWarning(repo.root, loaded) ?? assert.fail('no warning');
       assert.notEqual(first, second);
     });
+
+    it('names a src/ file removed since load', () => {
+      using repo = tree();
+      const loaded = { hashes: pluginHashes(repo.root), root: repo.root };
+      rmSync(join(repo.root, 'src/index.ts'));
+      assert.match(selfHostWarning(repo.root, loaded) ?? assert.fail('no warning'), /src\/index\.ts/);
+    });
+
+    it('still names the differing file when the base does not resolve', () => {
+      using repo = tree();
+      const loaded = { hashes: pluginHashes(repo.root), root: repo.root };
+      write(repo.root, 'src/index.ts', 'two');
+      assert.match(selfHostWarning(repo.root, loaded, 'no-such-ref') ?? assert.fail('no warning'), /src\/index\.ts/);
+    });
+
+    it('says "and 2 more" when seven files changed', () => {
+      using repo = tree();
+      const loaded = { hashes: pluginHashes(repo.root), root: repo.root };
+      for (const name of ['a', 'b', 'c', 'd', 'e', 'f']) write(repo.root, `src/${name}.ts`, name);
+      write(repo.root, 'src/index.ts', 'two');
+      assert.match(selfHostWarning(repo.root, loaded) ?? assert.fail('no warning'), /and 2 more/);
+    });
   });
   it('a headless run records a start warning, and its resume and review warn without being refused or paused', async () => {
     using repo = tempRepo('factory-selfhost-', { ...FACTORY, 'package.json': PLUGIN, 'ticket.md': '# Add the widget\n\nBuild it.\n' });
@@ -252,7 +274,8 @@ describe('self-host warning', () => {
   });
 
   it('factory_review_start gives no stale warning for src/ the slice commits changed, but names an uncommitted edit to another file', async () => {
-    using repo = tempRepo('factory-selfhost-', { ...FACTORY, 'package.json': PLUGIN, 'src/index.ts': 'one', 'src/other.ts': 'one' });
+    using repo = tempRepo('factory-selfhost-', { ...FACTORY, 'package.json': PLUGIN, 'src/index.ts': 'one', '.gitignore': 'src/other.ts\n' });
+    writeFileSync(join(repo.root, 'src/other.ts'), 'one'); // git-ignored but on disk at load, so the later write is an edit
     setLoadedPlugin({ hashes: pluginHashes(repo.root), root: repo.root });
     const { call } = session(repo.root, false);
     await call('factory_start', { feature: 'demo', source: SOURCE });
@@ -264,10 +287,9 @@ describe('self-host warning', () => {
     commit(ws, 'ok');
     await call('factory_checks', {});
     assert.doesNotMatch(await call('factory_review_start', { skip: [] }), /Warning:/);
-    writeFileSync(join(repo.root, 'src/other.ts'), 'edited');
-    const run = readRun(ws, 'demo');
-    const warning = selfHostWarning(repo.root, undefined, run.baseSha ?? run.baseRef) ?? assert.fail('no warning');
-    assert.match(warning, /src\/other\.ts/);
-    assert.doesNotMatch(warning, /src\/index\.ts/);
+    writeFileSync(join(repo.root, 'src/other.ts'), 'edited'); // git-ignored, so the dirty-tree refusal does not block the review start
+    const reply = await call('factory_review_start', { skip: [] });
+    assert.match(reply, /Warning:.*src\/other\.ts/);
+    assert.doesNotMatch(reply, /src\/index\.ts/);
   });
 });
