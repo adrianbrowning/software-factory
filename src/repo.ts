@@ -68,7 +68,8 @@ export async function alignToSliceBranch(root: string, slice: Slice) {
       await git(root, 'switch', slice.branch);
       return `Switched the checkout from ${from} to ${slice.branch}, the branch of slice ${slice.id}.`;
     } catch {
-      // The switch failed (for example the branch is missing): report the mismatch below.
+      // A failing post-checkout hook fails `git switch` after it moved the checkout: re-read before reporting.
+      if ((await readState(root)).branch === slice.branch) return `Switched the checkout from ${from} to ${slice.branch}, the branch of slice ${slice.id}.`;
     }
   }
   return `Slice ${slice.id} works on ${slice.branch}, but ${from} is checked out and resume did not switch it. Any changes must be committed or removed and ${slice.branch} checked out before the next factory tool.`;

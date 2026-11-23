@@ -594,6 +594,19 @@ describe('used-up fix budget', () => {
     assert.doesNotMatch(same.content[0]?.text ?? '', /Switched the checkout|did not switch/);
   });
 
+  it('reports the switch when a failing post-checkout hook makes git switch exit nonzero', async () => {
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature']);
+    const branch = readRun(ws, 'demo').slices[0]!.branch;
+    await withRun(ws, 'demo', current => pauseRun(current, 'test'));
+    execFileSync('git', ['switch', '-c', 'other'], { cwd: repo.root });
+    const hook = join(repo.root, '.git', 'hooks', 'post-checkout');
+    writeFileSync(hook, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+    const reply = await call('factory_start', { resume: 'demo' }, { confirm: async () => true });
+    assert.match(reply.content[0]?.text ?? '', new RegExp(`from other to ${branch}`));
+    assert.doesNotMatch(reply.content[0]?.text ?? '', /did not switch/);
+  });
+
   it('keeps a paused run that is not stalled paused when the user declines the resume dialog', async () => {
     using repo = budgetRepo();
     const { call, ws } = await budgetRun(repo.root, ['Feature']);
