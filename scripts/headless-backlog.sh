@@ -5,7 +5,7 @@
 # done with a submit is skipped and its top branch is the base of the next run. The batch stops at the first run that
 # does not end done with a submit (paused, stalled, failed, running), names it in the summary and exits 1. A done run
 # (just finished, or skipped) must also pass three chain checks, in this order, before it is the base of the next run:
-# (1) its last submission event is a submit and each of its slice branches has an open or merged PR
+# (1) the last submission event of the run is a submit and each of its slice branches has an open or merged PR
 # (`gh pr list --head <branch> --state all`; a done run with no submit, or a failing `gh pr list`, fails here); (2) its
 # top slice branch, on origin (`git ls-remote origin`) and locally (the next run's --base pins the local branch), is at
 # the top slice's green commit; (3) its recorded baseBranch is the top branch of the run before it in the list, and
@@ -95,13 +95,16 @@ default_base() {
   echo "${ref:-origin/main}"
 }
 
+# Fails check 1 for run $1 whose last submission event is $2, not submit.
+chain_fail_not_submit() { chain_fail "$1" 1 "$check1" "its last submission event is $2, not submit"; }
+
 # Checks run $1, a done run about to become the base of the next run, in order, and returns 1 at the first failure after
 # naming the run and the check in the summary. $2 is its top slice branch. $base still holds the top branch of the run
 # before it in the list (empty for the first).
 chain_check() {
   s=$scratch/$1/state.json
   kind=$(submission_kind "$s")
-  [ "$kind" = submit ] || { chain_fail "$1" 1 "$check1" "its last submission event is $kind, not submit"; return; }
+  [ "$kind" = submit ] || { chain_fail_not_submit "$1" "$kind"; return; }
   for b in $(jq -r '.slices[].branch' "$s"); do
     err=$(mktemp)
     if ! prs=$(gh pr list --head "$b" --state all --json state 2>"$err"); then
@@ -157,7 +160,7 @@ chain_next() {
   [ "$separate" = 1 ] && return 0
   case $2 in
     done) next_base "$1" ;;
-    done,*) chain_fail "$1" 1 "$check1" "its last submission event is $(submission_kind "$scratch/$1/state.json"), not submit" ;; # check 1 fails: the last submission event is not submit (PRs may still exist after submit-failed)
+    done,*) chain_fail_not_submit "$1" "$(submission_kind "$scratch/$1/state.json")" ;; # check 1 fails: the last submission event is not submit (PRs may still exist after submit-failed)
     *) failed=1; chain_stop "$1"; return 1 ;;
   esac
 }
