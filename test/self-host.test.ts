@@ -174,6 +174,18 @@ describe('self-host warning', () => {
       assert.match(selfHostWarning(repo.root, loaded, base) ?? assert.fail('no warning'), /src\/x\.ts/);
     });
 
+    it('warns for a run-edited file whose content at the run base exceeds 1 MiB', () => {
+      using repo = tree();
+      const loaded = { hashes: pluginHashes(repo.root), root: repo.root };
+      write(repo.root, 'src/big.ts', 'x'.repeat(2 * 1024 * 1024));
+      sh(repo.root, 'add', '-A');
+      sh(repo.root, 'commit', '-qm', 'base');
+      const base = sh(repo.root, 'rev-parse', 'HEAD');
+      write(repo.root, 'src/big.ts', 'C');
+      sh(repo.root, 'commit', '-qam', 'slice');
+      assert.match(selfHostWarning(repo.root, loaded, base) ?? assert.fail('no warning'), /src\/big\.ts/);
+    });
+
     it('gives a different warning text when only a file beyond the listed ones differs', () => {
       using repo = tree();
       const loaded = { hashes: pluginHashes(repo.root), root: repo.root };

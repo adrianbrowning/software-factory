@@ -53,7 +53,7 @@ function changedSince(root: string, base: string) {
 /** The content hash of `path` at commit `base`, or undefined when the file is absent there. */
 function hashAtBase(root: string, base: string, path: string) {
   try {
-    return createHash('sha256').update(execFileSync('git', ['show', `${base}:${path}`], { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] })).digest('hex');
+    return createHash('sha256').update(execFileSync('git', ['show', `${base}:${path}`], { cwd: root, maxBuffer: Infinity, stdio: ['ignore', 'pipe', 'ignore'] })).digest('hex');
   } catch {
     return undefined;
   }
