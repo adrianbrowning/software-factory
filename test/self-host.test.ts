@@ -259,10 +259,35 @@ describe('self-host warning', () => {
       assert.doesNotMatch(disk, /run base/);
       assert.match(disk, /differs from the file on disk: src\/index\.ts, src\/x\.ts/);
       const unresolved = selfHostWarning(repo.root, loaded, 'no-such-ref') ?? assert.fail('no warning');
-      assert.match(unresolved, /run base did not resolve/);
-      assert.match(unresolved, /differs from the file on disk: src\/index\.ts, src\/x\.ts/);
+      assert.equal(unresolved, `This run's repository ${repo.root} is the loaded software-factory plugin, and these src/ or agents/ files are stale: loaded copy differs from the file on disk: src/index.ts, src/x.ts. The run base did not resolve, so every file was compared with the file on disk. An interactive run can start a new omp session to load them; a headless run goes on with the loaded gates and needs no action.`);
+      assert.doesNotMatch(unresolved, /\.;/);
       for (const name of ['a', 'b', 'c', 'd', 'e', 'f']) write(repo.root, `src/${name}.ts`, name);
       assert.match(selfHostWarning(repo.root, loaded, base) ?? assert.fail('no warning'), /differs from the file on disk: .* and 2 more \(file-set id [0-9a-f]{7}\)/);
+    });
+
+    it('truncates the run-base clause beyond five files and each clause lists only its own files', () => {
+      using repo = tree();
+      const names = ['a', 'b', 'c', 'd', 'e', 'f'];
+      for (const name of names) write(repo.root, `src/${name}.ts`, 'A');
+      const loaded = { hashes: pluginHashes(repo.root), root: repo.root };
+      for (const name of names) write(repo.root, `src/${name}.ts`, 'B');
+      sh(repo.root, 'add', '-A');
+      sh(repo.root, 'commit', '-qm', 'base');
+      const base = sh(repo.root, 'rev-parse', 'HEAD');
+      for (const name of names) write(repo.root, `src/${name}.ts`, 'C');
+      sh(repo.root, 'commit', '-qam', 'slice');
+      const short = base.slice(0, 7);
+      const baseOnly = selfHostWarning(repo.root, loaded, base) ?? assert.fail('no warning');
+      assert.match(baseOnly, new RegExp(`differs from the run base ${short}: src/a\\.ts, src/b\\.ts, src/c\\.ts, src/d\\.ts, src/e\\.ts and 1 more \\(file-set id [0-9a-f]{7}\\)\\. An interactive`));
+      assert.doesNotMatch(baseOnly, /src\/f\.ts|file on disk/);
+      for (const name of ['g', 'h', 'i', 'j', 'k', 'l', 'm']) write(repo.root, `src/${name}.ts`, name);
+      const both = selfHostWarning(repo.root, loaded, base) ?? assert.fail('no warning');
+      const baseClause = /differs from the run base [0-9a-f]{7}: ([^;]*?); loaded copy/.exec(both)?.[1] ?? assert.fail('no base clause');
+      const diskClause = /differs from the file on disk: (.*?)\. An interactive/.exec(both)?.[1] ?? assert.fail('no disk clause');
+      assert.match(baseClause, /^src\/a\.ts, .*src\/e\.ts and 1 more \(file-set id [0-9a-f]{7}\)$/);
+      assert.match(diskClause, /^src\/g\.ts, src\/h\.ts, src\/i\.ts, src\/j\.ts, src\/k\.ts and 2 more \(file-set id [0-9a-f]{7}\)$/);
+      assert.doesNotMatch(baseClause, /src\/[g-m]\.ts/);
+      assert.doesNotMatch(diskClause, /src\/[a-f]\.ts/);
     });
 
     it('treats a base starting with "-" as unresolved: git writes no file and the on-disk comparison applies', () => {
@@ -324,7 +349,7 @@ describe('self-host warning', () => {
     assert.equal(warningsOf(repo.root, 'demo').length, 1);
     writeFileSync(join(repo.root, 'src/new.ts'), 'x');
     setLoadedPlugin({ hashes: { ...pluginHashes(repo.root), 'src/new.ts': 'old' }, root: repo.root });
-    assert.match(await call('factory_start', { resume: 'demo' }), /\nWarning: .*src\/new\.ts/);
+    assert.match(await call('factory_start', { resume: 'demo' }), /\nWarning: .*loaded copy differs from the file on disk: src\/new\.ts/);
     assert.equal(warningsOf(repo.root, 'demo').length, 2);
     assert.doesNotMatch(await call('factory_start', { resume: 'demo' }), /Warning:/);
     assert.equal(warningsOf(repo.root, 'demo').length, 2);
@@ -355,7 +380,26 @@ describe('self-host warning', () => {
     assert.doesNotMatch(await call('factory_review_start', { skip: [] }), /Warning:/);
     writeFileSync(join(repo.root, 'src/other.ts'), 'edited'); // git-ignored, so the dirty-tree refusal does not block the review start
     const reply = await call('factory_review_start', { skip: [] });
-    assert.match(reply, /Warning:.*src\/other\.ts/);
+    assert.match(reply, /Warning:.*loaded copy differs from the file on disk: src\/other\.ts/);
     assert.doesNotMatch(reply, /src\/index\.ts/);
+  });
+
+  it('factory_review_start names the run base sha for a run-committed file whose loaded copy differs from the base', async () => {
+    using repo = tempRepo('factory-selfhost-', { ...FACTORY, 'package.json': PLUGIN, 'src/index.ts': 'one' });
+    setLoadedPlugin({ hashes: pluginHashes(repo.root), root: repo.root });
+    writeFileSync(join(repo.root, 'src/index.ts'), 'two');
+    sh(repo.root, 'commit', '-qam', 'edit before the run');
+    const { call } = session(repo.root, false);
+    await call('factory_start', { feature: 'demo', source: SOURCE });
+    const ws: Workspace = { config: loadConfig(repo.root), root: repo.root };
+    await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')])));
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    const baseSha = sh(repo.root, 'rev-parse', 'HEAD');
+    writeFileSync(join(repo.root, 'src/index.ts'), 'three');
+    sh(repo.root, 'commit', '-qam', 'slice edits a gate');
+    commit(ws, 'ok');
+    await call('factory_checks', {});
+    const reply = await call('factory_review_start', { skip: [] });
+    assert.ok(reply.includes(`loaded copy differs from the run base ${baseSha.slice(0, 7)}: src/index.ts`), reply);
   });
 });
