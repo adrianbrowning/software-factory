@@ -117,12 +117,18 @@ export function selfHostWarning(repoRoot: string, loaded: LoadedPlugin = loadedP
   const expectedHash = own === undefined
     ? (file: string) => now[file]
     : (file: string) => own.files.has(file) ? hashAtBase(repoRoot, own.commit, file) : now[file];
-  const stale = [...new Set([...Object.keys(now), ...Object.keys(loaded.hashes), ...ownLoaded])]
+  const all = [...new Set([...Object.keys(now), ...Object.keys(loaded.hashes), ...ownLoaded])]
     .filter(file => expectedHash(file) !== loaded.hashes[file])
     .sort();
-  if (stale.length === 0) return undefined;
-  const listed = listStale(stale);
-  return `This run's repository ${repoRoot} is the loaded software-factory plugin, and these src/ or agents/ files changed since omp loaded it, outside the run's own commits: ${listed}. The loaded gates are stale. An interactive run can start a new omp session to load them; a headless run goes on with the loaded gates and needs no action.`;
+  if (all.length === 0) return undefined;
+  const vsBase = own === undefined ? [] : all.filter(file => own.files.has(file));
+  const vsDisk = own === undefined ? all : all.filter(file => !own.files.has(file));
+  const clauses = [
+    ...base !== undefined && own === undefined ? ['The run base did not resolve, so every file was compared with the file on disk.'] : [],
+    ...own !== undefined && vsBase.length > 0 ? [`loaded copy differs from the run base ${own.commit.slice(0, 7)}: ${listStale(vsBase)}`] : [],
+    ...vsDisk.length > 0 ? [`loaded copy differs from the file on disk: ${listStale(vsDisk)}`] : [],
+  ];
+  return `This run's repository ${repoRoot} is the loaded software-factory plugin, and these src/ or agents/ files are stale, outside the run's own commits. ${clauses.join('; ')}. The loaded gates are stale. An interactive run can start a new omp session to load them; a headless run goes on with the loaded gates and needs no action.`;
 }
 
 /** Records the self-host warning for `repoRoot` as a 'warning' run event and returns the reply line for it, or '' when there is none or the run already has a 'warning' event with the same text. */

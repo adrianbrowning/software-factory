@@ -225,6 +225,34 @@ describe('self-host warning', () => {
       assert.match(selfHostWarning(repo.root, loaded, 'no-such-ref') ?? assert.fail('no warning'), /src\/index\.ts/);
     });
 
+    it('names which comparison failed per file: run base for committed files, disk for the rest', () => {
+      using repo = tree();
+      write(repo.root, 'src/x.ts', 'A');
+      const loaded = { hashes: pluginHashes(repo.root), root: repo.root };
+      write(repo.root, 'src/x.ts', 'B');
+      sh(repo.root, 'add', '-A');
+      sh(repo.root, 'commit', '-qm', 'base');
+      const base = sh(repo.root, 'rev-parse', 'HEAD');
+      write(repo.root, 'src/x.ts', 'C');
+      sh(repo.root, 'commit', '-qam', 'slice');
+      const only = selfHostWarning(repo.root, loaded, base) ?? assert.fail('no warning');
+      assert.ok(only.includes(`loaded copy differs from the run base ${base.slice(0, 7)}: src/x.ts`));
+      assert.doesNotMatch(only, /differs from the file on disk/);
+      write(repo.root, 'src/index.ts', 'two');
+      const both = selfHostWarning(repo.root, loaded, base) ?? assert.fail('no warning');
+      assert.match(both, /differs from the run base [0-9a-f]{7}: src\/x\.ts[.;]/);
+      assert.match(both, /differs from the file on disk: src\/index\.ts/);
+      assert.doesNotMatch(both, /run base [0-9a-f]{7}: [^;.]*src\/index\.ts/);
+      const disk = selfHostWarning(repo.root, loaded) ?? assert.fail('no warning');
+      assert.doesNotMatch(disk, /run base/);
+      assert.match(disk, /differs from the file on disk: src\/index\.ts, src\/x\.ts/);
+      const unresolved = selfHostWarning(repo.root, loaded, 'no-such-ref') ?? assert.fail('no warning');
+      assert.match(unresolved, /run base did not resolve/);
+      assert.match(unresolved, /differs from the file on disk: src\/index\.ts, src\/x\.ts/);
+      for (const name of ['a', 'b', 'c', 'd', 'e', 'f']) write(repo.root, `src/${name}.ts`, name);
+      assert.match(selfHostWarning(repo.root, loaded, base) ?? assert.fail('no warning'), /differs from the file on disk: .* and 2 more \(file-set id [0-9a-f]{7}\)/);
+    });
+
     it('treats a base starting with "-" as unresolved: git writes no file and the on-disk comparison applies', () => {
       using repo = tree();
       const loaded = { hashes: pluginHashes(repo.root), root: repo.root };
