@@ -169,14 +169,16 @@ describe('slice loop gates: fixes', { concurrency: 4 }, () => {
     assert.equal((await step(ws, run => completeSlice(ws, run))).status, 'done');
   });
 
-  it('keeps the start of a long bug report in the fix file', async () => {
+  it('keeps the whole long bug report in the fix file', async () => {
     using ws = workspace({ maxRounds: 2 });
     await greenWithObservation(ws);
 
-    const bug = `Saving a draft loses the title.\n${'log line\n'.repeat(600)}`;
+    const bug = `Saving a draft loses the title.\n${'log line\n'.repeat(600)}END-OF-BUG`;
     const fixed = await step(ws, run => fixAfterGreen(ws, run, { bug }, 'Found while demoing.'));
     const fix = readFileSync(fixed.fixPath, 'utf8');
     assert.match(fix, /Found while demoing\.\n\nSaving a draft loses the title\./);
+    assert.equal(fix.match(/^log line$/gm)?.length, 600);
+    assert.ok(fix.indexOf('END-OF-BUG') > fix.lastIndexOf('log line'), 'the end marker follows the last log line');
     assert.doesNotMatch(fix, /\[truncated\]/);
   });
 
