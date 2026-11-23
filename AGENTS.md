@@ -17,3 +17,5 @@ Writing or reviewing omp event hooks, or tests that share module state: follow C
 Prove hook or child-session behavior with a real omp run, see docs/smoke-testing.md.
 
 Tests run on node:test, not vitest; run one test file with `sh scripts/test.sh <file>` or `pnpm run test <file>`.
+
+When a change makes a `src/` file longer, adds a `src/` file, or moves code between `src/` modules, run `sh scripts/test.sh test/structure.test.ts` before committing. It enforces the 1000-line limit per `src/` file, no ticket decision citations in comments, no runtime import cycles, and no re-export shims between `src/` modules.
