@@ -8,6 +8,23 @@ import { nextAction, nextSlice, resolveStall } from '../src/workflow.ts';
 import { settleObservations, commit, finding, green, greenWithObservation, newRun, review, slice, step, workspace } from './helpers.ts';
 
 describe('slice loop gates: fixes', { concurrency: 4 }, () => {
+  it('shows an observation with a symbol as symbol (path:line) in the fix file and one without as path:line', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const opened = await step(ws, run => startReview(ws, run));
+    await review(ws, opened.reviewId, [{ ...finding('thermo', 'observation', 'naming'), symbol: 'the factory_carry handler' }, finding('comments', 'observation', 'stale')]);
+    assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
+    const fixed = await step(ws, run => fixAfterGreen(ws, run, { observations: ['thermo-naming', 'comments-stale'] }, 'tidy'));
+    const fix = readFileSync(fixed.fixPath, 'utf8');
+    assert.match(fix, /## \[observation\] thermo-naming\n\n- Location: the factory_carry handler \(ok:1\)\n/);
+    assert.match(fix, /## \[observation\] comments-stale\n\n- Location: ok:1\n/);
+    const ledger = readRun(ws, 'demo').observations.find(entry => entry.id === 'thermo-naming');
+    assert.equal(ledger?.location, 'the factory_carry handler (ok:1)');
+  });
+
   it('fixes observations the user chose from a green review in a tracked round that needs new checks and a new review', async () => {
     using ws = workspace({ maxRounds: 2 });
     await newRun(ws, [slice('Feature')]);

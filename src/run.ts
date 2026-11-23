@@ -78,6 +78,7 @@ export const findingSchema = z.object({
   path: text.describe('Repo-relative path from the CHANGED FILES list'),
   problem: text.describe('What is wrong and why it matters'),
   severity: z.enum(SEVERITIES),
+  symbol: text.optional().describe('Enclosing function, method, class, tool handler (such as "the factory_carry handler") or test title the finding points at; omit for a finding about a whole file'),
   title: text,
 });
 export type Finding = z.infer<typeof findingSchema>;
