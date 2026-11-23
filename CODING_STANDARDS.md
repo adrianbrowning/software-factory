@@ -25,3 +25,7 @@ Tests that assert on a section of a review data file extract it with `dataSectio
 ## Tests for a changed branch
 
 When a change alters a default or a branch condition, search the tests for the input that the changed branch reads. Check each test that sets that input. Each such test must still prove the behavior its name gives, or you update it. Example: `defaultChoice` changed so that a correctness observation on a `fromEndQueue` slice defaults to fix. Three sibling follow-up tests moved to `missing-test`, but the re-sliced follow-up test was missed, and it then passed for the wrong reason.
+
+## Script env in tests
+
+A test that spawns a script with `process.env` removes from the inherited env every variable the script reads, unless the test sets that variable on purpose. Otherwise the result depends on the developer's or CI's shell. A test reaches fake external binaries through the script's default lookup (for example a fake under the default name on `PATH`) or through an env variable the test sets on purpose, never through whatever the inherited env holds. A test does not set a variable whose default is the behavior under test, because the value masks the default. Example: `test/headless-backlog.test.ts` spawns `scripts/headless-backlog.sh`, which reads `OMP` and `LOG_DIR`. An inherited `OMP` or `LOG_DIR` changed what the script ran and where it logged, so the test deletes both from the env it passes and the script's defaults stay under test (fixed in 678b124).
