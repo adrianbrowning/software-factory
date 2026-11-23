@@ -4,8 +4,9 @@ import { activeSlice, type Run } from './run.ts';
 
 const HEADING = '## Pause cause';
 /**
- * Closes a section on its own line. The cause text has the marker and the heading neutralised, so each of them occurs
- * in the file only as a real section boundary and a section can match only itself.
+ * Closes a section on its own line. A cause has this marker escaped and a leading heading backslash-escaped, so the
+ * marker occurs in the file only as a real section end and no cause line starts a section heading, and a section can
+ * match only itself.
  */
 const END = '<!-- end pause cause -->';
 

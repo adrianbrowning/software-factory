@@ -160,6 +160,7 @@ the reply says so. With a dirty tree or a failed switch it leaves the checkout a
 or remove the changes and check out the slice branch before the next factory tool.
 Resume also moves a running run's active slice from implement to checks when its branch has own commits, the stored
 implementer report lists every one in Commits, and Open names no stop report; it records a resume event.
+Resume also copies the latest pause cause, redacted, once into the open fix file of an active slice in fix, as a `## Pause cause` section; it adds no fix item.
 
 ### Headless runs
 
