@@ -399,16 +399,24 @@ describe('pause and resume', () => {
       return readRun(ws, 'demo').slices[0]!.branch;
     }
 
-    it('switches to the active slice branch when another is checked out and the tree is clean, keeping standing checks', async () => {
+    it('switches to the active slice branch when another is checked out and the tree is clean, keeping standing checks and an open review', async () => {
       using ws = workspace();
       const branch = await pausedOnSliceBranch(ws);
       commit(ws, 'ok');
       await step(ws, run => runChecks(ws, run));
+      const opened = await step(ws, run => startReview(ws, run));
       sh(ws.root, 'switch', '-c', 'other');
+      writeFileSync(join(ws.root, 'elsewhere.txt'), 'y\n');
+      sh(ws.root, 'add', 'elsewhere.txt');
+      sh(ws.root, 'commit', '-qm', 'diverge');
+      const before = readRun(ws, 'demo').slices[0];
       const note = await step(ws, run => resumeRun(ws, run, 'session-2'));
       assert.equal(sh(ws.root, 'branch', '--show-current'), branch);
       assert.match(note ?? '', new RegExp(`from other to ${branch}`));
-      assert.notEqual(readRun(ws, 'demo').slices[0]?.phase, 'checks');
+      const after = readRun(ws, 'demo');
+      assert.equal(after.events.some(event => event.kind === 'review-invalidated'), false);
+      assert.deepEqual([after.slices[0]?.phase, after.slices[0]?.review?.id], [before?.phase, opened.reviewId]);
+      assert.equal(after.slices[0]?.phase, 'review');
     });
 
     it('leaves a dirty checkout alone and names the mismatch', async () => {
