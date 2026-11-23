@@ -72,6 +72,16 @@ export function importsOf(source: string, options: { runtimeOnly?: boolean } = {
   });
 }
 
+/** One message per `export … from` declaration with a relative specifier (named, star, `* as ns`, type-only), at the line it starts. */
+export function reExportsOf(file: string, source: string) {
+  const sf = ts.createSourceFile('x.ts', source, ts.ScriptTarget.Latest, true);
+  return sf.statements.flatMap(statement => {
+    if (!ts.isExportDeclaration(statement) || statement.moduleSpecifier === undefined || !ts.isStringLiteral(statement.moduleSpecifier) || !statement.moduleSpecifier.text.startsWith('.')) return [];
+    const line = sf.getLineAndCharacterOfPosition(statement.getStart(sf)).line + 1;
+    return [`${file}:${line}: re-exports from a local module: ${statement.getText(sf).split('\n')[0]}`];
+  });
+}
+
 /** The first import cycle reachable from each file of `graph`, as `a.ts -> b.ts -> a.ts`. */
 export function cyclesOf(graph: Map<string, string[]>) {
   const cycles = new Map<string, string>();
@@ -197,6 +207,22 @@ describe('structure checks: the helpers', () => {
   it('lets a test file with no matcher-less call through', () => {
     assert.deepEqual(unmatchedAsserts('test/x.test.ts', 'assert.throws(f, /x/);'), []);
   });
+
+  it('refuses a re-export from a relative module, at the line the declaration starts', () => {
+    const source = ["export { a } from './a.ts';", 'export {', '  b,', "} from '../b';", "export * from './c.ts';", "export * as d from './d.ts';", "export type { E } from './e.ts';"].join('\n');
+    assert.deepEqual(reExportsOf('src/x.ts', source), [
+      'src/x.ts:1: re-exports from a local module: export { a } from \'./a.ts\';',
+      'src/x.ts:2: re-exports from a local module: export {',
+      'src/x.ts:5: re-exports from a local module: export * from \'./c.ts\';',
+      'src/x.ts:6: re-exports from a local module: export * as d from \'./d.ts\';',
+      'src/x.ts:7: re-exports from a local module: export type { E } from \'./e.ts\';',
+    ]);
+  });
+
+  it('lets local exports, imports, package re-exports, and re-export text in comments or strings through', () => {
+    const source = ['const x = 1;', 'export { x };', 'export const y = 2;', "import { z } from './z.ts';", "export { q } from 'zod';", "// export { a } from './a.ts';", "const s = \"export { a } from './a.ts'\";"].join('\n');
+    assert.deepEqual(reExportsOf('src/x.ts', source), []);
+  });
 });
 
 const testFiles = tsFilesIn(TESTS);
@@ -220,5 +246,9 @@ describe('structure of src/', () => {
   it('has no runtime import cycle (a type-only import is erased, so it cannot cycle)', () => {
     const graph = new Map(files.map(file => [file.name, importsOf(file.source, { runtimeOnly: true })]));
     assert.deepEqual(cyclesOf(graph), []);
+  });
+
+  it('has no re-export shim between its modules', () => {
+    assert.deepEqual(files.flatMap(file => reExportsOf(`src/${file.name}`, file.source)), []);
   });
 });
