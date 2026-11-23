@@ -137,7 +137,7 @@ export function planDefer(ws: Workspace, run: Run, request: DeferRequest) {
   return {
     drafts: [
       ...(note === undefined ? [] : [draftOf(run, slice, review.id, { detail: redact(note), key: itemKey(review.id, `note:${noted + 1}`), kind: 'note', title: note })]),
-      ...observations.map(finding => draftOf(run, slice, review.id, { detail: renderFinding(finding, run.decisions, '###'), id: finding.id, key: itemKey(review.id, finding.id), kind: 'observation', title: finding.title })),
+      ...observations.map(finding => draftOf(run, slice, review.id, { commit: review.sha, detail: renderFinding(finding, run.decisions, '###', true), id: finding.id, key: itemKey(review.id, finding.id), kind: 'observation', title: finding.title })),
     ],
     observations,
     review,

@@ -149,8 +149,14 @@ const phaseSchema = z.enum(['checks', 'fix', 'implement', 'ready', 'review']);
 /** SHA-1 or SHA-256 object name. */
 const sha = z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/);
 
-/** An observation waiting for placement: the finding, the category that sets its default, and the review it came from. */
-const unplacedSchema = z.object({ category: z.enum(OBSERVATION_CATEGORIES), finding: findingSchema, review: text });
+/** An observation waiting for placement: the finding, the category that sets its default, the review it came from, and that review's commit. */
+const unplacedSchema = z.object({
+  category: z.enum(OBSERVATION_CATEGORIES),
+  finding: findingSchema,
+  review: text,
+  /** The commit the review that kept the observation was made on; a deferred item names it. Absent in state from before it was stored. */
+  sha: sha.optional(),
+});
 export type Unplaced = z.infer<typeof unplacedSchema>;
 
 /**

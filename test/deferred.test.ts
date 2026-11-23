@@ -41,7 +41,7 @@ async function sinkRun(root: string, deferred: unknown, stage: 'active' | 'green
   if (stage === 'green') {
     await withRun(ws, 'demo', run => runChecks(ws, run));
     const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
-    await review(ws, reviewId, [finding('thermo', 'observation', 'naming'), finding('thermo', 'observation', 'style')]);
+    await review(ws, reviewId, [{ ...finding('thermo', 'observation', 'naming'), symbol: 'the factory_carry handler' }, finding('thermo', 'observation', 'style')]);
     await withRun(ws, 'demo', run => recordReview(ws, run));
   }
   return { call, ws };
@@ -61,6 +61,86 @@ describe('deferred config', () => {
     for (const bad of [{ kind: 'jira' }, { kind: 'github', path: 'x.md' }, { kind: 'file', extra: 1 }, 'file', { kind: 'file', path: '/etc/x' }, { kind: 'file', path: '../x.md' }, {}]) {
       assert.throws(() => parseConfig({ deferred: bad }), /deferred/, JSON.stringify(bad));
     }
+  });
+});
+
+describe('deferred item from a finding names symbol, location at filing time and commit', () => {
+  const symbolic = (body: string, sha: string) => {
+    assert.match(body, /- Symbol: the factory_carry handler\n- Location at filing time: ok:1\n/);
+    assert.ok(body.includes(`Reviewed commit: ${sha}`));
+    assert.doesNotMatch(body, /- Location: /);
+  };
+
+  it('github: factory_defer files an issue body naming the symbol first, the path:line at filing time and the reviewed commit; the note carries none', async () => {
+    using gh = fakeGh();
+    using repo = tempRepo('factory-defer-', CHECKS_OK);
+    const { call, ws } = await sinkRun(repo.root, { kind: 'github' });
+    await call('factory_defer', { note: 'Log the parse time.', observations: ['thermo-naming', 'thermo-style'] });
+    const run = readRun(ws, 'demo');
+    const sha = run.slices[0]?.review?.sha ?? assert.fail('no review');
+    const [note, naming, style] = run.deferred;
+    symbolic(naming?.body ?? '', sha);
+    assert.ok(gh.args().includes('Location at filing time: ok:1'));
+    assert.match(style?.body ?? '', /- Location at filing time: ok:1\n/);
+    assert.doesNotMatch(style?.body ?? '', /Symbol:/);
+    assert.doesNotMatch(note?.body ?? '', /Reviewed commit|Location|Symbol/);
+  });
+
+  it('file: factory_defer queues an item with the same symbol, location and commit lines', async () => {
+    using repo = tempRepo('factory-defer-', CHECKS_OK);
+    const { call, ws } = await sinkRun(repo.root, { kind: 'file' });
+    await call('factory_defer', { observations: ['thermo-naming'] });
+    const run = readRun(ws, 'demo');
+    symbolic(run.deferred[0]?.body ?? '', run.slices[0]?.review?.sha ?? assert.fail('no review'));
+  });
+
+  it('factory_place defer files the same lines, with the commit of the review that kept the observation', async () => {
+    using repo = tempRepo('factory-defer-', CHECKS_OK);
+    const { call, ws } = await sinkRun(repo.root, { kind: 'file' }, 'green', { answer: true, asked: [] });
+    await call('factory_place', { placements: [{ id: 'thermo-naming', placement: 'defer' }] });
+    const run = readRun(ws, 'demo');
+    symbolic(run.deferred[0]?.body ?? '', run.slices[0]?.review?.sha ?? assert.fail('no review'));
+  });
+
+  it('headless complete_slice files default-deferred observations with the same lines', async () => {
+    using repo = tempRepo('factory-defer-', CHECKS_OK);
+    const { call, ws } = await sinkRun(repo.root, { kind: 'file' });
+    await call('factory_complete_slice', {});
+    const run = readRun(ws, 'demo');
+    const naming = run.deferred.find(item => item.id === 'thermo-naming');
+    symbolic(naming?.body ?? '', run.slices[0]?.checked?.sha ?? assert.fail('no sha'));
+  });
+
+  it('headless complete_slice files an observation of an earlier review with the commit of that review, not the latest', async () => {
+    using repo = tempRepo('factory-defer-', CHECKS_OK);
+    const { call, ws } = await sinkRun(repo.root, { kind: 'file' }, 'active');
+    const first = async (file: string, findings: ReturnType<typeof finding>[]) => {
+      commit(ws, file);
+      await withRun(ws, 'demo', run => runChecks(ws, run));
+      const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+      const sha = readRun(ws, 'demo').slices[0]?.review?.sha ?? assert.fail('no review');
+      await review(ws, reviewId, findings);
+      await call('factory_review_record', {});
+      return sha;
+    };
+    const early = await first('one', [finding('security', 'high', 'leak'), { ...finding('thermo', 'observation', 'naming'), symbol: 'the factory_carry handler' }]);
+    await first('two', []);
+    const latest = await first('three', []);
+    assert.notEqual(early, latest);
+    await call('factory_complete_slice', {});
+    const body = readRun(ws, 'demo').deferred.find(item => item.id === 'thermo-naming')?.body ?? assert.fail('not deferred');
+    symbolic(body, early);
+    assert.ok(!body.includes(latest));
+  });
+
+  it('an observation stored before the commit was kept defers without a commit line', async () => {
+    using repo = tempRepo('factory-defer-', CHECKS_OK);
+    const { call, ws } = await sinkRun(repo.root, { kind: 'file' });
+    await withRun(ws, 'demo', run => void run.slices[0]?.unplaced.forEach(entry => void delete entry.sha));
+    await call('factory_complete_slice', {});
+    const body = readRun(ws, 'demo').deferred.find(item => item.id === 'thermo-naming')?.body ?? '';
+    assert.match(body, /Location at filing time: ok:1/);
+    assert.doesNotMatch(body, /Reviewed commit/);
   });
 });
 
@@ -191,7 +271,7 @@ describe('factory_defer', () => {
     gh.failOn(2);
     await assert.rejects(call('factory_defer', { observations: ['thermo-naming', 'thermo-style'] }), /HTTP 502[\s\S]*only the rest: thermo-style/);
     assert.deepEqual(readRun(ws, 'demo').deferred.map(item => item.id), ['thermo-naming']);
-    const entry = (name: string) => ({ id: `thermo-${name}`, key: `01-r1:thermo-${name}`, location: 'ok:1', placement: 'deferred', problem: 'wrong', review: '01-r1', slice: '01', title: name });
+    const entry = (name: string) => ({ id: `thermo-${name}`, key: `01-r1:thermo-${name}`, location: name === 'naming' ? 'the factory_carry handler (ok:1)' : 'ok:1', placement: 'deferred', problem: 'wrong', review: '01-r1', slice: '01', title: name });
     assert.deepEqual(readRun(ws, 'demo').observations, [entry('naming')], 'only the observation whose issue was filed is in the ledger');
     await assert.rejects(call('factory_defer', { observations: ['thermo-naming'] }), /Observations already deferred: thermo-naming/);
     gh.healed();
@@ -239,7 +319,7 @@ describe('accepted unresolved findings go to the sink', () => {
       commit(run.ws, file);
       await withRun(run.ws, 'demo', current => runChecks(run.ws, current));
       const { reviewId } = await withRun(run.ws, 'demo', current => startReview(run.ws, current));
-      const a = { ...finding('thermo', 'high', 'a'), ...(decision === undefined ? {} : { decision: 1 }) };
+      const a = { ...finding('thermo', 'high', 'a'), symbol: 'the factory_carry handler', ...(decision === undefined ? {} : { decision: 1 }) };
       const b = { ...finding('bug', 'high', last && leak !== undefined ? 'c' : 'b'), ...(leak === undefined || last ? {} : { title: leak }) };
       const verdicts = last && leak !== undefined ? [{ id: 'thermo-a', reason: 'fixed', status: 'fixed' as const }, { id: 'bug-b', reason: 'still broken', status: 'open' as const }] : undefined;
       await review(run.ws, reviewId, [a, b], undefined, verdicts);
@@ -289,6 +369,23 @@ describe('accepted unresolved findings go to the sink', () => {
     assert.ok(run.slices[0]?.unresolved);
     assert.deepEqual(run.deferred.map(item => item.id).toSorted(), ['bug-b', 'thermo-a']);
     assert.ok(run.deferred.every(item => item.kind === 'unresolved' && item.location.startsWith('https://github.com/o/r/issues/') && item.body.includes('Review: 01-r4')));
+  });
+
+  it('github: an accepted-unresolved finding is filed with symbol, location at filing time and commit; an open fix item gets the commit only', async () => {
+    using _gh = fakeGh();
+    using repo = tempRepo('factory-defer-', CHECKS_OK);
+    const { call, ws } = await fourthReview(repo.root, { kind: 'github' }, undefined, 'leaky title');
+    await call('factory_review_record', {});
+    const run = readRun(ws, 'demo');
+    const sha = run.slices[0]?.review?.sha ?? assert.fail('no review');
+    const filed = (id: string) => run.deferred.find(item => item.id === id)?.body ?? assert.fail(`${id} not filed`);
+    const finding = filed('thermo-a');
+    assert.match(finding, /- Symbol: the factory_carry handler\n- Location at filing time: ok:1\n/);
+    assert.ok(finding.includes(`Reviewed commit: ${sha}`));
+    const open = filed('bug-b');
+    assert.ok(open.includes(`Reviewed commit: ${sha}`));
+    assert.match(open, /Scope reviewer: still broken/);
+    assert.doesNotMatch(open, /Location at filing time|Symbol:/);
   });
 
   it('file: queues them on the run', async () => {
