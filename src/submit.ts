@@ -153,8 +153,8 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
     const stacked = await readStack(ws.root, bottom);
     let base: SubmitBase | undefined;
     if (run.baseBranch !== undefined) {
-      base = { branch: run.baseBranch };
       if (stacked === undefined) base = { branch: run.baseBranch, stack: (await readStack(ws.root, run.baseBranch)) ?? null };
+      else base = { branch: run.baseBranch };
     }
     const plan = planSubmit(stacked, branches, base);
     if (plan.kind === 'init') {
