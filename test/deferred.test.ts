@@ -111,6 +111,28 @@ describe('deferred item from a finding names symbol, location at filing time and
     symbolic(naming?.body ?? '', run.slices[0]?.checked?.sha ?? assert.fail('no sha'));
   });
 
+  it('headless complete_slice files an observation of an earlier review with the commit of that review, not the latest', async () => {
+    using repo = tempRepo('factory-defer-', CHECKS_OK);
+    const { call, ws } = await sinkRun(repo.root, { kind: 'file' }, 'active');
+    const first = async (file: string, findings: ReturnType<typeof finding>[]) => {
+      commit(ws, file);
+      await withRun(ws, 'demo', run => runChecks(ws, run));
+      const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+      const sha = readRun(ws, 'demo').slices[0]?.review?.sha ?? assert.fail('no review');
+      await review(ws, reviewId, findings);
+      await call('factory_review_record', {});
+      return sha;
+    };
+    const early = await first('one', [finding('security', 'high', 'leak'), { ...finding('thermo', 'observation', 'naming'), symbol: 'the factory_carry handler' }]);
+    await first('two', []);
+    const latest = await first('three', []);
+    assert.notEqual(early, latest);
+    await call('factory_complete_slice', {});
+    const body = readRun(ws, 'demo').deferred.find(item => item.id === 'thermo-naming')?.body ?? assert.fail('not deferred');
+    symbolic(body, early);
+    assert.ok(!body.includes(latest));
+  });
+
   it('an observation stored before the commit was kept defers without a commit line', async () => {
     using repo = tempRepo('factory-defer-', CHECKS_OK);
     const { call, ws } = await sinkRun(repo.root, { kind: 'file' });
@@ -297,7 +319,7 @@ describe('accepted unresolved findings go to the sink', () => {
       commit(run.ws, file);
       await withRun(run.ws, 'demo', current => runChecks(run.ws, current));
       const { reviewId } = await withRun(run.ws, 'demo', current => startReview(run.ws, current));
-      const a = { ...finding('thermo', 'high', 'a'), ...(decision === undefined ? {} : { decision: 1 }) };
+      const a = { ...finding('thermo', 'high', 'a'), symbol: 'the factory_carry handler', ...(decision === undefined ? {} : { decision: 1 }) };
       const b = { ...finding('bug', 'high', last && leak !== undefined ? 'c' : 'b'), ...(leak === undefined || last ? {} : { title: leak }) };
       const verdicts = last && leak !== undefined ? [{ id: 'thermo-a', reason: 'fixed', status: 'fixed' as const }, { id: 'bug-b', reason: 'still broken', status: 'open' as const }] : undefined;
       await review(run.ws, reviewId, [a, b], undefined, verdicts);
@@ -349,17 +371,21 @@ describe('accepted unresolved findings go to the sink', () => {
     assert.ok(run.deferred.every(item => item.kind === 'unresolved' && item.location.startsWith('https://github.com/o/r/issues/') && item.body.includes('Review: 01-r4')));
   });
 
-  it('github: an accepted-unresolved finding is filed with symbol, location at filing time and commit lines; an open fix item gets the commit only', async () => {
+  it('github: an accepted-unresolved finding is filed with symbol, location at filing time and commit; an open fix item gets the commit only', async () => {
     using _gh = fakeGh();
     using repo = tempRepo('factory-defer-', CHECKS_OK);
-    const { call, ws } = await fourthReview(repo.root, { kind: 'github' });
+    const { call, ws } = await fourthReview(repo.root, { kind: 'github' }, undefined, 'leaky title');
     await call('factory_review_record', {});
     const run = readRun(ws, 'demo');
     const sha = run.slices[0]?.review?.sha ?? assert.fail('no review');
-    for (const item of run.deferred) {
-      assert.ok(item.body.includes(`Reviewed commit: ${sha}`));
-      assert.match(item.body, /- Location at filing time: ok:1\n/);
-    }
+    const filed = (id: string) => run.deferred.find(item => item.id === id)?.body ?? assert.fail(`${id} not filed`);
+    const finding = filed('thermo-a');
+    assert.match(finding, /- Symbol: the factory_carry handler\n- Location at filing time: ok:1\n/);
+    assert.ok(finding.includes(`Reviewed commit: ${sha}`));
+    const open = filed('bug-b');
+    assert.ok(open.includes(`Reviewed commit: ${sha}`));
+    assert.match(open, /Scope reviewer: still broken/);
+    assert.doesNotMatch(open, /Location at filing time|Symbol:/);
   });
 
   it('file: queues them on the run', async () => {
