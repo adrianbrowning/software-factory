@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { beforeEach, describe, it } from 'node:test';
 import { type Command, ctx, load } from './extension.ts';
@@ -209,6 +209,15 @@ describe('self-host warning', () => {
       const loaded = { hashes: pluginHashes(repo.root), root: repo.root };
       write(repo.root, 'src/index.ts', 'two');
       assert.match(selfHostWarning(repo.root, loaded, 'no-such-ref') ?? assert.fail('no warning'), /src\/index\.ts/);
+    });
+
+    it('treats a base starting with "-" as unresolved: git writes no file and the on-disk comparison applies', () => {
+      using repo = tree();
+      const loaded = { hashes: pluginHashes(repo.root), root: repo.root };
+      write(repo.root, 'src/index.ts', 'two');
+      assert.match(selfHostWarning(repo.root, loaded, '--output=x') ?? assert.fail('no warning'), /src\/index\.ts/);
+      assert.equal(existsSync(join(repo.root, 'x..HEAD')), false);
+      assert.equal(existsSync(join(repo.root, 'x')), false);
     });
 
     it('says "and 2 more" when seven files changed', () => {

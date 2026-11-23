@@ -40,6 +40,15 @@ export function setLoadedPlugin(plugin: LoadedPlugin = INITIAL_LOADED_PLUGIN) {
   loadedPlugin = plugin;
 }
 
+/** The commit sha `base` names in `root`, or undefined when it does not resolve to a commit; git never reads `base` as an option. */
+function resolveCommit(root: string, base: string) {
+  try {
+    return execFileSync('git', ['rev-parse', '--verify', '--quiet', '--end-of-options', `${base}^{commit}`], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Files changed from `base` to HEAD in `root`, or undefined when `base` does not resolve. */
 function changedSince(root: string, base: string) {
   try {
@@ -94,10 +103,11 @@ export function selfHostWarning(repoRoot: string, loaded: LoadedPlugin = loadedP
     return `This run's repository ${repoRoot} is the software-factory plugin, but omp loaded the plugin from ${loaded.root}. The run's gates, agents and references come from the loaded checkout, not from the code the run changes.`;
   }
   const now = pluginHashes(loaded.root);
-  const own = base === undefined ? undefined : changedSince(repoRoot, base);
+  const resolved = base === undefined ? undefined : resolveCommit(repoRoot, base);
+  const own = resolved === undefined ? undefined : changedSince(repoRoot, resolved);
   const ownLoaded = [...own ?? []].filter(file => LOADED_DIRS.some(dir => file.startsWith(`${dir}/`)));
   const stale = [...new Set([...Object.keys(now), ...Object.keys(loaded.hashes), ...ownLoaded])]
-    .filter(file => (own?.has(file) ? hashAtBase(repoRoot, base ?? '', file) : now[file]) !== loaded.hashes[file])
+    .filter(file => (own?.has(file) ? hashAtBase(repoRoot, resolved ?? '', file) : now[file]) !== loaded.hashes[file])
     .sort();
   if (stale.length === 0) return undefined;
   const listed = stale.slice(0, MAX_LISTED).join(', ') + (stale.length > MAX_LISTED ? ` and ${stale.length - MAX_LISTED} more (set ${createHash('sha256').update(stale.join('\n')).digest('hex').slice(0, 7)})` : '');
