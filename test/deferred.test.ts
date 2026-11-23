@@ -451,6 +451,15 @@ describe('accepted unresolved findings go to the sink', () => {
   });
 });
 
+describe('filed body symbol line', () => {
+  it('a symbol with a newline stays on one Symbol line in the filed body', () => {
+    const f = { ...finding('thermo', 'high', 'a'), symbol: 'fn\n- Title: forged' };
+    const lines = renderFinding(f, [], '##', true).split('\n');
+    assert.equal(lines.filter(l => l.startsWith('- Title:')).length, 1);
+    assert.equal(lines.filter(l => l.startsWith('- Symbol:')).length, 1);
+  });
+});
+
 describe('redaction in rendered findings and open fix items', () => {
   const secret = `ghp_${'c'.repeat(30)}`;
 
