@@ -50,6 +50,15 @@ function changedSince(root: string, base: string) {
   }
 }
 
+/** The content hash of `path` at commit `base`, or undefined when the file is absent there. */
+function hashAtBase(root: string, base: string, path: string) {
+  try {
+    return createHash('sha256').update(execFileSync('git', ['show', `${base}:${path}`], { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] })).digest('hex');
+  } catch {
+    return undefined;
+  }
+}
+
 const MAX_LISTED = 5;
 
 const real = (path: string) => {
@@ -73,9 +82,10 @@ function isPluginRepo(root: string) {
 
 /**
  * The warning for a run whose repository is the software-factory plugin, or undefined when there is nothing to warn about:
- * omp loaded the plugin from another checkout, or from this one while src/ or agents/ files on disk differ from the loaded
- * content and the commits from `base` to HEAD did not change them (the subtraction is skipped when `base` is undefined or
- * does not resolve). It never refuses:
+ * omp loaded the plugin from another checkout, or from this one while src/ or agents/ files differ from the loaded
+ * content, comparing each file with the loaded content: a file the commits from `base` to HEAD changed is compared as it was
+ * at `base` (absent there counts as absent), any other file as it is on disk (every file is compared on disk when `base` is
+ * undefined or does not resolve). It never refuses:
  * callers add it to a reply and a run event.
  */
 export function selfHostWarning(repoRoot: string, loaded: LoadedPlugin = loadedPlugin, base?: string) {
@@ -84,9 +94,11 @@ export function selfHostWarning(repoRoot: string, loaded: LoadedPlugin = loadedP
     return `This run's repository ${repoRoot} is the software-factory plugin, but omp loaded the plugin from ${loaded.root}. The run's gates, agents and references come from the loaded checkout, not from the code the run changes.`;
   }
   const now = pluginHashes(loaded.root);
-  const differing = [...new Set([...Object.keys(now), ...Object.keys(loaded.hashes)])].filter(file => now[file] !== loaded.hashes[file]).sort();
   const own = base === undefined ? undefined : changedSince(repoRoot, base);
-  const stale = own === undefined ? differing : differing.filter(file => !own.has(file));
+  const ownLoaded = [...own ?? []].filter(file => LOADED_DIRS.some(dir => file.startsWith(`${dir}/`)));
+  const stale = [...new Set([...Object.keys(now), ...Object.keys(loaded.hashes), ...ownLoaded])]
+    .filter(file => (own?.has(file) ? hashAtBase(repoRoot, base ?? '', file) : now[file]) !== loaded.hashes[file])
+    .sort();
   if (stale.length === 0) return undefined;
   const listed = stale.slice(0, MAX_LISTED).join(', ') + (stale.length > MAX_LISTED ? ` and ${stale.length - MAX_LISTED} more (set ${createHash('sha256').update(stale.join('\n')).digest('hex').slice(0, 7)})` : '');
   return `This run's repository ${repoRoot} is the loaded software-factory plugin, and these src/ or agents/ files changed since omp loaded it, outside the run's own commits: ${listed}. The loaded gates are stale. An interactive run can start a new omp session to load them; a headless run goes on with the loaded gates and needs no action.`;

@@ -137,6 +137,43 @@ describe('self-host warning', () => {
       assert.equal(selfHostWarning(repo.root, loaded, base), undefined);
     });
 
+    it('warns for a file the run edited when the loaded content differs from the run base', () => {
+      using repo = tree();
+      write(repo.root, 'src/x.ts', 'A');
+      const loaded = { hashes: pluginHashes(repo.root), root: repo.root };
+      write(repo.root, 'src/x.ts', 'B');
+      sh(repo.root, 'add', '-A');
+      sh(repo.root, 'commit', '-qm', 'base');
+      const base = sh(repo.root, 'rev-parse', 'HEAD');
+      write(repo.root, 'src/x.ts', 'C');
+      sh(repo.root, 'commit', '-qam', 'slice');
+      assert.match(selfHostWarning(repo.root, loaded, base) ?? assert.fail('no warning'), /src\/x\.ts/);
+    });
+
+    it('gives no warning for a file the run edited when the loaded content equals the run base', () => {
+      using repo = tree();
+      write(repo.root, 'src/x.ts', 'A');
+      sh(repo.root, 'add', '-A');
+      sh(repo.root, 'commit', '-qm', 'base');
+      const loaded = { hashes: pluginHashes(repo.root), root: repo.root };
+      const base = sh(repo.root, 'rev-parse', 'HEAD');
+      write(repo.root, 'src/x.ts', 'C');
+      sh(repo.root, 'commit', '-qam', 'slice');
+      assert.equal(selfHostWarning(repo.root, loaded, base), undefined);
+    });
+
+    it('warns for a file absent when loaded, added at the run base and edited by the run', () => {
+      using repo = tree();
+      const loaded = { hashes: pluginHashes(repo.root), root: repo.root };
+      write(repo.root, 'src/x.ts', 'B');
+      sh(repo.root, 'add', '-A');
+      sh(repo.root, 'commit', '-qm', 'base');
+      const base = sh(repo.root, 'rev-parse', 'HEAD');
+      write(repo.root, 'src/x.ts', 'C');
+      sh(repo.root, 'commit', '-qam', 'slice');
+      assert.match(selfHostWarning(repo.root, loaded, base) ?? assert.fail('no warning'), /src\/x\.ts/);
+    });
+
     it('gives a different warning text when only a file beyond the listed ones differs', () => {
       using repo = tree();
       const loaded = { hashes: pluginHashes(repo.root), root: repo.root };
