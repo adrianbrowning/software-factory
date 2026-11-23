@@ -76,7 +76,7 @@ export function importsOf(source: string, options: { runtimeOnly?: boolean } = {
 export function reExportsOf(file: string, source: string) {
   const sf = ts.createSourceFile('x.ts', source, ts.ScriptTarget.Latest, true);
   return sf.statements.flatMap(statement => {
-    if (!ts.isExportDeclaration(statement) || statement.moduleSpecifier === undefined || !ts.isStringLiteral(statement.moduleSpecifier) || !statement.moduleSpecifier.text.startsWith('.')) return [];
+    if (!ts.isExportDeclaration(statement) || statement.moduleSpecifier === undefined || !ts.isStringLiteral(statement.moduleSpecifier) || !/^\.\.?(?:$|[\\/])/.test(statement.moduleSpecifier.text)) return [];
     const line = sf.getLineAndCharacterOfPosition(statement.getStart(sf)).line + 1;
     return [`${file}:${line}: re-exports from a local module: ${statement.getText(sf).split('\n')[0]}`];
   });
@@ -220,7 +220,7 @@ describe('structure checks: the helpers', () => {
   });
 
   it('lets local exports, imports, package re-exports, and re-export text in comments or strings through', () => {
-    const source = ['const x = 1;', 'export { x };', 'export const y = 2;', "import { z } from './z.ts';", "export { q } from 'zod';", "// export { a } from './a.ts';", "const s = \"export { a } from './a.ts'\";"].join('\n');
+    const source = ['const x = 1;', 'export { x };', 'export const y = 2;', "import { z } from './z.ts';", "export { q } from 'zod';", "export { r } from '.internal/r';", "// export { a } from './a.ts';", "const s = \"export { a } from './a.ts'\";"].join('\n');
     assert.deepEqual(reExportsOf('src/x.ts', source), []);
   });
 });
