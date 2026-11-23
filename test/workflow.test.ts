@@ -474,6 +474,7 @@ describe('pause and resume', () => {
       using ws = workspace();
       const branch = await pausedOnSliceBranch(ws);
       sh(ws.root, 'switch', '--detach');
+      sh(ws.root, 'config', 'core.abbrev', '12');
       const sha = sh(ws.root, 'rev-parse', '--short', 'HEAD');
       const note = await step(ws, run => resumeRun(ws, run, 'session-2'));
       assert.equal(sh(ws.root, 'branch', '--show-current'), branch);
@@ -484,6 +485,7 @@ describe('pause and resume', () => {
       using ws = workspace();
       await pausedOnSliceBranch(ws);
       sh(ws.root, 'switch', '--detach');
+      sh(ws.root, 'config', 'core.abbrev', '12');
       const sha = sh(ws.root, 'rev-parse', '--short', 'HEAD');
       writeFileSync(join(ws.root, 'dirty.txt'), 'x');
       const note = await step(ws, run => resumeRun(ws, run, 'session-2'));
