@@ -246,7 +246,7 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
       const planned = planFix(ws, readRun(ws, feature), params);
       const bugRound = planned.items.some(item => item.label === 'bug');
       const what = planned.items.map(item => item.label).join(', ');
-      const pointer = planned.bug === undefined ? '' : `\n\n${confirmedTextLine(ws, feature, 'fix-bug', 'bug', redact(planned.bug))}`;
+      const pointer = planned.shownBug === undefined ? '' : `\n\n${confirmedTextLine(ws, feature, 'fix-bug', 'bug', planned.shownBug)}`;
       const body = `${params.reason}\n\n${planned.items.map(item => item.line).join('\n')}\n\nThe green review ${planned.review.id} is dropped. The implementer fixes these in fix mode, then the slice gets checks and a new review again.${bugRound ? ' The round counts toward the fix budget.' : ''}${pointer}`;
       const title = !bugRound ? 'Fix observations' : planned.items.length === 1 ? 'Fix a bug' : 'Fix a bug and observations';
       if (!(await gate(ctx, ws, feature, 'fix', `${title} in slice ${planned.slice.id} "${planned.slice.title}"?`, body))) {
@@ -269,8 +269,9 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
       // Refuses empty input, a slice without a green review, an id its green review does not list,
       // or a target that is neither "end" nor a pending slice, without a dialog.
       const planned = planCarry(ws, readRun(ws, feature), params);
+      const shownNote = planned.note === undefined ? undefined : noteText(redact(planned.note));
       const items = [
-        ...(planned.note === undefined ? [] : [`- Note: ${noteText(redact(planned.note))}`]),
+        ...(shownNote === undefined ? [] : [`- Note: ${shownNote}`]),
         ...planned.observations.map(finding => `- ${finding.id}: ${finding.title}`),
       ];
       const what = planned.labels.join(', ');
@@ -279,8 +280,7 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
         destination.kind === 'end'
           ? 'They wait on the run: the next factory_follow_up slice builds them, and its reviewers check them. The retro waits until then.'
           : `Slice ${destination.slice.id} builds these, and its reviewers check them.`;
-      const stored = planned.note === undefined ? undefined : noteText(redact(planned.note));
-      const pointer = stored === undefined ? '' : `\n\n${confirmedTextLine(ws, feature, 'carry-note', 'note', stored)}`;
+      const pointer = shownNote === undefined ? '' : `\n\n${confirmedTextLine(ws, feature, 'carry-note', 'note', shownNote)}`;
       const body = `${items.join('\n')}\n\nSlice ${planned.slice.id} keeps its green review. ${builder}${pointer}`;
       const title = destination.kind === 'end' ? 'Carry to the end of the run?' : `Carry into slice ${destination.slice.id} "${destination.slice.title}"?`;
       if (!(await gate(ctx, ws, feature, 'carry', title, body))) {
