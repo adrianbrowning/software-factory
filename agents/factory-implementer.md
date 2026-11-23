@@ -56,7 +56,7 @@ A correction commit made before `factory_checks` has run, with no fix file (for 
 Then end your final message with these sections, every time, in this order:
 
 1. **Commits**: each commit you made, as `<short sha> <subject>` (from `git log --oneline <parent>..HEAD`). "None" if you made none.
-2. **Fix file items** (fix mode only): each id from the fix file's `## Fix items`, exactly as listed, with `fixed in <sha>`, `already fixed`, or `not a defect: <why>`.
+2. **Fix file items** (fix mode only): each id from the fix file's `## Fix items`, exactly as listed, with `fixed in <sha>`, `already fixed`, or `not a defect: <why>`. A line may also name an observation of the slice that is still unplaced (its id, or `<review>:<id>` when two reviews kept the same id, at the start of the line) with `fixed in <sha>` for a commit of the slice: the factory then records that observation as fixed, adds it to this round's fix items, and the next review's scope reviewer gives it a verdict.
 3. **Behaviors**: each test name → the behavior it proves (seen red: yes — the failure, or no).
 4. **Open**: anything unfinished, and any stop report above.
 
