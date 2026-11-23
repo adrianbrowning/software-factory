@@ -243,7 +243,7 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
       // Refuses a call with neither a bug nor observations, a slice without a green review, an id that is not one of
       // its observations, without a dialog.
       const planned = planFix(ws, readRun(ws, feature), params);
-      const bugRound = planned.items.some(item => item.label === 'bug');
+      const bugRound = planned.items.some(item => item.kind === 'bug');
       const what = planned.items.map(item => item.label).join(', ');
       const pointer = planned.shownBug === undefined ? '' : `\n\n${confirmedTextLine(ws, feature, 'fix-bug', 'bug', planned.shownBug)}`;
       const body = `${params.reason}\n\n${planned.items.map(item => item.line).join('\n')}\n\nThe green review ${planned.review.id} is dropped. The implementer fixes these in fix mode, then the slice gets checks and a new review again.${bugRound ? ' The round counts toward the fix budget.' : ''}${pointer}`;

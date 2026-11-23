@@ -150,8 +150,8 @@ export function planFix(ws: Workspace, run: Run, request: FixRequest) {
   requireUnplaced(run, found.review.id, found.observations);
   const shownBug = bug === undefined ? undefined : redact(bug);
   const items = [
-    ...(shownBug === undefined ? [] : [{ label: 'bug', line: `- Bug: ${shownBug}` }]),
-    ...found.observations.map(finding => ({ label: finding.id, line: `- ${finding.id}: ${finding.title}` })),
+    ...(shownBug === undefined ? [] : [{ kind: 'bug' as const, label: 'bug', line: `- Bug: ${shownBug}` }]),
+    ...found.observations.map(finding => ({ kind: 'observation' as const, label: finding.id, line: `- ${finding.id}: ${finding.title}` })),
   ];
   return { bug, items, shownBug, ...found, groups: found.groups ?? [{ observations: found.observations, review: found.review }] };
 }
