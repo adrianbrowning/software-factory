@@ -39,12 +39,12 @@ export function describeSink(sink: DeferredSink) {
 /** An item to defer, before its sink location is known. */
 export type DeferredDraft = Omit<DeferredItem, 'location'>;
 
-/** A draft naming the run, slice and review it comes from, with `detail` as the rest of the body. */
-export function draftOf(run: Run, slice: Slice, reviewId: string, item: Pick<DeferredItem, 'id' | 'key' | 'kind'> & { detail: string; title: string }): DeferredDraft {
-  const { detail, ...rest } = item;
+/** A draft naming the run, slice and review it comes from, and the `commit` the review was made on when known, with `detail` as the rest of the body. */
+export function draftOf(run: Run, slice: Slice, reviewId: string, item: Pick<DeferredItem, 'id' | 'key' | 'kind'> & { commit?: string | undefined; detail: string; title: string }): DeferredDraft {
+  const { commit, detail, ...rest } = item;
   return {
     ...rest,
-    body: redact(`Run: ${run.feature}\nSlice: ${slice.id} "${slice.title}"\nReview: ${reviewId}\n\n${detail}`),
+    body: redact(`Run: ${run.feature}\nSlice: ${slice.id} "${slice.title}"\nReview: ${reviewId}${commit === undefined ? '' : `\nReviewed commit: ${commit}`}\n\n${detail}`),
     review: reviewId,
     slice: slice.id,
     title: `${run.feature}/${slice.id}: ${evidenceLine(item.title, 200)}`,

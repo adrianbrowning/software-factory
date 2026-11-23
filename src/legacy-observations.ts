@@ -51,11 +51,13 @@ export function carriedKeys(section: string) {
   return listed === NO_KEYS ? [] : listed.split(', ').map(key => key.slice(1, -1));
 }
 
-/** What a rendered finding (`renderFinding`) says of itself: its location, title and problem. Undefined when `section` holds no such observation. */
+/** What a rendered finding (`renderFinding`) says of itself: its location (a deferred item's, read as the ledger shows it: symbol first), title and problem. Undefined when `section` holds no such observation. */
 export function renderedObservation(section: string, id: string) {
   const escaped = id.replace(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
-  const found = new RegExp(`\\[observation\\] ${escaped}\\n\\n- Location: ([^\\n]*)\\n- Title: ([\\s\\S]*?)\\n- Problem: ([\\s\\S]*?)\\n- Fix: `).exec(section);
-  return found === null ? undefined : { location: found[1] ?? '', problem: found[3] ?? '', title: found[2] ?? '' };
+  const found = new RegExp(`\\[observation\\] ${escaped}\\n\\n(?:- Symbol: ([^\\n]*)\\n- Location at filing time: |- Location(?: at filing time)?: )([^\\n]*)\\n- Title: ([\\s\\S]*?)\\n- Problem: ([\\s\\S]*?)\\n- Fix: `).exec(section);
+  if (found === null) return undefined;
+  const place = found[2] ?? '';
+  return { location: found[1] === undefined ? place : `${found[1]} (${place})`, problem: found[4] ?? '', title: found[3] ?? '' };
 }
 
 /** What an entry migrated from a state file holds when no single rendered finding is found for it. */

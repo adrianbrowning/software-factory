@@ -679,7 +679,7 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
   const kept = keptFindings(findings, validation);
   const blocking = kept.filter(finding => finding.severity !== 'observation');
   const observations = kept.filter(finding => finding.severity === 'observation');
-  collectObservations(run, slice, review.id, observations);
+  collectObservations(run, slice, review.id, review.sha, observations);
   const verdicts = review.fixVerdicts ?? [];
   const verdictOf = new Map(verdicts.map(entry => [entry.id, entry]));
   // An item without a closing verdict stays open, so no item passes unchecked; a blocking finding under its id already carries it.
@@ -721,7 +721,8 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
       run,
       (isRecordSlice(slice) ? [] : records).map((record, index) => {
         const id = itemId(record);
-        return draftOf(run, slice, review.id, { detail: record.section, id, key: itemKey(review.id, id ?? `unresolved:${index + 1}`), kind: 'unresolved', title: record.item.summary });
+        const finding = blocking[index];
+        return draftOf(run, slice, review.id, { commit: review.sha, detail: finding === undefined ? record.section : renderFinding(finding, run.decisions, '###', true), id, key: itemKey(review.id, id ?? `unresolved:${index + 1}`), kind: 'unresolved', title: record.item.summary });
       }),
     );
     if (failure !== undefined) {

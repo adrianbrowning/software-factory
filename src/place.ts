@@ -117,7 +117,7 @@ export async function placeObservationBatch(ws: Workspace, run: Run, { items, sl
   for (const group of byReview(items.filter(item => item.choice === 'leave'))) placeObservations(run, group.review, slice, group.findings, 'left');
 
   const deferred = items.filter(item => item.choice === 'defer');
-  const drafts = deferred.map(({ entry }) => draftOf(run, slice, entry.review, { detail: renderFinding(entry.finding, run.decisions, '###'), id: entry.finding.id, key: itemKey(entry.review, entry.finding.id), kind: 'observation', title: entry.finding.title }));
+  const drafts = deferred.map(({ entry }) => draftOf(run, slice, entry.review, { commit: entry.sha, detail: renderFinding(entry.finding, run.decisions, '###', true), id: entry.finding.id, key: itemKey(entry.review, entry.finding.id), kind: 'observation', title: entry.finding.title }));
   const before = run.deferred.length;
   const failure = await deferItems(ws, run, drafts);
   const filed = run.deferred.slice(before);
@@ -148,7 +148,7 @@ export async function placeDefaults(ws: Workspace, run: Run) {
  * holds from that review (so recording a review again adds nothing twice). One the ledger already holds is not added.
  * Every kept observation has a category: submitDomain refuses one without it, and a downgrade needs one.
  */
-export function collectObservations(run: Run, slice: Slice, reviewId: string, observations: Finding[]) {
+export function collectObservations(run: Run, slice: Slice, reviewId: string, reviewSha: string, observations: Finding[]) {
   const others = slice.unplaced.filter(entry => entry.review !== reviewId);
   const fresh = observations.filter(
     finding =>
@@ -159,7 +159,7 @@ export function collectObservations(run: Run, slice: Slice, reviewId: string, ob
     ...others,
     ...fresh.map(finding => {
       if (finding.category === undefined) throw new Error(`Observation "${finding.id}" has no category.`);
-      return { category: finding.category, finding, review: reviewId };
+      return { category: finding.category, finding, review: reviewId, sha: reviewSha };
     }),
   ];
 }
