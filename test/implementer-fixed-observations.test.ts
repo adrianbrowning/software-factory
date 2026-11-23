@@ -154,13 +154,17 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
 
   it('records nothing outside fix mode', async () => {
     using ws = workspace({ maxRounds: 3 });
-    await newRun(ws, [slice('Feature')]);
-    await step(ws, run => nextSlice(ws, run));
-    commit(ws, 'ok');
-    const sha = sh(ws.root, 'rev-parse', 'HEAD');
+    const sha = await redWithObservation(ws);
+    await step(ws, run => {
+      run.slices[0]!.phase = 'implement';
+    });
+    const before = state(ws).slice.fixItems;
     const result = await report(ws, sha, [`${OBSERVATION}: fixed in ${sha.slice(0, 7)}`]);
     assert.deepEqual(result.fixed, []);
-    assert.deepEqual(state(ws).ledger, []);
+    const { ledger, slice: after } = state(ws);
+    assert.deepEqual(ledger, []);
+    assert.deepEqual(after.unplaced.map(entry => entry.finding.id), [OBSERVATION]);
+    assert.deepEqual(after.fixItems, before);
   });
 
   it('through the tools: the reply names it, a headless completion starts no fix round for a misleading-doc one, and the slice completes', async () => {
