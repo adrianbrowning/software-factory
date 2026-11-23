@@ -169,7 +169,8 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
     await withRun(ws, 'demo', run => runChecks(ws, run));
     const first = await withRun(ws, 'demo', run => startReview(ws, run));
     const doc = { ...finding('thermo', 'observation', 'doc'), category: 'misleading-doc' as const, problem: 'doc misleads the reader' };
-    await review(ws, first.reviewId, [finding('scope', 'high', 'gap'), doc]);
+    const gap = { ...finding('thermo', 'observation', 'gap'), category: 'correctness' as const, problem: 'gap remains' };
+    await review(ws, first.reviewId, [finding('scope', 'high', 'gap'), doc, gap]);
     assert.equal((await withRun(ws, 'demo', run => recordReview(ws, run))).kind, 'fix');
     commit(ws, 'fixed.txt');
     const sha = sh(ws.root, 'rev-parse', 'HEAD');
@@ -177,7 +178,7 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
     const implementer = { ...ctx('sub', 'factory-implementer'), cwd: dir.root };
     const reported = await load().get('factory_implementer_report')?.execute('id', { behaviors: [], commits: [`${sha.slice(0, 7)} fix`], fixItems: [`scope-gap: fixed in ${sha.slice(0, 7)}`, `thermo-doc: fixed in ${sha.slice(0, 7)}`], open: [] }, undefined, undefined, implementer);
     assert.match((reported as { content: { text: string }[] }).content[0]?.text ?? '', /thermo-doc/);
-    assert.deepEqual(readRun(ws, 'demo').slices[0]?.unplaced, []);
+    assert.deepEqual(readRun(ws, 'demo').slices[0]?.unplaced.map(entry => entry.finding.id), ['thermo-gap']);
 
     await withRun(ws, 'demo', run => runChecks(ws, run));
     const second = await withRun(ws, 'demo', run => startReview(ws, run));
@@ -186,7 +187,14 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
     // The fix round followed a red review, so the targeted green review is repeated in full before completion.
     const full = await withRun(ws, 'demo', run => startReview(ws, run));
     await review(ws, full.reviewId, []);
-    assert.equal((await withRun(ws, 'demo', run => recordReview(ws, run))).kind, 'green');
+    const recorded = (await call('factory_review_record', {})).content[0]?.text ?? '';
+    assert.match(recorded, /thermo-gap/);
+    assert.doesNotMatch(recorded, /thermo-doc/);
+    const placed = (await call('factory_place', { placements: [] })).content[0]?.text ?? '';
+    assert.doesNotMatch(placed, /thermo-doc/);
+    assert.match(placed, /thermo-gap/, placed);
+    assert.deepEqual(readRun(ws, 'demo').slices[0]?.unplaced, []);
+    assert.deepEqual(readRun(ws, 'demo').observations.map(entry => [entry.id, entry.placement]).filter(([id]) => id === 'thermo-doc'), [['thermo-doc', 'fixed']]);
     const rounds = readRun(ws, 'demo').slices[0]!.fixFiles;
     const text = (await call('factory_complete_slice', {})).content[0]?.text ?? '';
     assert.match(text, /Slice 01 is done on /);
