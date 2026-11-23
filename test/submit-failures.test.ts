@@ -19,22 +19,13 @@ describe('submit: failed stack calls', () => {
     const { failure } = await step(ws, run => submitStack(ws, run));
     assert.ok(failure instanceof Error, 'the failure comes back in the result');
     assert.match(failure.message, new RegExp(`submitted.*not all PR titles were set.*${branches[1]}`, 's'));
+    assert.ok(failure.message.includes(`gh stack submit left these slice branches with no PR: ${branches[1]}.`), failure.message);
     assert.match(failure.message, /\/factory submit again sets them/);
     assert.ok(!failure.message.includes(branches[0] ?? ''), 'a branch with a PR is not named');
     assert.ok(!failure.message.includes(branches[2] ?? ''), 'a branch with a PR is not named');
     assert.doesNotMatch(failure.message, /Already added/);
     assert.deepEqual(gh.calls().filter(call => call.startsWith('api')), [], 'no title is set when a slice has no PR');
     assert.equal(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'a failed title step stays on the top slice gh stack left');
-  });
-
-  it('reports the exact missing-PR error for the slice branch without a PR and sends no PATCH', async () => {
-    using ws = workspace();
-    const branches = await doneRun(ws, 2);
-    using gh = fakeGh({ stack: branches.slice(0, 1), submitted: [{ name: branches[0] ?? '', pr: 101 }, { name: branches[1] ?? '' }] });
-    const { failure } = await step(ws, run => submitStack(ws, run));
-    assert.ok(failure instanceof Error, 'the failure comes back in the result');
-    assert.ok(failure.message.includes(`gh stack submit left these slice branches with no PR: ${branches[1]}.`), failure.message);
-    assert.equal(gh.calls().filter(call => call.includes('PATCH')).length, 0, 'no PATCH is sent');
   });
 
   it('fails saying not all titles were set when a title PATCH fails, staying on the top slice', async () => {
