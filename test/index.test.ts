@@ -9,7 +9,7 @@ import { loadConfig } from '../src/config.ts';
 import { redact } from '../src/evidence.ts';
 import { noteText } from '../src/legacy-observations.ts';
 import { MAX_IDLE_STOP_ATTEMPTS, resetModuleState, stopDecision } from '../src/index.ts';
-import { readRun, type Run, reviewPaths, ticketPath, withRun, type Workspace } from '../src/run.ts';
+import { readRun, type Run, runDir, reviewPaths, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, pauseRun, planSlices, resolveStall } from '../src/workflow.ts';
 import { settleObservations, commit, finding, green, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
@@ -648,6 +648,8 @@ describe('used-up fix budget', () => {
     assert.equal(asked.length, 1);
     assert.match(asked[0] ?? '', /^Fix observations in slice 01 "Feature"\?\n/);
     assert.doesNotMatch(asked[0] ?? '', /fix budget/);
+    assert.doesNotMatch(asked[0] ?? '', /Full (bug|note) \(/);
+    assert.equal(existsSync(join(runDir(ws, 'demo'), 'confirmed')), false);
     assert.doesNotMatch(fixed.content[0]?.text ?? '', /fix budget|used up/);
     assert.equal(selects, 0);
     const slice = readRun(ws, 'demo').slices[0];
@@ -800,9 +802,13 @@ describe('used-up fix budget', () => {
     using repo = budgetRepo();
     const { call, ws } = await budgetRun(repo.root, ['Feature', 'Second', 'Third']);
     await greenWithObservation(ws, 1);
-    const yes = { confirm: async () => true };
+    const asked: string[] = [];
+    const yes = { confirm: async (_title: string, body: string) => (asked.push(body), true) };
 
     const toEnd = await call('factory_carry', { observations: ['thermo-naming'], to: 'end' }, yes);
+    assert.equal(asked.length, 1);
+    assert.doesNotMatch(asked[0] ?? '', /Full (bug|note) \(/);
+    assert.equal(existsSync(join(runDir(ws, 'demo'), 'confirmed')), false);
     assert.match(toEnd.content[0]?.text ?? '', /^Queued thermo-naming for the next factory_follow_up slice \(1 waiting\)/);
     assert.equal(readRun(ws, 'demo').events.at(-1)?.slice, '01');
     await assert.rejects(call('factory_carry', { observations: ['thermo-naming'], to: '03' }, yes), /Observations already carried: thermo-naming\./);
