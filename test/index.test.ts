@@ -1,15 +1,15 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import fs, { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import fs, { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { syncBuiltinESMExports } from 'node:module';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { beforeEach, describe, it, mock } from 'node:test';
 import { type Command, ctx, type Handler, load, type TestContext } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
 import { redact } from '../src/evidence.ts';
 import { noteText } from '../src/legacy-observations.ts';
 import { MAX_IDLE_STOP_ATTEMPTS, resetModuleState, stopDecision } from '../src/index.ts';
-import { readRun, type Run, runDir, reviewPaths, ticketPath, withRun, type Workspace } from '../src/run.ts';
+import { readRun, reportPath, type Run, runDir, reviewPaths, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, pauseRun, planSlices, resolveStall } from '../src/workflow.ts';
 import { seedUnplacedObservation, settleObservations, commit, finding, green, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
@@ -566,6 +566,44 @@ describe('used-up fix budget', () => {
     await call('factory_start', { resume: 'demo' }, ask(true));
     const resumed = readRun(ws, 'demo');
     assert.deepEqual([resumed.status, resumed.slices[0]?.stalled, resumed.slices[0]?.roundLimit], ['running', false, 3]);
+  });
+
+  describe('resume of a committed, reported implement slice', () => {
+    async function resumeWith(open: string, listed: boolean | 'none', commits = true) {
+      using repo = budgetRepo();
+      const { call, ws } = await budgetRun(repo.root, ['Feature']);
+      if (commits) commit(ws, 'f.txt');
+      const sliceNow = readRun(ws, 'demo').slices[0]!;
+      const path = reportPath(ws, 'demo', sliceNow);
+      if (listed !== 'none') {
+        mkdirSync(dirname(path), { recursive: true });
+        const sha = sh(ws.root, 'rev-parse', '--short=12', 'HEAD');
+        writeFileSync(path, `Implementer report:\nCommits:\n${listed ? `- ${sha} c` : '- none'}\nBehaviors:\n- none\nOpen:\n- ${open}\n`);
+      }
+      await withRun(ws, 'demo', current => pauseRun(current, 'test'));
+      const reply = await call('factory_start', { resume: 'demo' }, { confirm: async () => true });
+      const run = readRun(ws, 'demo');
+      return { events: JSON.stringify(run.events), phase: run.slices[0]?.phase, text: reply.content[0]?.text ?? '' };
+    }
+
+    it('moves to checks and says to call factory_checks, recording an event', async () => {
+      const result = await resumeWith('none', true);
+      assert.equal(result.phase, 'checks');
+      assert.match(result.text, /Call factory_checks for slice 01/);
+      assert.match(result.events, /already committed and reported/);
+    });
+
+    it('keeps implement when the report lacks the commit, is missing, or there are no commits', async () => {
+      for (const [listed, commits] of [[false, true], ['none', true], [true, false]] as const) {
+        const result = await resumeWith('none', listed, commits);
+        assert.equal(result.phase, 'implement');
+        assert.match(result.text, /Spawn factory-implementer for slice 01/);
+      }
+    });
+
+    it('keeps implement when Open holds a stop report', async () => {
+      assert.equal((await resumeWith('SLICE TOO BIG: rest', true)).phase, 'implement');
+    });
   });
 
   it('resumes a paused run that is not stalled when factory_start is called as factory_status says', async () => {
