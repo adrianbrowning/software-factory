@@ -254,7 +254,7 @@ describe('observation ledger', () => {
     const fixed = await call('factory_fix', { observations: ['thermo-naming'], reason: 'tidy now' });
     const path = /Fix file: (\S+)/.exec(fixed.content[0]?.text ?? '')?.[1] ?? assert.fail('no fix file path');
     const location = /- Location: ([^\n]*)\n- Title: /.exec(readFileSync(path, 'utf8'))?.[1] ?? assert.fail('no Location line');
-    assert.ok(location.includes('sss') && location.endsWith(' (ok:1)'));
+    assert.match(location, /^s{150,200}.* \(ok:1\)$/);
     assert.ok(!location.includes('TAILMARK') && !location.includes('s'.repeat(500)) && location.length < 300);
 
     using dir2 = repo();
@@ -268,7 +268,8 @@ describe('observation ledger', () => {
     const data = readFileSync(opened.details?.dataFile ?? assert.fail('no data file'), 'utf8');
     const known = /## KNOWN OBSERVATIONS\n\n([\s\S]*?)\n## /.exec(data)?.[1] ?? assert.fail('no KNOWN OBSERVATIONS section');
     const entry = /- `01-r1:thermo-naming` [^\n]*\n/.exec(known)?.[0] ?? assert.fail('no entry');
-    assert.ok(!entry.includes('TAILMARK') && !entry.includes('s'.repeat(500)) && entry.length < 400);
+    assert.match(entry, /\(left\): s{150,200}.* \(ok:1\) - naming\n/);
+    assert.ok(!entry.includes('TAILMARK') && !entry.includes('s'.repeat(500)));
   });
 
   it('marks an entry carried to the reviewed slice as work to check, and an entry carried to the end queue as an ordinary carried one', async () => {
