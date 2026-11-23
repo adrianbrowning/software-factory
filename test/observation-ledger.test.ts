@@ -210,6 +210,16 @@ describe('observation ledger', () => {
     assert.match(data, /#### \[observation\] thermo-style\n\n- Location: ok:1\n/);
   });
 
+  it('writes the symbol-first location into the fix file for observations submitted through factory_review_submit', async () => {
+    using dir = repo();
+    const { call } = await ledgerRun(dir.root, ['naming', 'style'], found => (found.id === 'thermo-naming' ? { ...found, symbol: 'the factory_carry handler' } : found), true);
+    const fixed = await call('factory_fix', { observations: ['thermo-naming', 'thermo-style'], reason: 'tidy now' });
+    const path = /Fix file: (\S+)/.exec(fixed.content[0]?.text ?? '')?.[1] ?? assert.fail('no fix file path');
+    const fix = readFileSync(path, 'utf8');
+    assert.match(fix, /## \[observation\] thermo-naming\n\n- Location: the factory_carry handler \(ok:1\)\n/);
+    assert.match(fix, /## \[observation\] thermo-style\n\n- Location: ok:1\n/);
+  });
+
   it('marks an entry carried to the reviewed slice as work to check, and an entry carried to the end queue as an ordinary carried one', async () => {
     using dir = repo();
     const { call, ws } = await ledgerRun(dir.root, ['naming', 'order']);
