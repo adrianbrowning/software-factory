@@ -678,15 +678,21 @@ describe('used-up fix budget', () => {
     commit(ws, 'ok');
     await green(ws);
     const asked: string[] = [];
-    const bug = `Saving a draft loses the title.\n${'log line\n'.repeat(600)}END`;
-    await call('factory_fix', { bug, reason: 'Found while demoing.' }, { confirm: async (_title: string, body: string) => (asked.push(body), true) });
+    const bug = `Saving a draft loses the title. token=ghp_${'a'.repeat(30)}\n${'log line\n'.repeat(600)}END`;
+    const reply = await call('factory_fix', { bug, reason: 'Found while demoing.' }, { confirm: async (_title: string, body: string) => (asked.push(body), true) });
     const shown = redact(bug);
     const last = (asked[0] ?? '').split('\n').at(-1) ?? '';
     const match = /^Full bug \((\d+) lines, (\d+) characters\): (\S+)$/.exec(last);
     assert.ok(match, last);
     assert.deepEqual([Number(match[1]), Number(match[2])], [shown.split('\n').length, shown.length]);
     assert.ok(resolve(ws.root, match[3] ?? '').startsWith(resolve(ws.root, ws.config.scratchDir, 'demo')));
-    assert.equal(readFileSync(resolve(ws.root, match[3] ?? ''), 'utf8'), shown);
+    const confirmed = readFileSync(resolve(ws.root, match[3] ?? ''), 'utf8');
+    assert.equal(confirmed, shown);
+    assert.doesNotMatch(last, /ghp_/);
+    assert.doesNotMatch(confirmed, /ghp_/);
+    const fixPath = /Fix file: (\S+)/.exec(reply.content[0]?.text ?? '')?.[1];
+    assert.ok(fixPath, reply.content[0]?.text ?? 'no reply');
+    assert.ok(readFileSync(resolve(ws.root, fixPath), 'utf8').includes(confirmed));
   });
 
   it('shows the whole redacted note in the factory_carry dialog, as stored in the waiting queue', async () => {
