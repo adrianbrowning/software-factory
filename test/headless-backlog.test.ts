@@ -31,7 +31,6 @@ const writeState = (n: number, body: string) => `mkdir -p work/issue-${n}; echo 
 /** Tools scripts/headless-backlog.sh and the fake omp run. gh is deliberately not among them. */
 const NO_GH_TOOLS = ['sh', 'git', 'jq', 'sed', 'tr', 'cut', 'grep', 'sort', 'mktemp', 'rm', 'mkdir', 'cat'];
 
-/** Links each of `names` (default NO_GH_TOOLS), found with `command -v` on the test's PATH, into `tools` and returns it. Throws naming a tool that is not found. */
 function linkTools(tools: string, names: readonly string[] = NO_GH_TOOLS): string {
   mkdirSync(tools);
   for (const name of names) {
