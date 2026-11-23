@@ -421,6 +421,21 @@ describe('accepted unresolved findings go to the sink', () => {
     assert.deepEqual(run.deferred.map(item => item.location), ['docs/factory-deferred.md', 'docs/factory-deferred.md']);
   });
 
+  it('file: a finding and an open fix item are queued in that order with their filed titles, bodies and keys', async () => {
+    using repo = tempRepo('factory-defer-', CHECKS_OK);
+    const { call, ws } = await fourthReview(repo.root, { kind: 'file' }, undefined, 'leaky title');
+    await call('factory_review_record', {});
+    const run = readRun(ws, 'demo');
+    assert.deepEqual(run.deferred.map(item => [item.id, item.key, item.title]), [
+      ['thermo-a', '01-r4:thermo-a', 'demo/01: [high] a'],
+      ['bug-c', '01-r4:bug-c', 'demo/01: [high] c'],
+      ['bug-b', '01-r4:bug-b', 'demo/01: [high] ok:1: leaky title'],
+    ]);
+    assert.ok(run.deferred[0]?.body.includes('- Symbol: the factory_carry handler'));
+    assert.match(run.deferred[2]?.body ?? '', /Scope reviewer: still broken/);
+    assert.doesNotMatch(run.deferred[2]?.body ?? '', /Symbol:/);
+  });
+
   it('github: does not accept the slice while an issue fails, keeps the filed URL, and the retry files only the rest', async () => {
     using gh = fakeGh();
     using repo = tempRepo('factory-defer-', CHECKS_OK);
