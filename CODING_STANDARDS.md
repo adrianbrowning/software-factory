@@ -30,7 +30,7 @@ When a change alters a default or a branch condition, search the tests for the i
 
 A test that spawns a script with `process.env` controls every variable the script reads. Otherwise the result depends on the developer's or CI's shell.
 
-- Pin every external binary the script calls through an env variable set to the fake's absolute path. Never reach a fake through the script's default lookup (a fake under the default name on `PATH`): if the default changes, the real binary runs (#409).
+- Pin every external binary that has an env variable (for example `OMP`) through that variable, set to the fake's absolute path. Never reach such a fake through the script's default lookup (a fake under the default name on `PATH`): if the default changes, the real binary runs (#409).
 - A binary the script has no env variable for (for example `gh` in `scripts/headless-backlog.sh`) is reached through a `PATH` the test builds with the fake dir first. A test that must never run the real binary uses a `PATH` that holds only the fake dir and linked tools. The rule above stays for binaries that have an env variable (`OMP`).
 - Test a binary's default in its own test, with a `PATH` that holds only the fake dir and linked tools. A wrong default then fails as not found instead of running the real binary.
 - Remove every other variable the script reads from the inherited env, unless the test sets it on purpose. Do not set a variable whose default is the behavior under test, because the value masks the default.
