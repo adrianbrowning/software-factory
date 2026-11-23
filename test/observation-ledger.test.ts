@@ -173,6 +173,21 @@ describe('observation ledger', () => {
     assert.match(known, /- `01-r1:thermo-style` \(left\): ok:1 - style\n {2}Problem: style misleads the reader/);
   });
 
+  it('shows a symbol before the path in the review data file and the KNOWN OBSERVATIONS line of its observation', async () => {
+    using dir = repo();
+    const { call, ws } = await ledgerRun(dir.root, ['naming', 'style'], found => (found.id === 'thermo-naming' ? { ...found, symbol: 'the factory_carry handler' } : found));
+    await call('factory_leave', { observations: ['thermo-naming', 'thermo-style'] });
+    await withRun(ws, 'demo', run => completeSlice(ws, run));
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    commit(ws, 'second.txt');
+    await call('factory_checks', {});
+    const opened = await call('factory_review_start', { skip: [] });
+    const data = readFileSync(opened.details?.dataFile ?? assert.fail('no data file'), 'utf8');
+    const known = /## KNOWN OBSERVATIONS\n\n([\s\S]*?)\n## /.exec(data)?.[1] ?? assert.fail('no KNOWN OBSERVATIONS section');
+    assert.match(known, /- `01-r1:thermo-naming` \(left\): the factory_carry handler \(ok:1\) - naming/);
+    assert.match(known, /- `01-r1:thermo-style` \(left\): ok:1 - style/);
+  });
+
   it('marks an entry carried to the reviewed slice as work to check, and an entry carried to the end queue as an ordinary carried one', async () => {
     using dir = repo();
     const { call, ws } = await ledgerRun(dir.root, ['naming', 'order']);
