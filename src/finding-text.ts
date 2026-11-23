@@ -11,11 +11,16 @@ export function renderFinding(finding: Finding, decisions: Decision[], heading =
   return `${heading} [${finding.severity}] ${finding.id}\n\n- Location: ${findingLocation(finding)}\n- Title: ${evidence(finding.title, 500)}\n- Problem: ${evidence(finding.problem, 2_000)}\n- Fix: ${evidence(finding.fix, 2_000)}\n- Fix prompt: ${evidence(finding.fix_prompt, 2_000)}${decision}`;
 }
 
+/** The note text the carry dialog shows and the carried-in ticket section stores. */
+export function storedNote(note: string) {
+  return noteText(redact(note));
+}
+
 /** The carried-in sections for `observations` of `review` (green unless it is a red review's) and an optional note: one section per observation (header, the rendered item, and a keys line with its one ledger key, which the receiving slice's data file reads) and the note as its own section without keys. */
 export function carriedSections(run: Run, review: { id: string }, slice: Pick<Slice, 'id' | 'title'>, observations: Finding[], note?: string, green = true) {
   const header = carriedHeader(review.id, slice, green);
   return [
-    ...(note === undefined ? [] : [`${header}\n\n${noteText(redact(note))}\n\n${carriedKeysLine([])}`]),
+    ...(note === undefined ? [] : [`${header}\n\n${storedNote(note)}\n\n${carriedKeysLine([])}`]),
     ...observations.map(finding => `${header}\n\n${renderFinding(finding, run.decisions, '####')}\n\n${carriedKeysLine([itemKey(review.id, finding.id)])}`),
   ];
 }

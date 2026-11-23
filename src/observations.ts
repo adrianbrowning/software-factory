@@ -180,15 +180,15 @@ function unplacedObservations(run: Run, chosen: Set<string>) {
  * does not, and never stalls. The slice earns checks and a new review before it completes.
  */
 export function fixAfterGreen(ws: Workspace, run: Run, request: FixRequest, reason: string) {
-  const { bug, groups, items, observations, review, slice } = planFix(ws, run, request);
+  const { bug, groups, items, observations, review, shownBug, slice } = planFix(ws, run, request);
   const why = evidence(reason, 4_000);
   const records: FixRecord[] = [
-    ...(bug === undefined
+    ...(shownBug === undefined
       ? []
       : [
           {
             item: { kind: 'bug' as const, summary: evidenceLine(`Bug found after green review ${review.id}: ${bug}`) },
-            section: `## Bug found after green review ${review.id}\n\n${why}\n\n${redact(bug)}`,
+            section: `## Bug found after green review ${review.id}\n\n${why}\n\n${shownBug}`,
           },
         ]),
     ...groups.flatMap(group =>

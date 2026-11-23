@@ -2,13 +2,12 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { REVIEWER, VALIDATOR } from './agents.ts';
 import { deferItems, describeSink, itemKey, requireSink } from './deferred.ts';
-import { evidenceHead, evidenceLine, redact } from './evidence.ts';
+import { evidenceHead, evidenceLine } from './evidence.ts';
 import { confirmInteractive, gate } from './gates.ts';
 import { placeObservations } from './ledger.ts';
-import { noteText } from './legacy-observations.ts';
 import { defaultChoice, describeChoice, describePlan, placeObservationBatch, placementSchema, planPlace } from './place.ts';
 import { carryObservations, fixAfterGreen, leaveObservations, planCarry, planDefer, planFix, planLeave } from './observations.ts';
-import { renderFinding } from './finding-text.ts';
+import { renderFinding, storedNote } from './finding-text.ts';
 import { completeSlice, recordReview, startReview, submitDomain, submitValidation } from './review.ts';
 import { validationSchema } from './review-record.ts';
 import { activeSlice, addEvent, findingSchema, fixVerdictSchema, readRun, REQUIRED_REVIEW_DOMAINS, REVIEW_DOMAINS, runDir, skippedDomainsSchema, ticketPath, withRun, type Workspace, writeAtomic } from './run.ts';
@@ -269,7 +268,7 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
       // Refuses empty input, a slice without a green review, an id its green review does not list,
       // or a target that is neither "end" nor a pending slice, without a dialog.
       const planned = planCarry(ws, readRun(ws, feature), params);
-      const shownNote = planned.note === undefined ? undefined : noteText(redact(planned.note));
+      const shownNote = planned.note === undefined ? undefined : storedNote(planned.note);
       const items = [
         ...(shownNote === undefined ? [] : [`- Note: ${shownNote}`]),
         ...planned.observations.map(finding => `- ${finding.id}: ${finding.title}`),
