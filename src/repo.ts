@@ -55,6 +55,25 @@ export async function requireOnBranchClean(root: string, slice: Slice, action: s
   return state.sha;
 }
 
+/**
+ * Checks out the slice branch when another branch (or a detached HEAD) is checked out and the tree is clean. Returns
+ * a note for the orchestrator when it switched or could not, and undefined when the slice branch is already checked out.
+ */
+export async function alignToSliceBranch(root: string, slice: Slice) {
+  const state = await readState(root);
+  if (state.branch === slice.branch) return undefined;
+  const from = state.branch || 'a detached HEAD';
+  if (state.clean) {
+    try {
+      await git(root, 'switch', slice.branch);
+      return `Switched the checkout from ${from} to ${slice.branch}, the branch of slice ${slice.id}.`;
+    } catch {
+      // The switch failed (for example the branch is missing): report the mismatch below.
+    }
+  }
+  return `Slice ${slice.id} works on ${slice.branch}, but ${from} is checked out and resume did not switch it. Any changes must be committed or removed and ${slice.branch} checked out before the next factory tool.`;
+}
+
 /** The slice's commits past its parent, newest first: each full sha with its `--oneline` line (short sha and subject). */
 export async function ownCommits(ws: { root: string }, slice: Slice) {
   const log = await git(ws.root, 'log', '--no-show-signature', '--no-color', '--format=%H %h %s', `${slice.parentBranch}..refs/heads/${slice.branch}`);

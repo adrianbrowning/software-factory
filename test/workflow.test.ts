@@ -391,6 +391,57 @@ describe('pause and resume', () => {
     assert.deepEqual([run.status, run.ownerSessionId], ['running', 'session-2']);
   });
 
+  describe('branch on resume', () => {
+    async function pausedOnSliceBranch(ws: Workspace) {
+      await newRun(ws, [slice('Feature')]);
+      await step(ws, run => nextSlice(ws, run));
+      await step(ws, run => pauseRun(run, 'test'));
+      return readRun(ws, 'demo').slices[0]!.branch;
+    }
+
+    it('switches to the active slice branch when another is checked out and the tree is clean, keeping standing checks', async () => {
+      using ws = workspace();
+      const branch = await pausedOnSliceBranch(ws);
+      commit(ws, 'ok');
+      await step(ws, run => runChecks(ws, run));
+      sh(ws.root, 'switch', '-c', 'other');
+      const note = await step(ws, run => resumeRun(ws, run, 'session-2'));
+      assert.equal(sh(ws.root, 'branch', '--show-current'), branch);
+      assert.match(note ?? '', new RegExp(`from other to ${branch}`));
+      assert.notEqual(readRun(ws, 'demo').slices[0]?.phase, 'checks');
+    });
+
+    it('leaves a dirty checkout alone and names the mismatch', async () => {
+      using ws = workspace();
+      const branch = await pausedOnSliceBranch(ws);
+      sh(ws.root, 'switch', '-c', 'other');
+      writeFileSync(join(ws.root, 'dirty.txt'), 'x');
+      const note = await step(ws, run => resumeRun(ws, run, 'session-2'));
+      assert.equal(sh(ws.root, 'branch', '--show-current'), 'other');
+      assert.equal(existsSync(join(ws.root, 'dirty.txt')), true);
+      assert.match(note ?? '', new RegExp(`${branch}.*but other is checked out.*committed or removed`));
+    });
+
+    it('does not fail the resume when the slice branch is missing, and names the mismatch', async () => {
+      using ws = workspace();
+      const branch = await pausedOnSliceBranch(ws);
+      sh(ws.root, 'switch', '-c', 'other');
+      sh(ws.root, 'branch', '-D', branch);
+      const note = await step(ws, run => resumeRun(ws, run, 'session-2'));
+      assert.equal(sh(ws.root, 'branch', '--show-current'), 'other');
+      assert.match(note ?? '', new RegExp(`other.*${branch}`));
+    });
+
+    it('says nothing when the slice branch is checked out or there is no active slice', async () => {
+      using ws = workspace();
+      await pausedOnSliceBranch(ws);
+      assert.equal(await step(ws, run => resumeRun(ws, run, 'session-2')), undefined);
+      using idle = workspace();
+      await start(idle);
+      assert.equal(await step(idle, run => resumeRun(idle, run, 'session-2')), undefined);
+    });
+  });
+
   /** A paused run of `mode` whose only slice is done and whose retro is recorded, with `waiting` carried items, resumed in a new session. */
   async function resumedFinished(ws: Workspace, mode: Run['mode'], waiting: string[]) {
     await newRun(ws, [slice('Feature')]);
