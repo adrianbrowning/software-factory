@@ -378,9 +378,9 @@ async function setPrTexts(root: string, run: Run, slices: Slice[], stop: Stop | 
   const pairs = slices.map(slice => ({ slice, pr: byName.get(slice.branch) }));
   const missing = pairs.filter(pair => pair.pr === undefined).map(pair => pair.slice.branch);
   if (missing.length > 0) throw new Error(`gh stack submit left these slice branches with no PR: ${missing.join(', ')}.`);
+  const withPr = pairs.flatMap(({ slice, pr }) => (pr === undefined ? [] : [{ slice, pr }]));
   const urls: string[] = [];
-  for (const { slice, pr } of pairs) {
-    if (pr === undefined) continue;
+  for (const { slice, pr } of withPr) {
     const endpoint = `repos/{owner}/{repo}/pulls/${pr.number}`;
     await gh(root, 'api', '-X', 'PATCH', endpoint, '-f', `title=${run.feature}: ${slice.id} ${slice.title}`, '-f', `body=${prBody(run, slice, slices, stop)}`);
     if (pr.url !== undefined) urls.push(pr.url);
