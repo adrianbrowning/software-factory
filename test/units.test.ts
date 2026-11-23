@@ -99,6 +99,12 @@ describe('runShell', () => {
     assert.equal(result.lastStream, undefined);
   });
 
+  it('counts a chunk of only non-ASCII whitespace (U+00A0) as output', async () => {
+    using temp = dir();
+    const result = await runShell(`echo out; sleep 0.2; printf '\\302\\240' >&2`, temp.root, 10_000);
+    assert.equal(result.lastStream, 'stderr');
+  });
+
   it('reports a missing working directory as exit 127', async () => {
     using temp = dir();
     const result = await runShell('true', join(temp.root, 'missing'), 1_000);

@@ -30,7 +30,8 @@ class Tail {
 
 /** True when `chunk` holds a byte other than ASCII whitespace (0x20, 0x09-0x0d). Scans bytes; nothing is decoded or allocated. */
 function hasNonWhitespaceByte(chunk: Buffer) {
-  for (const byte of chunk) {
+  for (let i = 0; i < chunk.length; i++) {
+    const byte = chunk[i]!;
     if (byte !== 0x20 && (byte < 0x09 || byte > 0x0d)) return true;
   }
   return false;
