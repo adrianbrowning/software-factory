@@ -98,10 +98,13 @@ export function cyclesOf(graph: Map<string, string[]>) {
 
 const lineCount = (source: string) => source.split('\n').length - (source.endsWith('\n') ? 1 : 0);
 
-const files = readdirSync(SRC)
-  .filter(name => name.endsWith('.ts'))
-  .sort()
-  .map(name => ({ name, source: readFileSync(join(SRC, name), 'utf8') }));
+const tsFilesIn = (dir: string) =>
+  readdirSync(dir)
+    .filter(name => name.endsWith('.ts'))
+    .sort()
+    .map(name => ({ name, source: readFileSync(join(dir, name), 'utf8') }));
+
+const files = tsFilesIn(SRC);
 
 describe('structure checks: the helpers', () => {
   it('cites a comment with a decision number, by file and line', () => {
@@ -195,10 +198,7 @@ describe('structure checks: the helpers', () => {
   });
  });
 
-const testFiles = readdirSync(TESTS)
-  .filter(name => name.endsWith('.ts'))
-  .sort()
-  .map(name => ({ name, source: readFileSync(join(TESTS, name), 'utf8') }));
+const testFiles = tsFilesIn(TESTS);
 
 describe('structure of test/', () => {
   it('has no assert.throws or assert.rejects without a message matcher', () => {
