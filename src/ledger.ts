@@ -14,7 +14,7 @@ export function findUnplaced(slice: Slice, id: string) {
   return slice.unplaced.filter(entry => entry.finding.id === id || itemKey(entry.review, entry.finding.id) === id);
 }
 
-/** Where a finding points: `<symbol> (<path>:<line>)`, or `<path>:<line>` without a symbol; `path` alone when it names no line. */
+/** Where a finding points: `<path>:<line>`, or `<path>` when it names no line; a finding with a symbol shows `<symbol> (<that place>)`. */
 export function findingLocation(finding: Finding) {
   const place = `${finding.path}${finding.line === undefined ? '' : `:${finding.line}`}`;
   return finding.symbol === undefined ? place : `${finding.symbol} (${place})`;
