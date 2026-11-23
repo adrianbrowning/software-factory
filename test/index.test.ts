@@ -222,7 +222,7 @@ describe('implementer sessions', () => {
     using repo = emptyRepo();
     const { call, implementer } = await startedRun(repo.root);
     const open = ['x'];
-    const refused = (behavior: object) => assert.rejects(call('factory_implementer_report', { behaviors: [behavior], commits: [], open }, implementer));
+    const refused = (behavior: object) => assert.rejects(call('factory_implementer_report', { behaviors: [behavior], commits: [], open }, implementer), /red|one line per item/);
     await refused({ test: 't', behavior: 'b', seenRed: true });
     await refused({ test: 't', behavior: 'b', seenRed: false, red: 'failed' });
     await refused({ test: 't\nx', behavior: 'b', seenRed: false });
@@ -600,7 +600,7 @@ describe('used-up fix budget', () => {
     const { call, ws } = await budgetRun(repo.root, ['Feature']);
     await greenWithObservation(ws, 1);
     const interrupted = { confirm: async () => true, select: async () => Promise.reject(new Error('omp exited')) };
-    await assert.rejects(call('factory_fix', { bug: 'Crash.', reason: 'tidy' }, interrupted));
+    await assert.rejects(call('factory_fix', { bug: 'Crash.', reason: 'tidy' }, interrupted), /omp exited/);
     assert.deepEqual([readRun(ws, 'demo').status, readRun(ws, 'demo').slices[0]?.stalled], ['running', true]);
 
     const asked: string[] = [];

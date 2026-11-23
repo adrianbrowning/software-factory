@@ -76,8 +76,8 @@ describe('headless config', () => {
     assert.ok(Object.values(defaults).every(value => value === 'auto'));
     assert.equal(parseConfig({ headless: { retro: 'stop' } }).headless.retro, 'stop');
     assert.equal(parseConfig({ headless: { retro: 'stop' } }).headless.plan, 'auto');
-    assert.throws(() => parseConfig({ headless: { nope: 'auto' } }));
-    assert.throws(() => parseConfig({ headless: { plan: 'maybe' } }));
+    assert.throws(() => parseConfig({ headless: { nope: 'auto' } }), /Unrecognized key: "nope"/);
+    assert.throws(() => parseConfig({ headless: { plan: 'maybe' } }), /Invalid option/);
   });
 });
 

@@ -7,6 +7,7 @@ import { describe, it } from 'node:test';
 
 const SRC = fileURLToPath(new URL('../src/', import.meta.url));
 const MAX_LINES = 1000;
+const TESTS = fileURLToPath(new URL('./', import.meta.url));
 const TICKET_DECISION = /decisions? \d+/i;
 type Comment = { line: number; text: string };
 
@@ -33,6 +34,25 @@ export function decisionCitations(file: string, source: string) {
   return commentsOf(source).flatMap(comment =>
     comment.text.split('\n').flatMap((text, offset) => (TICKET_DECISION.test(text) ? [`${file}:${comment.line + offset}: comment cites a ticket decision number: ${text.trim()}`] : [])),
   );
+}
+
+/** One message per assert.throws / assert.rejects call with no second argument or only the bare `Error` class as it. */
+export function unmatchedAsserts(file: string, source: string) {
+  const sf = ts.createSourceFile('x.ts', source, ts.ScriptTarget.Latest, true);
+  const found: string[] = [];
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.expression) && node.expression.expression.text === 'assert') {
+      const method = node.expression.name.text;
+      const matcher = node.arguments[1];
+      if (method === 'throws' || method === 'rejects') {
+        const problem = matcher === undefined ? 'has no message matcher' : ts.isIdentifier(matcher) && matcher.text === 'Error' ? 'matches only the bare Error class' : undefined;
+        if (problem) found.push(`${file}:${sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1}: assert.${method} ${problem}`);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return found;
 }
 
 /**
@@ -164,6 +184,25 @@ describe('structure checks: the helpers', () => {
   it('leaves a type-only import out of the runtime graph, and keeps a value import', () => {
     const source = ["import type { B } from './b.ts';", "import { type C } from './c.ts';", "import { d } from './d.ts';", "export type { E } from './e.ts';", "export { f } from './f.ts';"].join('\n');
     assert.deepEqual(importsOf(source, { runtimeOnly: true }), ['c.ts', 'd.ts', 'f.ts']);
+  });
+  it('refuses assert.throws and assert.rejects with no matcher or only the bare Error class, at the line the call starts', () => {
+    const source = ['assert.throws(() => f());', 'assert.rejects(', '  g(),', '  Error,', ');', "assert.throws(() => f(), /x/);", 'assert.rejects(g(), { message: "x" });', 'assert.throws(f, new Error("x"));', 'assert.throws(f, TypeError);', 'assert.throws(f, matcher);', 'assert.doesNotThrow(f);', '// assert.throws(f);', 'const s = "assert.throws(f)";'].join('\n');
+    assert.deepEqual(unmatchedAsserts('test/x.test.ts', source), ['test/x.test.ts:1: assert.throws has no message matcher', 'test/x.test.ts:2: assert.rejects matches only the bare Error class']);
+  });
+
+  it('lets a test file with no matcher-less call through', () => {
+    assert.deepEqual(unmatchedAsserts('test/x.test.ts', 'assert.throws(f, /x/);'), []);
+  });
+ });
+
+const testFiles = readdirSync(TESTS)
+  .filter(name => name.endsWith('.ts'))
+  .sort()
+  .map(name => ({ name, source: readFileSync(join(TESTS, name), 'utf8') }));
+
+describe('structure of test/', () => {
+  it('has no assert.throws or assert.rejects without a message matcher', () => {
+    assert.deepEqual(testFiles.flatMap(file => unmatchedAsserts(`test/${file.name}`, file.source)), []);
   });
 });
 
