@@ -184,7 +184,7 @@ export async function submitStack(ws: Workspace, run: Run, progress: (step: stri
       }
       path = missing.length === 0
         ? 're-submitted the existing gh stack'
-        : `added ${missing.join(', ')} ${onto === undefined ? 'to the existing gh stack' : `onto the gh stack whose top is ${onto}`} and submitted`;
+        : `added ${missing.join(', ')} ${target} and submitted`;
     }
     progress(`pushing ${slices.length} branches and opening or updating draft PRs (gh stack submit; this can take a few minutes)`);
     output = await gh(ws.root, 'stack', 'submit', '--auto');
