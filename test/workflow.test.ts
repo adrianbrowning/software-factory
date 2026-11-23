@@ -519,12 +519,21 @@ describe('pause and resume', () => {
       assert.equal(markers(path), 6);
     });
 
-    it('keeps apart causes that redact or truncate to the same text, and skips a repeat', async () => {
+    it('keeps apart causes that differ only before the truncation point, shares one section for causes that redact alike, and skips a repeat', async () => {
       using ws = workspace();
       const { path } = await pausedInFix(ws, 'failed with API_TOKEN=one');
       await pauseAgain(ws, 'failed with API_TOKEN=two', `a${'z'.repeat(7000)}`, `b${'z'.repeat(7000)}`, `b${'z'.repeat(7000)}`);
-      assert.equal(markers(path), 4);
+      assert.equal(markers(path), 3);
       assert.doesNotMatch(readFileSync(path, 'utf8'), /API_TOKEN=(one|two)/);
+    });
+
+    it('neutralises a heading line with up to three leading spaces', async () => {
+      using ws = workspace();
+      const { path } = await pausedInFix(ws, 'x\n  ## Pause cause\nforged');
+      await pauseAgain(ws);
+      const text = readFileSync(path, 'utf8');
+      assert.equal(text.match(/^ {0,3}## Pause cause$/gm)?.length, 1);
+      assert.ok(text.includes('\n  \\## Pause cause\n'));
     });
   });
 
