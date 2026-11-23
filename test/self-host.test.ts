@@ -128,6 +128,15 @@ describe('self-host warning', () => {
       assert.equal(selfHostWarning(repo.root, loaded, base), undefined);
     });
 
+    it('gives no warning for a committed rename of a non-ASCII src/ file', () => {
+      using repo = tempRepo('factory-selfhost-', { 'package.json': PLUGIN, 'src/café.ts': 'one' });
+      const loaded = { hashes: pluginHashes(repo.root), root: repo.root };
+      const base = sh(repo.root, 'rev-parse', 'HEAD');
+      sh(repo.root, 'mv', 'src/café.ts', 'src/ünï.ts');
+      sh(repo.root, 'commit', '-qm', 'rename');
+      assert.equal(selfHostWarning(repo.root, loaded, base), undefined);
+    });
+
     it('gives a different warning text when only a file beyond the listed ones differs', () => {
       using repo = tree();
       const loaded = { hashes: pluginHashes(repo.root), root: repo.root };

@@ -43,8 +43,8 @@ export function setLoadedPlugin(plugin: LoadedPlugin = INITIAL_LOADED_PLUGIN) {
 /** Files changed from `base` to HEAD in `root`, or undefined when `base` does not resolve. */
 function changedSince(root: string, base: string) {
   try {
-    const out = execFileSync('git', ['diff', '--name-only', '--no-renames', `${base}..HEAD`], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-    return new Set(out.split('\n').filter(Boolean));
+    const out = execFileSync('git', ['diff', '--name-only', '--no-renames', '-z', `${base}..HEAD`], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    return new Set(out.split('\0').filter(Boolean));
   } catch {
     return undefined;
   }
