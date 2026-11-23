@@ -275,6 +275,7 @@ describe('self-host warning', () => {
 
   it('factory_review_start gives no stale warning for src/ the slice commits changed, but names an uncommitted edit to another file', async () => {
     using repo = tempRepo('factory-selfhost-', { ...FACTORY, 'package.json': PLUGIN, 'src/index.ts': 'one', '.gitignore': 'src/other.ts\n' });
+    writeFileSync(join(repo.root, 'src/other.ts'), 'one'); // git-ignored but on disk at load, so the later write is an edit
     setLoadedPlugin({ hashes: pluginHashes(repo.root), root: repo.root });
     const { call } = session(repo.root, false);
     await call('factory_start', { feature: 'demo', source: SOURCE });
