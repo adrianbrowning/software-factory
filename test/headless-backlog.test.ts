@@ -548,7 +548,7 @@ describe('scripts/headless-backlog.sh without gh on PATH', () => {
 describe('linkTools', () => {
   it('throws naming a tool that is not found', () => {
     using dir = tempDir('tools-');
-    assert.throws(() => linkTools(join(dir.root, 'tools'), ['sh', 'no-such-tool-xyz']), /no-such-tool-xyz/);
+    assert.throws(() => linkTools(join(dir.root, 'tools'), ['sh', 'no-such-tool-xyz']), /tool not found on PATH: no-such-tool-xyz/);
   });
 
   it('links exactly NO_GH_TOOLS and no gh by default', () => {
