@@ -102,8 +102,9 @@ export function targetingAfter(review: { id: string; sha: string }, domains: rea
   return { base: review.sha, domains: [...new Set(domains)], from: review.id };
 }
 
-/** A finding as a fix record in `group`: its id and summary `[severity] <location>: title` as the fix item. */
-export function findingRecord(finding: Finding, group: string, decisions: Decision[]): FixRecord {
+/** A finding as a fix record in `group`: its id and summary `[severity] <location>: title` as the fix item, and its location-free `title`. */
+export function findingRecord(finding: Finding, group: string, decisions: Decision[]): FixRecord & { title: string } {
+  const title = `[${finding.severity}] ${evidenceLine(finding.title, 500)}`;
   const summary = `[${finding.severity}] ${findingLocation(finding)}: ${evidenceLine(finding.title, 500)}`;
-  return { group, item: { id: finding.id, summary }, section: renderFinding(finding, decisions, '###') };
+  return { group, item: { id: finding.id, summary }, section: renderFinding(finding, decisions, '###'), title };
 }

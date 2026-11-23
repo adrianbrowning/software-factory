@@ -705,8 +705,9 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
   slice.targeting = targetingAfter(review, [...blocking.map(finding => finding.domain), ...(open.length > 0 ? (['scope'] as const) : [])]);
   const blockingIds = [...blocking.map(finding => finding.id), ...open.map(item => `${item.id} (open fix item)`)];
   const blockingDetail = `${detail}; blocking ${blockingIds.join(', ')}`;
+  const findingRecords = blocking.map(finding => findingRecord(finding, `## Blocking review findings from ${review.id}`, run.decisions));
   const records: FixRecord[] = [
-    ...blocking.map(finding => findingRecord(finding, `## Blocking review findings from ${review.id}`, run.decisions)),
+    ...findingRecords,
     ...open.map(item => ({ group: `## Open fix items from ${review.id}`, item: { id: item.id, summary: item.summary }, section: renderOpenItem(item, verdictOf.get(item.id)) })),
   ];
   if (run.mode === 'headless' && slice.fixRounds >= slice.roundLimit) {
@@ -722,7 +723,7 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
       isRecordSlice(slice)
         ? []
         : [
-            ...blocking.map(finding => draftOf(run, slice, review.id, { commit: review.sha, detail: renderFinding(finding, run.decisions, '###', true), id: finding.id, key: itemKey(review.id, finding.id), kind: 'unresolved', title: `[${finding.severity}] ${evidenceLine(finding.title, 500)}` })),
+            ...blocking.map((finding, index) => draftOf(run, slice, review.id, { commit: review.sha, detail: renderFinding(finding, run.decisions, '###', true), id: finding.id, key: itemKey(review.id, finding.id), kind: 'unresolved', title: findingRecords[index]!.title })),
             ...open.map(item => draftOf(run, slice, review.id, { commit: review.sha, detail: renderOpenItem(item, verdictOf.get(item.id)), id: item.id, key: itemKey(review.id, item.id), kind: 'unresolved', title: item.summary })),
           ],
     );
