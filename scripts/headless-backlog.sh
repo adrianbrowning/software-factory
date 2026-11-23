@@ -221,7 +221,7 @@ for ref in "$@"; do
 done
 
 printf '\nSummary:\n%b' "$summary"
-exit $failed
+return $failed
 }
 
 main "$@"; exit $?
