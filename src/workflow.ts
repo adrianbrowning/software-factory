@@ -853,7 +853,6 @@ function submittedAfterStackReady(run: Run) {
 export function nextAction(run: Run): string {
   if (run.status === 'intake') return 'Clarify the issue with the user, then propose slices with factory_plan.';
   if (run.status === 'done') {
-    if (run.waiting.length > 0) return waitingNotice(run);
     if (run.mode === 'headless' && run.landOn === undefined && submittedAfterStackReady(run)) return 'The draft PRs are open; merging stays manual.';
     return run.landOn === undefined
       ? `The stack is ready. Tell the user they can open draft PRs with /factory submit ${run.feature}.`
