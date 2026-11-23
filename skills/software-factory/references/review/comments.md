@@ -53,6 +53,7 @@ Your task gives you the review id and the data file (PR metadata, full diff, cha
 - Missing comments
 - Generated files, vendored code, lockfiles
 - Comment formatting the linter catches
+- The deferred sink file (the `deferred` file path in `.omp/factory.json`, for example `DEFERRED.md`): it is a ledger of items as filed. Its path:line hints are as of filing, so do not report them as stale or misleading, and do not review that file's wording
 
 ---
 
