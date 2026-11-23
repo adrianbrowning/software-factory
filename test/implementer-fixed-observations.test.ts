@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { readRun, type Workspace } from '../src/run.ts';
+import { ctx, load } from './extension.ts';
+
+import { readRun, type Workspace, withRun } from '../src/run.ts';
 import { submitImplementerReport } from '../src/report.ts';
 import { recordReview, runChecks, startReview } from '../src/review.ts';
 import { nextSlice } from '../src/workflow.ts';
-import { commit, finding, fixItems, newRun, review, sh, slice, step, workspace } from './helpers.ts';
+import { HEADLESS_FILES, commit, tempRepo, finding, headlessSubmitRun, fixItems, newRun, review, sh, slice, step, workspace } from './helpers.ts';
 
 const OBSERVATION = 'thermo-naming';
 
@@ -53,7 +55,10 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
     await step(ws, run => runChecks(ws, run));
     const opened = await step(ws, run => startReview(ws, run));
     assert.match(fixItems(opened.dataFile), /- `thermo-naming` \(/);
-    const verdicts = readRun(ws, 'demo').slices[0]!.fixItems.map(item => ({ id: item.id, reason: 'still wrong', status: 'open' as const }));
+    const verdicts = readRun(ws, 'demo').slices[0]!.fixItems.map(item =>
+      item.id === OBSERVATION ? { id: item.id, reason: 'still wrong', status: 'open' as const } : { id: item.id, reason: 'the diff fixes it', status: 'fixed' as const },
+    );
+    assert.ok(verdicts.some(verdict => verdict.id !== OBSERVATION), 'the round has another fix item, which is fixed');
     await review(ws, opened.reviewId, [], [], verdicts);
     assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'fix');
   });
@@ -103,5 +108,35 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
     const result = await report(ws, sha, [`${OBSERVATION}: fixed in ${sha.slice(0, 7)}`]);
     assert.deepEqual(result.fixed, []);
     assert.deepEqual(state(ws).ledger, []);
+  });
+
+  it('through the tools: the reply names it, a headless completion starts no fix round for a misleading-doc one, and the slice completes', async () => {
+    using dir = tempRepo('factory-fixed-obs-', HEADLESS_FILES);
+    const { call, ws } = await headlessSubmitRun(dir.root, ['Feature'], {}, {}, async () => '');
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const first = await withRun(ws, 'demo', run => startReview(ws, run));
+    const doc = { ...finding('thermo', 'observation', 'doc'), category: 'misleading-doc' as const, problem: 'doc misleads the reader' };
+    await review(ws, first.reviewId, [finding('scope', 'high', 'gap'), doc]);
+    assert.equal((await withRun(ws, 'demo', run => recordReview(ws, run))).kind, 'fix');
+    commit(ws, 'fixed.txt');
+    const sha = sh(ws.root, 'rev-parse', 'HEAD');
+
+    const implementer = { ...ctx('sub', 'factory-implementer'), cwd: dir.root };
+    const reported = await load().get('factory_implementer_report')?.execute('id', { behaviors: [], commits: [`${sha.slice(0, 7)} fix`], fixItems: [`scope-gap: fixed in ${sha.slice(0, 7)}`, `thermo-doc: fixed in ${sha.slice(0, 7)}`], open: [] }, undefined, undefined, implementer);
+    assert.match((reported as { content: { text: string }[] }).content[0]?.text ?? '', /thermo-doc/);
+    assert.deepEqual(readRun(ws, 'demo').slices[0]?.unplaced, []);
+
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const second = await withRun(ws, 'demo', run => startReview(ws, run));
+    await review(ws, second.reviewId, []);
+    assert.equal((await withRun(ws, 'demo', run => recordReview(ws, run))).kind, 'green');
+    // The fix round followed a red review, so the targeted green review is repeated in full before completion.
+    const full = await withRun(ws, 'demo', run => startReview(ws, run));
+    await review(ws, full.reviewId, []);
+    assert.equal((await withRun(ws, 'demo', run => recordReview(ws, run))).kind, 'green');
+    const rounds = readRun(ws, 'demo').slices[0]!.fixFiles;
+    const text = (await call('factory_complete_slice', {})).content[0]?.text ?? '';
+    assert.match(text, /Slice 01 is done on /);
+    assert.equal(readRun(ws, 'demo').slices[0]?.fixFiles, rounds);
   });
 });
