@@ -28,6 +28,14 @@ class Tail {
   }
 }
 
+/** True when `chunk` holds a byte other than ASCII whitespace (0x20, 0x09-0x0d). Scans bytes; nothing is decoded or allocated. */
+function hasNonWhitespaceByte(chunk: Buffer) {
+  for (const byte of chunk) {
+    if (byte !== 0x20 && (byte < 0x09 || byte > 0x0d)) return true;
+  }
+  return false;
+}
+
 /**
  * Runs `command` through `sh -c` (with `env`, default the process environment) in its own process group, so a timeout or `signal` abort kills the whole tree.
  */
@@ -61,11 +69,11 @@ export function runShell(command: string, cwd: string, timeoutMs: number, signal
   signal?.addEventListener('abort', stop, { once: true });
   child.stdout.on('data', (chunk: Buffer) => {
     stdout.push(chunk);
-    if (chunk.toString().trim() !== '') lastStream = 'stdout';
+    if (hasNonWhitespaceByte(chunk)) lastStream = 'stdout';
   });
   child.stderr.on('data', (chunk: Buffer) => {
     stderr.push(chunk);
-    if (chunk.toString().trim() !== '') lastStream = 'stderr';
+    if (hasNonWhitespaceByte(chunk)) lastStream = 'stderr';
   });
   const finish = (exitCode: number, extraError = '') => {
     if (settled) return;
