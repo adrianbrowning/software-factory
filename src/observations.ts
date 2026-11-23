@@ -148,11 +148,12 @@ export function planFix(ws: Workspace, run: Run, request: FixRequest) {
   const { text: bug, chosen } = normalizeRequest(request.bug, request.observations, 'factory_fix needs a bug, observation ids, or both.');
   const found = unplacedObservations(run, chosen) ?? { ...greenObservations(ws, run, chosen, 'fix observations or a bug'), groups: undefined };
   requireUnplaced(run, found.review.id, found.observations);
+  const shownBug = bug === undefined ? undefined : redact(bug);
   const items = [
-    ...(bug === undefined ? [] : [{ label: 'bug', line: `- Bug: ${redact(bug)}` }]),
+    ...(shownBug === undefined ? [] : [{ label: 'bug', line: `- Bug: ${shownBug}` }]),
     ...found.observations.map(finding => ({ label: finding.id, line: `- ${finding.id}: ${finding.title}` })),
   ];
-  return { bug, items, ...found, groups: found.groups ?? [{ observations: found.observations, review: found.review }] };
+  return { bug, items, shownBug, ...found, groups: found.groups ?? [{ observations: found.observations, review: found.review }] };
 }
 
 /**
