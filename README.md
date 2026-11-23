@@ -158,6 +158,8 @@ whether to raise the fix budget by `maxRounds` and resume; declining keeps the r
 Resume also checks out the active slice's branch when another branch is checked out and the working tree is clean, and
 the reply says so. With a dirty tree or a failed switch it leaves the checkout and the reply names the mismatch: commit
 or remove the changes and check out the slice branch before the next factory tool.
+Resume also moves a running run's active slice from implement to checks when its branch has own commits, the stored
+implementer report lists every one in Commits, and Open names no stop report; it records a resume event.
 
 ### Headless runs
 

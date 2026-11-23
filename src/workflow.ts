@@ -768,6 +768,8 @@ function recordedFilesIntact(ws: Workspace, run: Run, review: NonNullable<Slice[
  * Before any of that, when the run has an active slice and another branch (or a detached HEAD) is checked out with a
  * clean working tree, it checks out the slice branch. It returns a note when it switched, or when it could not (dirty
  * tree, failed checkout) and left the checkout alone; `factory_start` puts the note in its reply.
+ * A running run's active slice at `implement` whose branch has own commits that the stored implementer report lists in
+ * full, with no stop report in Open, moves to `checks` and records a resume event.
  */
 export async function resumeRun(ws: Workspace, run: Run, sessionId: string) {
   const filled = run.checks.length === 0;
