@@ -537,6 +537,7 @@ The gates stop model mistakes and limit what a misled agent can do. They are not
 ```sh
 pnpm typecheck
 pnpm test
+pnpm run lint
 pnpm run test test/units.test.ts   # only the named test files
 ```
 

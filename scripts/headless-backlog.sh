@@ -57,9 +57,9 @@ submission_kind() {
 run_status() {
   [ -f "$1" ] || { echo 'no run'; return; }
   st=$(jq -r .status "$1")
-  [ "$st" = done ] || { echo "$st"; return; }
+  [ "$st" = "done" ] || { echo "$st"; return; }
   k=$(submission_kind "$1")
-  [ "$k" = submit ] && { echo done; return; }
+  [ "$k" = submit ] && { echo "done"; return; }
   [ "$k" = none ] && k="not submitted"
   echo "done, no PRs ($k; /factory submit opens them)"
 }
@@ -119,7 +119,7 @@ chain_check() {
   c2='top slice branch on origin and locally is at the top slice'\''s green commit'
   green=$(jq -r '.slices[-1] | select(.green != null) | .checked.sha // empty' "$s")
   remote=$(git ls-remote origin "refs/heads/$2" 2>/dev/null | cut -f1)
-  [ -n "$green" ] && [ "$remote" = "$green" ] || { chain_fail "$1" 2 "$c2" "origin has ${remote:-no} $2, the green commit is ${green:-missing}"; return; }
+  if [ -z "$green" ] || [ "$remote" != "$green" ]; then chain_fail "$1" 2 "$c2" "origin has ${remote:-no} $2, the green commit is ${green:-missing}"; return; fi
   local_sha=$(git rev-parse --verify --quiet "refs/heads/$2^{commit}")
   [ "$local_sha" = "$green" ] || { chain_fail "$1" 2 "$c2" "local $2 is at ${local_sha:-missing}, the green commit is $green"; return; }
   base_check "$1"
@@ -217,11 +217,11 @@ for ref in "$@"; do
     break
   fi
   chain_next "$feature" "$status" || break
-  [ "$status" = done ] || failed=1
+  [ "$status" = "done" ] || failed=1
 done
 
 printf '\nSummary:\n%b' "$summary"
-exit $failed
+return $failed
 }
 
 main "$@"; exit $?
