@@ -29,7 +29,7 @@ export async function submitHeadless(ws: Workspace, feature: string, stop?: Stop
     return `\nThe headless policy sets submission to stop, so no PRs were opened. ${stop === undefined ? '/factory submit opens them.' : 'After /factory resume finishes the stack, /factory submit opens them.'}`;
   }
   // Saved before submitStack runs, so a later failure cannot discard the choice; each PR body lists it.
-  await addOnce(ws, feature, 'autonomous', `gate submission (auto): opening draft PRs${stop === undefined ? '' : ` for the slices below slice ${stop.slice.id}`}`);
+  await addOnce(ws, feature, 'autonomous', `gate submission (auto): opening or updating draft PRs${stop === undefined ? '' : ` for the slices below slice ${stop.slice.id}`}`);
   const retry = stop === undefined ? '/factory submit retries it' : 'after /factory resume finishes the stack, /factory submit opens the PRs';
   const failed = (message: string) => `\nSubmission failed: ${message}\nThe run is saved as ${run.status}; ${retry}.`;
   try {

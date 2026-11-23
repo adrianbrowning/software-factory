@@ -25,6 +25,7 @@ describe('headless submit: stopped stacks and gh failures', () => {
     assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, `stack init --base main ${branches[0]}`, 'stack submit --auto', 'stack view --json', ...prCalls(1)]);
     assert.match(text, /https:\/\/example\.test\/pull\/101/);
     assert.match(gh.bodies().get(101) ?? '', /stack stopped at slice 02 "S2".*still red after 3 fix rounds/);
+    assert.deepEqual(run.events.filter(event => event.kind === 'autonomous').map(event => event.detail), ['gate submission (auto): opening or updating draft PRs for the slices below slice 02']);
     assert.equal(sh(repo.root, 'branch', '--show-current'), branches[1], 'the run is back on the red slice');
   });
 
@@ -94,6 +95,7 @@ describe('headless submit: stopped stacks and gh failures', () => {
     await withRun(ws, 'demo', run => { run.retroRecorded = false; });
     await call('factory_retro', { findings: [] });
     const gateChoices = readRun(ws, 'demo').events.filter(event => event.kind === 'autonomous' && event.detail.startsWith('gate submission (auto)'));
+    assert.deepEqual(gateChoices.map(event => event.detail), ['gate submission (auto): opening or updating draft PRs']);
     assert.equal(gateChoices.length, 1, 'a repeat submission lists the gate choice once');
   });
 
