@@ -57,6 +57,7 @@ describe('headless submit', () => {
     assert.match(text, /https:\/\/example\.test\/pull\/101/);
     assert.match(gh.bodies().get(101) ?? '', /S1/);
     assert.ok(readRun(ws, 'demo').events.some(event => event.kind === 'submit'));
+    assert.deepEqual(readRun(ws, 'demo').events.filter(event => event.kind === 'autonomous' && event.detail.startsWith('gate submission')).map(event => event.detail), ['gate submission (auto): opening or updating draft PRs']);
   });
 
   it('lists the Related lines in the draft PR bodies of a headless run', async () => {
