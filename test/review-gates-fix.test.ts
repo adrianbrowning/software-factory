@@ -202,7 +202,7 @@ describe('slice loop gates: fixes', { concurrency: 4 }, () => {
   it('refuses a fix with neither a bug nor observations, and changes nothing', async () => {
     using ws = workspace({ maxRounds: 2 });
     await greenWithObservation(ws);
-    for (const request of [{}, { observations: [] }, { bug: '' }]) {
+    for (const request of [{}, { observations: [] }, { bug: '' }, { bug: '  \n ' }]) {
       await assert.rejects(step(ws, run => fixAfterGreen(ws, run, request, 'tidy')), /factory_fix needs a bug, observation ids, or both/);
     }
     assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'ready');
