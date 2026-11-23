@@ -109,12 +109,16 @@ export function carryObservations(ws: Workspace, run: Run, request: CarryRequest
   const sections = carriedSections(run, review, slice, observations, note);
   const target = carryTargetId(destination);
   placeObservations(run, review, slice, observations, 'carried', target);
-  if (destination.kind === 'end') run.waiting.push(...sections);
-  else {
+  let where: string;
+  if (destination.kind === 'end') {
+    run.waiting.push(...sections);
+    where = 'the end of the run';
+  } else {
     destination.slice.carried.push(...sections);
     writeTicket(ws, run, destination.slice);
+    where = `slice ${destination.slice.id}`;
   }
-  addEvent(run, 'carry', `${review.id} to ${target === 'end' ? 'the end of the run' : `slice ${target}`}: ${labels.join(', ')}`, slice);
+  addEvent(run, 'carry', `${review.id} to ${where}: ${labels.join(', ')}`, slice);
   return planned;
 }
 
