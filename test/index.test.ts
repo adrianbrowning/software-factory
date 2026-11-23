@@ -656,6 +656,23 @@ describe('used-up fix budget', () => {
     assert.deepEqual([slice?.stalled, slice?.fixRounds, slice?.phase], [false, 2, 'fix']);
   });
 
+  it('factory_fix for an observation whose id is "bug" is an observation round with no fix budget sentence', async () => {
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature']);
+    commit(ws, 'ok');
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+    await review(ws, reviewId, [finding('thermo', 'observation', 'naming')]);
+    await withRun(ws, 'demo', run => recordReview(ws, run));
+    await withRun(ws, 'demo', run => {
+      for (const entry of run.slices[0]?.unplaced ?? []) entry.finding.id = 'bug';
+    });
+    const asked: string[] = [];
+    await call('factory_fix', { observations: ['bug'], reason: 'tidy' }, { confirm: async (title: string, body: string) => (asked.push(`${title}\n${body}`), true), select: async () => 'Pause the run' });
+    assert.match(asked[0] ?? '', /^Fix observations in slice 01 "Feature"\?\n/);
+    assert.doesNotMatch(asked[0] ?? '', /fix budget/);
+  });
+
   it('shows the whole redacted bug in the factory_fix dialog, as stored in the fix file', async () => {
     using repo = budgetRepo();
     const { call, ws } = await budgetRun(repo.root, ['Feature']);

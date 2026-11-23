@@ -19,11 +19,11 @@ describe('fix items', { concurrency: 4 }, () => {
     const planned = planFix(ws, run, { bug, observations: ['thermo-naming'] }).items;
     assert.doesNotMatch(planned[0]?.line ?? '', /ghp_/);
     assert.deepEqual(planned, [
-      { label: 'bug', line: `- Bug: ${redact(bug)}` },
-      { label: 'thermo-naming', line: '- thermo-naming: naming' },
+      { kind: 'bug', label: 'bug', line: `- Bug: ${redact(bug)}` },
+      { kind: 'observation', label: 'thermo-naming', line: '- thermo-naming: naming' },
     ]);
-    assert.deepEqual(planFix(ws, run, { observations: ['thermo-naming'] }).items, [{ label: 'thermo-naming', line: '- thermo-naming: naming' }]);
-    assert.deepEqual(planFix(ws, run, { bug: 'Crash.' }).items, [{ label: 'bug', line: '- Bug: Crash.' }]);
+    assert.deepEqual(planFix(ws, run, { observations: ['thermo-naming'] }).items, [{ kind: 'observation', label: 'thermo-naming', line: '- thermo-naming: naming' }]);
+    assert.deepEqual(planFix(ws, run, { bug: 'Crash.' }).items, [{ kind: 'bug', label: 'bug', line: '- Bug: Crash.' }]);
   });
 
   it('numbers two failed checks of one round check-f1-1 and check-f1-2, in check order', async () => {
