@@ -165,9 +165,11 @@ function firstFailureNames({ lastStream, stderr, stdout }: CommandResult) {
     if (tap) names.add(evidenceLine(tap[1] ?? ''));
   }
   if (names.size === 0) {
-    const stream = lastStream ?? 'stdout';
-    const last = (stream === 'stderr' ? stderr : stdout).split(/\r?\n/).findLast(line => line.trim() !== '');
-    return last === undefined ? '' : `; last ${stream} line: ${evidenceLine(last, 299)}`;
+    for (const stream of lastStream === 'stderr' ? (['stderr', 'stdout'] as const) : (['stdout', 'stderr'] as const)) {
+      const last = (stream === 'stderr' ? stderr : stdout).split(/\r?\n/).findLast(line => line.trim() !== '');
+      if (last !== undefined) return `; last ${stream} line: ${evidenceLine(last, 299)}`;
+    }
+    return '';
   }
   const listed = [...names].slice(0, MAX_NAMED_TESTS).join(', ');
   const rest = names.size - MAX_NAMED_TESTS;

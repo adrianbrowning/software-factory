@@ -257,6 +257,8 @@ describe('slice loop gates: checks and the fix budget', { concurrency: 4 }, () =
     assert.ok(!stderrLast.includes('earlier'));
     const blank = await flakyRun('', '', () => `printf 'last\\n'; ${drained('')}; printf ' \\n' >&2`);
     assert.match(blank, /last stdout line: last/);
+    const nbsp = await flakyRun('', '', () => `printf 'last\\n'; ${drained('')}; printf '\\302\\240' >&2`);
+    assert.match(nbsp, /last stdout line: last/);
   });
 
   it('runs a passing check once and does not rerun a timed-out check', async () => {

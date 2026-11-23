@@ -89,8 +89,14 @@ describe('runShell', () => {
 
   it('ignores a whitespace-only chunk on stderr after stdout output', async () => {
     using temp = dir();
-    const result = await runShell(`echo out; sleep 0.2; printf ' \\t\\n\\r' >&2`, temp.root, 10_000);
+    const result = await runShell(`echo out; sleep 0.2; printf ' \\t\\n\\v\\f\\r' >&2`, temp.root, 10_000);
     assert.equal(result.lastStream, 'stdout');
+  });
+
+  it('counts a chunk with leading whitespace followed by text as output', async () => {
+    using temp = dir();
+    const result = await runShell(`echo out; sleep 0.2; printf '  x' >&2`, temp.root, 10_000);
+    assert.equal(result.lastStream, 'stderr');
   });
 
   it('reports no last stream when only whitespace is written', async () => {
