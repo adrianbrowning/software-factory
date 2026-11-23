@@ -6,7 +6,7 @@ import { loadConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
 import { findingLocation, renderKnownObservations } from '../src/ledger.ts';
 import { renderedObservation } from '../src/legacy-observations.ts';
-import { type Finding, forgetRun, type ObservationEntry, readRun, statePath, ticketPath, withRun, type Workspace } from '../src/run.ts';
+import { type Finding, forgetRun, type ObservationEntry, readRun, REVIEW_DOMAINS, statePath, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { renderFinding } from '../src/finding-text.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, planSlices } from '../src/workflow.ts';
@@ -24,12 +24,12 @@ const problemOf = (name: string) => `${name} misleads the reader`;
  * An interactive run of slices Feature and Second, with a file deferred sink, whose slice 01 is green with one thermo
  * observation per name in `names`. `dialogs` collects the title of every confirm dialog the tools ask, all answered yes.
  */
-async function ledgerRun(root: string, names: string[], shape: (finding: Finding) => Finding = same => same) {
+async function ledgerRun(root: string, names: string[], shape: (finding: Finding) => Finding = same => same, viaTool = false) {
   const tools = load();
   const dialogs: string[] = [];
   const yes: Ui = { confirm: async title => (dialogs.push(title), true) };
-  const call = async (name: string, params: unknown, ui: Ui = yes) => {
-    const caller = { ...ctx('main', 'main'), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { notify() {}, ...ui } };
+  const call = async (name: string, params: unknown, ui: Ui = yes, agent: 'main' | 'factory-reviewer' | 'factory-review-validator' = 'main') => {
+    const caller = { ...ctx(agent === 'main' ? 'main' : 'sub', agent), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { notify() {}, ...ui } };
     const tool = tools.get(name);
     if (tool === undefined) throw new Error(`no tool ${name}`);
     return (await tool.execute('id', params, undefined, undefined, caller)) as Reply;
@@ -41,7 +41,15 @@ async function ledgerRun(root: string, names: string[], shape: (finding: Finding
   commit(ws, 'ok');
   await withRun(ws, 'demo', run => runChecks(ws, run));
   const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
-  await review(ws, reviewId, names.map(name => shape({ ...finding('thermo', 'observation', name), problem: problemOf(name) })));
+  const found = names.map(name => shape({ ...finding('thermo', 'observation', name), problem: problemOf(name) }));
+  if (viaTool) {
+    const skipped = readRun(ws, 'demo').slices[0]?.review?.skipped ?? [];
+    for (const domain of REVIEW_DOMAINS.filter(item => !skipped.some(entry => entry.domain === item))) {
+      const own = found.filter(item => item.domain === domain);
+      await call('factory_review_submit', { domain, findings: own, reviewId, ...(domain === 'scope' ? { fixItems: [] } : {}) }, yes, 'factory-reviewer');
+    }
+    await call('factory_review_validate', { dropped: [], keep: found.map(item => item.id), reviewId }, yes, 'factory-review-validator');
+  } else await review(ws, reviewId, found);
   assert.equal((await withRun(ws, 'demo', run => recordReview(ws, run))).kind, 'green');
   return { call, dialogs, ws };
 }
@@ -186,6 +194,20 @@ describe('observation ledger', () => {
     const known = /## KNOWN OBSERVATIONS\n\n([\s\S]*?)\n## /.exec(data)?.[1] ?? assert.fail('no KNOWN OBSERVATIONS section');
     assert.match(known, /- `01-r1:thermo-naming` \(left\): the factory_carry handler \(ok:1\) - naming/);
     assert.match(known, /- `01-r1:thermo-style` \(left\): ok:1 - style/);
+  });
+
+  it('accepts a finding with and without symbol through factory_review_submit and renders each location in the carried-in section of the review data file', async () => {
+    using dir = repo();
+    const { call, ws } = await ledgerRun(dir.root, ['naming', 'style'], found => (found.id === 'thermo-naming' ? { ...found, symbol: 'the factory_carry handler' } : found), true);
+    await call('factory_carry', { observations: ['thermo-naming', 'thermo-style'], to: '02' });
+    await withRun(ws, 'demo', run => completeSlice(ws, run));
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    commit(ws, 'second.txt');
+    await call('factory_checks', {});
+    const opened = await call('factory_review_start', { skip: [] });
+    const data = readFileSync(opened.details?.dataFile ?? assert.fail('no data file'), 'utf8');
+    assert.match(data, /#### \[observation\] thermo-naming\n\n- Location: the factory_carry handler \(ok:1\)\n/);
+    assert.match(data, /#### \[observation\] thermo-style\n\n- Location: ok:1\n/);
   });
 
   it('marks an entry carried to the reviewed slice as work to check, and an entry carried to the end queue as an ordinary carried one', async () => {
