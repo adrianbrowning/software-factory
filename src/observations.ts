@@ -93,6 +93,11 @@ export function planCarry(ws: Workspace, run: Run, request: CarryRequest) {
   return { labels, note, ...green, destination: { kind: 'slice', slice: found } satisfies CarryDestination };
 }
 
+/** The ledger target id of a carry destination: "end", or the id of the pending slice. */
+export function carryTargetId(destination: CarryDestination): string {
+  return destination.kind === 'end' ? 'end' : destination.slice.id;
+}
+
 /**
  * Carries the observations chosen from the active slice's green review, and the user's free-text note, into the
  * ticket of a pending slice, whose implementer builds them and whose reviewers check them, or, for "end", onto the
@@ -102,13 +107,14 @@ export function carryObservations(ws: Workspace, run: Run, request: CarryRequest
   const planned = planCarry(ws, run, request);
   const { labels, note, observations, review, slice, destination } = planned;
   const sections = carriedSections(run, review, slice, observations, note);
-  placeObservations(run, review, slice, observations, 'carried', destination.kind === 'end' ? 'end' : destination.slice.id);
+  const target = carryTargetId(destination);
+  placeObservations(run, review, slice, observations, 'carried', target);
   if (destination.kind === 'end') run.waiting.push(...sections);
   else {
     destination.slice.carried.push(...sections);
     writeTicket(ws, run, destination.slice);
   }
-  addEvent(run, 'carry', `${review.id} to ${destination.kind === 'end' ? 'the end of the run' : `slice ${destination.slice.id}`}: ${labels.join(', ')}`, slice);
+  addEvent(run, 'carry', `${review.id} to ${target === 'end' ? 'the end of the run' : `slice ${target}`}: ${labels.join(', ')}`, slice);
   return planned;
 }
 
