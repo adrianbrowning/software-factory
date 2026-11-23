@@ -5,7 +5,7 @@ import { beforeEach, describe, it } from 'node:test';
 import { type Command, ctx, load } from './extension.ts';
 import { loadConfig, parseConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
-import { readRun, withRun, type Workspace } from '../src/run.ts';
+import { type Finding, readRun, withRun, type Workspace } from '../src/run.ts';
 import { renderFinding } from '../src/finding-text.ts';
 import { recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, planSlices } from '../src/workflow.ts';
@@ -100,6 +100,28 @@ describe('deferred item from a finding names symbol, location at filing time and
     await call('factory_place', { placements: [{ id: 'thermo-naming', placement: 'defer' }] });
     const run = readRun(ws, 'demo');
     symbolic(run.deferred[0]?.body ?? '', run.slices[0]?.review?.sha ?? assert.fail('no review'));
+  });
+
+  it('factory_place defer of an observation kept by an earlier review files that review\'s commit, not the later review\'s', async () => {
+    using repo = tempRepo('factory-defer-', CHECKS_OK);
+    const { call, ws } = await sinkRun(repo.root, { kind: 'file' }, 'active', { answer: true, asked: [] });
+    const round = async (file: string, findings: Finding[]) => {
+      commit(ws, file);
+      await withRun(ws, 'demo', run => runChecks(ws, run));
+      const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+      const sha = readRun(ws, 'demo').slices[0]?.review?.sha ?? assert.fail('no review');
+      await review(ws, reviewId, findings);
+      await call('factory_review_record', {});
+      return sha;
+    };
+    const early = await round('one', [finding('security', 'high', 'leak'), { ...finding('thermo', 'observation', 'naming'), symbol: 'the factory_carry handler' }]);
+    await round('two', []);
+    const latest = await round('three', []);
+    assert.notEqual(early, latest);
+    await call('factory_place', { placements: [{ id: 'thermo-naming', placement: 'defer' }] });
+    const body = readRun(ws, 'demo').deferred.find(item => item.id === 'thermo-naming')?.body ?? assert.fail('not deferred');
+    symbolic(body, early);
+    assert.ok(!body.includes(latest));
   });
 
   it('headless complete_slice files default-deferred observations with the same lines', async () => {
@@ -386,6 +408,9 @@ describe('accepted unresolved findings go to the sink', () => {
     assert.ok(open.includes(`Reviewed commit: ${sha}`));
     assert.match(open, /Scope reviewer: still broken/);
     assert.doesNotMatch(open, /Location at filing time|Symbol:/);
+    assert.doesNotMatch(run.deferred.find(item => item.id === 'thermo-a')?.title ?? '', /ok:1|the factory_carry handler/);
+    assert.ok(run.deferred.find(item => item.id === 'thermo-a')?.title.endsWith('[high] a'));
+    assert.match(run.deferred.find(item => item.id === 'bug-b')?.title ?? '', /\[high\] ok:1: leaky title$/);
   });
 
   it('file: queues them on the run', async () => {

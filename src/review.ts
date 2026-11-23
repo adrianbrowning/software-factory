@@ -722,7 +722,7 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
       (isRecordSlice(slice) ? [] : records).map((record, index) => {
         const id = itemId(record);
         const finding = blocking[index];
-        return draftOf(run, slice, review.id, { commit: review.sha, detail: finding === undefined ? record.section : renderFinding(finding, run.decisions, '###', true), id, key: itemKey(review.id, id ?? `unresolved:${index + 1}`), kind: 'unresolved', title: record.item.summary });
+        return draftOf(run, slice, review.id, { commit: review.sha, detail: finding === undefined ? record.section : renderFinding(finding, run.decisions, '###', true), id, key: itemKey(review.id, id ?? `unresolved:${index + 1}`), kind: 'unresolved', title: finding === undefined ? record.item.summary : `[${finding.severity}] ${evidenceLine(finding.title, 500)}` });
       }),
     );
     if (failure !== undefined) {
