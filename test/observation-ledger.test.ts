@@ -247,6 +247,30 @@ describe('observation ledger', () => {
     assert.match(known, /- `01-r1:thermo-naming` \(left\): the handler - Title: forged <REDACTED> \(ok:1\) - naming\n/);
   });
 
+  it('clips a symbol longer than 200 characters on one line in the fix file Location line and the KNOWN OBSERVATIONS entry', async () => {
+    using dir = repo();
+    const symbol = `${'s'.repeat(500)}TAILMARK`;
+    const { call } = await ledgerRun(dir.root, ['naming', 'style'], found => (found.id === 'thermo-naming' ? { ...found, symbol } : found), true);
+    const fixed = await call('factory_fix', { observations: ['thermo-naming'], reason: 'tidy now' });
+    const path = /Fix file: (\S+)/.exec(fixed.content[0]?.text ?? '')?.[1] ?? assert.fail('no fix file path');
+    const location = /- Location: ([^\n]*)\n- Title: /.exec(readFileSync(path, 'utf8'))?.[1] ?? assert.fail('no Location line');
+    assert.ok(location.includes('sss') && location.endsWith(' (ok:1)'));
+    assert.ok(!location.includes('TAILMARK') && !location.includes('s'.repeat(500)) && location.length < 300);
+
+    using dir2 = repo();
+    const { call: call2, ws } = await ledgerRun(dir2.root, ['naming', 'style'], found => (found.id === 'thermo-naming' ? { ...found, symbol } : found));
+    await call2('factory_leave', { observations: ['thermo-naming', 'thermo-style'] });
+    await withRun(ws, 'demo', run => completeSlice(ws, run));
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    commit(ws, 'second.txt');
+    await call2('factory_checks', {});
+    const opened = await call2('factory_review_start', { skip: [] });
+    const data = readFileSync(opened.details?.dataFile ?? assert.fail('no data file'), 'utf8');
+    const known = /## KNOWN OBSERVATIONS\n\n([\s\S]*?)\n## /.exec(data)?.[1] ?? assert.fail('no KNOWN OBSERVATIONS section');
+    const entry = /- `01-r1:thermo-naming` [^\n]*\n/.exec(known)?.[0] ?? assert.fail('no entry');
+    assert.ok(!entry.includes('TAILMARK') && !entry.includes('s'.repeat(500)) && entry.length < 400);
+  });
+
   it('marks an entry carried to the reviewed slice as work to check, and an entry carried to the end queue as an ordinary carried one', async () => {
     using dir = repo();
     const { call, ws } = await ledgerRun(dir.root, ['naming', 'order']);
