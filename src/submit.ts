@@ -68,7 +68,7 @@ export function planSubmit(stacked: string[] | undefined, branches: string[], ba
   return { kind: 'add', missing: branches.slice(own.length) };
 }
 
-/** The original stacked check: refuses a stack holding a non-run branch or run branches out of run order; undefined when it is a prefix of the run. */
+/** Refuses a stack holding a non-run branch or run branches out of run order; undefined when the stack is a prefix of the run. */
 function checkRunStack(stacked: string[], branches: string[]): { kind: 'refuse'; outside: string[]; unordered: string[] } | undefined {
   const outside = stacked.filter(name => !branches.includes(name));
   const unordered = stacked.filter((name, index) => branches.includes(name) && branches[index] !== name);
