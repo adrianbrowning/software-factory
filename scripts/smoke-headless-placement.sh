@@ -37,6 +37,7 @@ omp -p --wait-async --no-extensions -e "$plugin" --model "$model" --max-cost 5 "
 set +x
 
 rundir=$repo/.scratch/demo
+# shellcheck disable=SC2012 # review ids are generated names without special characters
 id=$(ls "$rundir/reviews" | sort | tail -1)
 echo "--- validation.json"
 cat "$rundir/reviews/$id/validation.json" || { echo "FAIL: no validation.json"; exit 1; }

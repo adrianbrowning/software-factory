@@ -9,6 +9,7 @@
     "extensions": ["./src/index.ts"]
   },
   "scripts": {
+    "lint": "shellcheck --shell=sh scripts/*.sh",
     "test": "sh scripts/test.sh",
     "typecheck": "tsc --noEmit"
   },
