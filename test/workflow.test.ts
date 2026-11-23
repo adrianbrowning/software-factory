@@ -391,6 +391,44 @@ describe('pause and resume', () => {
     assert.deepEqual([run.status, run.ownerSessionId], ['running', 'session-2']);
   });
 
+  describe('pause cause in the fix file', () => {
+    async function pausedInFix(ws: Workspace, reason: string) {
+      await newRun(ws, [slice('Feature')]);
+      await step(ws, run => nextSlice(ws, run));
+      commit(ws, 'ok');
+      await green(ws);
+      await step(ws, run => completeSlice(ws, run));
+      await step(ws, run => reopenSlice(ws, run, '01', 'bug'));
+      await step(ws, run => pauseRun(run, reason));
+      const fixPath = readRun(ws, 'demo').slices[0]!.fixPath!;
+      return { path: fixPath, before: readFileSync(fixPath, 'utf8') };
+    }
+
+    it('appends the redacted cause once, keeping the original content and adding no fix item or round', async () => {
+      using ws = workspace();
+      const { path, before } = await pausedInFix(ws, 'local env broke; API_TOKEN=abc123secret');
+      const items = readRun(ws, 'demo').slices[0]!.fixItems.length;
+      await step(ws, run => resumeRun(ws, run, 'session-2'));
+      const after = readFileSync(path, 'utf8');
+      assert.equal(after.startsWith(before), true);
+      assert.match(after.slice(before.length), /## Pause cause[\s\S]*local env broke; API_TOKEN=<REDACTED>/);
+      assert.doesNotMatch(after, /abc123secret/);
+      await step(ws, run => pauseRun(run, 'local env broke; API_TOKEN=abc123secret'));
+      await step(ws, run => resumeRun(ws, run, 'session-3'));
+      assert.equal(readFileSync(path, 'utf8'), after);
+      const resumed = readRun(ws, 'demo').slices[0]!;
+      assert.deepEqual([resumed.fixItems.length, resumed.fixFiles], [items, 1]);
+    });
+
+    it('leaves the fix file alone when the slice is not in fix', async () => {
+      using ws = workspace();
+      const { path, before } = await pausedInFix(ws, 'cause');
+      await step(ws, run => { run.slices[0]!.phase = 'implement'; });
+      await step(ws, run => resumeRun(ws, run, 'session-2'));
+      assert.equal(readFileSync(path, 'utf8'), before);
+    });
+  });
+
   describe('branch on resume', () => {
     async function pausedOnSliceBranch(ws: Workspace) {
       await newRun(ws, [slice('Feature')]);
