@@ -459,6 +459,19 @@ describe('batched observation placement', () => {
     assert.deepEqual(readRun(ws, 'demo').slices[0]?.unplaced.map(entry => entry.finding.id), ['thermo-naming']);
   });
 
+  it('dedupes a later review\'s observation at the same path:line with the same problem whatever its symbol', async () => {
+    using dir = repo();
+    const { full, ws } = await interactive(dir.root);
+    await full([{ ...observation('naming', 'correctness'), symbol: 'the first handler' }, finding('security', 'high', 'leak')]);
+    commit(ws, 'more.txt');
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const targeted = await withRun(ws, 'demo', run => startReview(ws, run));
+    await review(ws, targeted.reviewId, []);
+    await withRun(ws, 'demo', run => recordReview(ws, run));
+    await full([{ ...observation('naming', 'correctness'), id: 'thermo-again', symbol: 'a reworded handler' }]);
+    assert.deepEqual(readRun(ws, 'demo').slices[0]?.unplaced.map(entry => entry.finding.id), ['thermo-naming']);
+  });
+
   for (const sink of [false, true]) {
     it(`an interactive follow-up slice of end-queue items ${sink ? 'defers' : 'leaves'} its own end-default observation and refills no queue`, async () => {
       using dir = repo(sink ? { deferred: { kind: 'file' } } : {});

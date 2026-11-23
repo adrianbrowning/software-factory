@@ -1,5 +1,5 @@
 /** How a finding reads in a data file, a fix file, a carried-in ticket section and a deferred item. */
-import { evidence, redact } from './evidence.ts';
+import { evidence, evidenceLine, redact } from './evidence.ts';
 import { itemKey } from './deferred.ts';
 import { findingLocation } from './ledger.ts';
 import { carriedHeader, carriedKeysLine, noteText } from './legacy-observations.ts';
@@ -15,7 +15,7 @@ export function renderFinding(finding: Finding, decisions: Decision[], heading =
 }
 
 function filedLocation(finding: Finding) {
-  const symbol = finding.symbol === undefined ? '' : `- Symbol: ${evidence(finding.symbol, 500)}\n`;
+  const symbol = finding.symbol === undefined ? '' : `- Symbol: ${evidenceLine(finding.symbol, 200)}\n`;
   return `${symbol}- Location at filing time: ${finding.path}${finding.line === undefined ? '' : `:${finding.line}`}`;
 }
 

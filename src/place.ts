@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import { draftOf, deferItems, isRecordSlice, itemKey, requireSink } from './deferred.ts';
 import { evidenceHead, evidenceLine } from './evidence.ts';
-import { findingLocation, findUnplaced, placeObservations } from './ledger.ts';
+import { findingPlace, findUnplaced, placeObservations } from './ledger.ts';
 import { carriedSections, renderFinding } from './finding-text.ts';
 import { addEvent, DEFAULT_PLACEMENT, fixesOnceInSlice, greenCommit, Invalidated, requireActive, type Finding, type Run, type Slice, type Unplaced, type Workspace } from './run.ts';
 import { needsFullReview, writeTicket } from './workflow.ts';
@@ -153,7 +153,7 @@ export function collectObservations(run: Run, slice: Slice, reviewId: string, re
   const fresh = observations.filter(
     finding =>
       !run.observations.some(entry => entry.key === itemKey(reviewId, finding.id)) &&
-      !others.some(entry => findingLocation(entry.finding) === findingLocation(finding) && entry.finding.problem === finding.problem),
+      !others.some(entry => findingPlace(entry.finding) === findingPlace(finding) && entry.finding.problem === finding.problem),
   );
   slice.unplaced = [
     ...others,
