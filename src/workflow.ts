@@ -764,6 +764,9 @@ function recordedFilesIntact(ws: Workspace, run: Run, review: NonNullable<Slice[
  * reason: a changed snapshot, or a missing data file, or a recorded file that is missing or edited. A run saved before
  * runs kept their own checks gets the repository's checks, which its passes may not have run, so its active slice goes
  * back to `checks`.
+ * Before any of that, when the run has an active slice and another branch (or a detached HEAD) is checked out with a
+ * clean working tree, it checks out the slice branch. It returns a note when it switched, or when it could not (dirty
+ * tree, failed checkout) and left the checkout alone; `factory_start` puts the note in its reply.
  */
 export async function resumeRun(ws: Workspace, run: Run, sessionId: string) {
   const filled = run.checks.length === 0;
