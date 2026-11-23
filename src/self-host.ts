@@ -43,7 +43,7 @@ export function setLoadedPlugin(plugin: LoadedPlugin = INITIAL_LOADED_PLUGIN) {
 /** Files changed from `base` to HEAD in `root`, or undefined when `base` does not resolve. */
 function changedSince(root: string, base: string) {
   try {
-    const out = execFileSync('git', ['diff', '--name-only', `${base}..HEAD`], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const out = execFileSync('git', ['diff', '--name-only', '--no-renames', `${base}..HEAD`], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
     return new Set(out.split('\n').filter(Boolean));
   } catch {
     return undefined;
@@ -86,7 +86,7 @@ export function selfHostWarning(repoRoot: string, loaded: LoadedPlugin = loadedP
   const own = base === undefined ? undefined : changedSince(repoRoot, base);
   const stale = own === undefined ? differing : differing.filter(file => !own.has(file));
   if (stale.length === 0) return undefined;
-  const listed = stale.slice(0, MAX_LISTED).join(', ') + (stale.length > MAX_LISTED ? ` and ${stale.length - MAX_LISTED} more` : '');
+  const listed = stale.slice(0, MAX_LISTED).join(', ') + (stale.length > MAX_LISTED ? ` and ${stale.length - MAX_LISTED} more (set ${createHash('sha256').update(stale.join('\n')).digest('hex').slice(0, 7)})` : '');
   return `This run's repository ${repoRoot} is the loaded software-factory plugin, and these src/ or agents/ files changed since omp loaded it, outside the run's own commits: ${listed}. The loaded gates are stale. An interactive run can start a new omp session to load them; a headless run goes on with the loaded gates and needs no action.`;
 }
 

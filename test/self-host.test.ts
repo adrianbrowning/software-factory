@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { beforeEach, describe, it } from 'node:test';
 import { type Command, ctx, load } from './extension.ts';
@@ -117,6 +117,27 @@ describe('self-host warning', () => {
       assert.equal(selfHostWarning(repo.root, loaded), undefined);
       write(repo.root, 'skills/s.md', 'edited skill');
       assert.equal(selfHostWarning(repo.root, loaded), undefined);
+    });
+
+    it('gives no warning for a file the run renamed, old and new path alike', () => {
+      using repo = tree();
+      const loaded = { hashes: pluginHashes(repo.root), root: repo.root };
+      const base = sh(repo.root, 'rev-parse', 'HEAD');
+      sh(repo.root, 'mv', 'src/index.ts', 'src/renamed.ts');
+      sh(repo.root, 'commit', '-qm', 'rename');
+      assert.equal(selfHostWarning(repo.root, loaded, base), undefined);
+    });
+
+    it('gives a different warning text when only a file beyond the listed ones differs', () => {
+      using repo = tree();
+      const loaded = { hashes: pluginHashes(repo.root), root: repo.root };
+      for (const name of ['a', 'b', 'c', 'd', 'e', 'f']) write(repo.root, `src/${name}.ts`, name);
+      write(repo.root, 'src/g.ts', 'g');
+      const first = selfHostWarning(repo.root, loaded) ?? assert.fail('no warning');
+      rmSync(join(repo.root, 'src/g.ts'));
+      write(repo.root, 'src/h.ts', 'h');
+      const second = selfHostWarning(repo.root, loaded) ?? assert.fail('no warning');
+      assert.notEqual(first, second);
     });
   });
   it('a headless run records a start warning, and its resume and review warn without being refused or paused', async () => {
