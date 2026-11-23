@@ -1,6 +1,7 @@
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync, realpathSync } from 'node:fs';
-import { dirname, join, relative, resolve } from 'node:path';
+import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { addEvent, type Run } from './run.ts';
 
@@ -10,31 +11,46 @@ export const LOADED_PLUGIN_ROOT = resolve(dirname(fileURLToPath(import.meta.url)
 /** The directories whose code omp loads once: tools and gates in src/, agent definitions in agents/. Skills and review references are read from disk each time. */
 const LOADED_DIRS = ['src', 'agents'];
 
-export type LoadedPlugin = { digest: string; root: string };
+export type LoadedPlugin = { hashes: Record<string, string>; root: string };
 
-/** A content digest of every file under src/ and agents/ of `root`: committed, checked-out and uncommitted edits alike, because it reads the files on disk. */
-export function pluginDigest(root: string) {
-  const hash = createHash('sha256');
-  const files = LOADED_DIRS.flatMap(dir => {
+/** A content hash per file under src/ and agents/ of `root`, keyed by path relative to `root`: committed, checked-out and uncommitted edits alike, because it reads the files on disk. */
+export function pluginHashes(root: string) {
+  const hashes: Record<string, string> = {};
+  for (const dir of LOADED_DIRS) {
+    let entries;
     try {
-      return readdirSync(join(root, dir), { recursive: true, withFileTypes: true })
-        .filter(entry => entry.isFile())
-        .map(entry => join(entry.parentPath, entry.name));
+      entries = readdirSync(join(root, dir), { recursive: true, withFileTypes: true });
     } catch {
-      return [];
+      continue;
     }
-  }).sort();
-  for (const file of files) hash.update(`${relative(root, file)}\0`).update(readFileSync(file)).update('\0');
-  return hash.digest('hex');
+    for (const entry of entries) {
+      if (!entry.isFile()) continue;
+      const file = join(entry.parentPath, entry.name);
+      hashes[relative(root, file).split(sep).join('/')] = createHash('sha256').update(readFileSync(file)).digest('hex');
+    }
+  }
+  return hashes;
 }
 
-/** The plugin as it was when this module loaded: the checkout and its digest, which later tool calls compare against. */
-const INITIAL_LOADED_PLUGIN: LoadedPlugin = { digest: pluginDigest(LOADED_PLUGIN_ROOT), root: LOADED_PLUGIN_ROOT };
+/** The plugin as it was when this module loaded: the checkout and its per-file hashes, which later tool calls compare against. */
+const INITIAL_LOADED_PLUGIN: LoadedPlugin = { hashes: pluginHashes(LOADED_PLUGIN_ROOT), root: LOADED_PLUGIN_ROOT };
 let loadedPlugin = INITIAL_LOADED_PLUGIN;
 /** Test-only: replaces the loaded plugin that tool calls compare against; no argument restores the one taken at module load. */
 export function setLoadedPlugin(plugin: LoadedPlugin = INITIAL_LOADED_PLUGIN) {
   loadedPlugin = plugin;
 }
+
+/** Files changed from `base` to HEAD in `root`, or undefined when `base` does not resolve. */
+function changedSince(root: string, base: string) {
+  try {
+    const out = execFileSync('git', ['diff', '--name-only', `${base}..HEAD`], { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    return new Set(out.split('\n').filter(Boolean));
+  } catch {
+    return undefined;
+  }
+}
+
+const MAX_LISTED = 5;
 
 const real = (path: string) => {
   try {
@@ -60,18 +76,23 @@ function isPluginRepo(root: string) {
  * omp loaded the plugin from another checkout, or from this one before its src/ or agents/ changed. It never refuses:
  * callers add it to a reply and a run event.
  */
-export function selfHostWarning(repoRoot: string, loaded: LoadedPlugin = loadedPlugin) {
+export function selfHostWarning(repoRoot: string, loaded: LoadedPlugin = loadedPlugin, base?: string) {
   if (!isPluginRepo(repoRoot)) return undefined;
   if (real(repoRoot) !== real(loaded.root)) {
     return `This run's repository ${repoRoot} is the software-factory plugin, but omp loaded the plugin from ${loaded.root}. The run's gates, agents and references come from the loaded checkout, not from the code the run changes.`;
   }
-  if (pluginDigest(loaded.root) === loaded.digest) return undefined;
-  return `This run's repository ${repoRoot} is the loaded software-factory plugin, and its src/ or agents/ changed since omp loaded it. The loaded gates are stale: start a new omp session to run with the new gates.`;
+  const now = pluginHashes(loaded.root);
+  const differing = [...new Set([...Object.keys(now), ...Object.keys(loaded.hashes)])].filter(file => now[file] !== loaded.hashes[file]).sort();
+  const own = base === undefined ? undefined : changedSince(repoRoot, base);
+  const stale = own === undefined ? differing : differing.filter(file => !own.has(file));
+  if (stale.length === 0) return undefined;
+  const listed = stale.slice(0, MAX_LISTED).join(', ') + (stale.length > MAX_LISTED ? ` and ${stale.length - MAX_LISTED} more` : '');
+  return `This run's repository ${repoRoot} is the loaded software-factory plugin, and these src/ or agents/ files changed since omp loaded it, outside the run's own commits: ${listed}. The loaded gates are stale. An interactive run can start a new omp session to load them; a headless run goes on with the loaded gates and needs no action.`;
 }
 
 /** Records the self-host warning for `repoRoot` as a 'warning' run event and returns the reply line for it, or '' when there is none. */
 export function recordSelfHostWarning(run: Run, repoRoot: string) {
-  const warning = selfHostWarning(repoRoot);
+  const warning = selfHostWarning(repoRoot, undefined, run.baseSha ?? run.baseRef);
   if (warning === undefined) return '';
   addEvent(run, 'warning', warning);
   return `\nWarning: ${warning}`;
