@@ -474,7 +474,7 @@ describe('pause and resume', () => {
       using ws = workspace();
       const branch = await pausedOnSliceBranch(ws);
       sh(ws.root, 'switch', '--detach');
-      const sha = sh(ws.root, 'rev-parse', '--short=7', 'HEAD');
+      const sha = sh(ws.root, 'rev-parse', '--short', 'HEAD');
       const note = await step(ws, run => resumeRun(ws, run, 'session-2'));
       assert.equal(sh(ws.root, 'branch', '--show-current'), branch);
       assert.match(note ?? '', new RegExp(`from a detached HEAD at ${sha} to ${branch}`));
@@ -484,7 +484,7 @@ describe('pause and resume', () => {
       using ws = workspace();
       await pausedOnSliceBranch(ws);
       sh(ws.root, 'switch', '--detach');
-      const sha = sh(ws.root, 'rev-parse', '--short=7', 'HEAD');
+      const sha = sh(ws.root, 'rev-parse', '--short', 'HEAD');
       writeFileSync(join(ws.root, 'dirty.txt'), 'x');
       const note = await step(ws, run => resumeRun(ws, run, 'session-2'));
       assert.match(note ?? '', new RegExp(`but a detached HEAD at ${sha} is checked out`));

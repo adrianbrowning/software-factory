@@ -62,7 +62,7 @@ export async function requireOnBranchClean(root: string, slice: Slice, action: s
 export async function alignToSliceBranch(root: string, slice: Slice) {
   const state = await readState(root);
   if (state.branch === slice.branch) return undefined;
-  const from = state.branch || `a detached HEAD at ${state.sha.slice(0, 7)}`;
+  const from = state.branch || `a detached HEAD at ${(await git(root, 'rev-parse', '--short', state.sha)).trim()}`;
   if (state.clean) {
     try {
       await git(root, 'switch', '--no-guess', '--no-overwrite-ignore', slice.branch);
