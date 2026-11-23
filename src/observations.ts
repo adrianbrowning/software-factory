@@ -78,7 +78,7 @@ export type CarryDestination = { kind: 'end' } | { kind: 'slice'; slice: Slice }
  * The destination of `request.to` (a pending slice, or "end"), the observations chosen from the green review
  * that lists them of the active slice, and the note. Throws for a request with neither,
  * for a slice without a green review, for ids its review does not list, for ids the ledger already
- * holds, and for a target that is neither "end" nor a pending slice. Does not change the run.
+ * holds, and for a destination that is neither "end" nor a pending slice. Does not change the run.
  */
 export function planCarry(ws: Workspace, run: Run, request: CarryRequest) {
   const { text: note, chosen } = normalizeRequest(request.note, request.observations, 'factory_carry needs observation ids, a note, or both.');
@@ -86,11 +86,11 @@ export function planCarry(ws: Workspace, run: Run, request: CarryRequest) {
   const green = greenObservations(ws, run, chosen, 'carry observations or a note');
   requireUnplaced(run, green.review.id, green.observations);
   const labels = [...(note === undefined ? [] : ['note']), ...green.observations.map(finding => finding.id)];
-  if (request.to === 'end') return { labels, note, ...green, destination: { kind: 'end' } as CarryDestination };
+  if (request.to === 'end') return { labels, note, ...green, destination: { kind: 'end' } satisfies CarryDestination };
   const found = run.slices.find(candidate => candidate.id === request.to);
   if (found === undefined) throw new Error(`No slice ${request.to}. Slices: ${run.slices.map(candidate => candidate.id).join(', ')}.`);
   if (found.status !== 'pending') throw new Error(`Slice ${found.id} is ${found.status}; factory_carry takes a pending slice.`);
-  return { labels, note, ...green, destination: { kind: 'slice', slice: found } as CarryDestination };
+  return { labels, note, ...green, destination: { kind: 'slice', slice: found } satisfies CarryDestination };
 }
 
 /**
