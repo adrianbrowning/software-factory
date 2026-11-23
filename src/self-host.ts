@@ -128,7 +128,7 @@ export function selfHostWarning(repoRoot: string, loaded: LoadedPlugin = loadedP
     ...own !== undefined && vsBase.length > 0 ? [`loaded copy differs from the run base ${own.commit.slice(0, 7)}: ${listStale(vsBase)}`] : [],
     ...vsDisk.length > 0 ? [`loaded copy differs from the file on disk: ${listStale(vsDisk)}`] : [],
   ];
-  return `This run's repository ${repoRoot} is the loaded software-factory plugin, and these src/ or agents/ files are stale, outside the run's own commits. ${clauses.join('; ')}. The loaded gates are stale. An interactive run can start a new omp session to load them; a headless run goes on with the loaded gates and needs no action.`;
+  return `This run's repository ${repoRoot} is the loaded software-factory plugin, and these src/ or agents/ files are stale: ${clauses.join('; ')}. An interactive run can start a new omp session to load them; a headless run goes on with the loaded gates and needs no action.`;
 }
 
 /** Records the self-host warning for `repoRoot` as a 'warning' run event and returns the reply line for it, or '' when there is none or the run already has a 'warning' event with the same text. */
