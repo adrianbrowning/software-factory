@@ -679,7 +679,15 @@ describe('used-up fix budget', () => {
     await green(ws);
     const asked: string[] = [];
     const bug = `Saving a draft loses the title. token=ghp_${'a'.repeat(30)}\n${'log line\n'.repeat(600)}END`;
-    const reply = await call('factory_fix', { bug, reason: 'Found while demoing.' }, { confirm: async (_title: string, body: string) => (asked.push(body), true) });
+    let atDialog = '';
+    const reply = await call('factory_fix', { bug, reason: 'Found while demoing.' }, { confirm: async (_title: string, body: string) => {
+      asked.push(body);
+      const file = resolve(ws.root, /: (\S+)$/.exec(body.split('\n').at(-1) ?? '')?.[1] ?? '');
+      assert.ok(existsSync(file), 'file must exist when the dialog opens');
+      atDialog = readFileSync(file, 'utf8');
+      return true;
+    } });
+    assert.equal(atDialog, redact(bug));
     const shown = redact(bug);
     const last = (asked[0] ?? '').split('\n').at(-1) ?? '';
     const match = /^Full bug \((\d+) lines, (\d+) characters\): (\S+)$/.exec(last);
@@ -715,15 +723,27 @@ describe('used-up fix budget', () => {
     commit(ws, 'ok');
     await green(ws);
     const asked: string[] = [];
-    const note = `Handle empty titles.\n${'detail line\n'.repeat(600)}END`;
-    await call('factory_carry', { note, to: 'end' }, { confirm: async (_title: string, body: string) => (asked.push(body), true) });
+    const note = `Handle empty titles. token=ghp_${'a'.repeat(30)}\n${'detail line\n'.repeat(600)}END`;
     const shown = noteText(redact(note));
+    assert.notEqual(shown, noteText(note));
+    let atDialog = '';
+    await call('factory_carry', { note, to: 'end' }, { confirm: async (_title: string, body: string) => {
+      asked.push(body);
+      const file = resolve(ws.root, /: (\S+)$/.exec(body.split('\n').at(-1) ?? '')?.[1] ?? '');
+      assert.ok(existsSync(file), 'file must exist when the dialog opens');
+      atDialog = readFileSync(file, 'utf8');
+      return true;
+    } });
     const last = (asked[0] ?? '').split('\n').at(-1) ?? '';
     const match = /^Full note \((\d+) lines, (\d+) characters\): (\S+)$/.exec(last);
     assert.ok(match, last);
     assert.deepEqual([Number(match[1]), Number(match[2])], [shown.split('\n').length, shown.length]);
     assert.ok(resolve(ws.root, match[3] ?? '').startsWith(resolve(ws.root, ws.config.scratchDir, 'demo')));
-    assert.equal(readFileSync(resolve(ws.root, match[3] ?? ''), 'utf8'), shown);
+    const confirmed = readFileSync(resolve(ws.root, match[3] ?? ''), 'utf8');
+    assert.equal(atDialog, shown);
+    assert.equal(confirmed, shown);
+    assert.doesNotMatch(last, /ghp_/);
+    assert.doesNotMatch(confirmed, /ghp_/);
   });
 
   it('keeps each factory_carry dialog file intact when another note is confirmed in between', async () => {
