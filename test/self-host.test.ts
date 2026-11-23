@@ -103,7 +103,8 @@ describe('self-host warning', () => {
         const loaded = { hashes: pluginHashes(repo.root), root: repo.root };
         write(repo.root, path, content);
         const warning = selfHostWarning(repo.root, loaded) ?? assert.fail('no warning');
-        assert.match(warning, /stale/);
+        assert.match(warning, /and these src\/ or agents\/ files are stale: loaded copy differs from the file on disk: /);
+        assert.doesNotMatch(warning, /outside the run's own commits|The loaded gates are stale/);
         assert.match(warning, new RegExp(path.replace('.', '\\.')));
         assert.match(warning, /new omp session/);
         assert.match(warning, /headless run goes on with the loaded gates/);
@@ -125,6 +126,17 @@ describe('self-host warning', () => {
       sh(repo.root, 'mv', 'src/index.ts', 'src/renamed.ts');
       sh(repo.root, 'commit', '-qm', 'rename');
       assert.equal(selfHostWarning(repo.root, loaded, base), undefined);
+    });
+
+    it('leads a base-clause warning without claiming the files are outside the run commits', () => {
+      using repo = tree();
+      const base = sh(repo.root, 'rev-parse', 'HEAD');
+      write(repo.root, 'src/index.ts', 'two');
+      sh(repo.root, 'commit', '-qam', 'edit');
+      const loaded = { hashes: pluginHashes(repo.root), root: repo.root };
+      const warning = selfHostWarning(repo.root, loaded, base) ?? assert.fail('no warning');
+      assert.match(warning, /files are stale: loaded copy differs from the run base [0-9a-f]{7}: src\/index\.ts\. An interactive/);
+      assert.doesNotMatch(warning, /outside the run's own commits|The loaded gates are stale/);
     });
 
     it('gives no warning for a committed rename of a non-ASCII src/ file', () => {
