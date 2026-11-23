@@ -427,6 +427,31 @@ describe('pause and resume', () => {
       await step(ws, run => resumeRun(ws, run, 'session-2'));
       assert.equal(readFileSync(path, 'utf8'), before);
     });
+
+    it('leaves the fix file alone for a stalled run that was not paused', async () => {
+      using ws = workspace();
+      const { path, before } = await pausedInFix(ws, 'cause');
+      await step(ws, run => { run.status = 'stalled'; run.slices[0]!.stalled = true; });
+      await step(ws, run => resumeRun(ws, run, 'session-2'));
+      assert.equal(readFileSync(path, 'utf8'), before);
+    });
+
+    it('copies the cause when the run paused at a stall', async () => {
+      using ws = workspace();
+      const { path, before } = await pausedInFix(ws, 'stall cause');
+      await step(ws, run => { run.slices[0]!.stalled = true; });
+      await step(ws, run => resumeRun(ws, run, 'session-2'));
+      assert.match(readFileSync(path, 'utf8').slice(before.length), /## Pause cause[\s\S]*stall cause/);
+    });
+
+    it('appends a later cause that is a prefix of an earlier one', async () => {
+      using ws = workspace();
+      const { path } = await pausedInFix(ws, 'foo\nbar');
+      await step(ws, run => resumeRun(ws, run, 'session-2'));
+      await step(ws, run => pauseRun(run, 'foo'));
+      await step(ws, run => resumeRun(ws, run, 'session-3'));
+      assert.equal(readFileSync(path, 'utf8').split('## Pause cause').length - 1, 2);
+    });
   });
 
   describe('branch on resume', () => {
