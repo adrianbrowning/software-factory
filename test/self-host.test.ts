@@ -51,11 +51,10 @@ describe('self-host warning', () => {
     commit(ws, 'ok');
     await call('factory_checks', {});
     const resumed = await call('factory_start', { resume: 'demo' });
-    assert.ok(resumed.includes(repo.root) && resumed.includes(LOADED));
+    assert.doesNotMatch(resumed, /Warning:/);
     const review = await call('factory_review_start', { skip: [] });
-    const warning = review.split('\n').find(line => line.startsWith('Warning:')) ?? assert.fail(`no warning in ${review}`);
-    assert.ok(warning.includes(repo.root) && warning.includes(LOADED));
-    assert.equal(readRun(ws, 'demo').events.filter(event => event.kind === 'warning').length, 3);
+    assert.doesNotMatch(review, /Warning:/);
+    assert.equal(readRun(ws, 'demo').events.filter(event => event.kind === 'warning').length, 1);
   });
 
   it('gives no warning for another package name or no package.json', async () => {
@@ -211,11 +210,11 @@ describe('self-host warning', () => {
     commit(ws, 'ok');
     await call('factory_checks', {});
     const resumed = await call('factory_start', { resume: 'ticket' });
-    assert.ok(resumed.includes(repo.root) && resumed.includes(LOADED));
+    assert.doesNotMatch(resumed, /Warning:/);
     const review = await call('factory_review_start', { skip: [] });
-    assert.ok(review.includes(repo.root) && review.includes(LOADED));
+    assert.doesNotMatch(review, /Warning:/);
     assert.equal(readRun(ws, 'ticket').status, 'running');
-    assert.equal(warningsOf(repo.root, 'ticket').length, 3);
+    assert.equal(warningsOf(repo.root, 'ticket').length, 1);
   });
 
   it('factory_start and factory_review_start in the loaded plugin checkout warn that the gates are stale once src/ changed, and record it', async () => {
@@ -233,7 +232,13 @@ describe('self-host warning', () => {
     await withRun(ws, 'demo', run => nextSlice(ws, run));
     commit(ws, 'ok');
     await call('factory_checks', {});
-    assert.match(await call('factory_review_start', { skip: [] }), /\nWarning: .*stale.*new omp session/);
+    assert.doesNotMatch(await call('factory_review_start', { skip: [] }), /Warning:/);
+    assert.equal(warningsOf(repo.root, 'demo').length, 1);
+    writeFileSync(join(repo.root, 'src/new.ts'), 'x');
+    setLoadedPlugin({ hashes: { ...pluginHashes(repo.root), 'src/new.ts': 'old' }, root: repo.root });
+    assert.match(await call('factory_start', { resume: 'demo' }), /\nWarning: .*src\/new\.ts/);
+    assert.equal(warningsOf(repo.root, 'demo').length, 2);
+    assert.doesNotMatch(await call('factory_start', { resume: 'demo' }), /Warning:/);
     assert.equal(warningsOf(repo.root, 'demo').length, 2);
     assert.equal(readRun(ws, 'demo').status, 'running');
   });

@@ -104,10 +104,10 @@ export function selfHostWarning(repoRoot: string, loaded: LoadedPlugin = loadedP
   return `This run's repository ${repoRoot} is the loaded software-factory plugin, and these src/ or agents/ files changed since omp loaded it, outside the run's own commits: ${listed}. The loaded gates are stale. An interactive run can start a new omp session to load them; a headless run goes on with the loaded gates and needs no action.`;
 }
 
-/** Records the self-host warning for `repoRoot` as a 'warning' run event and returns the reply line for it, or '' when there is none. */
+/** Records the self-host warning for `repoRoot` as a 'warning' run event and returns the reply line for it, or '' when there is none or the run already has a 'warning' event with the same text. */
 export function recordSelfHostWarning(run: Run, repoRoot: string) {
   const warning = selfHostWarning(repoRoot, undefined, run.baseSha ?? run.baseRef);
-  if (warning === undefined) return '';
+  if (warning === undefined || run.events.some(event => event.kind === 'warning' && event.detail === warning)) return '';
   addEvent(run, 'warning', warning);
   return `\nWarning: ${warning}`;
 }
