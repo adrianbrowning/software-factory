@@ -14,9 +14,10 @@ export function findUnplaced(slice: Slice, id: string) {
   return slice.unplaced.filter(entry => entry.finding.id === id || itemKey(entry.review, entry.finding.id) === id);
 }
 
-/** Where a finding points: `path:line`, or `path` when it names no line. */
+/** Where a finding points: `<symbol> (<path>:<line>)`, or `<path>:<line>` without a symbol; `path` alone when it names no line. */
 export function findingLocation(finding: Finding) {
-  return `${finding.path}${finding.line === undefined ? '' : `:${finding.line}`}`;
+  const place = `${finding.path}${finding.line === undefined ? '' : `:${finding.line}`}`;
+  return finding.symbol === undefined ? place : `${finding.symbol} (${place})`;
 }
 
 /** What a ledger entry keeps of its finding: where it points, and its title and problem in full, redacted. */
