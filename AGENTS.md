@@ -15,3 +15,5 @@ The /factory submit wording sits in four places. When you change it, change all 
 Writing or reviewing omp event hooks, or tests that share module state: follow CODING_STANDARDS.md.
 
 Prove hook or child-session behavior with a real omp run, see docs/smoke-testing.md.
+
+Tests run on node:test, not vitest; run one test file with `sh scripts/test.sh <file>` or `pnpm run test <file>`.
