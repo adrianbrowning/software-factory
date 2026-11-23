@@ -28,4 +28,10 @@ When a change alters a default or a branch condition, search the tests for the i
 
 ## Script env in tests
 
-A test that spawns a script with `process.env` removes from the inherited env every variable the script reads, unless the test sets that variable on purpose. Otherwise the result depends on the developer's or CI's shell. A test reaches fake external binaries through the script's default lookup (for example a fake under the default name on `PATH`) or through an env variable the test sets on purpose, never through whatever the inherited env holds. A test does not set a variable whose default is the behavior under test, because the value masks the default. Example: `test/headless-backlog.test.ts` spawns `scripts/headless-backlog.sh`, which reads `OMP` and `LOG_DIR`. An inherited `OMP` or `LOG_DIR` changed what the script ran and where it logged, so the test removes `LOG_DIR` from the env it passes, and the script's default log dir stays under test. It sets `OMP` on purpose to the fake omp, so a local `OMP` can never start the real one (fixed in 678b124).
+A test that spawns a script with `process.env` controls every variable the script reads. Otherwise the result depends on the developer's or CI's shell.
+
+- Pin every external binary the script calls through an env variable set to the fake's absolute path. Never reach a fake through the script's default lookup (a fake under the default name on `PATH`): if the default changes, the real binary runs (#409).
+- Test a binary's default in its own test, with a `PATH` that holds only the fake dir and linked tools. A wrong default then fails as not found instead of running the real binary.
+- Remove every other variable the script reads from the inherited env, unless the test sets it on purpose. Do not set a variable whose default is the behavior under test, because the value masks the default.
+
+Example: `test/headless-backlog.test.ts` spawns `scripts/headless-backlog.sh`, which reads `OMP` and `LOG_DIR`. It sets `OMP` to `join(bin, ',omp')`, the fake's absolute path, so a local `OMP` or a changed script default can never start the real omp. It removes `LOG_DIR` from the env it passes, so the script's default log dir stays under test.
