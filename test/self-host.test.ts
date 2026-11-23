@@ -218,7 +218,10 @@ describe('self-host warning', () => {
     it('still names the differing file when the base does not resolve', () => {
       using repo = tree();
       const loaded = { hashes: pluginHashes(repo.root), root: repo.root };
+      const base = sh(repo.root, 'rev-parse', 'HEAD');
       write(repo.root, 'src/index.ts', 'two');
+      sh(repo.root, 'commit', '-qam', 'slice');
+      assert.equal(selfHostWarning(repo.root, loaded, base), undefined);
       assert.match(selfHostWarning(repo.root, loaded, 'no-such-ref') ?? assert.fail('no warning'), /src\/index\.ts/);
     });
 
