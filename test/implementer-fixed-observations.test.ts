@@ -104,6 +104,34 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
     assert.deepEqual(state(ws).ledger.map(entry => entry.key).toSorted(), ['01-r0:thermo-naming', '01-r1:thermo-naming']);
   });
 
+  it('does not accept a commit of another checked-out branch as a slice commit', async () => {
+    using ws = workspace({ maxRounds: 3 });
+    const sha = await redWithObservation(ws);
+    const branch = sh(ws.root, 'rev-parse', '--abbrev-ref', 'HEAD');
+    sh(ws.root, 'switch', '-qc', 'unrelated', 'main');
+    commit(ws, 'foreign.txt');
+    const foreign = sh(ws.root, 'rev-parse', 'HEAD');
+    const before = JSON.stringify(state(ws));
+    const result = await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [], fixItems: [`${OBSERVATION}: fixed in ${foreign.slice(0, 7)}`], open: [] }));
+    assert.deepEqual(result.fixed, []);
+    assert.equal(JSON.stringify(state(ws)), before);
+    sh(ws.root, 'switch', '-q', branch);
+    assert.deepEqual((await report(ws, sha, [`${OBSERVATION}: fixed in ${sha.slice(0, 7)}`])).fixed, ['01-r1:thermo-naming']);
+  });
+
+  it('resolves ids against the unplaced list the report found, whatever the order of its lines', async () => {
+    using ws = workspace({ maxRounds: 3 });
+    const sha = await redWithObservation(ws);
+    await step(ws, run => {
+      const active = run.slices[0]!;
+      active.unplaced.push({ ...active.unplaced[0]!, review: '01-r0' });
+    });
+    const short = sha.slice(0, 7);
+    const result = await report(ws, sha, [`\`01-r1:${OBSERVATION}\` fixed in ${short}`, `${OBSERVATION}: fixed in ${short}`]);
+    assert.deepEqual(result.fixed, ['01-r1:thermo-naming']);
+    assert.deepEqual(state(ws).slice.unplaced.map(entry => entry.review), ['01-r0']);
+  });
+
   it('does not undo a placement when a later report omits it, and adds nothing when a later report names it again', async () => {
     using ws = workspace({ maxRounds: 3 });
     const sha = await redWithObservation(ws);

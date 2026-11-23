@@ -62,11 +62,13 @@ const FIXED_LINE = /^(`?)([^\s`]+?):?\1:?\s+fixed in ([0-9a-f]{7,40})\b/i;
  */
 function recordFixedObservations(run: Run, slice: Slice, fixItems: string[], own: { sha: string }[]) {
   const recorded: string[] = [];
+  // Ids resolve against the list as the report found it, so an earlier line cannot make a later bare id unambiguous.
+  const initial = { unplaced: [...slice.unplaced] };
   for (const line of fixItems) {
     const match = FIXED_LINE.exec(line);
     const prefix = match?.[3]?.toLowerCase();
     if (match === null || prefix === undefined || !own.some(commit => commit.sha.startsWith(prefix))) continue;
-    const found = findUnplaced(slice, match[2] ?? '');
+    const found = findUnplaced(initial, match[2] ?? '');
     const entry = found.length === 1 ? found[0] : undefined;
     if (entry === undefined) continue;
     placeObservations(run, { id: entry.review }, slice, [entry.finding], 'fixed');

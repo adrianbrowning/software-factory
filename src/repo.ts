@@ -57,7 +57,7 @@ export async function requireOnBranchClean(root: string, slice: Slice, action: s
 
 /** The slice's commits past its parent, newest first: each full sha with its `--oneline` line (short sha and subject). */
 export async function ownCommits(ws: { root: string }, slice: Slice) {
-  const log = await git(ws.root, 'log', '--no-show-signature', '--no-color', '--format=%H %h %s', `${slice.parentBranch}..HEAD`);
+  const log = await git(ws.root, 'log', '--no-show-signature', '--no-color', '--format=%H %h %s', `${slice.parentBranch}..refs/heads/${slice.branch}`);
   return log
     .split('\n')
     .filter(Boolean)
