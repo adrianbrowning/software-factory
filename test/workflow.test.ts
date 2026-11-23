@@ -372,7 +372,7 @@ describe('re-slice', () => {
     sh(ws.root, 'branch', 'factory/demo/01-part-one');
 
     const before = readFileSync(join(ws.root, '.scratch', 'demo', 'state.json'), 'utf8');
-    await assert.rejects(step(ws, run => applyReslice(ws, run, planReslice(ws, run, [slice('Part one')]))));
+    await assert.rejects(step(ws, run => applyReslice(ws, run, planReslice(ws, run, [slice('Part one')]))), /git branch -m/);
     assert.equal(readFileSync(join(ws.root, '.scratch', 'demo', 'state.json'), 'utf8'), before);
     assert.ok(existsSync(join(ws.root, '.scratch', 'demo', 'issues', '01-big.md')));
   });

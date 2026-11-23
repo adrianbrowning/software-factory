@@ -48,7 +48,7 @@ describe('submit: returning to the starting branch after a gh failure', () => {
     using ws = workspace();
     const branches = await doneRun(ws, 2);
     using gh = fakeGh({ fail: 'stack init', stack: undefined });
-    await assert.rejects(step(ws, run => submitStack(ws, run)));
+    await assert.rejects(step(ws, run => submitStack(ws, run)), /gh stack init/);
     assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, `stack init --base main ${branches.join(' ')}`]);
     assert.equal(sh(ws.root, 'branch', '--show-current'), 'main');
   });

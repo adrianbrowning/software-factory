@@ -222,12 +222,12 @@ describe('implementer sessions', () => {
     using repo = emptyRepo();
     const { call, implementer } = await startedRun(repo.root);
     const open = ['x'];
-    const refused = (behavior: object) => assert.rejects(call('factory_implementer_report', { behaviors: [behavior], commits: [], open }, implementer));
-    await refused({ test: 't', behavior: 'b', seenRed: true });
-    await refused({ test: 't', behavior: 'b', seenRed: false, red: 'failed' });
-    await refused({ test: 't\nx', behavior: 'b', seenRed: false });
-    await refused({ test: 't', behavior: 'b\nx', seenRed: false });
-    await refused({ test: 't', behavior: 'b', seenRed: true, red: 'a\nb' });
+    const refused = (behavior: object, message: RegExp) => assert.rejects(call('factory_implementer_report', { behaviors: [behavior], commits: [], open }, implementer), message);
+    await refused({ test: 't', behavior: 'b', seenRed: true }, /red is required/);
+    await refused({ test: 't', behavior: 'b', seenRed: false, red: 'failed' }, /omit red/);
+    await refused({ test: 't\nx', behavior: 'b', seenRed: false }, /one line per item/);
+    await refused({ test: 't', behavior: 'b\nx', seenRed: false }, /one line per item/);
+    await refused({ test: 't', behavior: 'b', seenRed: true, red: 'a\nb' }, /one line per item/);
     assert.match(await call('factory_implementer_report', { behaviors: [{ test: 't', behavior: 'b', seenRed: false }], commits: [], open }, implementer), /Stored the report/);
   });
 
@@ -600,7 +600,7 @@ describe('used-up fix budget', () => {
     const { call, ws } = await budgetRun(repo.root, ['Feature']);
     await greenWithObservation(ws, 1);
     const interrupted = { confirm: async () => true, select: async () => Promise.reject(new Error('omp exited')) };
-    await assert.rejects(call('factory_fix', { bug: 'Crash.', reason: 'tidy' }, interrupted));
+    await assert.rejects(call('factory_fix', { bug: 'Crash.', reason: 'tidy' }, interrupted), /omp exited/);
     assert.deepEqual([readRun(ws, 'demo').status, readRun(ws, 'demo').slices[0]?.stalled], ['running', true]);
 
     const asked: string[] = [];
