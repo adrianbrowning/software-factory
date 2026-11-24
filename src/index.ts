@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { bindRun } from './active-run.ts';
 import { auditChild, IMPLEMENTER, resetAudit, SPAWN_ROLES } from './agents.ts';
 import { CONFIG_PATH, describeModels, loadConfig, requireAvailableModels, requireOrchestrator, type RoleModels, routeSpawn } from './config.ts';
+import { flaggedFilesSection } from './flagged-files.ts';
 import { gitArchWarning } from './git-arch.ts';
 import { carriedKeys } from './legacy-observations.ts';
 import { deferItems } from './deferred.ts';
@@ -455,9 +456,10 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
       const summary = result.summary.join('\n');
       const run = readRun(ws, feature);
       const work = `Slice commits:\n${result.commits}\n${result.report}`;
-      const unchanged = result.unchanged
-        ? '\nNo new commits since the fix file. The implementer report should explain, for each item, why no change was needed.'
-        : '';
+      const unchanged =
+        (result.unchanged
+          ? '\nNo new commits since the fix file. The implementer report should explain, for each item, why no change was needed.'
+          : '') + (await flaggedFilesSection(ws.root));
       if (result.passed) {
         const byPath = result.pathSkipped.length === 0 ? '' : `\nPath rules skip: ${result.pathSkipped.map(entry => `${entry.domain} (${entry.reason})`).join('; ')}. Pass a domain in factory_review_start keep when a changed file holds its subject after all.`;
         const passed = result.reused ? `All checks already passed on ${result.sha}; reusing their results, no check ran.` : 'All checks passed.';

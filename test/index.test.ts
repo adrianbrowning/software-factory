@@ -117,7 +117,7 @@ const emptyRepo = () => tempRepo('factory-index-', { 'README.md': 'base\n' });
 
 describe('implementer sessions', () => {
   /** Starts a run on slice 01 of the empty repo at `root`, with the main and factory-implementer callers. */
-  const startedRun = async (root: string) => {
+  const startedRun = async (root: string, checks = 'true') => {
     const handlers = new Map<string, Handler>();
     const tools = load({ handlers });
     const main = {
@@ -125,7 +125,7 @@ describe('implementer sessions', () => {
       cwd: root,
       hasUI: true,
       sessionManager: { getSessionId: () => 'session' },
-      ui: { confirm: async () => true, editor: async () => 'true', notify() {} },
+      ui: { confirm: async () => true, editor: async () => checks, notify() {} },
     };
     const implementer = { ...ctx('sub', 'factory-implementer'), cwd: root };
     const call = async (name: string, params: unknown, caller: unknown) => JSON.stringify(await tools.get(name)?.execute('id', params, undefined, undefined, caller));
@@ -269,6 +269,68 @@ describe('implementer sessions', () => {
     const reply = await call('factory_review_start', { skip: [] }, main);
     assert.match(reply, /in one eval step/);
     assert.match(reply, /wait for every reviewer, then spawn one factory-review-validator/);
+  });
+
+  describe('flagged files in the factory_checks reply', () => {
+    /** Commits `names` as tracked files, then flags each with `flag` (a `git update-index` option). */
+    const trackFlagged = (root: string, names: string[], flag: string) => {
+      for (const name of names) writeFileSync(join(root, name), 'x\n');
+      git(root, 'add', '.');
+      git(root, 'commit', '-qm', 'work');
+      git(root, 'update-index', flag, ...names);
+    };
+
+    it('names a skip-worktree file and its flag on a passing reply and on a reply that reuses standing results', async () => {
+      using repo = emptyRepo();
+      const { call, main } = await startedRun(repo.root);
+      trackFlagged(repo.root, ['local.txt'], '--skip-worktree');
+      const first = await call('factory_checks', {}, main);
+      assert.match(first, /All checks passed/);
+      assert.match(first, /skip-worktree: local\.txt/);
+      assert.match(first, /differ from the committed one/);
+      const again = await call('factory_checks', {}, main);
+      assert.match(again, /reusing their results/);
+      assert.match(again, /skip-worktree: local\.txt/);
+    });
+
+    it('names an assume-unchanged file with its flag on a failing reply', async () => {
+      using repo = emptyRepo();
+      const { call, main } = await startedRun(repo.root, 'false');
+      trackFlagged(repo.root, ['local.txt'], '--assume-unchanged');
+      const reply = await call('factory_checks', {}, main);
+      assert.match(reply, /Checks failed/);
+      assert.match(reply, /assume-unchanged: local\.txt/);
+    });
+
+    it('names both flags for a file that is skip-worktree and assume-unchanged', async () => {
+      using repo = emptyRepo();
+      const { call, main } = await startedRun(repo.root);
+      trackFlagged(repo.root, ['local.txt'], '--skip-worktree');
+      git(repo.root, 'update-index', '--assume-unchanged', 'local.txt');
+      const reply = await call('factory_checks', {}, main);
+      assert.match(reply, /skip-worktree, assume-unchanged: local\.txt/);
+    });
+
+    it('adds no flagged-files section when no file is flagged', async () => {
+      using repo = emptyRepo();
+      const { call, main } = await startedRun(repo.root);
+      writeFileSync(join(repo.root, 'work.txt'), 'x\n');
+      git(repo.root, 'add', '.');
+      git(repo.root, 'commit', '-qm', 'work');
+      const reply = await call('factory_checks', {}, main);
+      assert.match(reply, /All checks passed/);
+      assert.doesNotMatch(reply, /skip-worktree|assume-unchanged/);
+    });
+
+    it('lists 20 flagged files and states how many more are flagged', async () => {
+      using repo = emptyRepo();
+      const { call, main } = await startedRun(repo.root);
+      const names = Array.from({ length: 23 }, (_, i) => `f${String(i).padStart(2, '0')}.txt`);
+      trackFlagged(repo.root, names, '--skip-worktree');
+      const reply = await call('factory_checks', {}, main);
+      assert.equal(reply.match(/skip-worktree: f\d\d\.txt/g)?.length, 20);
+      assert.match(reply, /and 3 more/);
+    });
   });
 
   it('does not count stops after an ask toward the auto-pause and restarts the count', async () => {
