@@ -113,8 +113,11 @@ export async function submitImplementerReport(ws: Workspace, run: Run, report: I
   const path = reportPath(ws, run.feature, slice);
   const replaced = existsSync(path);
   writeAtomic(path, `${renderReport(report)}\n`);
-  const fixed = report.fixItems !== undefined ? recordFixedObservations(run, slice, report.fixItems, own) : [];
-  return { fixed, path, replaced };
+  // An open review's data file already lists the fix items its scope reviewer must judge; adding more would leave it unable to give them.
+  const reviewOpen = slice.phase === 'review' && slice.review !== undefined;
+  const fixed = report.fixItems !== undefined && !reviewOpen ? recordFixedObservations(run, slice, report.fixItems, own) : [];
+  const skippedForOpenReview = reviewOpen && report.fixItems?.some(line => FIXED_LINE.test(line)) === true;
+  return { fixed, path, replaced, skippedForOpenReview };
 }
 
 /** The slice's latest stored implementer report, or a line saying none was submitted; both name the report file. */

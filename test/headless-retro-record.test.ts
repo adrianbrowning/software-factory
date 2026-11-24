@@ -97,14 +97,14 @@ describe('nextAction for implementer phases', () => {
   it('implement: names the report file and says to handle a stop report before factory_checks', () => {
     const text = nextLine('implement');
     assert.match(text, /^Spawn factory-implementer for slice 01/);
-    assert.match(text, /reports\/01\.md/);
+    assert.match(text, /read its report file \(reports\/01\.md/);
     assert.match(text, /stop report in its Open list.*then call factory_checks/);
   });
 
   it('fix: says the same together with the fix file', () => {
     const text = nextLine('fix');
     assert.match(text, /\/x\/fixes\/01-f1\.md/);
-    assert.match(text, /reports\/01\.md/);
+    assert.match(text, /read its report file \(reports\/01\.md/);
     assert.match(text, /stop report in its Open list.*then call factory_checks/);
   });
 });
