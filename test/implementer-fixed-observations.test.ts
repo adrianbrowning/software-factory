@@ -91,6 +91,39 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
     assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
   });
 
+  it('records a `fixed in <sha>` observation reported after the review returned green, as no review is open then', async () => {
+    using ws = workspace({ maxRounds: 3 });
+    const sha = await redWithObservation(ws);
+    await step(ws, run => runChecks(ws, run));
+    const opened = await step(ws, run => startReview(ws, run));
+    const listed = [...fixItems(opened.dataFile).matchAll(/^- `([^`]+)`/gm)].map(match => match[1]!);
+    await review(ws, opened.reviewId, [], [], listed.map(id => ({ id, reason: 'the diff fixes it', status: 'fixed' as const })));
+    assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
+    assert.notEqual(readRun(ws, 'demo').slices[0]?.phase, 'review');
+    const result = await report(ws, sha, [`${OBSERVATION}: fixed in ${sha.slice(0, 7)}`]);
+    assert.deepEqual(result.fixed, ['01-r1:thermo-naming']);
+    assert.equal(result.skippedForOpenReview, false);
+  });
+
+  it('flags a `fixed in <sha>` line sent during an open review as not recorded, and the tool reply says so', async () => {
+    using dir = tempRepo('factory-fixed-obs-open-', HEADLESS_FILES);
+    const { ws } = await headlessSubmitRun(dir.root, ['Feature'], {}, {}, async () => '');
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const first = await withRun(ws, 'demo', run => startReview(ws, run));
+    await review(ws, first.reviewId, [finding('scope', 'high', 'gap'), finding('thermo', 'observation', 'naming')]);
+    assert.equal((await withRun(ws, 'demo', run => recordReview(ws, run))).kind, 'fix');
+    commit(ws, 'fixed.txt');
+    const sha = sh(ws.root, 'rev-parse', 'HEAD');
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    await withRun(ws, 'demo', run => startReview(ws, run));
+
+    const implementer = { ...ctx('sub', 'factory-implementer'), cwd: dir.root };
+    const reported = await load().get('factory_implementer_report')?.execute('id', { behaviors: [], commits: [`${sha.slice(0, 7)} fix`], fixItems: [`${OBSERVATION}: fixed in ${sha.slice(0, 7)}`], open: [] }, undefined, undefined, implementer);
+    const text = reported !== null && typeof reported === 'object' && 'content' in reported && Array.isArray(reported.content) ? JSON.stringify(reported.content) : '';
+    assert.match(text, /not recorded as fixed because a review is open/);
+    assert.deepEqual(readRun(ws, 'demo').observations, []);
+  });
+
   it('places nothing for `already fixed` and `not a defect` lines against an unambiguous unplaced observation', async () => {
     using ws = workspace({ maxRounds: 3 });
     const sha = await redWithObservation(ws);
