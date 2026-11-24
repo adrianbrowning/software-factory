@@ -186,7 +186,11 @@ const configSchema = z
     baseRef: text.optional(),
     branchPrefix: text.default('factory'),
     /** Checks a new run starts with, in order. Unset: the first run asks the user and saves the choice in `scratchDir`. */
-    checks: z.array(text).min(1).optional(),
+    checks: z
+      .array(z.string())
+      .transform(list => [...new Set(list.map(command => command.trim()).filter(command => command !== ''))])
+      .pipe(z.array(z.string()).min(1))
+      .optional(),
     /** Directories put before the omp process PATH when checks run. Each is absolute or starts with `~/`. */
     checkPath: z.array(text).default([]),
     checkTimeoutMs: positiveInt.default(10 * 60 * 1_000),
