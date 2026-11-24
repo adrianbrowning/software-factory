@@ -235,6 +235,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
     let run: Run;
     const notes: string[] = [];
     let warned = '';
+    let branchNote = '';
     const mode = params.mode ?? 'interactive';
     if (params.resume !== undefined) {
       const feature = requireFeatureName(params.resume);
@@ -259,7 +260,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
       }
       if (current.checks.length === 0) notes.push(...(await ensureChecks(ctx, ws, current.mode)));
       run = await withRun(ws, feature, async latest => {
-        await resumeRun(ws, latest, sessionId);
+        branchNote = (await resumeRun(ws, latest, sessionId)) ?? '';
         for (const note of notes) addEvent(latest, 'autonomous', note);
         warned = recordSelfHostWarning(latest, ws.root);
         return latest;
@@ -296,7 +297,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
         ? ''
         : `\nOpen review ${open.reviewId}: Data file: ${open.dataFile}; Reference dir: ${open.referenceDir}; Findings dir: ${open.findingsDir}; domains with no submission: ${open.missingDomains.length === 0 ? 'none' : open.missingDomains.join(', ')}; validation submitted: ${open.validated ? 'yes' : 'no'}`;
     return reply(
-      `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${run.mode === 'headless' ? HEADLESS_FIX_ROUNDS : ws.config.maxRounds}.${warned}\nNext: ${nextAction(run)}${openText}`,
+      `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${run.mode === 'headless' ? HEADLESS_FIX_ROUNDS : ws.config.maxRounds}.${warned}${branchNote === '' ? '' : `\n${branchNote}`}\nNext: ${nextAction(run)}${openText}`,
       summary,
     );
   }

@@ -155,6 +155,9 @@ When a slice uses up its fix budget (from red checks, a blocking review, `factor
 continue with `maxRounds` more fix rounds or pause. A paused stall leaves the run stalled, and the tool reply and its
 `Next:` line say so. `/factory resume <feature>` on a stalled run names the slice and its used rounds and asks
 whether to raise the fix budget by `maxRounds` and resume; declining keeps the run stalled.
+Resume also checks out the active slice's branch when another branch is checked out and the working tree is clean, and
+the reply says so. With a dirty tree or a failed switch it leaves the checkout and the reply names the mismatch: commit
+or remove the changes and check out the slice branch before the next factory tool.
 
 ### Headless runs
 
