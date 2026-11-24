@@ -40,6 +40,7 @@ Your task gives you the review id and the data file (PR metadata, full diff, cha
 
 **Control flow structure**
 - Are `if` checks pushed to the highest possible call site, or do functions defensively re-check conditions the caller already validated?
+  - If an acceptance criterion or recorded decision asks for that narrowing or removal, keeping the re-check is an unmet requirement: report it as `high` (with `decision` set for a decision), not as an observation or a `structure` observation. See the reviewer rule in `agents/factory-reviewer.md` ("Report gaps, not preferences").
 - Are loops/iterations operating on collections as a unit, or is per-item branching leaking into the loop body where it could be lifted out?
 
 **Completeness**

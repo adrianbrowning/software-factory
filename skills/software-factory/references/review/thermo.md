@@ -140,6 +140,8 @@ Prefer parallel independent work, atomic related updates, transaction/compensati
 | High            | High               |
 | Medium / Low    | Observation        |
 
+An unmet acceptance criterion or recorded decision (the code does not do what it names, read literally) is `high`, never a Medium/Low observation and never a `structure` observation, whatever this mapping says. The reviewer rule in `agents/factory-reviewer.md` ("Report gaps, not preferences") decides.
+
 ## Presumptive blockers (Critical)
 
 Block unless clearly justified:
