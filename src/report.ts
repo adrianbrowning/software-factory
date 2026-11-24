@@ -159,5 +159,10 @@ export function reportCoversCommits(ws: Workspace, run: Run, slice: Slice, shas:
  */
 export function startImplementerSession(ws: Workspace, run: Run) {
   const slice = activeSlice(run);
-  if (slice !== undefined) rmSync(reportPath(ws, run.feature, slice), { force: true });
+  if (slice !== undefined) clearReport(ws, run.feature, slice);
+}
+
+/** Removes the stored implementer report of a slice, so no later checks reply shows it. */
+export function clearReport(ws: Workspace, feature: string, slice: Pick<Slice, 'id'>) {
+  rmSync(reportPath(ws, feature, slice), { force: true });
 }

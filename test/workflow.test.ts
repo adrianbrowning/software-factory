@@ -273,7 +273,7 @@ describe('implementer report', () => {
     );
   });
 
-  it('clears the stored report when a new implementer session starts, and only then', async () => {
+  it('keeps the stored report through amendSeams and clears it when a new implementer session starts', async () => {
     using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
@@ -1126,6 +1126,34 @@ describe('reopen', () => {
     assert.deepEqual([next?.id, next?.phase, sh(ws.root, 'branch', '--show-current')], ['02', 'checks', second]);
     await step(ws, current => runChecks(ws, current));
     assert.equal((await step(ws, current => startReview(ws, current))).reviewId, '02-r2');
+  });
+
+  it('does not show the old implementer report of a restacked slice in its checks result', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    await newRun(ws, [slice('First'), slice('Second', ['First'])]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    commit(ws, 'first.txt');
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'second.txt');
+    const second = sh(ws.root, 'log', '--format=%h %s', '-1');
+    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [second], open: [] }));
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+
+    await step(ws, run => reopenSlice(ws, run, '01', 'first.txt must say fixed'));
+    commit(ws, 'first.txt', 'fixed\n');
+    await step(ws, run => runChecks(ws, run));
+    const reviewed = await step(ws, run => startReview(ws, run));
+    await review(ws, reviewed.reviewId, []);
+    await step(ws, run => recordReview(ws, run));
+    await step(ws, run => completeSlice(ws, run));
+
+    await step(ws, run => nextSlice(ws, run));
+    const checked = await step(ws, run => runChecks(ws, run));
+    assert.match(checked.report, /^No implementer report was submitted for slice 02 \(factory_implementer_report\)\./);
   });
 
   it('restores every later branch and pauses the run when a restack conflicts', async () => {

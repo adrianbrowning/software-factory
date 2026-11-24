@@ -9,13 +9,13 @@ import { isRecordSlice, recordFailed, waitsForRecord } from './deferred.ts';
 import { requireFeatureName } from './feature-name.ts';
 import {
   activeSlice, addEvent, builtBy, discardReview, clearFullGreen, dropPass, greenCommit, hasPass, outdatedGreenCount,
-  reportPath, runDir, type Run, reviewDomains, reviewPaths, saveRun, type Slice, type SliceInput, resliceItemSchema,
+  runDir, type Run, reviewDomains, reviewPaths, saveRun, type Slice, type SliceInput, resliceItemSchema,
   sliceInputSchema, standingChecks, type Source, sourceSchema, statePath, reviewDir, ticketPath, type Workspace,
   requireActive, requireNotStalled, stallNotice, writeAtomic,
 } from './run.ts';
 import { moveCarried } from './legacy-observations.ts';
 import { copyPauseCause } from './pause-cause.ts';
-import { reportCoversCommits } from './report.ts';
+import { clearReport, reportCoversCommits } from './report.ts';
 import { alignToSliceBranch, head, ownCommits, requireClean, requireOnBranchClean, sliceBranchExists, snapshot } from './repo.ts';
 
 export const UNTRUSTED_NOTE =
@@ -471,11 +471,11 @@ export async function applyReslice(ws: Workspace, run: Run, { renamed, slices }:
   const first = slices[run.slices.indexOf(active)];
   if (first === undefined) throw new Error('Re-slice lost the active slice');
   if (first.branch !== active.branch) await git(ws.root, 'branch', '-m', active.branch, first.branch);
-  // Re-slicing renumbers every slice that is not done, so their tickets and implementer reports go with them: checks
-  // can run on the carried-over commits before a new implementer starts.
+  // Re-slicing remakes every slice that is not done, so their tickets go with them. Their implementer reports go too:
+  // the first child keeps the split slice's id, so a kept report would show the split slice's report for the child.
   for (const old of run.slices.filter(slice => slice.status !== 'done')) {
     rmSync(ticketPath(ws, run.feature, old), { force: true });
-    rmSync(reportPath(ws, run.feature, old), { force: true });
+    clearReport(ws, run.feature, old);
   }
   // Items a Record slice wrote follow its renumbering: the split slice to its first child, later ones to their remade slice.
   for (const item of run.deferred) item.recorded = (item.recorded === undefined ? undefined : renamed.get(item.recorded)) ?? item.recorded;
@@ -664,6 +664,7 @@ export async function restartSlice(ws: Workspace, run: Run, slice: Slice) {
   slice.targeting = undefined;
   slice.fixPath = undefined;
   slice.fixFromSha = undefined;
+  clearReport(ws, run.feature, slice);
   writeTicket(ws, run, slice);
 }
 
