@@ -51,8 +51,7 @@ function templateRepo(files: Record<string, string>) {
   const key = JSON.stringify(files);
   let template = templates.get(key);
   if (template === undefined) {
-    const built = tempDir('factory-template-');
-    initRepo(built.root, files);
+    const built = tempDir('factory-template-', root => initRepo(root, files));
     process.once('exit', () => built[Symbol.dispose]());
     template = built.root;
     templates.set(key, template);
