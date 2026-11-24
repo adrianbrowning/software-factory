@@ -460,7 +460,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
       const unchanged =
         (result.unchanged
           ? '\nNo new commits since the fix file. The implementer report should explain, for each item, why no change was needed.'
-          : '') + (await flaggedFilesSection(ws.root)) + (await newChecksSection(ws.root, run.checks));
+          : '') + (await flaggedFilesSection(ws.root)) + (await newChecksSection(ws.root, result.sha, run.checks));
       if (result.passed) {
         const byPath = result.pathSkipped.length === 0 ? '' : `\nPath rules skip: ${result.pathSkipped.map(entry => `${entry.domain} (${entry.reason})`).join('; ')}. Pass a domain in factory_review_start keep when a changed file holds its subject after all.`;
         const passed = result.reused ? `All checks already passed on ${result.sha}; reusing their results, no check ran.` : 'All checks passed.';

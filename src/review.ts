@@ -269,7 +269,7 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
     [...failed.map(({ command }) => command), ...(dirty === '' ? [] : ['working tree changed'])].join('; '),
     slice,
   );
-  return { commits, passed: false as const, report, summary, unchanged, ...requestFix(ws, run, slice, sha, records) };
+  return { commits, passed: false as const, report, sha, summary, unchanged, ...requestFix(ws, run, slice, sha, records) };
 }
 
 /** Moves the slice to review with check `results` passed on `sha`. `reused` marks stored results that stand, when no check ran. */
