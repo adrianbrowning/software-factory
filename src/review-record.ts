@@ -80,12 +80,12 @@ export const validationSchema = z.object({
     .array(
       z.union(
         [
-          z.strictObject({
+          z.object({
             criterion: z.never().optional(),
             decision: decisionField,
             ...escalateBase,
           }),
-          z.strictObject({
+          z.object({
             decision: z.never().optional(),
             criterion: criterionField,
             ...escalateBase,
@@ -93,8 +93,8 @@ export const validationSchema = z.object({
         ],
         {
           error: issue => {
-            const id = typeof issue.input === 'object' && issue.input !== null && 'id' in issue.input ? String(issue.input.id) : '?';
-            return `"${id}": an escalate entry gives exactly one of \`decision\` (a recorded decision number) or \`criterion\` (the quoted acceptance criterion).`;
+            const input = typeof issue.input === 'object' && issue.input !== null ? (issue.input as Record<string, unknown>) : {};
+            if ((input.decision === undefined) === (input.criterion === undefined)) return `"${String(input.id ?? '?')}": an escalate entry gives exactly one of \`decision\` (a recorded decision number) or \`criterion\` (the quoted acceptance criterion).`;
           },
         },
       ),
