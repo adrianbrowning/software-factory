@@ -65,6 +65,32 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
     assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'fix');
   });
 
+  it('records a `fixed in <sha>` observation after the fix round passes the checks, in phase review', async () => {
+    using ws = workspace({ maxRounds: 3 });
+    const sha = await redWithObservation(ws);
+    await step(ws, run => runChecks(ws, run));
+    assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'review');
+    const result = await report(ws, sha, [`${OBSERVATION}: fixed in ${sha.slice(0, 7)}`]);
+    assert.deepEqual(result.fixed, ['01-r1:thermo-naming']);
+    const { ledger, slice: after } = state(ws);
+    assert.deepEqual(ledger.map(entry => [entry.key, entry.placement]), [['01-r1:thermo-naming', 'fixed']]);
+    assert.deepEqual(after.unplaced, []);
+  });
+
+  it('keeps the fix items an open review lists when a report names a fixed observation', async () => {
+    using ws = workspace({ maxRounds: 3 });
+    const sha = await redWithObservation(ws);
+    await step(ws, run => runChecks(ws, run));
+    const opened = await step(ws, run => startReview(ws, run));
+    const listed = [...fixItems(opened.dataFile).matchAll(/^- `([^`]+)`/gm)].map(match => match[1]!);
+    assert.ok(listed.length > 0);
+    const result = await report(ws, sha, [`${OBSERVATION}: fixed in ${sha.slice(0, 7)}`]);
+    assert.deepEqual(result.fixed, []);
+    assert.deepEqual(readRun(ws, 'demo').slices[0]!.fixItems.map(item => item.id).toSorted(), listed.toSorted());
+    await review(ws, opened.reviewId, [], [], listed.map(id => ({ id, reason: 'the diff fixes it', status: 'fixed' as const })));
+    assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
+  });
+
   it('places nothing for `already fixed` and `not a defect` lines against an unambiguous unplaced observation', async () => {
     using ws = workspace({ maxRounds: 3 });
     const sha = await redWithObservation(ws);

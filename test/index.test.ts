@@ -259,6 +259,7 @@ describe('implementer sessions', () => {
     using repo = emptyRepo();
     const { next } = await startedRun(repo.root);
     assert.match(next, /Implementer report file: \S+\/\.scratch\/demo\/reports\/01\.md/);
+    assert.match(next, /Spawn factory-implementer for slice 01.*read its report file \(reports\/01\.md.*handle any stop report in its Open list, then call factory_checks/);
   });
 
   it('says in the factory_next reply that factory_checks runs the full checks and the implementer runs only what it touched', async () => {
@@ -745,6 +746,7 @@ describe('used-up fix budget', () => {
       const result = await resumeWith('none', true, true, { phase: 'fix' });
       assert.equal(result.phase, 'fix');
       assert.match(result.text, /fix mode/);
+      assert.match(result.text, /read its report file \(reports\/01\.md.*handle any stop report in its Open list, then call factory_checks/);
     });
   });
 

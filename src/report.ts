@@ -113,7 +113,8 @@ export async function submitImplementerReport(ws: Workspace, run: Run, report: I
   const path = reportPath(ws, run.feature, slice);
   const replaced = existsSync(path);
   writeAtomic(path, `${renderReport(report)}\n`);
-  const fixed = report.fixItems !== undefined ? recordFixedObservations(run, slice, report.fixItems, own) : [];
+  // An open review's data file already lists the fix items its scope reviewer must judge; adding more would leave it unable to give them.
+  const fixed = report.fixItems !== undefined && slice.review === undefined ? recordFixedObservations(run, slice, report.fixItems, own) : [];
   return { fixed, path, replaced };
 }
 
