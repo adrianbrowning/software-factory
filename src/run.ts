@@ -521,10 +521,9 @@ export function forgetRun(ws: Workspace, feature: string) {
 
 export function saveRun(ws: Workspace, run: Run) {
   const path = statePath(ws, run.feature);
-  const state = { ...run, factoryVersion: FACTORY_VERSION, version: STATE_VERSION };
-  const valid = runSchema.safeParse(JSON.parse(JSON.stringify(state)));
+  const content = `${JSON.stringify({ ...run, factoryVersion: FACTORY_VERSION, version: STATE_VERSION }, null, 2)}\n`;
+  const valid = runSchema.safeParse(JSON.parse(content));
   if (!valid.success) throw new Error(`Refusing to save invalid factory state ${path}: ${z.prettifyError(valid.error)}`);
-  const content = `${JSON.stringify(state, null, 2)}\n`;
   const current = hash(content);
   writeAtomic(savedPath(path), `${current}\n${savedHashes(path).find(previous => previous !== current) ?? ''}\n`);
   writeAtomic(path, content);
