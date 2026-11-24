@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, posix } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { type FactoryConfig, modelsSchema, SPAWN_MODEL_ROLES } from './config.ts';
@@ -447,7 +447,7 @@ export function reviewPaths(ws: Workspace, run: Pick<Run, 'feature'>, id: string
     referenceDir: REVIEW_REFERENCE_DIR,
   };
 }
-export const reportFile = (slice: Pick<Slice, 'id'>) => join('reports', `${slice.id}.md`);
+export const reportFile = (slice: Pick<Slice, 'id'>) => posix.join('reports', `${slice.id}.md`);
 export const reportPath = (ws: Workspace, feature: string, slice: Pick<Slice, 'id'>) => join(runDir(ws, feature), reportFile(slice));
 
 /** Write via rename so concurrent readers never see a partial file. */
