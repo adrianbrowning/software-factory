@@ -277,6 +277,16 @@ describe('review submissions', { concurrency: 4 }, () => {
     assert.match(readFileSync(result.fixPath, 'utf8'), new RegExp(`- Does not meet criterion: ${criterion}`));
   });
 
+  it('refuses a reviewer-supplied criterion, so only the validator can name one in the fix file', async () => {
+    using ws = workspace();
+    const { reviewId } = await openReview(ws);
+    const claimed = { ...finding('bug', 'high', 'claims-criterion'), criterion: 'Reviewer-chosen criterion' };
+    await assert.rejects(
+      step(ws, run => submitDomain(ws, run, { agentId: 'bug', domain: 'bug', findings: [claimed], reviewId, ...noFixItems('bug') })),
+      /bug-claims-criterion.*criterion.*validator/,
+    );
+  });
+
   it('refuses to escalate a blocking finding with a criterion', async () => {
     using ws = workspace();
     const { reviewId } = await openReview(ws);
