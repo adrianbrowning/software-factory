@@ -580,7 +580,7 @@ function checkCoverage(findings: Finding[], validation: Validation, decisionCoun
   const alreadyBlocking = escalated.filter(id => byId.get(id)?.severity !== 'observation');
   if (alreadyBlocking.length > 0) throw new Error(`Only observation findings can be escalated; keep these instead: ${alreadyBlocking.join(', ')}`);
   for (const entry of validation.escalate) {
-    if ('decision' in entry && entry.decision > decisionCount) {
+    if (entry.decision !== undefined && entry.decision > decisionCount) {
       throw new Error(`"${entry.id}" names decision ${entry.decision}, but the review data lists ${decisionCount} decisions.`);
     }
   }

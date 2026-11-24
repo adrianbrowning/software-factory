@@ -72,10 +72,12 @@ export const validationSchema = z.object({
       z.union(
         [
           z.strictObject({
+            criterion: z.never().optional(),
             decision: z.number().int().positive().describe('Number of the recorded decision the code breaks; give exactly one of `decision` or `criterion`'),
             ...escalateBase,
           }),
           z.strictObject({
+            decision: z.never().optional(),
             criterion: z.string().min(1).describe('The quoted acceptance criterion the code does not meet, read literally; give exactly one of `decision` or `criterion`'),
             ...escalateBase,
           }),
@@ -107,7 +109,7 @@ export function keptFindings(findings: Finding[], validation: Validation) {
     .map(finding => {
       if (downgraded.has(finding.id)) return { ...finding, category: finding.category ?? downgraded.get(finding.id), severity: 'observation' as const };
       const entry = escalated.get(finding.id);
-      if (entry !== undefined) return { ...finding, ...('criterion' in entry ? { criterion: entry.criterion } : { decision: entry.decision }), severity: 'high' as const };
+      if (entry !== undefined) return { ...finding, ...(entry.criterion === undefined ? { decision: entry.decision } : { criterion: entry.criterion }), severity: 'high' as const };
       return finding;
     });
 }

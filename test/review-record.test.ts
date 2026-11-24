@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { keptFindings, validationSchema } from '../src/review-record.ts';
+import { keptFindings, type Validation, validationSchema } from '../src/review-record.ts';
 import { finding } from './helpers.ts';
 
 describe('validation escalate entry', () => {
@@ -23,5 +23,14 @@ describe('validation escalate entry', () => {
       { criterion: undefined, decision: 2, id: 'bug-a', severity: 'high' },
       { criterion: 'quoted', decision: undefined, id: 'bug-b', severity: 'high' },
     ]);
+  });
+});
+
+describe('Validation escalate entry type', () => {
+  it('has no state with both decision and criterion', () => {
+    const both = { criterion: 'c', decision: 1, id: 'bug-a', reason: 'r' };
+    // @ts-expect-error an entry with both fields is not a Validation escalate entry
+    const validation: Validation = { dropped: [], escalate: [both], keep: [] };
+    assert.ok(validation);
   });
 });
