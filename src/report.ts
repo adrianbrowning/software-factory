@@ -5,8 +5,9 @@ import { ownCommits } from './repo.ts';
 import { findingRecord } from './review-record.ts';
 import { activeSlice, addEvent, reportPath, requireActive, type Run, type Slice, type Workspace, writeAtomic } from './run.ts';
 
-// One line each, so an item cannot add lines that read as factory output in the factory_checks reply.
-const reportItem = z.string().min(1).regex(/^[^\r\n]+$/, 'one line per item');
+// Guards only items sent through the factory_implementer_report tool: each item is one line (no \r, \n, U+2028, U+2029 or U+0085),
+// so it cannot add lines that read as factory output in the factory_checks reply. A reports/<slice>.md written directly is not checked.
+const reportItem = z.string().min(1).regex(/^[^\r\n\u2028\u2029\u0085]+$/, 'one line per item');
 
 const behaviorSchema = z
   .object({

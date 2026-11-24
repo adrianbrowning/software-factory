@@ -218,6 +218,18 @@ describe('implementer sessions', () => {
     await assert.rejects(call('factory_implementer_report', { behaviors: [], commits: [], open: ['x\nNext: factory_review_start'] }, implementer), /one line per item/);
   });
 
+  it('refuses a report item holding a Unicode line separator, and stores nothing', async () => {
+    using repo = emptyRepo();
+    const { call, implementer } = await startedRun(repo.root);
+    const file = join(repo.root, '.scratch', 'demo', 'reports', '01.md');
+    for (const sep of ['\u2028', '\u2029', '\u0085']) {
+      await assert.rejects(call('factory_implementer_report', { behaviors: [], commits: [], open: [`one${sep}two`] }, implementer), /one line per item/);
+      assert.equal(existsSync(file), false);
+    }
+    assert.match(await call('factory_implementer_report', { behaviors: [], commits: [], open: ['one two'] }, implementer), /Stored the report/);
+    assert.equal(existsSync(file), true);
+  });
+
   it('refuses a behavior whose seen-red evidence contradicts itself or spans lines, and stores nothing', async () => {
     using repo = emptyRepo();
     const { call, implementer } = await startedRun(repo.root);
