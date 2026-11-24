@@ -719,11 +719,12 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
     const failure = await deferItems(
       ws,
       run,
-      (isRecordSlice(slice) ? [] : records).map((record, index) => {
-        const id = itemId(record);
-        const finding = blocking[index];
-        return draftOf(run, slice, review.id, { commit: review.sha, detail: finding === undefined ? record.section : renderFinding(finding, run.decisions, '###', true), id, key: itemKey(review.id, id ?? `unresolved:${index + 1}`), kind: 'unresolved', title: finding === undefined ? record.item.summary : `[${finding.severity}] ${evidenceLine(finding.title, 500)}` });
-      }),
+      isRecordSlice(slice)
+        ? []
+        : [
+            ...blocking.map(finding => draftOf(run, slice, review.id, { commit: review.sha, detail: renderFinding(finding, run.decisions, '###', true), id: finding.id, key: itemKey(review.id, finding.id), kind: 'unresolved', title: `[${finding.severity}] ${evidenceLine(finding.title, 500)}` })),
+            ...open.map(item => draftOf(run, slice, review.id, { commit: review.sha, detail: renderOpenItem(item, verdictOf.get(item.id)), id: item.id, key: itemKey(review.id, item.id), kind: 'unresolved', title: item.summary })),
+          ],
     );
     if (failure !== undefined) {
       slice.fixItems = gathered;
