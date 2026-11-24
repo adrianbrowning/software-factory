@@ -30,11 +30,18 @@ export function initRepo(root: string, files: Record<string, string>) {
   return root;
 }
 
-/** A temp directory, removed when the `using` scope that holds it ends. */
-export function tempDir(prefix: string) {
+/** A temp directory, removed when the `using` scope that holds it ends; when `setup` throws, the directory is removed and the error rethrown. */
+export function tempDir(prefix: string, setup?: (root: string) => void) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
   // Retries cover ENOTEMPTY when the OS (macOS writes .DS_Store) adds a file while the tree is being removed.
-  return { root, [Symbol.dispose]: () => rmSync(root, { force: true, maxRetries: 3, recursive: true }) };
+  const remove = () => rmSync(root, { force: true, maxRetries: 3, recursive: true });
+  try {
+    setup?.(root);
+  } catch (error) {
+    remove();
+    throw error;
+  }
+  return { root, [Symbol.dispose]: remove };
 }
 
 /** Built repositories by their files, one per distinct `files` in this process; each test copies one instead of running git init and commit again. */
@@ -44,8 +51,7 @@ function templateRepo(files: Record<string, string>) {
   const key = JSON.stringify(files);
   let template = templates.get(key);
   if (template === undefined) {
-    const built = tempDir('factory-template-');
-    initRepo(built.root, files);
+    const built = tempDir('factory-template-', root => initRepo(root, files));
     process.once('exit', () => built[Symbol.dispose]());
     template = built.root;
     templates.set(key, template);
@@ -55,14 +61,7 @@ function templateRepo(files: Record<string, string>) {
 
 /** A temp git repository with a base commit of `files`, removed when the `using` scope that holds it ends. */
 export function tempRepo(prefix: string, files: Record<string, string>) {
-  const repo = tempDir(prefix);
-  try {
-    cpSync(templateRepo(files), repo.root, { recursive: true });
-  } catch (error) {
-    repo[Symbol.dispose]();
-    throw error;
-  }
-  return repo;
+  return tempDir(prefix, root => cpSync(templateRepo(files), root, { recursive: true }));
 }
 
 /** A workspace on a temp repository, removed when the `using` scope that holds it ends. */
@@ -212,15 +211,16 @@ export async function green(ws: Workspace) {
 
 /** A fake `gh` first on PATH that logs each call, prints an issue URL numbered by the call, and fails the call whose number is in `fail`. */
 export function fakeGh() {
-  const dir = tempDir('factory-gh-');
+  const dir = tempDir('factory-gh-', root => {
+    writeFileSync(
+      join(root, 'gh'),
+      `#!/bin/sh\nif [ "$1 $2" != 'issue create' ]; then exit 0; fi\necho "$1 $2 $3 $4" >> '${join(root, 'calls.log')}'\necho "$@" >> '${join(root, 'args.log')}'\nn=$(wc -l < '${join(root, 'calls.log')}' | tr -d ' ')\nif [ -f '${join(root, 'fail')}' ] && [ "$n" = "$(cat '${join(root, 'fail')}')" ]; then echo 'HTTP 502' >&2; exit 1; fi\nif [ -f '${join(root, 'garble')}' ]; then echo 'created'; exit 0; fi\necho "https://github.com/o/r/issues/$n"\n`,
+    );
+    chmodSync(join(root, 'gh'), 0o755);
+  });
   const log = join(dir.root, 'calls.log');
   const fail = join(dir.root, 'fail');
   const garble = join(dir.root, 'garble');
-  writeFileSync(
-    join(dir.root, 'gh'),
-    `#!/bin/sh\nif [ "$1 $2" != 'issue create' ]; then exit 0; fi\necho "$1 $2 $3 $4" >> '${log}'\necho "$@" >> '${join(dir.root, 'args.log')}'\nn=$(wc -l < '${log}' | tr -d ' ')\nif [ -f '${fail}' ] && [ "$n" = "$(cat '${fail}')" ]; then echo 'HTTP 502' >&2; exit 1; fi\nif [ -f '${garble}' ]; then echo 'created'; exit 0; fi\necho "https://github.com/o/r/issues/$n"\n`,
-  );
-  chmodSync(join(dir.root, 'gh'), 0o755);
   const path = process.env.PATH;
   process.env.PATH = `${dir.root}:${path}`;
   return {
