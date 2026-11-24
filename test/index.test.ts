@@ -361,7 +361,8 @@ describe('implementer sessions', () => {
     });
 
     it('adds no section when the committed config adds no check, is absent, or is invalid', async () => {
-      for (const content of [JSON.stringify({ checks: ['true'] }), JSON.stringify({ checks: ['true '] }), undefined, '{not json', JSON.stringify({ checks: [] })]) {
+      const cases = [JSON.stringify({ checks: ['true'] }), JSON.stringify({ checks: ['true '] }), undefined, '{not json', JSON.stringify({ checks: [] }), JSON.stringify({ checks: ['true', '   '] }), JSON.stringify({ checks: ['true', 'echo extra'], models: 5 })];
+      for (const content of cases) {
         using repo = emptyRepo();
         const { call, main } = await startedRun(repo.root);
         if (content === undefined) {
@@ -371,8 +372,16 @@ describe('implementer sessions', () => {
         } else commitConfig(repo.root, content);
         const reply = await call('factory_checks', {}, main);
         assert.match(reply, /All checks passed/);
-        assert.doesNotMatch(reply, /does not run them/);
+        assert.doesNotMatch(reply, /does not run them/, String(content));
       }
+    });
+
+    it('lists a repeated committed check once', async () => {
+      using repo = emptyRepo();
+      const { call, main } = await startedRun(repo.root);
+      commitConfig(repo.root, JSON.stringify({ checks: ['true', 'echo extra', 'echo extra '] }));
+      const reply = await call('factory_checks', {}, main);
+      assert.match(reply, /does not run them:\\n- echo extra\\nChanged files/);
     });
   });
 
