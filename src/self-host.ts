@@ -111,10 +111,14 @@ export function selfHostWarning(repoRoot: string, loaded: LoadedPlugin = loadedP
   }
   const now = pluginHashes(loaded.root);
   const resolved = base === undefined ? undefined : resolveCommit(repoRoot, base);
-  const own = resolved === undefined ? undefined : changedSince(repoRoot, resolved);
-  const ownLoaded = [...own ?? []].filter(file => LOADED_DIRS.some(dir => file.startsWith(`${dir}/`)));
+  const files = resolved === undefined ? undefined : changedSince(repoRoot, resolved);
+  const own = resolved === undefined || files === undefined ? undefined : { commit: resolved, files };
+  const ownLoaded = [...own?.files ?? []].filter(file => LOADED_DIRS.some(dir => file.startsWith(`${dir}/`)));
+  const expectedHash = own === undefined
+    ? (file: string) => now[file]
+    : (file: string) => own.files.has(file) ? hashAtBase(repoRoot, own.commit, file) : now[file];
   const stale = [...new Set([...Object.keys(now), ...Object.keys(loaded.hashes), ...ownLoaded])]
-    .filter(file => (own?.has(file) ? hashAtBase(repoRoot, resolved ?? '', file) : now[file]) !== loaded.hashes[file])
+    .filter(file => expectedHash(file) !== loaded.hashes[file])
     .sort();
   if (stale.length === 0) return undefined;
   const listed = listStale(stale);
