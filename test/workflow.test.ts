@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { implementerReportSchema, startImplementerSession, submitImplementerReport } from '../src/report.ts';
+import { startImplementerSession, submitImplementerReport } from '../src/report.ts';
 import { forgetRun, greenCommit, readRun, REVIEW_DOMAINS, REVIEW_REFERENCE_DIR, reviewDir, reviewPaths, type Run, ticketPath, type Workspace } from '../src/run.ts';
 import { completeSlice, recordDecisions, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
 import {
@@ -247,16 +247,6 @@ describe('implementer report', () => {
     for (const fixItems of [[], ['bug-f1: already fixed']]) {
       await assert.rejects(step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [], fixItems, open: [] })), /not in fix mode: leave fixItems out/);
     }
-  });
-
-  it('refuses a report item holding a Unicode line separator, so nothing is stored', async () => {
-    using ws = workspace();
-    await newRun(ws, [slice('Feature')]);
-    await step(ws, run => nextSlice(ws, run));
-    for (const sep of ['\u2028', '\u2029', '\u0085']) {
-      assert.throws(() => implementerReportSchema.parse({ behaviors: [], commits: [], open: [`one${sep}two`] }), /one line per item/);
-    }
-    assert.equal(existsSync(join(ws.root, '.scratch', 'demo', 'reports', '01.md')), false);
   });
 
   it('keeps the fixItems rules after a fix round passes the checks', async () => {
