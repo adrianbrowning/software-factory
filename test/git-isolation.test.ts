@@ -5,8 +5,12 @@ import { git } from '../src/exec.ts';
 import { workspace } from './helpers.ts';
 
 describe('test isolation', () => {
-  it("runs the factory's git calls without the developer's global git config", async () => {
+  it("runs the factory's git calls with no config but the repo's own", async () => {
     using ws = workspace();
-    assert.equal(await git(ws.root, 'config', '--global', '--list'), '');
+    const lines = (await git(ws.root, 'config', '--list', '--show-origin')).split('\n').filter(Boolean);
+    const foreign = lines.filter(
+      (line) => !line.startsWith('file:.git/config\t') && line !== 'command line:\tmaintenance.auto=false',
+    );
+    assert.deepEqual(foreign, []);
   });
 });
