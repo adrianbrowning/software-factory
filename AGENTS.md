@@ -12,6 +12,13 @@ The /factory submit wording sits in four places. When you change it, change all 
 - `src/headless-submit.ts`: the gate event and the reply.
 - `skills/software-factory/SKILL.md`: section 6 (Hand over) and the headless Hand over line.
 
+The implementer test-scope wording (the implementer runs only the typecheck, the test files it touched, the test files that assert on output it changed, and the test files the repository names for its kind of change) sits in five places. When you change it, change all five together:
+- `agents/factory-implementer.md`: Build mode step 3, Fix mode steps 3 and 4, and the Running checks section.
+- `src/index.ts`: the factory_next reply.
+- `src/workflow.ts`: the ticket Checks section and the fix-file header.
+- `skills/software-factory/SKILL.md`: section 4 step 2.
+- `README.md`: the config table `checks` row.
+
 Writing or reviewing omp event hooks, or tests that share module state: follow CODING_STANDARDS.md.
 
 Prove hook or child-session behavior with a real omp run, see docs/smoke-testing.md.
