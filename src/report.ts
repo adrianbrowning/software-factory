@@ -116,7 +116,7 @@ export async function submitImplementerReport(ws: Workspace, run: Run, report: I
   // An open review's data file already lists the fix items its scope reviewer must judge; adding more would leave it unable to give them.
   const reviewOpen = slice.phase === 'review' && slice.review !== undefined;
   const fixed = report.fixItems !== undefined && !reviewOpen ? recordFixedObservations(run, slice, report.fixItems, own) : [];
-  const skippedForOpenReview = reviewOpen && report.fixItems?.some(line => /\bfixed in\b/.test(line)) === true;
+  const skippedForOpenReview = reviewOpen && report.fixItems?.some(line => FIXED_LINE.test(line)) === true;
   return { fixed, path, replaced, skippedForOpenReview };
 }
 

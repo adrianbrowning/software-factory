@@ -91,6 +91,15 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
     assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
   });
 
+  it('flags a capitalised `Fixed in <sha>` line sent during an open review as skipped, but not an `already fixed in` note', async () => {
+    using ws = workspace({ maxRounds: 3 });
+    const sha = await redWithObservation(ws);
+    await step(ws, run => runChecks(ws, run));
+    await step(ws, run => startReview(ws, run));
+    assert.equal((await report(ws, sha, [`${OBSERVATION}: Fixed in ${sha.slice(0, 7)}`])).skippedForOpenReview, true);
+    assert.equal((await report(ws, sha, [`${OBSERVATION}: already fixed in an earlier commit`])).skippedForOpenReview, false);
+  });
+
   it('records a `fixed in <sha>` observation reported after the review returned green, as no review is open then', async () => {
     using ws = workspace({ maxRounds: 3 });
     const sha = await redWithObservation(ws);
