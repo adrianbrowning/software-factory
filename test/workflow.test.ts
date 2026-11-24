@@ -1284,7 +1284,7 @@ describe('intake next action', () => {
     await start(ws);
     const next = nextAction(readRun(ws, 'demo'));
     assert.match(next, /issue\.md in the run directory/);
-    assert.match(next, /not .*gh/);
+    assert.match(next, /read it there, do not fetch the issue again with gh/);
   });
 });
 
