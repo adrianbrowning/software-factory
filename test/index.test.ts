@@ -497,6 +497,19 @@ describe('first-run checks dialog', () => {
     using repo = emptyRepo();
     await assert.rejects(start(repo.root, [undefined]), /cancelled the checks dialog/);
   });
+
+  it('points the new-run and resume Next line and factory_status at issue.md instead of gh', async () => {
+    using repo = emptyRepo();
+    const main = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, editor: async () => 'make test', notify() {} } };
+    const tools = load();
+    const run = async (name: string, params: unknown) => (await tools.get(name)?.execute('id', params, undefined, undefined, main) as { content: { text: string }[] }).content[0]?.text ?? '';
+    const wanted = /^Next: .*issue\.md in the run directory.*do not fetch the issue again with gh/m;
+    const fresh = await run('factory_start', { feature: 'demo', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } });
+    assert.match(fresh, wanted);
+    const resumed = await run('factory_start', { resume: 'demo' });
+    assert.match(resumed, wanted);
+    assert.match(await run('factory_status', {}), /issue\.md in the run directory.*do not fetch the issue again with gh/);
+  });
 });
 
 const CHECKS_OK = { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) };
