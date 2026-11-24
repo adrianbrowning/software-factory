@@ -1138,8 +1138,7 @@ describe('active run in a fresh extension copy', () => {
 
     assert.equal(await stop(), `${hint}Software factory run "demo" is not finished. Next: ${next}`);
     await commands.get('factory')?.handler('status', main);
-    assert.match(notices.at(-1) ?? '', /Active run: demo: The factory tools are not loaded: call factory_start with resume: "demo"/);
-    assert.match(notices.at(-1) ?? '', new RegExp(next.replaceAll(/[.()]/g, '\\$&')));
+    assert.equal(notices.at(-1), `Active run: demo: ${hint}${next}\nRuns: demo`);
 
     await tools.get('factory_start')?.execute('id', { resume: 'demo' }, undefined, undefined, main);
     assert.equal(await stop(), `Software factory run "demo" is not finished. Next: ${next}`);
