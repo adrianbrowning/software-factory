@@ -435,6 +435,7 @@ describe('accepted unresolved findings go to the sink', () => {
     const askedIn = realpathSync(join(ws.root, '.scratch', 'demo', 'fixes', '01-f3.md'));
     const head = `Run: demo\nSlice: 01 "Feature"\nReview: 01-r4\nReviewed commit: ${sha}\n\n`;
     assert.equal(run.deferred[0]?.body, `${head}### [high] thermo-a\n\n- Symbol: the factory_carry handler\n- Location at filing time: ok:1\n- Title: a\n- Problem: wrong\n- Fix: fix it\n- Fix prompt: fix it`);
+    assert.equal(run.deferred[1]?.body, `${head}### [high] bug-c\n\n- Location at filing time: ok:1\n- Title: c\n- Problem: wrong\n- Fix: fix it\n- Fix prompt: fix it`);
     assert.equal(run.deferred[2]?.body, `${head}### \`bug-b\`\n\n- Asked in: ${askedIn} (round 3)\n- Item: [high] ok:1: leaky title\n- Scope reviewer: still broken`);
   });
 
