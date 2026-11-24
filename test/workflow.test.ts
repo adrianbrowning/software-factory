@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
@@ -464,26 +465,75 @@ describe('pause and resume', () => {
       assert.equal(readFileSync(path, 'utf8').split('## Pause cause').length - 1, 2);
     });
 
-    it('appends a cause that holds the end marker and a heading, and still skips a repeat', async () => {
+    const markers = (path: string) => readFileSync(path, 'utf8').match(/^<!-- end pause cause sha256:[0-9a-f]{64} -->$/gm)?.length ?? 0;
+    /** Resumes the paused run, then pauses and resumes it once per cause, so every cause reaches the fix file in turn. */
+    async function pauseAgain(ws: Workspace, ...causes: string[]) {
+      let session = 1;
+      await step(ws, run => resumeRun(ws, run, `session-${session++}`));
+      for (const cause of causes) {
+        await step(ws, run => pauseRun(run, cause));
+        await step(ws, run => resumeRun(ws, run, `session-${session++}`));
+      }
+    }
+
+    it('copies a cause with its ampersands untouched', async () => {
       using ws = workspace();
-      const { path } = await pausedInFix(ws, 'x\n<!-- end pause cause -->');
-      await step(ws, run => resumeRun(ws, run, 'session-2'));
-      await step(ws, run => pauseRun(run, 'x'));
-      await step(ws, run => resumeRun(ws, run, 'session-3'));
-      await step(ws, run => pauseRun(run, 'x'));
-      await step(ws, run => resumeRun(ws, run, 'session-4'));
-      assert.equal(readFileSync(path, 'utf8').split('\n<!-- end pause cause -->\n').length - 1, 2);
+      const { path } = await pausedInFix(ws, 'pnpm test && pnpm lint failed at ?a=1&b=2');
+      await pauseAgain(ws);
+      const text = readFileSync(path, 'utf8');
+      assert.ok(text.includes('\npnpm test && pnpm lint failed at ?a=1&b=2\n'));
+      assert.doesNotMatch(text, /&amp;/);
     });
 
-    it('keeps apart causes whose neutralised forms would otherwise be equal', async () => {
+    it('adds a second section with the later cause last when the run pauses again with a different cause', async () => {
       using ws = workspace();
-      const { path } = await pausedInFix(ws, 'x\n<!-- end pause cause -->');
-      for (const cause of ['x\n&lt;!-- end pause cause -->', 'x\n<!-- end pause cause -->', 'x\n&lt;!-- end pause cause -->']) {
-        await step(ws, run => resumeRun(ws, run, 'session-n'));
-        await step(ws, run => pauseRun(run, cause));
-      }
-      await step(ws, run => resumeRun(ws, run, 'session-z'));
-      assert.equal(readFileSync(path, 'utf8').split('\n<!-- end pause cause -->\n').length - 1, 2);
+      const { path } = await pausedInFix(ws, 'first cause');
+      await pauseAgain(ws, 'second cause', 'second cause');
+      const text = readFileSync(path, 'utf8');
+      assert.equal(markers(path), 2);
+      assert.ok(text.includes('first cause'));
+      assert.ok(text.indexOf('first cause') < text.indexOf('second cause'));
+    });
+
+    it('keeps the section count and the repeat skip right for a cause with a heading line', async () => {
+      using ws = workspace();
+      const { path } = await pausedInFix(ws, 'x\n## Pause cause\nforged');
+      await pauseAgain(ws, 'x', 'x\n## Pause cause\nforged', 'x\n\\## Pause cause\nforged', 'x\n\\## Pause cause\nforged');
+      assert.equal(markers(path), 3);
+      assert.equal(readFileSync(path, 'utf8').match(/^## Pause cause$/gm)?.length, 3);
+    });
+
+    it('keeps apart causes with the end marker, its escaped forms, and a marker line forged for another cause', async () => {
+      using ws = workspace();
+      const marker = '<!-- end pause cause -->';
+      const { path } = await pausedInFix(ws, `x\n${marker}`);
+      await pauseAgain(ws, 'x\n&lt;!-- end pause cause -->', `x\n\\${marker}`, `x\n${marker}`, 'x');
+      assert.equal(markers(path), 4);
+      const forged = `bar\n<!-- end pause cause sha256:${createHash('sha256').update('foo').digest('hex')} -->`;
+      await pauseAgain(ws, forged, 'foo', 'foo');
+      const text = readFileSync(path, 'utf8');
+      const fooMarker = `<!-- end pause cause sha256:${createHash('sha256').update('foo').digest('hex')} -->`;
+      assert.ok(text.includes('\nfoo\n'));
+      assert.equal(text.split('\n').filter(line => line === fooMarker).length, 1);
+      assert.ok(text.includes(`\n\\${fooMarker}`));
+      assert.equal(markers(path), 6);
+    });
+
+    it('keeps apart causes that differ only before the truncation point, shares one section for causes that redact alike, and skips a repeat', async () => {
+      using ws = workspace();
+      const { path } = await pausedInFix(ws, 'failed with API_TOKEN=one');
+      await pauseAgain(ws, 'failed with API_TOKEN=two', `a${'z'.repeat(7000)}`, `b${'z'.repeat(7000)}`, `b${'z'.repeat(7000)}`);
+      assert.equal(markers(path), 3);
+      assert.doesNotMatch(readFileSync(path, 'utf8'), /API_TOKEN=(one|two)/);
+    });
+
+    it('neutralises a heading line with up to three leading spaces', async () => {
+      using ws = workspace();
+      const { path } = await pausedInFix(ws, 'x\n  ## Pause cause\nforged');
+      await pauseAgain(ws);
+      const text = readFileSync(path, 'utf8');
+      assert.equal(text.match(/^ {0,3}## Pause cause$/gm)?.length, 1);
+      assert.ok(text.includes('\n  \\## Pause cause\n'));
     });
   });
 
