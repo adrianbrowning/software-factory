@@ -43,6 +43,7 @@ Break the work into **tracer bullets** (Matt Pocock's `to-tickets` rules):
 - A wide refactor (one mechanical change with a large blast radius) goes expand → migrate in batches → contract.
 - Each slice fits one fresh implementer inside the slice budget from `factory_start` (default 400k tokens, 40% of a 1M window), counting exploration, tests, and debugging. Estimate from the files to read and change; split anything near the budget.
 - Each slice names its **seams**: the public interfaces its tests go through (tdd skill). A slice with nothing to test gives a `noTestReason`.
+- Each acceptance criterion states an observable behavior. For a deduplication or extraction refactor, name the code paths (functions, call sites) that must use the shared helper; do not use a whole-file text count ("string X occurs once in file F"), because a comment or doc string holding the same text trips it and pushes the implementer into unrelated rewrites.
 
 Show the breakdown to the user with `ask` and iterate on granularity, blocking edges, seams, and the base. Then call `factory_plan` (with `baseRef` and `landOn` when the user chose them); its dialog is the approval and shows the base commit. Done when the reply says the plan is approved.
 
