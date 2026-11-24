@@ -9,7 +9,7 @@ import { isRecordSlice, recordFailed, waitsForRecord } from './deferred.ts';
 import { requireFeatureName } from './feature-name.ts';
 import {
   activeSlice, addEvent, builtBy, discardReview, clearFullGreen, dropPass, greenCommit, hasPass, outdatedGreenCount,
-  runDir, type Run, reviewDomains, reviewPaths, saveRun, type Slice, type SliceInput, resliceItemSchema,
+  runDir, type Run, reviewDomains, reviewIsOpen, reviewPaths, saveRun, type Slice, type SliceInput, resliceItemSchema,
   sliceInputSchema, standingChecks, type Source, sourceSchema, statePath, reviewDir, ticketPath, type Workspace,
   requireActive, requireNotStalled, stallNotice, writeAtomic,
 } from './run.ts';
@@ -793,9 +793,9 @@ export async function resumeRun(ws: Workspace, run: Run, sessionId: string) {
   const slice = activeSlice(run);
   if (slice !== undefined && hasPass(slice)) {
     if (filled || standingChecks(slice, await head(ws.root)) === undefined) dropPass(slice, 'checks');
-    else if (slice.phase === 'review' && slice.review !== undefined && (await snapshot(ws.root)) !== slice.review.snapshot) {
+    else if (reviewIsOpen(slice) && (await snapshot(ws.root)) !== slice.review.snapshot) {
       discardReview(run, slice, 'repository changed while the run was away');
-    } else if (slice.phase === 'review' && slice.review !== undefined && !recordedFilesIntact(ws, run, slice.review)) {
+    } else if (reviewIsOpen(slice) && !recordedFilesIntact(ws, run, slice.review)) {
       discardReview(run, slice, 'recorded review files changed while the run was away');
     }
   }
