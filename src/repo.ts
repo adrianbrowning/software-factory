@@ -62,10 +62,10 @@ export async function requireOnBranchClean(root: string, slice: Slice, action: s
 export async function alignToSliceBranch(root: string, slice: Slice) {
   const state = await readState(root);
   if (state.branch === slice.branch) return undefined;
-  const from = state.branch || 'a detached HEAD';
+  const from = state.branch || `a detached HEAD at ${(await git(root, 'rev-parse', '--short', state.sha)).trim()}`;
   if (state.clean) {
     try {
-      await git(root, 'switch', slice.branch);
+      await git(root, 'switch', '--no-guess', '--no-overwrite-ignore', slice.branch);
       return `Switched the checkout from ${from} to ${slice.branch}, the branch of slice ${slice.id}.`;
     } catch {
       // A failing post-checkout hook fails `git switch` after it moved the checkout: re-read before reporting.

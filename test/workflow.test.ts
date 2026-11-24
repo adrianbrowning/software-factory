@@ -440,6 +440,58 @@ describe('pause and resume', () => {
       assert.match(note ?? '', new RegExp(`other.*${branch}`));
     });
 
+    it('does not recreate a missing local slice branch from a remote-tracking branch', async () => {
+      using ws = workspace();
+      const branch = await pausedOnSliceBranch(ws);
+      sh(ws.root, 'switch', '-c', 'other');
+      sh(ws.root, 'remote', 'add', 'origin', ws.root);
+      sh(ws.root, 'update-ref', `refs/remotes/origin/${branch}`, 'HEAD');
+      sh(ws.root, 'branch', '-D', branch);
+      const note = await step(ws, run => resumeRun(ws, run, 'session-2'));
+      assert.equal(sh(ws.root, 'branch', '--show-current'), 'other');
+      assert.equal(sh(ws.root, 'branch', '--list', branch), '');
+      assert.match(note ?? '', new RegExp(`${branch}.*but other is checked out`));
+    });
+
+    it('does not overwrite an ignored local file the slice branch tracks', async () => {
+      using ws = workspace();
+      const branch = await pausedOnSliceBranch(ws);
+      writeFileSync(join(ws.root, 'secret.env'), 'tracked\n');
+      sh(ws.root, 'add', 'secret.env');
+      sh(ws.root, 'commit', '-qm', 'track secret');
+      sh(ws.root, 'switch', '-c', 'other', 'HEAD~1');
+      writeFileSync(join(ws.root, '.gitignore'), 'secret.env\n');
+      sh(ws.root, 'add', '.gitignore');
+      sh(ws.root, 'commit', '-qm', 'ignore secret');
+      writeFileSync(join(ws.root, 'secret.env'), 'local\n');
+      const note = await step(ws, run => resumeRun(ws, run, 'session-2'));
+      assert.equal(sh(ws.root, 'branch', '--show-current'), 'other');
+      assert.equal(readFileSync(join(ws.root, 'secret.env'), 'utf8'), 'local\n');
+      assert.match(note ?? '', new RegExp(`${branch}.*but other is checked out`));
+    });
+
+    it('names the short sha when resuming from a clean detached HEAD', async () => {
+      using ws = workspace();
+      const branch = await pausedOnSliceBranch(ws);
+      sh(ws.root, 'switch', '--detach');
+      sh(ws.root, 'config', 'core.abbrev', '12');
+      const sha = sh(ws.root, 'rev-parse', '--short', 'HEAD');
+      const note = await step(ws, run => resumeRun(ws, run, 'session-2'));
+      assert.equal(sh(ws.root, 'branch', '--show-current'), branch);
+      assert.match(note ?? '', new RegExp(`from a detached HEAD at ${sha} to ${branch}`));
+    });
+
+    it('names the short sha in the mismatch note for a dirty detached HEAD', async () => {
+      using ws = workspace();
+      await pausedOnSliceBranch(ws);
+      sh(ws.root, 'switch', '--detach');
+      sh(ws.root, 'config', 'core.abbrev', '12');
+      const sha = sh(ws.root, 'rev-parse', '--short', 'HEAD');
+      writeFileSync(join(ws.root, 'dirty.txt'), 'x');
+      const note = await step(ws, run => resumeRun(ws, run, 'session-2'));
+      assert.match(note ?? '', new RegExp(`but a detached HEAD at ${sha} is checked out`));
+    });
+
     it('says nothing when the slice branch is checked out or there is no active slice', async () => {
       using ws = workspace();
       await pausedOnSliceBranch(ws);
