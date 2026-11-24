@@ -169,7 +169,9 @@ describe('slice loop gates: checks and the fix budget', { concurrency: 4 }, () =
     assert.ok(!failed.passed);
     assert.match(readFileSync(failed.fixPath, 'utf8'), /attempt\s+2/);
     assert.equal(readRun(ws2, 'demo').slices[0]?.fixRounds, 1);
-    assert.ok(failed.summary.some(l => l.startsWith(hard) && /^: failed \(exit 1\) in \d+ms on rerun \(first failed \(exit 1\) in \d+ms\)$/.test(l.slice(hard.length))));
+    const hardLine = failed.summary.find(l => l.startsWith(hard));
+    assert.ok(hardLine);
+    assert.match(hardLine.slice(hard.length), /^: failed \(exit 1\) in \d+ms on rerun \(first failed \(exit 1\) in \d+ms\)$/);
   });
 
   async function flakyRun(output: string, redirect = '', emit?: (out: string) => string) {
