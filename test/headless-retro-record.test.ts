@@ -83,3 +83,28 @@ describe('headless retro: Record deferred items slices', () => {
     assert.equal(run.deferred.find(item => item.id === 'later')?.recorded, '04');
   });
 });
+
+describe('nextAction for implementer phases', () => {
+  const nextLine = (phase: 'implement' | 'fix') => {
+    const run = {
+      feature: 'demo',
+      status: 'running',
+      slices: [{ id: '01', title: 'Feature', phase, status: 'active', fixPath: '/x/fixes/01-f1.md' }],
+    };
+    return nextAction(run as never);
+  };
+
+  it('implement: names the report file and says to handle a stop report before factory_checks', () => {
+    const text = nextLine('implement');
+    assert.match(text, /^Spawn factory-implementer for slice 01/);
+    assert.match(text, /reports\/01\.md/);
+    assert.match(text, /stop report in its Open list.*then call factory_checks/);
+  });
+
+  it('fix: says the same together with the fix file', () => {
+    const text = nextLine('fix');
+    assert.match(text, /\/x\/fixes\/01-f1\.md/);
+    assert.match(text, /reports\/01\.md/);
+    assert.match(text, /stop report in its Open list.*then call factory_checks/);
+  });
+});

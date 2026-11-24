@@ -872,6 +872,8 @@ function submittedAfterStackReady(run: Run) {
 }
 
 /** The one thing the orchestrator should do next, in words a model can act on. */
+const reportNote = (slice: Slice) => `reports/${slice.id}.md`;
+
 export function nextAction(run: Run): string {
   if (run.status === 'intake') return 'Clarify the issue with the user, then propose slices with factory_plan.';
   if (run.status === 'done') {
@@ -893,9 +895,9 @@ export function nextAction(run: Run): string {
   const where = `slice ${slice.id} "${slice.title}"`;
   switch (slice.phase) {
     case 'implement':
-      return `Spawn factory-implementer for ${where}, then call factory_checks.`;
+      return `Spawn factory-implementer for ${where}, then read its report file (${reportNote(slice)}) and handle any stop report in its Open list, then call factory_checks.`;
     case 'fix':
-      return `Spawn factory-implementer in fix mode with ${slice.fixPath ?? 'the fix file'} for ${where}, then call factory_checks.`;
+      return `Spawn factory-implementer in fix mode with ${slice.fixPath ?? 'the fix file'} for ${where}, then read its report file (${reportNote(slice)}) and handle any stop report in its Open list, then call factory_checks.`;
     case 'checks':
       return `Call factory_checks for ${where}.`;
     case 'review':
