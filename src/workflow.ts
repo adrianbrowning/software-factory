@@ -14,6 +14,7 @@ import {
   requireActive, requireNotStalled, stallNotice, writeAtomic,
 } from './run.ts';
 import { moveCarried } from './legacy-observations.ts';
+import { copyPauseCause } from './pause-cause.ts';
 import { reportCoversCommits } from './report.ts';
 import { alignToSliceBranch, head, ownCommits, requireClean, requireOnBranchClean, sliceBranchExists, snapshot } from './repo.ts';
 
@@ -768,15 +769,19 @@ function recordedFilesIntact(ws: Workspace, run: Run, review: NonNullable<Slice[
  * Before any of that, when the run has an active slice and another branch (or a detached HEAD) is checked out with a
  * clean working tree, it checks out the slice branch. It returns a note when it switched, or when it could not (dirty
  * tree, failed checkout) and left the checkout alone; `factory_start` puts the note in its reply.
+ * A paused run whose active slice is in fix gets the latest pause cause appended to its fix file as redacted evidence
+ * (see `copyPauseCause`), also when it paused at a stall; a run with status stalled or a slice outside fix leaves the file alone.
  * A running run's active slice at `implement` whose branch has own commits that the stored implementer report lists in
  * full, with no stop report in Open, moves to `checks` and records a resume event.
  */
 export async function resumeRun(ws: Workspace, run: Run, sessionId: string) {
   const filled = run.checks.length === 0;
   if (filled) run.checks = checksSchema.parse(repoChecks(ws));
+  const wasPaused = run.status === 'paused';
   if (activeSlice(run)?.stalled) resolveStall(ws, run, 'continue');
   const active = activeSlice(run);
   const branchNote = active === undefined ? undefined : await alignToSliceBranch(ws.root, active);
+  if (wasPaused) copyPauseCause(run);
   if (run.status === 'paused' || run.status === 'stalled') {
     // A stop gate pauses a headless run in any status (intake, running or done) and factory_pause pauses it at intake, so only a headless run restores intake (no approved plan) or done (settle).
     if (run.mode === 'headless') {
