@@ -750,6 +750,14 @@ describe('used-up fix budget', () => {
     });
   });
 
+  it('names the report file and the stop-report step before factory_checks in the factory_next reply for phase fix', async () => {
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature']);
+    await withRun(ws, 'demo', current => { current.slices[0]!.phase = 'fix'; });
+    const text = (await call('factory_next', {})).content[0]?.text ?? '';
+    assert.match(text, /Spawn factory-implementer in fix mode.*read its report file \(reports\/01\.md.*handle any stop report in its Open list, then call factory_checks/);
+  });
+
   it('resumes a paused run that is not stalled when factory_start is called as factory_status says', async () => {
     using repo = budgetRepo();
     const { call, ws } = await budgetRun(repo.root, ['Feature']);
