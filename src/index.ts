@@ -476,7 +476,8 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
     schema: implementerReportSchema,
     async run(params, { feature, ws }) {
       const result = await withRun(ws, feature, run => submitImplementerReport(ws, run, params));
-      return reply(`${result.replaced ? 'Replaced the stored report' : 'Stored the report'}: ${result.path}`);
+      const recorded = result.fixed.length === 0 ? '' : `\nRecorded as fixed in the ledger and added to this round's fix items for the next review's verdict: ${result.fixed.join(', ')}.`;
+      return reply(`${result.replaced ? 'Replaced the stored report' : 'Stored the report'}: ${result.path}${recorded}`);
     },
   });
 

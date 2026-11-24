@@ -10,7 +10,7 @@ import { PLACEMENTS } from './run.ts';
 import type { Finding, ObservationEntry, Run, Slice } from './run.ts';
 
 /** The entries of `slice.unplaced` that `id` names: an observation id, or `<review>:<id>` for one. More than one is ambiguous between reviews. */
-export function findUnplaced(slice: Slice, id: string) {
+export function findUnplaced(slice: Pick<Slice, 'unplaced'>, id: string) {
   return slice.unplaced.filter(entry => entry.finding.id === id || itemKey(entry.review, entry.finding.id) === id);
 }
 

@@ -1,6 +1,8 @@
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { z } from 'zod';
+import { findUnplaced, placeObservations } from './ledger.ts';
 import { ownCommits } from './repo.ts';
+import { findingRecord } from './review-record.ts';
 import { activeSlice, reportPath, requireActive, type Run, type Slice, type Workspace, writeAtomic } from './run.ts';
 
 // One line each, so an item cannot add lines that read as factory output in the factory_checks reply.
@@ -50,6 +52,40 @@ function commitPrefix(item: string) {
   return /^[0-9a-f]{7,40}/i.exec(item)?.[0].toLowerCase();
 }
 
+/** `<id> fixed in <sha>` at the start of a fixItems line: the id plain or in backticks, an optional colon after it. */
+const FIXED_LINE = /^(`?)([^\s`]+?):?\1:?\s+fixed in ([0-9a-f]{7,40})\b/i;
+
+/**
+ * Records each observation unplaced on the slice that a fixItems line names with `fixed in <sha>` (a commit of the slice) as
+ * placed `fixed`, and adds it as a fix item of the current round so the next review's scope reviewer gives it a verdict.
+ * Other lines, unknown or ambiguous ids and other shas change nothing. Returns the ids recorded.
+ */
+function recordFixedObservations(run: Run, slice: Slice, fixItems: string[], own: { sha: string }[]) {
+  const recorded: string[] = [];
+  // Ids resolve against the list as the report found it, so an earlier line cannot make a later bare id unambiguous.
+  const initial = { unplaced: [...slice.unplaced] };
+  const placed = new Set<string>();
+  for (const line of fixItems) {
+    const match = FIXED_LINE.exec(line);
+    const prefix = match?.[3]?.toLowerCase();
+    if (match === null || prefix === undefined || !own.some(commit => commit.sha.startsWith(prefix))) continue;
+    const found = findUnplaced(initial, match[2] ?? '');
+    const entry = found.length === 1 ? found[0] : undefined;
+    const key = entry === undefined ? undefined : `${entry.review}:${entry.finding.id}`;
+    if (entry === undefined || key === undefined || placed.has(key)) continue;
+    placed.add(key);
+    placeObservations(run, { id: entry.review }, slice, [entry.finding], 'fixed');
+    if (slice.fixPath !== undefined) {
+      const { item } = findingRecord(entry.finding, '', run.decisions);
+      // Two reviews can keep the same id: the later one is listed as `<review>:<id>`, so each gets its own verdict.
+      const id = slice.fixItems.some(existing => existing.id === entry.finding.id) ? `${entry.review}:${entry.finding.id}` : entry.finding.id;
+      slice.fixItems.push({ id, path: slice.fixPath, round: slice.fixFiles, summary: item.summary });
+    }
+    recorded.push(key);
+  }
+  return recorded;
+}
+
 /** Stores the implementer's report for the active slice in the run dir; a later call replaces it. */
 export async function submitImplementerReport(ws: Workspace, run: Run, report: ImplementerReport) {
   const slice = requireActive(run);
@@ -71,7 +107,8 @@ export async function submitImplementerReport(ws: Workspace, run: Run, report: I
   const path = reportPath(ws, run.feature, slice);
   const replaced = existsSync(path);
   writeAtomic(path, `${renderReport(report)}\n`);
-  return { path, replaced };
+  const fixed = slice.phase === 'fix' && report.fixItems !== undefined ? recordFixedObservations(run, slice, report.fixItems, own) : [];
+  return { fixed, path, replaced };
 }
 
 /** The slice's latest stored implementer report, or a line saying none was submitted; both name the report file. */
