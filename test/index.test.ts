@@ -1283,30 +1283,32 @@ describe('active run in a fresh extension copy', () => {
   const RESUME_NEXT = 'Every slice is done. Run the retro (skill://retro) and record it with factory_retro.';
   const RESUME_HINT = 'The factory tools are not loaded: call factory_start with resume: "demo" first. ';
 
-  /** A running "demo" run in a fresh module state, with the extension loaded with only `initialActive` tools active. */
-  const resumeSetup = async (prefix: string, initialActive: string[]) => {
+  /** A running "demo" run in a fresh module state, with the extension loaded with `initialActive` tools active, or the real startup tools by default. */
+  const resumeSetup = async (prefix: string, initialActive?: string[]) => {
     const repo = tempRepo(prefix, CHECKS_OK);
     await startIn(repo.root, { feature: 'demo', source: SOURCE }, 'main-start');
     await withRun({ config: loadConfig(repo.root), root: repo.root }, 'demo', run => { run.status = 'running'; });
     resetModuleState();
     const handlers = new Map<string, Handler>();
     const commands = new Map<string, Command>();
-    const tools = load({ commands, handlers, initialActive });
+    const activated: string[] = [];
+    const tools = load({ activated, commands, handlers, initialActive });
     const notices: string[] = [];
     const main = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, editor: async () => 'true', notify: (message: string) => notices.push(message) } };
     const stop = async () => ((await handlers.get('session_stop')?.({ session_id: 'session', messages: [], type: 'session_stop' }, main)) as { reason: string }).reason;
-    return { commands, main, notices, stop, tools, [Symbol.dispose]: () => repo[Symbol.dispose]() };
+    return { activated, commands, main, notices, stop, tools, [Symbol.dispose]: () => repo[Symbol.dispose]() };
   };
 
   it('tells the orchestrator to resume in the stop block reason and /factory status while the factory tools are not loaded, and not once they are', async () => {
-    using setup = await resumeSetup('factory-fresh-resume-hint-', ['factory_start']);
-    const { commands, main, notices, stop, tools } = setup;
+    using setup = await resumeSetup('factory-fresh-resume-hint-');
+    const { activated, commands, main, notices, stop, tools } = setup;
 
     assert.equal(await stop(), `${RESUME_HINT}Software factory run "demo" is not finished. Next: ${RESUME_NEXT}`);
     await commands.get('factory')?.handler('status', main);
     assert.equal(notices.at(-1), `Active run: demo: ${RESUME_HINT}${RESUME_NEXT}\nRuns: demo`);
 
     await tools.get('factory_start')?.execute('id', { resume: 'demo' }, undefined, undefined, main);
+    assert.ok(['factory_start', ...ORCHESTRATION_TOOLS].every(name => activated.includes(name)));
     assert.equal(await stop(), `Software factory run "demo" is not finished. Next: ${RESUME_NEXT}`);
     await commands.get('factory')?.handler('status', main);
     assert.doesNotMatch(notices.at(-1) ?? '', /factory_start/);
