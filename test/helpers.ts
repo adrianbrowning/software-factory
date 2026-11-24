@@ -186,6 +186,17 @@ export async function greenWithObservation(ws: Workspace) {
   assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
 }
 
+/** Leaves the active slice of the 'demo' run with one unplaced thermo observation whose finding id is `id`, as a kept observation of a recorded review would. `id` must match the finding schema's `/^[a-z0-9-]+$/` (for example 'bug'); anything else throws before the run is written. */
+export async function seedUnplacedObservation(ws: Workspace, id: string) {
+  assert.match(id, /^[a-z0-9-]+$/, 'finding ids are lowercase letters, digits and hyphens');
+  await step(ws, run => {
+    const slice = activeSlice(run);
+    assert.ok(slice, 'no active slice');
+    const seeded = { ...finding('thermo', 'observation', 'naming'), id };
+    slice.unplaced.push({ category: 'naming', finding: seeded, review: 'seeded' });
+  });
+}
+
 /** Places the active slice's unplaced observations by their defaults, as factory_place with no exceptions does. */
 export async function settleObservations(ws: Workspace) {
   await step(ws, run => placeObservationBatch(ws, run, planPlace(ws, run, { placements: [] })));

@@ -12,7 +12,7 @@ import { MAX_IDLE_STOP_ATTEMPTS, resetModuleState, stopDecision } from '../src/i
 import { readRun, type Run, runDir, reviewPaths, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, pauseRun, planSlices, resolveStall } from '../src/workflow.ts';
-import { settleObservations, commit, finding, green, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
+import { seedUnplacedObservation, settleObservations, commit, finding, green, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
 
 beforeEach(() => resetModuleState());
 
@@ -674,13 +674,8 @@ describe('used-up fix budget', () => {
     using repo = budgetRepo();
     const { call, ws } = await budgetRun(repo.root, ['Feature']);
     commit(ws, 'ok');
-    await withRun(ws, 'demo', run => runChecks(ws, run));
-    const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
-    await review(ws, reviewId, [finding('thermo', 'observation', 'naming')]);
-    await withRun(ws, 'demo', run => recordReview(ws, run));
-    await withRun(ws, 'demo', run => {
-      for (const entry of run.slices[0]?.unplaced ?? []) entry.finding.id = 'bug';
-    });
+    await green(ws);
+    await seedUnplacedObservation(ws, 'bug');
     const asked: string[] = [];
     await call('factory_fix', { observations: ['bug'], reason: 'tidy' }, { confirm: async (title: string, body: string) => (asked.push(`${title}\n${body}`), true), select: async () => 'Pause the run' });
     assert.match(asked[0] ?? '', /^Fix observations in slice 01 "Feature"\?\n/);
