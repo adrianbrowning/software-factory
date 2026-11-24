@@ -5,6 +5,8 @@ import { describe, it } from 'node:test';
 import { type Finding, readRun, REVIEW_DOMAINS, ticketPath, type Workspace } from '../src/run.ts';
 import { pathSkips, recordDecisions, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
 import { nextSlice } from '../src/workflow.ts';
+import { bindRun } from '../src/active-run.ts';
+import { ctx, load } from './extension.ts';
 import { commit, finding, newRun, noFixItems, review, sh, slice, step, workspace } from './helpers.ts';
 
 describe('review submissions', { concurrency: 4 }, () => {
@@ -292,6 +294,29 @@ describe('review submissions', { concurrency: 4 }, () => {
       step(ws, run => submitValidation(ws, run, { agentId: 'v', dropped: [], escalate: [{ criterion: 'c', id: 'bug-already-high', reason: 'r' }], keep: [], reviewId })),
       /Only observation findings can be escalated/,
     );
+  });
+
+  it('takes the escalate entry through the factory_review_validate tool', async () => {
+    using ws = workspace();
+    const { reviewId } = await openReview(ws);
+    bindRun(join(ws.root, '.git', 'software-factory-active-run.json'), { feature: 'demo', mainId: 'main', ws });
+    const tools = load();
+    const call = async (name: string, params: unknown, agent: 'factory-reviewer' | 'factory-review-validator') => {
+      const caller = { ...ctx('sub', agent), cwd: ws.root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { notify() {} } };
+      return tools.get(name)?.execute('id', params, undefined, undefined, caller);
+    };
+    for (const domain of REVIEW_DOMAINS) {
+      const findings = domain === 'bug' ? [{ ...finding('bug', 'observation', 'kept-guard'), category: 'structure' }] : [];
+      await call('factory_review_submit', { domain, findings, reviewId, ...noFixItems(domain) }, 'factory-reviewer');
+    }
+    const validate = (entry: object) => call('factory_review_validate', { dropped: [], escalate: [{ id: 'bug-kept-guard', reason: 'r', ...entry }], keep: [], reviewId }, 'factory-review-validator');
+
+    await assert.rejects(validate({}), /bug-kept-guard/);
+    await assert.rejects(validate({ criterion: 'c', decision: 1 }), /bug-kept-guard/);
+    await validate({ criterion: 'No runtime guard' });
+    const result = await step(ws, run => recordReview(ws, run));
+    assert.ok(result.kind === 'fix');
+    assert.equal(result.blocking, 1);
   });
 
   it('skips the domains the orchestrator leaves out, but never the required ones', async () => {
