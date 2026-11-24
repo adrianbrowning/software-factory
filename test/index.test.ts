@@ -361,7 +361,7 @@ describe('implementer sessions', () => {
     });
 
     it('adds no section when the committed config adds no check, is absent, or is invalid', async () => {
-      for (const content of [JSON.stringify({ checks: ['true'] }), undefined, '{not json', JSON.stringify({ checks: [] })]) {
+      for (const content of [JSON.stringify({ checks: ['true'] }), JSON.stringify({ checks: ['true '] }), undefined, '{not json', JSON.stringify({ checks: [] })]) {
         using repo = emptyRepo();
         const { call, main } = await startedRun(repo.root);
         if (content === undefined) {
