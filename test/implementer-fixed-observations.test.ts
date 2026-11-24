@@ -184,8 +184,8 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
     await step(ws, run => runChecks(ws, run));
     const opened = await step(ws, run => startReview(ws, run));
     const listed = fixItems(opened.dataFile);
-    assert.match(listed, /`thermo-naming`/);
-    assert.match(listed, /`01-r1:thermo-naming`/);
+    assert.match(listed, /^- `thermo-naming` \(/m);
+    assert.match(listed, /^- `01-r1:thermo-naming` \(/m);
     const verdicts = readRun(ws, 'demo').slices[0]!.fixItems.map(item => ({
       id: item.id,
       reason: 'checked',
