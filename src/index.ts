@@ -373,7 +373,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
         const slice = await nextSlice(ws, run);
         if (slice === undefined) return reply(`No slices left.\nNext: ${nextAction(run)}`);
         return reply(
-          `Slice ${slice.id} "${slice.title}" on ${slice.branch} (phase ${slice.phase}).\nTicket: ${ticketPath(ws, run.feature, slice)}\nImplementer report file: ${reportPath(ws, run.feature, slice)}\nChecks that factory_checks runs in full after the implementer commits (the implementer runs only the typecheck, the test files it touched, and the test files that assert on output it changed): ${run.checks.join('; ')}\nContext budget: ${ws.config.sliceTokenBudget} tokens.\nNext: ${nextAction(run)}`,
+          `Slice ${slice.id} "${slice.title}" on ${slice.branch} (phase ${slice.phase}).\nTicket: ${ticketPath(ws, run.feature, slice)}\nImplementer report file: ${reportPath(ws, run.feature, slice)}\nChecks that factory_checks runs in full after the implementer commits (the implementer runs only the typecheck, the test files it touched, and the test files that assert on output it changed, and the test files the repository names for its kind of change): ${run.checks.join('; ')}\nContext budget: ${ws.config.sliceTokenBudget} tokens.\nNext: ${nextAction(run)}`,
         );
       });
     },

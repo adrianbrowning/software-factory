@@ -271,7 +271,7 @@ ${seams}
 
 ## Checks
 
-factory_checks runs these in full after the implementer commits; the implementer runs only the typecheck, the test files it touched, and the test files that assert on output it changed.
+factory_checks runs these in full after the implementer commits; the implementer runs only the typecheck, the test files it touched, and the test files that assert on output it changed, and the test files the repository names for its kind of change.
 
 ${run.checks.map(check => `- ${check}`).join('\n')}
 
@@ -625,7 +625,7 @@ export function writeFixFile(ws: Workspace, run: Run, slice: Slice, records: Fix
   const context = [
     `- Ticket (seams and acceptance criteria): ${ticketPath(ws, run.feature, slice)}`,
     `- Branch: ${slice.branch}`,
-    `- Checks that factory_checks runs in full after your commit (you run only the typecheck, the test files you touched and the test files that assert on output you changed): ${run.checks.join('; ')}`,
+    `- Checks that factory_checks runs in full after your commit (you run only the typecheck, the test files you touched and the test files that assert on output you changed and the test files the repository names for your kind of change): ${run.checks.join('; ')}`,
   ].join('\n');
   const listed = items.map(item => `- \`${item.id}\`: ${item.summary}`).join('\n');
   writeAtomic(fixPath, `# Fix slice ${slice.id}: ${slice.title}\n\n${context}\n\n${UNTRUSTED_NOTE}\n\n## Fix items\n\n${listed}\n\n${parts.join('\n\n')}\n`);

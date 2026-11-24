@@ -45,7 +45,7 @@ describe('slice loop gates: fixes', { concurrency: 4 }, () => {
     const fixed = await step(ws, run => fixAfterGreen(ws, run, { observations: ['thermo-naming'] }, 'The user wants the names fixed now.'));
     assert.equal(fixed.stalled, false);
     const fix = readFileSync(fixed.fixPath, 'utf8');
-    assert.match(fix, /Checks that factory_checks runs in full after your commit \(you run only the typecheck, the test files you touched and the test files that assert on output you changed\): test -f ok/);
+    assert.match(fix, /Checks that factory_checks runs in full after your commit \(you run only the typecheck, the test files you touched and the test files that assert on output you changed and the test files the repository names for your kind of change\): test -f ok/);
     assert.doesNotMatch(fix, /Checks to run before committing/);
     assert.match(fix, /The user wants the names fixed now\./);
     assert.match(fix, /## \[observation\] thermo-naming\n\n- Location: ok:1/);

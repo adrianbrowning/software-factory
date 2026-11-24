@@ -252,9 +252,9 @@ describe('implementer sessions', () => {
   it('says in the factory_next reply that factory_checks runs the full checks and the implementer runs only what it touched', async () => {
     using repo = emptyRepo();
     const { next } = await startedRun(repo.root);
-    assert.match(next, /Checks that factory_checks runs in full after the implementer commits \(the implementer runs only the typecheck, the test files it touched, and the test files that assert on output it changed\): true\\n/);
+    assert.match(next, /Checks that factory_checks runs in full after the implementer commits \(the implementer runs only the typecheck, the test files it touched, and the test files that assert on output it changed, and the test files the repository names for its kind of change\): true\\n/);
     const ticket = readFileSync(/Ticket: ([^\\]+)/.exec(next)?.[1] ?? '', 'utf8');
-    assert.match(ticket, /## Checks\n\nfactory_checks runs these in full after the implementer commits; the implementer runs only the typecheck, the test files it touched, and the test files that assert on output it changed\.\n\n- true\n/);
+    assert.match(ticket, /## Checks\n\nfactory_checks runs these in full after the implementer commits; the implementer runs only the typecheck, the test files it touched, and the test files that assert on output it changed, and the test files the repository names for its kind of change\.\n\n- true\n/);
   });
 
   it('tells the orchestrator to run every reviewer and then the validator in one eval step', async () => {
