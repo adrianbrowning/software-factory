@@ -49,17 +49,10 @@ Stop and report instead of guessing in these cases:
 
 ## Final report
 
-Submit the report with `factory_implementer_report` before your final message: `commits`, `fixItems` (required in fix mode), `behaviors`, and `open`, one single-line entry per item. Each `behaviors` entry is `{ test, behavior, seenRed, red }`: `seenRed: true` with `red` as one line describing the failing run you observed, or `seenRed: false` without `red` when you never saw that test fail. Never invent a failure; report `seenRed: false` instead. The factory stores it for the slice, and the orchestrator reads it from there, so a report only in your final message can be lost. After every follow-up turn (for example an advisor note), call `factory_implementer_report` again with the complete report; each call replaces the stored report.
+Report only through `factory_implementer_report`, before your final message; the schema describes each field. Report one single-line entry per item. Never invent a failure; report `seenRed: false` instead. The factory stores the report for the slice, and the orchestrator reads it from there, so a report in your final message can be lost. Your final message does not repeat the report. After every follow-up turn (for example an advisor note), call `factory_implementer_report` again with the complete report; each call replaces the stored report.
 
 Once you have committed and submitted `factory_implementer_report`, never amend, rebase, squash or reset those commits. Any later change (for example after an advisor note or a follow-up turn) is a new commit, followed by a new complete `factory_implementer_report`. Rewriting HEAD after `factory_checks` has run makes `factory_review_start` refuse and the checks run again.
 
-A correction commit made before `factory_checks` has run, with no fix file (for example after an advisor note or another follow-up turn in build mode), uses the build-mode subject `NN: <summary>`, never `fix rN`. The `NN: fix rN <summary>` subject is only for fix mode, where `N` comes from the fix file name. The new complete `factory_implementer_report` lists that correction commit in `commits`, and the final **Commits** section lists it too.
-
-Then end your final message with these sections, every time, in this order:
-
-1. **Commits**: each commit you made, as `<short sha> <subject>` (from `git log --oneline <parent>..HEAD`). "None" if you made none.
-2. **Fix file items** (fix mode only): each id from the fix file's `## Fix items`, exactly as listed, with `fixed in <sha>`, `already fixed`, or `not a defect: <why>`. A line may also name an observation of the slice that is still unplaced (its id, or `<review>:<id>` when two reviews kept the same id, at the start of the line) with `fixed in <sha>` for a commit of the slice: the factory then records that observation as fixed, adds it to this round's fix items, and the next review's scope reviewer gives it a verdict.
-3. **Behaviors**: each test name → the behavior it proves (seen red: yes — the failure, or no).
-4. **Open**: anything unfinished, and any stop report above.
+A correction commit made before `factory_checks` has run, with no fix file (for example after an advisor note or another follow-up turn in build mode), uses the build-mode subject `NN: <summary>`, never `fix rN`. The `NN: fix rN <summary>` subject is only for fix mode, where `N` comes from the fix file name. The new complete `factory_implementer_report` lists that correction commit in `commits`.
 
 Report on this slice only; leave out unrelated warnings unless they block a check.
