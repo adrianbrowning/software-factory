@@ -333,6 +333,49 @@ describe('implementer sessions', () => {
     });
   });
 
+  describe('checks the slice adds to factory.json in the factory_checks reply', () => {
+    /** Commits `.omp/factory.json` holding `content`. */
+    const commitConfig = (root: string, content: string) => {
+      mkdirSync(join(root, '.omp'), { recursive: true });
+      writeFileSync(join(root, '.omp', 'factory.json'), content);
+      git(root, 'add', '.');
+      git(root, 'commit', '-qm', 'config');
+    };
+
+    it('names a committed check the frozen checks lack on a passing and a failing reply, and does not run it', async () => {
+      using repo = emptyRepo();
+      const { call, main } = await startedRun(repo.root);
+      commitConfig(repo.root, JSON.stringify({ checks: ['true', 'touch ran-new.txt'] }));
+      const passed = await call('factory_checks', {}, main);
+      assert.match(passed, /All checks passed/);
+      assert.match(passed, /does not run them:\\n- touch ran-new\.txt/);
+      assert.doesNotMatch(passed, /- true\\n/);
+      assert.equal(existsSync(join(repo.root, 'ran-new.txt')), false);
+
+      using failing = emptyRepo();
+      const second = await startedRun(failing.root, 'false');
+      commitConfig(failing.root, JSON.stringify({ checks: ['false', 'echo extra'] }));
+      const failed = await second.call('factory_checks', {}, second.main);
+      assert.match(failed, /Checks failed/);
+      assert.match(failed, /does not run them:\\n- echo extra/);
+    });
+
+    it('adds no section when the committed config adds no check, is absent, or is invalid', async () => {
+      for (const content of [JSON.stringify({ checks: ['true'] }), undefined, '{not json', JSON.stringify({ checks: [] })]) {
+        using repo = emptyRepo();
+        const { call, main } = await startedRun(repo.root);
+        if (content === undefined) {
+          writeFileSync(join(repo.root, 'work.txt'), 'x\n');
+          git(repo.root, 'add', '.');
+          git(repo.root, 'commit', '-qm', 'work');
+        } else commitConfig(repo.root, content);
+        const reply = await call('factory_checks', {}, main);
+        assert.match(reply, /All checks passed/);
+        assert.doesNotMatch(reply, /does not run them/);
+      }
+    });
+  });
+
   it('does not count stops after an ask toward the auto-pause and restarts the count', async () => {
     using repo = emptyRepo();
     const { handlers, main } = await startedRun(repo.root);
