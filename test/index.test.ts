@@ -1129,21 +1129,39 @@ describe('active run in a fresh extension copy', () => {
     resetModuleState();
     const handlers = new Map<string, Handler>();
     const commands = new Map<string, Command>();
-    const tools = load({ commands, handlers });
+    const tools = load({ commands, handlers, initialActive: ['factory_start'] });
     const notices: string[] = [];
     const main = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, editor: async () => 'true', notify: (message: string) => notices.push(message) } };
     const stop = async () => ((await handlers.get('session_stop')?.({ session_id: 'session', messages: [], type: 'session_stop' }, main)) as { reason: string }).reason;
+    const next = 'Every slice is done. Run the retro (skill://retro) and record it with factory_retro.';
+    const hint = 'The factory tools are not loaded: call factory_start with resume: "demo" first. ';
 
-    const cold = await stop();
-    assert.match(cold, /^The factory tools are not loaded: call factory_start with resume: "demo" first\. Software factory run "demo" is not finished\. Next: .+/);
+    assert.equal(await stop(), `${hint}Software factory run "demo" is not finished. Next: ${next}`);
     await commands.get('factory')?.handler('status', main);
-    assert.match(notices.at(-1) ?? '', /Active run: demo: The factory tools are not loaded: call factory_start with resume: "demo"/);
+    assert.equal(notices.at(-1), `Active run: demo: ${hint}${next}\nRuns: demo`);
 
     await tools.get('factory_start')?.execute('id', { resume: 'demo' }, undefined, undefined, main);
-    const warm = await stop();
-    assert.match(warm, /^Software factory run "demo" is not finished\. Next: .+/);
+    assert.equal(await stop(), `Software factory run "demo" is not finished. Next: ${next}`);
     await commands.get('factory')?.handler('status', main);
     assert.doesNotMatch(notices.at(-1) ?? '', /factory_start/);
+  });
+
+  it('tells the orchestrator to resume when every factory tool but one is loaded', async () => {
+    using repo = tempRepo('factory-fresh-resume-hint-partial-', CHECKS_OK);
+    await startIn(repo.root, { feature: 'demo', source: SOURCE }, 'main-start');
+    await withRun({ config: loadConfig(repo.root), root: repo.root }, 'demo', run => { run.status = 'running'; });
+    const probe = load();
+    const everyTool = [...probe.keys()].filter(name => name !== 'factory_start');
+    resetModuleState();
+    const handlers = new Map<string, Handler>();
+    // factory_retro is the last orchestration tool; leaving it out is the single missing one.
+    load({ handlers, initialActive: ['factory_start', ...everyTool.filter(name => name !== 'factory_retro')] });
+    const main = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { notify() {} } };
+
+    // The stop hook returns { decision: 'block', reason } here; the handler type is untyped (unknown).
+    const blocked = await handlers.get('session_stop')?.({ session_id: 'session', messages: [], type: 'session_stop' }, main) as { reason: string };
+
+    assert.equal(blocked.reason, 'The factory tools are not loaded: call factory_start with resume: "demo" first. Software factory run "demo" is not finished. Next: Every slice is done. Run the retro (skill://retro) and record it with factory_retro.');
   });
 
   it('starts a new run when the pointer names a run whose state is gone, and rebinds the pointer', async () => {
