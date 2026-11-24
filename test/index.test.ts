@@ -1292,26 +1292,37 @@ describe('active run in a fresh extension copy', () => {
     const handlers = new Map<string, Handler>();
     const commands = new Map<string, Command>();
     const activated: string[] = [];
-    const tools = load({ activated, commands, handlers, initialActive });
+    const probe: { activeTools?: () => string[] } = {};
+    const tools = load({ activated, commands, handlers, initialActive, probe });
     const notices: string[] = [];
     const main = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, editor: async () => 'true', notify: (message: string) => notices.push(message) } };
     const stop = async () => ((await handlers.get('session_stop')?.({ session_id: 'session', messages: [], type: 'session_stop' }, main)) as { reason: string }).reason;
-    return { activated, commands, main, notices, stop, tools, [Symbol.dispose]: () => repo[Symbol.dispose]() };
+    const active = () => probe.activeTools?.() ?? [];
+    return { active, activated, commands, main, notices, stop, tools, [Symbol.dispose]: () => repo[Symbol.dispose]() };
   };
 
   it('tells the orchestrator to resume in the stop block reason and /factory status while the factory tools are not loaded, and not once they are', async () => {
     using setup = await resumeSetup('factory-fresh-resume-hint-');
-    const { activated, commands, main, notices, stop, tools } = setup;
+    const { active, commands, main, notices, stop, tools } = setup;
 
+    assert.deepEqual(active(), ['factory_start']);
     assert.equal(await stop(), `${RESUME_HINT}Software factory run "demo" is not finished. Next: ${RESUME_NEXT}`);
     await commands.get('factory')?.handler('status', main);
     assert.equal(notices.at(-1), `Active run: demo: ${RESUME_HINT}${RESUME_NEXT}\nRuns: demo`);
 
     await tools.get('factory_start')?.execute('id', { resume: 'demo' }, undefined, undefined, main);
-    assert.ok(['factory_start', ...ORCHESTRATION_TOOLS].every(name => activated.includes(name)));
+    for (const name of ['factory_start', ...ORCHESTRATION_TOOLS]) assert.ok(active().includes(name), name);
     assert.equal(await stop(), `Software factory run "demo" is not finished. Next: ${RESUME_NEXT}`);
     await commands.get('factory')?.handler('status', main);
     assert.doesNotMatch(notices.at(-1) ?? '', /factory_start/);
+  });
+
+  it('replaces the default active tools with an explicit initialActive, including an empty list', async () => {
+    for (const initialActive of [[], ['x']]) {
+      const probe: { activeTools?: () => string[] } = {};
+      load({ initialActive, probe });
+      assert.deepEqual(probe.activeTools?.(), initialActive);
+    }
   });
 
   it('tells the orchestrator to resume when any single orchestration tool is not loaded', async () => {
