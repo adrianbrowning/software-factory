@@ -503,12 +503,12 @@ describe('first-run checks dialog', () => {
     const main = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, editor: async () => 'make test', notify() {} } };
     const tools = load();
     const run = async (name: string, params: unknown) => (await tools.get(name)?.execute('id', params, undefined, undefined, main) as { content: { text: string }[] }).content[0]?.text ?? '';
-    const wanted = /^Next: .*issue\.md in the run directory.*do not fetch the issue again with gh/m;
-    const fresh = await run('factory_start', { feature: 'demo', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } });
-    assert.match(fresh, wanted);
-    const resumed = await run('factory_start', { resume: 'demo' });
-    assert.match(resumed, wanted);
-    assert.match(await run('factory_status', {}), /issue\.md in the run directory.*do not fetch the issue again with gh/);
+    const nextOf = (text: string) => /^Next: (.*)$/m.exec(text)?.[1];
+    const fresh = nextOf(await run('factory_start', { feature: 'demo', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } }));
+    assert.match(fresh ?? '', /issue\.md in the run directory.*do not fetch the issue again with gh/);
+    assert.equal(nextOf(await run('factory_start', { resume: 'demo' })), fresh);
+    const status: { nextAction: string } = JSON.parse(await run('factory_status', {}));
+    assert.equal(status.nextAction, fresh);
   });
 });
 
