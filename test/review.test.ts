@@ -264,7 +264,7 @@ describe('review submissions', { concurrency: 4 }, () => {
     type Entry = { criterion?: string; decision?: number; id: string; reason: string };
     const validate = (escalate: Entry[]) => step(ws, run => submitValidation(ws, run, { agentId: 'v', dropped: [], escalate, keep: [], reviewId }));
     const reason = 'the code keeps the guard the criterion removes';
-    const criterion = 'Loop over the narrowed values with no runtime guard';
+    const criterion = `Loop over the narrowed values with no runtime guard${' and keep every branch explicit'.repeat(20)}`;
 
     await assert.rejects(validate([{ id: 'bug-kept-guard', reason }]), /bug-kept-guard.*decision.*criterion/);
     await assert.rejects(validate([{ criterion, decision: 1, id: 'bug-kept-guard', reason }]), /bug-kept-guard.*decision.*criterion/);
