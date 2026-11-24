@@ -34,6 +34,8 @@ Record each decision the user makes that a reviewer could otherwise question (an
 
 When the plan gives a decision's work to one slice, give the decision that owning slice: in `factory_decide`, pass the item as `{ text, slice }` with the id of a pending or active slice; in `factory_plan`, set the slice's `ownsDecisions` to the numbers of decisions recorded before the plan. Each decision has at most one owner. The tickets and review data of the slices before the owner mark the decision "Built by slice NN (title): this slice need not build it; report only code that contradicts it.", so their reviewers do not report it as a gap; the owner and later slices list it unmarked. `factory_reslice` moves the split slice's decisions to its last child; its slices take no `ownsDecisions`.
 
+Before you record a decision or write an acceptance criterion that says a path or guard has no test, and before you ask a slice for a new test, search the test files for distinctive key words of the path's message, not for the full literal message, because tests often assert on a regex or a substring. Also search for the path's call path, for example the failure tests of the function that reaches it. A match alone proves nothing: read each matching test, and count the path as tested only when a test reaches that path and asserts on its output. Only when no such test exists may you record the path as untested; do not ask a slice for a duplicate of the behavior or guard an existing test already covers. Existing coverage of a path does not rule out a new test for changed behavior or an uncovered case on that path.
+
 ## 3. Slice
 
 Break the work into **tracer bullets** (Matt Pocock's `to-tickets` rules):
