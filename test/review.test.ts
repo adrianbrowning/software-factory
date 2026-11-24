@@ -245,6 +245,55 @@ describe('review submissions', { concurrency: 4 }, () => {
     assert.match(fix, /\[high\] react-ts-undefined-field[\s\S]*- Breaks decision 1:/);
   });
 
+  it('escalates an observation that shows an unmet acceptance criterion, with no decision behind it', async () => {
+    using ws = workspace();
+    const { reviewId } = await openReview(ws);
+    for (const domain of REVIEW_DOMAINS) {
+      await step(ws, run =>
+        submitDomain(ws, run, {
+          agentId: domain,
+          domain,
+          findings: domain === 'bug' ? [{ ...finding('bug', 'observation', 'kept-guard'), category: 'structure' }] : [],
+          reviewId,
+          ...noFixItems(domain),
+        }),
+      );
+    }
+    type Entry = { criterion?: string; decision?: number; id: string; reason: string };
+    const validate = (escalate: Entry[]) => step(ws, run => submitValidation(ws, run, { agentId: 'v', dropped: [], escalate, keep: [], reviewId }));
+    const reason = 'the code keeps the guard the criterion removes';
+    const criterion = 'Loop over the narrowed values with no runtime guard';
+
+    await assert.rejects(validate([{ id: 'bug-kept-guard', reason }]), /bug-kept-guard.*decision.*criterion/);
+    await assert.rejects(validate([{ criterion, decision: 1, id: 'bug-kept-guard', reason }]), /bug-kept-guard.*decision.*criterion/);
+    await validate([{ criterion, id: 'bug-kept-guard', reason }]);
+
+    const result = await step(ws, run => recordReview(ws, run));
+    assert.ok(result.kind === 'fix');
+    assert.equal(result.blocking, 1);
+    assert.match(readFileSync(result.fixPath, 'utf8'), /\[high\] bug-kept-guard/);
+  });
+
+  it('refuses to escalate a blocking finding with a criterion', async () => {
+    using ws = workspace();
+    const { reviewId } = await openReview(ws);
+    for (const domain of REVIEW_DOMAINS) {
+      await step(ws, run =>
+        submitDomain(ws, run, {
+          agentId: domain,
+          domain,
+          findings: domain === 'bug' ? [finding('bug', 'high', 'already-high')] : [],
+          reviewId,
+          ...noFixItems(domain),
+        }),
+      );
+    }
+    await assert.rejects(
+      step(ws, run => submitValidation(ws, run, { agentId: 'v', dropped: [], escalate: [{ criterion: 'c', id: 'bug-already-high', reason: 'r' }], keep: [], reviewId })),
+      /Only observation findings can be escalated/,
+    );
+  });
+
   it('skips the domains the orchestrator leaves out, but never the required ones', async () => {
     using ws = workspace();
     await newRun(ws, [slice('Feature')]);

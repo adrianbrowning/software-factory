@@ -68,13 +68,14 @@ export const validationSchema = z.object({
   escalate: z
     .array(
       z.object({
-        decision: z.number().int().positive().describe('Number of the recorded decision the code breaks'),
+        criterion: z.string().min(1).optional().describe('The quoted acceptance criterion the code does not meet, read literally; give exactly one of `decision` or `criterion`'),
+        decision: z.number().int().positive().optional().describe('Number of the recorded decision the code breaks; give exactly one of `decision` or `criterion`'),
         id: z.string().min(1),
         reason: z.string().min(1),
       }),
     )
     .default([])
-    .describe('observation findings that show the code breaks a recorded user decision; kept as high'),
+    .describe('observation findings that show the code breaks a recorded user decision (`decision`) or does not meet an acceptance criterion as written (`criterion`); kept as high'),
   keep: z.array(z.string().min(1)).describe('Ids of findings the diff substantiates, one per distinct problem'),
 });
 
@@ -82,7 +83,7 @@ export type Validation = z.infer<typeof validationSchema>;
 
 /**
  * Kept findings at the severity the gate uses: downgraded findings count as observations (with the category the
- * validator gave one that had none), escalated ones as high and carry the decision the validator cited.
+ * validator gave one that had none), escalated ones as high and, when the validator cited a decision, carry it.
  */
 export function keptFindings(findings: Finding[], validation: Validation) {
   const downgraded = new Map(validation.downgrade.map(entry => [entry.id, entry.category]));
@@ -91,8 +92,10 @@ export function keptFindings(findings: Finding[], validation: Validation) {
     .filter(finding => validation.keep.includes(finding.id) || downgraded.has(finding.id) || escalated.has(finding.id))
     .map(finding => {
       if (downgraded.has(finding.id)) return { ...finding, category: finding.category ?? downgraded.get(finding.id), severity: 'observation' as const };
-      const decision = escalated.get(finding.id);
-      if (decision !== undefined) return { ...finding, decision, severity: 'high' as const };
+      if (escalated.has(finding.id)) {
+        const decision = escalated.get(finding.id);
+        return { ...finding, ...(decision === undefined ? {} : { decision }), severity: 'high' as const };
+      }
       return finding;
     });
 }

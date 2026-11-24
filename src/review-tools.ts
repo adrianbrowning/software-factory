@@ -127,7 +127,7 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
   tool({
     caller: VALIDATOR,
     description:
-      'Submit the validation: keep the substantiated finding ids, downgrade or escalate with reasons, drop the rest with reasons. One more call replaces it once (to correct the verdict), until the review is recorded.',
+      'Submit the validation: keep the substantiated finding ids, downgrade or escalate with reasons, drop the rest with reasons. An escalate entry names exactly one of `decision` (the recorded decision number the code breaks) or `criterion` (the quoted acceptance criterion the code does not meet). One more call replaces it once (to correct the verdict), until the review is recorded.',
     label: 'Factory: submit validation',
     name: 'factory_review_validate',
     schema: validateSchema,

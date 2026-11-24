@@ -533,7 +533,7 @@ export function readDomainFindings(ws: Workspace, run: Run, reviewId: string) {
 /**
  * Throws unless the validation keeps, downgrades, escalates, or drops every submitted finding exactly once, and nothing
  * else. Only a `critical` or `high` finding can be downgraded, and only to `observation`. Only an `observation` can be
- * escalated, to `high`, and only by naming one of the `decisionCount` recorded decisions. A duplicate may only be
+ * escalated, to `high`, and only by naming one of the `decisionCount` recorded decisions or quoting an acceptance criterion. A duplicate may only be
  * dropped in favour of a kept, downgraded, or escalated finding of the same or higher severity (original severity,
  * except that an escalated finding counts as high).
  */
@@ -579,7 +579,10 @@ function checkCoverage(findings: Finding[], validation: Validation, decisionCoun
   const alreadyBlocking = escalated.filter(id => byId.get(id)?.severity !== 'observation');
   if (alreadyBlocking.length > 0) throw new Error(`Only observation findings can be escalated; keep these instead: ${alreadyBlocking.join(', ')}`);
   for (const entry of validation.escalate) {
-    if (entry.decision > decisionCount) {
+    if ((entry.decision === undefined) === (entry.criterion === undefined)) {
+      throw new Error(`"${entry.id}": an escalate entry gives exactly one of \`decision\` (a recorded decision number) or \`criterion\` (the quoted acceptance criterion).`);
+    }
+    if (entry.decision !== undefined && entry.decision > decisionCount) {
       throw new Error(`"${entry.id}" names decision ${entry.decision}, but the review data lists ${decisionCount} decisions.`);
     }
   }
