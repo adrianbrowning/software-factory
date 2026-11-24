@@ -447,7 +447,8 @@ export function reviewPaths(ws: Workspace, run: Pick<Run, 'feature'>, id: string
     referenceDir: REVIEW_REFERENCE_DIR,
   };
 }
-export const reportPath = (ws: Workspace, feature: string, slice: Pick<Slice, 'id'>) => join(runDir(ws, feature), 'reports', `${slice.id}.md`);
+export const reportFile = (slice: Pick<Slice, 'id'>) => join('reports', `${slice.id}.md`);
+export const reportPath = (ws: Workspace, feature: string, slice: Pick<Slice, 'id'>) => join(runDir(ws, feature), reportFile(slice));
 
 /** Write via rename so concurrent readers never see a partial file. */
 export function writeAtomic(path: string, content: string) {

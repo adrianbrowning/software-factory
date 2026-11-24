@@ -11,7 +11,7 @@ import {
   activeSlice, addEvent, builtBy, discardReview, clearFullGreen, dropPass, greenCommit, hasPass, outdatedGreenCount,
   runDir, type Run, reviewDomains, reviewIsOpen, reviewPaths, saveRun, type Slice, type SliceInput, resliceItemSchema,
   sliceInputSchema, standingChecks, type Source, sourceSchema, statePath, reviewDir, ticketPath, type Workspace,
-  requireActive, requireNotStalled, stallNotice, writeAtomic,
+  requireActive, requireNotStalled, reportFile, stallNotice, writeAtomic,
 } from './run.ts';
 import { moveCarried } from './legacy-observations.ts';
 import { copyPauseCause } from './pause-cause.ts';
@@ -871,7 +871,7 @@ function submittedAfterStackReady(run: Run) {
   return ready >= 0 && run.events.slice(ready + 1).some(event => event.kind === 'submit');
 }
 
-const reportNote = (slice: Slice) => `reports/${slice.id}.md in the run directory`;
+const reportNote = (slice: Slice) => `${reportFile(slice)} in the run directory`;
 
 /** The one thing the orchestrator should do next, in words a model can act on. */
 export function nextAction(run: Run): string {
