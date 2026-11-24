@@ -871,9 +871,9 @@ function submittedAfterStackReady(run: Run) {
   return ready >= 0 && run.events.slice(ready + 1).some(event => event.kind === 'submit');
 }
 
-/** The one thing the orchestrator should do next, in words a model can act on. */
 const reportNote = (slice: Slice) => `reports/${slice.id}.md in the run directory`;
 
+/** The one thing the orchestrator should do next, in words a model can act on. */
 export function nextAction(run: Run): string {
   if (run.status === 'intake') return 'Clarify the issue with the user, then propose slices with factory_plan.';
   if (run.status === 'done') {
