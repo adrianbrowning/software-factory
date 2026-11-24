@@ -110,7 +110,7 @@ describe('slice loop gates: stacking and review data', { concurrency: 4 }, () =>
     assert.equal(JSON.stringify(readRun(ws, 'demo')), before);
     assert.deepEqual(readdirSync(fixDir), fixFiles);
 
-    await step(ws, async run => submitImplementerReport(ws, run, { behaviors: [], commits: [`${sha.slice(0, 7)} 01: fix`], fixItems: [], open: [] }));
+    await step(ws, async run => submitImplementerReport(ws, run, { behaviors: [], commits: [`${sha.slice(0, 7)} 01: fix`], fixItems: ['check-f1-1: already fixed'], open: [] }));
     assert.equal((await step(ws, run => runChecks(ws, run))).passed, true);
   });
 
@@ -132,7 +132,7 @@ describe('slice loop gates: stacking and review data', { concurrency: 4 }, () =>
     const fixDir = dirname(readRun(ws, 'demo').slices[0]!.fixPath!);
     const fixFiles = readdirSync(fixDir);
     const report = (...commits: string[]) =>
-      step(ws, async run => submitImplementerReport(ws, run, { behaviors: [], commits, fixItems: [], open: [] }));
+      step(ws, async run => submitImplementerReport(ws, run, { behaviors: [], commits, fixItems: ['check-f1-1: already fixed'], open: [] }));
 
     // The tool refuses a short prefix, so write the stored report directly to prove the checks gate ignores it.
     writeAtomic(reportPath(ws, 'demo', readRun(ws, 'demo').slices[0]!), `Implementer report:\nCommits:\n- ${first.slice(0, 7)} add a.txt\n- ${second.slice(0, 6)} add ok\n`);

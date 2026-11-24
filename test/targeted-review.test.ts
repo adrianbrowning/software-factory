@@ -246,7 +246,7 @@ describe('targeted re-review in other flows', () => {
     execFileSync('git', ['rm', '-q', 'gone.txt'], { cwd: dir.root });
     execFileSync('git', ['commit', '-qm', 'remove gone.txt'], { cwd: dir.root });
     const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir.root, encoding: 'utf8' }).trim();
-    await call('factory_implementer_report', { behaviors: [], commits: [`${sha.slice(0, 7)} remove gone.txt`], fixItems: [], open: [] }, 'factory-implementer');
+    await call('factory_implementer_report', { behaviors: [], commits: [`${sha.slice(0, 7)} remove gone.txt`], fixItems: ['security-leak: already fixed'], open: [] }, 'factory-implementer');
     await call('factory_checks', {});
     const targeted = await open();
     assert.match(readFileSync(targeted.dataFile, 'utf8'), /- gone\.txt: \(no hunk lines/);
