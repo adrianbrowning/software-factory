@@ -499,7 +499,6 @@ describe('first-run checks dialog', () => {
   });
 });
 
-/** A factory config whose one check passes once `ok` is committed. */
 const CHECKS_OK = { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) };
 
 /** Drives a run of `titles` slices in the repo at `root` through the loaded tools until its first slice has committed `ok`. `confirms` records each confirm dialog's message. */

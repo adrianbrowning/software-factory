@@ -207,13 +207,7 @@ describe('fix item verdicts', { concurrency: 4 }, () => {
 
   it('puts every observation the user chose to fix under one heading', async () => {
     using ws = workspace({ maxRounds: 2 });
-    await newRun(ws, [slice('Feature')]);
-    await step(ws, run => nextSlice(ws, run));
-    commit(ws, 'ok');
-    await step(ws, run => runChecks(ws, run));
-    const { reviewId } = await step(ws, run => startReview(ws, run));
-    await review(ws, reviewId, [finding('thermo', 'observation', 'naming'), finding('thermo', 'observation', 'length')]);
-    assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
+    await greenWithObservation(ws, [finding('thermo', 'observation', 'naming'), finding('thermo', 'observation', 'length')]);
     const fixed = await step(ws, run => fixAfterGreen(ws, run, { observations: ['thermo-naming', 'thermo-length'] }, 'Fix both now.'));
     const fix = readFileSync(fixed.fixPath, 'utf8');
     assert.equal(fix.match(/## Observations from green review 01-r1/g)?.length, 1);
