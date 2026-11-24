@@ -457,17 +457,18 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
       const summary = result.summary.join('\n');
       const run = readRun(ws, feature);
       const work = `Slice commits:\n${result.commits}\n${result.report}`;
-      const unchanged =
-        (result.unchanged
-          ? '\nNo new commits since the fix file. The implementer report should explain, for each item, why no change was needed.'
-          : '') + (await flaggedFilesSection(ws.root)) + (await newChecksSection(ws.root, result.sha, run.checks));
+      const unchanged = result.unchanged
+        ? '\nNo new commits since the fix file. The implementer report should explain, for each item, why no change was needed.'
+        : '';
+      const flagged = await flaggedFilesSection(ws.root);
+      const newChecks = await newChecksSection(ws.root, result.sha, run.checks);
       if (result.passed) {
         const byPath = result.pathSkipped.length === 0 ? '' : `\nPath rules skip: ${result.pathSkipped.map(entry => `${entry.domain} (${entry.reason})`).join('; ')}. Pass a domain in factory_review_start keep when a changed file holds its subject after all.`;
         const passed = result.reused ? `All checks already passed on ${result.sha}; reusing their results, no check ran.` : 'All checks passed.';
-        return reply(`${passed}\n${summary}\n${work}${unchanged}\nChanged files:\n${result.changed}${byPath}\nNext: ${nextAction(run)}`);
+        return reply(`${passed}\n${summary}\n${work}${unchanged}${flagged}${newChecks}\nChanged files:\n${result.changed}${byPath}\nNext: ${nextAction(run)}`);
       }
       const stall = result.stalled ? await decideStall(ctx, ws, feature, 'checks') : '';
-      return reply(`Checks failed.\n${summary}\n${work}${unchanged}\nFix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
+      return reply(`Checks failed.\n${summary}\n${work}${unchanged}${flagged}${newChecks}\nFix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
     },
   });
 
