@@ -17,8 +17,9 @@ type LoadOptions = { activated?: string[]; commands?: Map<string, Command>; hand
 /** Registers the extension against a recording `pi` and returns its tools by name; `activated` collects what setActiveTools gets, `handlers` records its event hooks, `commands` its slash commands, `sent` the messages passed to pi.sendUserMessage, `thinking` gives pi.getThinkingLevel, `submit` replaces the headless submission. */
 export function load({ activated = [], commands = new Map(), handlers = new Map(), sent = [], sentOptions = [], thinking = () => 'off', checkGit, submit }: LoadOptions = {}) {
   const tools = new Map<string, Registered>();
+  let active: string[] = [];
   const pi = {
-    getActiveTools: () => [],
+    getActiveTools: () => active,
     getThinkingLevel: thinking,
     sendUserMessage(message: string, options?: unknown) {
       sentOptions.push(options);
@@ -34,6 +35,7 @@ export function load({ activated = [], commands = new Map(), handlers = new Map(
       tools.set(tool.name, tool);
     },
     setActiveTools: async (names: string[]) => {
+      active = names;
       activated.push(...names);
     },
     setLabel() {},

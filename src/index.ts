@@ -601,7 +601,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
         const ws = active?.ws ?? (await workspace(ctx.cwd));
         const runsDir = join(ws.root, ws.config.scratchDir);
         const known = existsSync(runsDir) ? readdirSync(runsDir).filter(name => existsSync(statePath(ws, name))) : [];
-        const current = active === undefined ? 'none' : `${active.feature}: ${describeBound(ws, active.feature)}`;
+        const current = active === undefined ? 'none' : `${active.feature}: ${resumeHint(active.feature)}${describeBound(ws, active.feature)}`;
         ctx.ui.notify(`Active run: ${current}\nRuns: ${known.join(', ') || 'none'}`, 'info');
         return;
       }
@@ -674,6 +674,12 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
     },
   });
 
+  /** After an omp restart only factory_start is loaded; the Next action names tools that are not, so resume comes first. */
+  function resumeHint(feature: string) {
+    const loaded = new Set(pi.getActiveTools());
+    return ORCHESTRATION_TOOLS.every(name => loaded.has(name)) ? '' : `The factory tools are not loaded: call factory_start with resume: "${feature}" first. `;
+  }
+
   pi.on('session_stop', async (event, ctx) => {
     if (ctx.agent.kind !== 'main') return;
     const active = await runForCwd(ctx.cwd);
@@ -698,7 +704,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
       return;
     }
     stopAttempts.set(feature, decision.attempts);
-    return { decision: 'block', reason: `Software factory run "${feature}" is not finished. Next: ${nextAction(run)}` };
+    return { decision: 'block', reason: `${resumeHint(feature)}Software factory run "${feature}" is not finished. Next: ${nextAction(run)}` };
   });
 
   /** Measures each implementer's context so the retro can see slices that outgrew the budget. `found` is its active run. */

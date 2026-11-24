@@ -1122,6 +1122,30 @@ describe('active run in a fresh extension copy', () => {
     resetModuleState();
   };
 
+  it('tells the orchestrator to resume in the stop block reason and /factory status while the factory tools are not loaded, and not once they are', async () => {
+    using repo = tempRepo('factory-fresh-resume-hint-', CHECKS_OK);
+    await startIn(repo.root, { feature: 'demo', source: SOURCE }, 'main-start');
+    await withRun({ config: loadConfig(repo.root), root: repo.root }, 'demo', run => { run.status = 'running'; });
+    resetModuleState();
+    const handlers = new Map<string, Handler>();
+    const commands = new Map<string, Command>();
+    const tools = load({ commands, handlers });
+    const notices: string[] = [];
+    const main = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, editor: async () => 'true', notify: (message: string) => notices.push(message) } };
+    const stop = async () => ((await handlers.get('session_stop')?.({ session_id: 'session', messages: [], type: 'session_stop' }, main)) as { reason: string }).reason;
+
+    const cold = await stop();
+    assert.match(cold, /^The factory tools are not loaded: call factory_start with resume: "demo" first\. Software factory run "demo" is not finished\. Next: .+/);
+    await commands.get('factory')?.handler('status', main);
+    assert.match(notices.at(-1) ?? '', /Active run: demo: The factory tools are not loaded: call factory_start with resume: "demo"/);
+
+    await tools.get('factory_start')?.execute('id', { resume: 'demo' }, undefined, undefined, main);
+    const warm = await stop();
+    assert.match(warm, /^Software factory run "demo" is not finished\. Next: .+/);
+    await commands.get('factory')?.handler('status', main);
+    assert.doesNotMatch(notices.at(-1) ?? '', /factory_start/);
+  });
+
   it('starts a new run when the pointer names a run whose state is gone, and rebinds the pointer', async () => {
     using repo = tempRepo('factory-fresh-stale-start-', CHECKS_OK);
     await startThenDeleteState(repo.root);
@@ -1153,7 +1177,7 @@ describe('active run in a fresh extension copy', () => {
 
     await commands.get('factory')?.handler('status', main);
 
-    assert.match(notices.join('\n'), /Active run: demo: state unreadable \(.*ENOENT/);
+    assert.match(notices.join('\n'), /Active run: demo: .*state unreadable \(.*ENOENT/);
   });
 
   /** How many times the pointer file is read while `call` runs. */
