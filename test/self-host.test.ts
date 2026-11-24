@@ -239,7 +239,10 @@ describe('self-host warning', () => {
       const loaded = { hashes: pluginHashes(repo.root), root: repo.root };
       for (const name of ['a', 'b', 'c', 'd', 'e', 'f']) write(repo.root, `src/${name}.ts`, name);
       write(repo.root, 'src/index.ts', 'two');
-      assert.match(selfHostWarning(repo.root, loaded) ?? assert.fail('no warning'), /and 2 more/);
+      const text = selfHostWarning(repo.root, loaded) ?? assert.fail('no warning');
+      assert.match(text, /and 2 more/);
+      assert.ok(text.includes('src/a.ts, src/b.ts, src/c.ts, src/d.ts, src/e.ts and 2 more'));
+      assert.doesNotMatch(text, /src\/f\.ts|src\/index\.ts/);
     });
   });
   it('a headless run records a start warning, and its resume and review warn without being refused or paused', async () => {
