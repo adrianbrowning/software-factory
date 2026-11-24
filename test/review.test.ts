@@ -274,6 +274,7 @@ describe('review submissions', { concurrency: 4 }, () => {
     assert.ok(result.kind === 'fix');
     assert.equal(result.blocking, 1);
     assert.match(readFileSync(result.fixPath, 'utf8'), /\[high\] bug-kept-guard/);
+    assert.match(readFileSync(result.fixPath, 'utf8'), new RegExp(`- Does not meet criterion: ${criterion}`));
   });
 
   it('refuses to escalate a blocking finding with a criterion', async () => {
@@ -311,8 +312,8 @@ describe('review submissions', { concurrency: 4 }, () => {
     }
     const validate = (entry: object) => call('factory_review_validate', { dropped: [], escalate: [{ id: 'bug-kept-guard', reason: 'r', ...entry }], keep: [], reviewId }, 'factory-review-validator');
 
-    await assert.rejects(validate({}), /bug-kept-guard/);
-    await assert.rejects(validate({ criterion: 'c', decision: 1 }), /bug-kept-guard/);
+    await assert.rejects(validate({}), /bug-kept-guard.*decision.*criterion/);
+    await assert.rejects(validate({ criterion: 'c', decision: 1 }), /bug-kept-guard.*decision.*criterion/);
     await validate({ criterion: 'No runtime guard' });
     const result = await step(ws, run => recordReview(ws, run));
     assert.ok(result.kind === 'fix');

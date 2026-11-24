@@ -83,18 +83,18 @@ export type Validation = z.infer<typeof validationSchema>;
 
 /**
  * Kept findings at the severity the gate uses: downgraded findings count as observations (with the category the
- * validator gave one that had none), escalated ones as high and, when the validator cited a decision, carry it.
+ * validator gave one that had none), escalated ones as high and, when the validator cited a decision or an unmet criterion, carry it.
  */
 export function keptFindings(findings: Finding[], validation: Validation) {
   const downgraded = new Map(validation.downgrade.map(entry => [entry.id, entry.category]));
-  const escalated = new Map(validation.escalate.map(entry => [entry.id, entry.decision]));
+  const escalated = new Map(validation.escalate.map(entry => [entry.id, entry]));
   return findings
     .filter(finding => validation.keep.includes(finding.id) || downgraded.has(finding.id) || escalated.has(finding.id))
     .map(finding => {
       if (downgraded.has(finding.id)) return { ...finding, category: finding.category ?? downgraded.get(finding.id), severity: 'observation' as const };
       if (escalated.has(finding.id)) {
-        const decision = escalated.get(finding.id);
-        return { ...finding, ...(decision === undefined ? {} : { decision }), severity: 'high' as const };
+        const { criterion, decision } = escalated.get(finding.id) ?? {};
+        return { ...finding, ...(criterion === undefined ? {} : { criterion }), ...(decision === undefined ? {} : { decision }), severity: 'high' as const };
       }
       return finding;
     });

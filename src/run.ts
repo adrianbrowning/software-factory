@@ -61,6 +61,7 @@ export const findingSchema = z.object({
     .enum(OBSERVATION_CATEGORIES)
     .optional()
     .describe('Required for an observation: correctness, missing-test, misleading-doc, naming, structure or style. It sets where the observation goes by default'),
+  criterion: z.string().min(1).optional().describe('Set by the validator when it escalates the finding for an unmet acceptance criterion: the quoted criterion'),
   decision: z
     .number()
     .int()
