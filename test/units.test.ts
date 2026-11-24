@@ -9,7 +9,6 @@ import { evidence, evidenceLine, redact } from '../src/evidence.ts';
 import { runShell } from '../src/exec.ts';
 import { tempDir, workspace } from './helpers.ts';
 
-/** Writes `files` (path → content) under `root` and returns `root`. */
 function writeFiles(root: string, files: Record<string, string>) {
   for (const [name, content] of Object.entries(files)) {
     mkdirSync(join(root, name, '..'), { recursive: true });

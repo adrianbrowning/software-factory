@@ -174,14 +174,14 @@ export async function review(ws: Workspace, reviewId: string, findings: Finding[
   await step(ws, run => submitValidation(ws, run, { agentId: 'validator', dropped, keep, reviewId }));
 }
 
-/** Takes a slice that commits `ok` to a green review with one thermo observation. */
-export async function greenWithObservation(ws: Workspace) {
+/** Takes a slice that commits `ok` to a green review with `findings` (default: one thermo naming observation). */
+export async function greenWithObservation(ws: Workspace, findings: Finding[] = [finding('thermo', 'observation', 'naming')]) {
   await newRun(ws, [slice('Feature')]);
   await step(ws, run => nextSlice(ws, run));
   commit(ws, 'ok');
   await step(ws, run => runChecks(ws, run));
   const opened = await step(ws, run => startReview(ws, run));
-  await review(ws, opened.reviewId, [finding('thermo', 'observation', 'naming')]);
+  await review(ws, opened.reviewId, findings);
   assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
 }
 
