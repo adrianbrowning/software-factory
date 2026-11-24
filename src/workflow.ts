@@ -872,7 +872,7 @@ function submittedAfterStackReady(run: Run) {
 }
 
 /** The one thing the orchestrator should do next, in words a model can act on. */
-const reportNote = (slice: Slice) => `reports/${slice.id}.md`;
+const reportNote = (slice: Slice) => `reports/${slice.id}.md in the run directory`;
 
 export function nextAction(run: Run): string {
   if (run.status === 'intake') return 'Clarify the issue with the user, then propose slices with factory_plan.';
