@@ -580,10 +580,7 @@ function checkCoverage(findings: Finding[], validation: Validation, decisionCoun
   const alreadyBlocking = escalated.filter(id => byId.get(id)?.severity !== 'observation');
   if (alreadyBlocking.length > 0) throw new Error(`Only observation findings can be escalated; keep these instead: ${alreadyBlocking.join(', ')}`);
   for (const entry of validation.escalate) {
-    if ((entry.decision === undefined) === (entry.criterion === undefined)) {
-      throw new Error(`"${entry.id}": an escalate entry gives exactly one of \`decision\` (a recorded decision number) or \`criterion\` (the quoted acceptance criterion).`);
-    }
-    if (entry.decision !== undefined && entry.decision > decisionCount) {
+    if ('decision' in entry && entry.decision > decisionCount) {
       throw new Error(`"${entry.id}" names decision ${entry.decision}, but the review data lists ${decisionCount} decisions.`);
     }
   }

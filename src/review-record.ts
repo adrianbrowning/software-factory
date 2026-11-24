@@ -38,6 +38,8 @@ export function recordedFindings(ws: Workspace, run: Run, review: Review) {
   return { findings, missing };
 }
 
+const escalateBase = { id: z.string().min(1), reason: z.string().min(1) };
+
 export const validationSchema = z.object({
   dropped: z
     .array(
@@ -67,12 +69,24 @@ export const validationSchema = z.object({
     .describe('critical/high findings the diff supports but that fail the correctness-or-requirements bar; kept as observations'),
   escalate: z
     .array(
-      z.object({
-        criterion: z.string().min(1).optional().describe('The quoted acceptance criterion the code does not meet, read literally; give exactly one of `decision` or `criterion`'),
-        decision: z.number().int().positive().optional().describe('Number of the recorded decision the code breaks; give exactly one of `decision` or `criterion`'),
-        id: z.string().min(1),
-        reason: z.string().min(1),
-      }),
+      z.union(
+        [
+          z.strictObject({
+            decision: z.number().int().positive().describe('Number of the recorded decision the code breaks; give exactly one of `decision` or `criterion`'),
+            ...escalateBase,
+          }),
+          z.strictObject({
+            criterion: z.string().min(1).describe('The quoted acceptance criterion the code does not meet, read literally; give exactly one of `decision` or `criterion`'),
+            ...escalateBase,
+          }),
+        ],
+        {
+          error: issue => {
+            const id = typeof issue.input === 'object' && issue.input !== null && 'id' in issue.input ? String(issue.input.id) : '?';
+            return `"${id}": an escalate entry gives exactly one of \`decision\` (a recorded decision number) or \`criterion\` (the quoted acceptance criterion).`;
+          },
+        },
+      ),
     )
     .default([])
     .describe('observation findings that show the code breaks a recorded user decision (`decision`) or does not meet an acceptance criterion as written (`criterion`); kept as high'),
@@ -92,10 +106,8 @@ export function keptFindings(findings: Finding[], validation: Validation) {
     .filter(finding => validation.keep.includes(finding.id) || downgraded.has(finding.id) || escalated.has(finding.id))
     .map(finding => {
       if (downgraded.has(finding.id)) return { ...finding, category: finding.category ?? downgraded.get(finding.id), severity: 'observation' as const };
-      if (escalated.has(finding.id)) {
-        const { criterion, decision } = escalated.get(finding.id) ?? {};
-        return { ...finding, ...(criterion === undefined ? {} : { criterion }), ...(decision === undefined ? {} : { decision }), severity: 'high' as const };
-      }
+      const entry = escalated.get(finding.id);
+      if (entry !== undefined) return { ...finding, ...('criterion' in entry ? { criterion: entry.criterion } : { decision: entry.decision }), severity: 'high' as const };
       return finding;
     });
 }
