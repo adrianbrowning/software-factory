@@ -24,7 +24,7 @@ import {
 } from '../src/workflow.ts';
 import { parseRetro, recordRetro } from '../src/retro.ts';
 import { fileSource, githubSource } from '../src/source.ts';
-import { checkRuns, commit, countedCheck, fixItems, green, newRun, review, sh, slice, start, step, workspace } from './helpers.ts';
+import { checkRuns, commit, countedCheck, finding, fixItems, green, newRun, review, sh, slice, start, step, workspace } from './helpers.ts';
 
 describe('base resolution', () => {
   it('starts a run without the default base, and plans on a base the user chooses', async () => {
@@ -192,34 +192,37 @@ describe('planSlices', () => {
 });
 
 describe('implementer report', () => {
-  it('stores the latest report for the active slice and shows it in the checks result, or that none was submitted', async () => {
+  it('says in the checks result that no report was submitted', async () => {
     using ws = workspace();
-    await newRun(ws, [slice('Feature'), slice('Next', ['Feature'])]);
+    await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'work.txt');
     const red = await step(ws, run => runChecks(ws, run));
     const path = join(ws.root, '.scratch', 'demo', 'reports', '01.md');
     assert.equal(red.report, `No implementer report was submitted for slice 01 (factory_implementer_report). Once it is, read it at ${path}`);
+  });
 
+  it('replaces the stored report with a later one and shows it in the checks result', async () => {
+    using ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'work.txt');
+    const path = join(ws.root, '.scratch', 'demo', 'reports', '01.md');
     const firstSha = sh(ws.root, 'rev-parse', '--short=12', 'HEAD');
     const first = await step(ws, run =>
       submitImplementerReport(ws, run, {
         behaviors: [{ test: 'old test', behavior: 'old behavior', seenRed: false }],
         commits: [`${firstSha} 01: first try`],
-        fixItems: [],
         open: [],
       }),
     );
     assert.deepEqual([first.path, first.replaced], [path, false]);
-    writeFileSync(join(ws.root, 'ok'), 'x\n');
-    sh(ws.root, 'add', 'ok');
-    sh(ws.root, 'commit', '-qm', 'add ok');
+    commit(ws, 'ok');
     const head = sh(ws.root, 'rev-parse', '--short=12', 'HEAD');
     const second = await step(ws, run =>
       submitImplementerReport(ws, run, {
         behaviors: [{ test: 'writes ok', behavior: 'checks pass', seenRed: true, red: 'ok was missing' }],
         commits: [`${firstSha} 01: first try`, `${head} 01: add ok`],
-        fixItems: [`check-f1-1: fixed in ${head}`],
         open: [],
       }),
     );
@@ -227,18 +230,43 @@ describe('implementer report', () => {
     const passed = await step(ws, run => runChecks(ws, run));
     assert.equal(
       passed.report,
-      `Implementer report:\nCommits:\n- ${firstSha} 01: first try\n- ${head} 01: add ok\nFix file items:\n- check-f1-1: fixed in ${head}\nBehaviors:\n- writes ok → checks pass (seen red: yes — ok was missing)\nOpen:\n- none\nReport file: ${path}`,
+      `Implementer report:\nCommits:\n- ${firstSha} 01: first try\n- ${head} 01: add ok\nBehaviors:\n- writes ok → checks pass (seen red: yes — ok was missing)\nOpen:\n- none\nReport file: ${path}`,
     );
+  });
 
-    await green(ws);
-    await step(ws, run => completeSlice(ws, run));
+  it('shows no Fix file items section outside fix mode, and refuses a report that has fixItems there', async () => {
+    using ws = workspace();
+    await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
-    commit(ws, 'next.txt');
     await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [], open: ['SLICE TOO BIG: the rest'] }));
+    commit(ws, 'ok');
     assert.equal(
       (await step(ws, run => runChecks(ws, run))).report,
-      `Implementer report:\nCommits:\n- none\nBehaviors:\n- none\nOpen:\n- SLICE TOO BIG: the rest\nReport file: ${join(ws.root, '.scratch', 'demo', 'reports', '02.md')}`,
+      `Implementer report:\nCommits:\n- none\nBehaviors:\n- none\nOpen:\n- SLICE TOO BIG: the rest\nReport file: ${join(ws.root, '.scratch', 'demo', 'reports', '01.md')}`,
     );
+    for (const fixItems of [[], ['bug-f1: already fixed']]) {
+      await assert.rejects(step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [], fixItems, open: [] })), /not in fix mode: leave fixItems out/);
+    }
+  });
+
+  it('keeps the fixItems rules after a fix round passes the checks', async () => {
+    using ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const opened = await step(ws, run => startReview(ws, run));
+    await review(ws, opened.reviewId, [finding('scope', 'high', 'gap')]);
+    assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'fix');
+    commit(ws, 'fixed.txt');
+    await step(ws, run => runChecks(ws, run));
+    assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'review');
+    const sha = sh(ws.root, 'rev-parse', '--short=12', 'HEAD');
+    const submit = (fixItems?: string[]) =>
+      step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [`${sha} fix`], ...(fixItems === undefined ? {} : { fixItems }), open: [] }));
+    await assert.rejects(submit(), /fix mode: list every fix file item in fixItems/);
+    await assert.rejects(submit([]), /fix mode: list every fix file item in fixItems/);
+    await submit([`scope-gap: fixed in ${sha}`]);
   });
 
   it('shows a stop report submitted before any commit in the no-commits refusal', async () => {

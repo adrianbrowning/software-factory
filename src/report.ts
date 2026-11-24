@@ -90,10 +90,14 @@ function recordFixedObservations(run: Run, slice: Slice, fixItems: string[], own
 /** Stores the implementer's report for the active slice in the run dir; a later call replaces it. */
 export async function submitImplementerReport(ws: Workspace, run: Run, report: ImplementerReport) {
   const slice = requireActive(run);
-  if (slice.phase === 'fix' && report.fixItems === undefined) {
+  const fixMode = slice.fixFromSha !== undefined;
+  if (fixMode && (report.fixItems === undefined || report.fixItems.length === 0)) {
     throw new Error(
       `Slice ${slice.id} is in fix mode: list every fix file item in fixItems, each with \`fixed in <sha>\`, \`already fixed\`, or \`not a defect: <why>\`.`,
     );
+  }
+  if (!fixMode && report.fixItems !== undefined) {
+    throw new Error(`Slice ${slice.id} is not in fix mode: leave fixItems out of the report.`);
   }
   const own = await ownCommits(ws, slice);
   const rejected = report.commits.filter(item => {
@@ -108,7 +112,7 @@ export async function submitImplementerReport(ws: Workspace, run: Run, report: I
   const path = reportPath(ws, run.feature, slice);
   const replaced = existsSync(path);
   writeAtomic(path, `${renderReport(report)}\n`);
-  const fixed = slice.phase === 'fix' && report.fixItems !== undefined ? recordFixedObservations(run, slice, report.fixItems, own) : [];
+  const fixed = report.fixItems !== undefined ? recordFixedObservations(run, slice, report.fixItems, own) : [];
   return { fixed, path, replaced };
 }
 

@@ -158,24 +158,20 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
     const sha = await redWithObservation(ws);
     await report(ws, sha, [`${OBSERVATION}: fixed in ${sha.slice(0, 7)}`]);
     const placed = JSON.stringify(state(ws));
-    assert.deepEqual((await report(ws, sha, [])).fixed, []);
+    assert.deepEqual((await report(ws, sha, ['scope-gap: already fixed'])).fixed, []);
     assert.deepEqual((await report(ws, sha, [`${OBSERVATION}: fixed in ${sha.slice(0, 7)}`])).fixed, []);
     assert.equal(JSON.stringify(state(ws)), placed);
   });
 
-  it('records nothing outside fix mode', async () => {
+  it('refuses the report and records nothing outside fix mode', async () => {
     using ws = workspace({ maxRounds: 3 });
     const sha = await redWithObservation(ws);
     await step(ws, run => {
-      run.slices[0]!.phase = 'implement';
+      run.slices[0]!.fixFromSha = undefined;
     });
-    const before = state(ws).slice.fixItems;
-    const result = await report(ws, sha, [`${OBSERVATION}: fixed in ${sha.slice(0, 7)}`]);
-    assert.deepEqual(result.fixed, []);
-    const { ledger, slice: after } = state(ws);
-    assert.deepEqual(ledger, []);
-    assert.deepEqual(after.unplaced.map(entry => entry.finding.id), [OBSERVATION]);
-    assert.deepEqual(after.fixItems, before);
+    const before = JSON.stringify(state(ws));
+    await assert.rejects(report(ws, sha, [`${OBSERVATION}: fixed in ${sha.slice(0, 7)}`]), /not in fix mode/);
+    assert.equal(JSON.stringify(state(ws)), before);
   });
 
   it('through the tools: the reply names it, a headless completion starts no fix round for a misleading-doc one, and the slice completes', async () => {
