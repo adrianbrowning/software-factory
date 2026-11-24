@@ -10,7 +10,8 @@ export async function newChecksSection(root: string, sha: string, checks: string
   let added: string[];
   try {
     const committed = parseConfig(JSON.parse(await git(root, 'show', `${sha}:${CONFIG_PATH}`)));
-    added = (committed.checks ?? []).map(command => command.trim()).filter(command => !checks.includes(command));
+    const trimmed = new Set((committed.checks ?? []).map(command => command.trim()).filter(command => command !== ''));
+    added = [...trimmed].filter(command => !checks.includes(command));
   } catch {
     return '';
   }
