@@ -20,9 +20,7 @@ function writeFiles(root: string, files: Record<string, string>) {
 
 /** A temp dir holding `files`, removed when the `using` scope that holds it ends. */
 function dir(files: Record<string, string> = {}) {
-  const temp = tempDir('factory-unit-');
-  writeFiles(temp.root, files);
-  return temp;
+  return tempDir('factory-unit-', root => writeFiles(root, files));
 }
 
 const scripts = (names: string[], extra: Record<string, unknown> = {}) =>
@@ -47,6 +45,16 @@ describe('test temp dirs', () => {
       assert.ok(roots.every(root => existsSync(root)));
     }
     assert.deepEqual(roots.filter(root => existsSync(root)), []);
+  });
+
+  it('removes the dir and rethrows when setup throws', () => {
+    let root = '';
+    assert.throws(() => tempDir('factory-unit-', created => {
+      root = created;
+      throw new Error('setup failed');
+    }), /setup failed/);
+    assert.notEqual(root, '');
+    assert.equal(existsSync(root), false);
   });
 });
 
