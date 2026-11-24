@@ -33,6 +33,16 @@ describe('tool registration', () => {
     assert.match(fixItems.description ?? '', /^Scope domain only, and required for it/);
   });
 
+  it('advertises an escalate item with decision and criterion both optional, so the tool argument check cannot refuse a neither-or-both entry before the factory names the finding', () => {
+    const validate = load().get('factory_review_validate');
+    const escalate = validate?.parameters.properties?.escalate as { items?: Record<string, unknown> };
+    const items = escalate.items as { anyOf?: unknown; oneOf?: unknown; properties?: Record<string, unknown>; required?: string[] };
+    assert.ok(!('anyOf' in items) && !('oneOf' in items));
+    assert.ok(!JSON.stringify(items).includes('"not"'));
+    assert.deepEqual(Object.keys(items.properties ?? {}).toSorted(), ['criterion', 'decision', 'id', 'reason']);
+    assert.deepEqual(items.required?.toSorted(), ['id', 'reason']);
+  });
+
   it('makes the orchestrator choose the review domains to skip', () => {
     assert.deepEqual(load().get('factory_review_start')?.parameters.required, ['skip']);
   });

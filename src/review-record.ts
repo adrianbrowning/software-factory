@@ -39,6 +39,15 @@ export function recordedFindings(ws: Workspace, run: Run, review: Review) {
 }
 
 const escalateBase = { id: z.string().min(1), reason: z.string().min(1) };
+const decisionField = z.number().int().positive().describe('Number of the recorded decision the code breaks; give exactly one of `decision` or `criterion`');
+const criterionField = z.string().min(1).describe('The quoted acceptance criterion the code does not meet, read literally; give exactly one of `decision` or `criterion`');
+export const escalateDescription = 'observation findings that show the code breaks a recorded user decision (`decision`) or does not meet an acceptance criterion as written (`criterion`); kept as high';
+
+/**
+ * An escalate entry as the factory_review_validate tool advertises it: `decision` and `criterion` both optional, with no
+ * anyOf or `not`, so the tool argument check lets a neither-or-both entry through and `validationSchema.parse` refuses it with the finding id.
+ */
+export const escalateInputSchema = z.strictObject({ ...escalateBase, criterion: criterionField.optional(), decision: decisionField.optional() });
 
 export const validationSchema = z.object({
   dropped: z
@@ -73,12 +82,12 @@ export const validationSchema = z.object({
         [
           z.strictObject({
             criterion: z.never().optional(),
-            decision: z.number().int().positive().describe('Number of the recorded decision the code breaks; give exactly one of `decision` or `criterion`'),
+            decision: decisionField,
             ...escalateBase,
           }),
           z.strictObject({
             decision: z.never().optional(),
-            criterion: z.string().min(1).describe('The quoted acceptance criterion the code does not meet, read literally; give exactly one of `decision` or `criterion`'),
+            criterion: criterionField,
             ...escalateBase,
           }),
         ],
@@ -91,7 +100,7 @@ export const validationSchema = z.object({
       ),
     )
     .default([])
-    .describe('observation findings that show the code breaks a recorded user decision (`decision`) or does not meet an acceptance criterion as written (`criterion`); kept as high'),
+    .describe(escalateDescription),
   keep: z.array(z.string().min(1)).describe('Ids of findings the diff substantiates, one per distinct problem'),
 });
 
