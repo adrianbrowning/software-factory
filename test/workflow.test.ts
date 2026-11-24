@@ -1278,6 +1278,16 @@ describe('follow-up slice', () => {
   });
 });
 
+describe('intake next action', () => {
+  it('points to issue.md in the run directory instead of refetching with gh', async () => {
+    using ws = workspace();
+    await start(ws);
+    const next = nextAction(readRun(ws, 'demo'));
+    assert.match(next, /issue\.md in the run directory/);
+    assert.match(next, /not .*gh/);
+  });
+});
+
 describe('run state', () => {
   it('fails closed on a state file that does not match the schema', async () => {
     using ws = workspace();
