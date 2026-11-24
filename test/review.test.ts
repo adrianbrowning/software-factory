@@ -285,6 +285,18 @@ describe('review submissions', { concurrency: 4 }, () => {
       step(ws, run => submitDomain(ws, run, { agentId: 'bug', domain: 'bug', findings: [claimed], reviewId, ...noFixItems('bug') })),
       /bug-claims-criterion.*criterion.*validator/,
     );
+    const { criterion: _refused, ...plain } = claimed;
+    for (const domain of REVIEW_DOMAINS) {
+      await step(ws, run =>
+        submitDomain(ws, run, { agentId: domain, domain, findings: domain === 'bug' ? [plain] : [], reviewId, ...noFixItems(domain) }),
+      );
+    }
+    await step(ws, run => submitValidation(ws, run, { agentId: 'v', dropped: [], keep: ['bug-claims-criterion'], reviewId }));
+    const result = await step(ws, run => recordReview(ws, run));
+    assert.ok(result.kind === 'fix');
+    const fix = readFileSync(result.fixPath, 'utf8');
+    assert.match(fix, /\[high\] bug-claims-criterion/);
+    assert.doesNotMatch(fix, /Does not meet criterion|Reviewer-chosen criterion/);
   });
 
   it('refuses to escalate a blocking finding with a criterion', async () => {
