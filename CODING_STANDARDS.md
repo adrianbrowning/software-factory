@@ -48,3 +48,11 @@ Free text that an agent wrote (a reviewer, validator, implementer or issue) and 
 Every rendering of one field uses one shared helper, not its own `evidence` or `evidenceLine` call. A finding's location is `findingLocation` in `src/ledger.ts`. A second rendering that formats the same field on its own drifts from the first.
 
 Example (issue #589, past history): slice 01 put the reviewer-written symbol into location lines without redact, clip or single-line. Slice 04 fixed `findingLocation` with `evidenceLine(symbol, 200)`, and the review then found `filedLocation` in `src/finding-text.ts` still used `evidence(symbol, 500)`, so the same field rendered two ways.
+
+## Event order in tests
+
+A test that needs one event before another (stdout before stderr, one callback before another) orders them by a handshake or backpressure: the test or script waits until the first event is observed, then triggers the next. Never order events with a fixed sleep or timer. A fixed sleep passes on an idle machine and fails under load, for example parallel reviewer agents (issue 348).
+
+A sleep that bounds a duration, not an order, is allowed: a check that must outlast a timeout (`sleep 5` with a smaller `checkTimeoutMs` in `test/review-gates-checks.test.ts`) or a process that must be killed (`sleep 30` in `test/units.test.ts`).
+
+Example (forbidden): the `runShell` cases in `test/units.test.ts` run `echo out; sleep 0.2; echo err >&2` to get stdout before stderr. Under load the 0.2 s gap can pass before the first chunk is read, and the order is no longer guaranteed. Handshake alternative: `runShell` resolves only at process exit, so the test needs an optional stdout hook on `runShell` that runs after `runShell` has recorded the `out` chunk. The script writes `out`, then blocks on a file or FIFO. The test creates that file from the hook, and only then does the script write `err` to stderr. Do not spawn the child directly: that bypasses `runShell` and tests nothing about how it orders chunks.
