@@ -371,7 +371,7 @@ describe('implementer sessions', () => {
           git(repo.root, 'commit', '-qm', 'work');
         } else commitConfig(repo.root, content);
         const reply = await call('factory_checks', {}, main);
-        assert.match(reply, /All checks passed/);
+        assert.match(reply, /All checks passed/, String(content));
         assert.doesNotMatch(reply, /does not run them/, String(content));
       }
     });
