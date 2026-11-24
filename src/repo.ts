@@ -66,11 +66,10 @@ export async function alignToSliceBranch(root: string, slice: Slice) {
   if (state.clean) {
     try {
       await git(root, 'switch', '--no-guess', '--no-overwrite-ignore', slice.branch);
-      return `Switched the checkout from ${from} to ${slice.branch}, the branch of slice ${slice.id}.`;
     } catch {
       // A failing post-checkout hook fails `git switch` after it moved the checkout: re-read before reporting.
-      if ((await readState(root)).branch === slice.branch) return `Switched the checkout from ${from} to ${slice.branch}, the branch of slice ${slice.id}.`;
     }
+    if ((await readState(root)).branch === slice.branch) return `Switched the checkout from ${from} to ${slice.branch}, the branch of slice ${slice.id}.`;
   }
   return `Slice ${slice.id} works on ${slice.branch}, but ${from} is checked out and resume did not switch it. Any changes must be committed or removed and ${slice.branch} checked out before the next factory tool.`;
 }
