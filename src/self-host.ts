@@ -70,6 +70,13 @@ function hashAtBase(root: string, base: string, path: string) {
 
 const MAX_LISTED = 5;
 
+/** The first MAX_LISTED files; beyond them 'and N more' plus a file-set id, so a change to an unlisted file still changes the text. */
+function listStale(stale: string[]) {
+  const head = stale.slice(0, MAX_LISTED).join(', ');
+  if (stale.length <= MAX_LISTED) return head;
+  return `${head} and ${stale.length - MAX_LISTED} more (file-set id ${createHash('sha256').update(stale.join('\n')).digest('hex').slice(0, 7)})`;
+}
+
 const real = (path: string) => {
   try {
     return realpathSync(path);
@@ -110,7 +117,7 @@ export function selfHostWarning(repoRoot: string, loaded: LoadedPlugin = loadedP
     .filter(file => (own?.has(file) ? hashAtBase(repoRoot, resolved ?? '', file) : now[file]) !== loaded.hashes[file])
     .sort();
   if (stale.length === 0) return undefined;
-  const listed = stale.slice(0, MAX_LISTED).join(', ') + (stale.length > MAX_LISTED ? ` and ${stale.length - MAX_LISTED} more (set ${createHash('sha256').update(stale.join('\n')).digest('hex').slice(0, 7)})` : '');
+  const listed = listStale(stale);
   return `This run's repository ${repoRoot} is the loaded software-factory plugin, and these src/ or agents/ files changed since omp loaded it, outside the run's own commits: ${listed}. The loaded gates are stale. An interactive run can start a new omp session to load them; a headless run goes on with the loaded gates and needs no action.`;
 }
 
