@@ -147,6 +147,12 @@ export function reportListsCommit(ws: Workspace, run: Run, slice: Slice, sha: st
   });
 }
 
+/** Whether the stored report lists every sha in `shas` (at least one) in Commits and names no stop report in Open. */
+export function reportCoversCommits(ws: Workspace, run: Run, slice: Slice, shas: string[]) {
+  const stopped = (reportSection(ws, run, slice, 'Open') ?? []).some(item => /NEEDS SEAM|SLICE TOO BIG|MISSING DEPENDENCY/.test(item));
+  return shas.length > 0 && !stopped && shas.every(sha => reportListsCommit(ws, run, slice, sha));
+}
+
 /**
  * A report belongs to one implementer session: a newly spawned implementer (a fix round, or a respawn after a stop
  * report) starts without the stored report of the one before. A follow-up turn of the same session keeps it.

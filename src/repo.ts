@@ -75,6 +75,16 @@ export async function alignToSliceBranch(root: string, slice: Slice) {
   return `Slice ${slice.id} works on ${slice.branch}, but ${from} is checked out and resume did not switch it. Any changes must be committed or removed and ${slice.branch} checked out before the next factory tool.`;
 }
 
+/** Whether the slice branch exists as a local branch. */
+export async function sliceBranchExists(ws: { root: string }, slice: Slice) {
+  try {
+    await git(ws.root, 'rev-parse', '--verify', '--quiet', `refs/heads/${slice.branch}`);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** The slice's commits past its parent, newest first: each full sha with its `--oneline` line (short sha and subject). */
 export async function ownCommits(ws: { root: string }, slice: Slice) {
   const log = await git(ws.root, 'log', '--no-show-signature', '--no-color', '--format=%H %h %s', `${slice.parentBranch}..refs/heads/${slice.branch}`);
