@@ -36,3 +36,11 @@ A test that spawns a script with `process.env` controls every variable the scrip
 - Remove every other variable the script reads from the inherited env, unless the test sets it on purpose. Do not set a variable whose default is the behavior under test, because the value masks the default.
 
 Example: `test/headless-backlog.test.ts` spawns `scripts/headless-backlog.sh`, which reads `OMP` and `LOG_DIR`. It sets `OMP` to `join(bin, ',omp')`, the fake's absolute path, so a local `OMP` or a changed script default can never start the real omp. It removes `LOG_DIR` from the env it passes, so the script's default log dir stays under test.
+
+## One-line agent text
+
+Free text that an agent wrote (a reviewer, validator, implementer or issue) and that a one-line field shows (a location, a title, a `Symbol` line) goes through `evidenceLine` from `src/evidence.ts`. It redacts credential shapes, collapses all whitespace to one line and clips to a limit. Never pass such text through `evidence`, `evidenceHead` or `redact` alone, and never show it raw: each leaves newlines or unbounded length in a field that must stay on one line.
+
+Every rendering of one field uses one shared helper, not its own `evidence` or `evidenceLine` call. A finding's location is `findingLocation` in `src/ledger.ts`. A second rendering that formats the same field on its own drifts from the first.
+
+Example (issue #589, past history): slice 01 put the reviewer-written symbol into location lines without redact, clip or single-line. Slice 04 fixed `findingLocation` with `evidenceLine(symbol, 200)`, and the review then found `filedLocation` in `src/finding-text.ts` still used `evidence(symbol, 500)`, so the same field rendered two ways.
