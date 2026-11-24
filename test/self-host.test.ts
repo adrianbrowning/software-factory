@@ -103,7 +103,8 @@ describe('self-host warning', () => {
         const loaded = { hashes: pluginHashes(repo.root), root: repo.root };
         write(repo.root, path, content);
         const warning = selfHostWarning(repo.root, loaded) ?? assert.fail('no warning');
-        assert.match(warning, /stale/);
+        assert.match(warning, /and these src\/ or agents\/ files are stale: loaded copy differs from the file on disk: /);
+        assert.doesNotMatch(warning, /outside the run's own commits|The loaded gates are stale/);
         assert.match(warning, new RegExp(path.replace('.', '\\.')));
         assert.match(warning, /new omp session/);
         assert.match(warning, /headless run goes on with the loaded gates/);
@@ -125,6 +126,17 @@ describe('self-host warning', () => {
       sh(repo.root, 'mv', 'src/index.ts', 'src/renamed.ts');
       sh(repo.root, 'commit', '-qm', 'rename');
       assert.equal(selfHostWarning(repo.root, loaded, base), undefined);
+    });
+
+    it('leads a base-clause warning without claiming the files are outside the run commits', () => {
+      using repo = tree();
+      const base = sh(repo.root, 'rev-parse', 'HEAD');
+      write(repo.root, 'src/index.ts', 'two');
+      sh(repo.root, 'commit', '-qam', 'edit');
+      const loaded = { hashes: pluginHashes(repo.root), root: repo.root };
+      const warning = selfHostWarning(repo.root, loaded, base) ?? assert.fail('no warning');
+      assert.match(warning, /files are stale: loaded copy differs from the run base [0-9a-f]{7}: src\/index\.ts\. An interactive/);
+      assert.doesNotMatch(warning, /outside the run's own commits|The loaded gates are stale/);
     });
 
     it('gives no warning for a committed rename of a non-ASCII src/ file', () => {
@@ -223,6 +235,34 @@ describe('self-host warning', () => {
       sh(repo.root, 'commit', '-qam', 'slice');
       assert.equal(selfHostWarning(repo.root, loaded, base), undefined);
       assert.match(selfHostWarning(repo.root, loaded, 'no-such-ref') ?? assert.fail('no warning'), /src\/index\.ts/);
+    });
+
+    it('names which comparison failed per file: run base for committed files, disk for the rest', () => {
+      using repo = tree();
+      write(repo.root, 'src/x.ts', 'A');
+      const loaded = { hashes: pluginHashes(repo.root), root: repo.root };
+      write(repo.root, 'src/x.ts', 'B');
+      sh(repo.root, 'add', '-A');
+      sh(repo.root, 'commit', '-qm', 'base');
+      const base = sh(repo.root, 'rev-parse', 'HEAD');
+      write(repo.root, 'src/x.ts', 'C');
+      sh(repo.root, 'commit', '-qam', 'slice');
+      const only = selfHostWarning(repo.root, loaded, base) ?? assert.fail('no warning');
+      assert.ok(only.includes(`loaded copy differs from the run base ${base.slice(0, 7)}: src/x.ts`));
+      assert.doesNotMatch(only, /differs from the file on disk/);
+      write(repo.root, 'src/index.ts', 'two');
+      const both = selfHostWarning(repo.root, loaded, base) ?? assert.fail('no warning');
+      assert.match(both, /differs from the run base [0-9a-f]{7}: src\/x\.ts[.;]/);
+      assert.match(both, /differs from the file on disk: src\/index\.ts/);
+      assert.doesNotMatch(both, /run base [0-9a-f]{7}: [^;.]*src\/index\.ts/);
+      const disk = selfHostWarning(repo.root, loaded) ?? assert.fail('no warning');
+      assert.doesNotMatch(disk, /run base/);
+      assert.match(disk, /differs from the file on disk: src\/index\.ts, src\/x\.ts/);
+      const unresolved = selfHostWarning(repo.root, loaded, 'no-such-ref') ?? assert.fail('no warning');
+      assert.match(unresolved, /run base did not resolve/);
+      assert.match(unresolved, /differs from the file on disk: src\/index\.ts, src\/x\.ts/);
+      for (const name of ['a', 'b', 'c', 'd', 'e', 'f']) write(repo.root, `src/${name}.ts`, name);
+      assert.match(selfHostWarning(repo.root, loaded, base) ?? assert.fail('no warning'), /differs from the file on disk: .* and 2 more \(file-set id [0-9a-f]{7}\)/);
     });
 
     it('treats a base starting with "-" as unresolved: git writes no file and the on-disk comparison applies', () => {
