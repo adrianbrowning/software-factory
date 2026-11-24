@@ -302,6 +302,15 @@ describe('implementer sessions', () => {
       assert.match(reply, /assume-unchanged: local\.txt/);
     });
 
+    it('names both flags for a file that is skip-worktree and assume-unchanged', async () => {
+      using repo = emptyRepo();
+      const { call, main } = await startedRun(repo.root);
+      trackFlagged(repo.root, ['local.txt'], '--skip-worktree');
+      git(repo.root, 'update-index', '--assume-unchanged', 'local.txt');
+      const reply = await call('factory_checks', {}, main);
+      assert.match(reply, /skip-worktree, assume-unchanged: local\.txt/);
+    });
+
     it('adds no flagged-files section when no file is flagged', async () => {
       using repo = emptyRepo();
       const { call, main } = await startedRun(repo.root);

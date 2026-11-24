@@ -13,6 +13,7 @@ export async function flaggedFilesSection(root: string) {
     const tag = line[0];
     if (tag === undefined || line[1] !== ' ') continue;
     if (tag === 'S') flagged.push(`- skip-worktree: ${line.slice(2)}`);
+    else if (tag === 's') flagged.push(`- skip-worktree, assume-unchanged: ${line.slice(2)}`);
     else if (tag >= 'a' && tag <= 'z') flagged.push(`- assume-unchanged: ${line.slice(2)}`);
   }
   if (flagged.length === 0) return '';
