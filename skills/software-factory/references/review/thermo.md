@@ -181,6 +181,7 @@ Call `factory_review_submit` once with `reviewId`, `domain: "thermo"`, and `find
 - `severity`: `critical`, `high`, or `observation`
 - `category`: required for an `observation`: `correctness`, `missing-test`, `misleading-doc`, `naming`, `structure` or `style` (the tool refuses an observation without one)
   - A structure observation that predicts a concrete missed or wrong state, field, input or event is `correctness`, not `structure`, even when its fix is a refactor (for example a hand-rolled snapshot that misses named run state).
+  - A finding that shows the code does not do what an acceptance criterion or recorded decision names, read literally, is `high` (with `decision` set for a decision), never an observation of any category; see the reviewer rule in `agents/factory-reviewer.md` ("Report gaps, not preferences").
 - `path` and `line`: the file and its new-side line in the diff; omit `line` for a file-level finding
 - `symbol`: optional; the enclosing function, method, class, tool handler or test title the finding points at; omit for a whole-file finding
 - `title`, `problem`, `fix`, and `fix_prompt` (plain text an implementer can act on directly)
