@@ -188,6 +188,7 @@ describe('structure checks: the helpers', () => {
     const source = ["import type { B } from './b.ts';", "import { type C } from './c.ts';", "import { d } from './d.ts';", "export type { E } from './e.ts';", "export { f } from './f.ts';"].join('\n');
     assert.deepEqual(importsOf(source, { runtimeOnly: true }), ['c.ts', 'd.ts', 'f.ts']);
   });
+
   it('refuses assert.throws and assert.rejects with no matcher or only the bare Error class, at the line the call starts', () => {
     const source = ['assert.throws(() => f());', 'assert.rejects(', '  g(),', '  Error,', ');', "assert.throws(() => f(), /x/);", 'assert.rejects(g(), { message: "x" });', 'assert.throws(f, new Error("x"));', 'assert.throws(f, TypeError);', 'assert.throws(f, matcher);', 'assert.doesNotThrow(f);', '// assert.throws(f);', 'const s = "assert.throws(f)";', 'other.throws(f);', 'other.rejects(g());'].join('\n');
     assert.deepEqual(unmatchedAsserts('test/x.test.ts', source), ['test/x.test.ts:1: assert.throws has no message matcher', 'test/x.test.ts:2: assert.rejects matches only the bare Error class']);
@@ -196,7 +197,7 @@ describe('structure checks: the helpers', () => {
   it('lets a test file with no matcher-less call through', () => {
     assert.deepEqual(unmatchedAsserts('test/x.test.ts', 'assert.throws(f, /x/);'), []);
   });
- });
+});
 
 const testFiles = tsFilesIn(TESTS);
 
