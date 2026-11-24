@@ -264,7 +264,7 @@ describe('review submissions', { concurrency: 4 }, () => {
     type Entry = { criterion?: string; decision?: number; id: string; reason: string };
     const validate = (escalate: Entry[]) => step(ws, run => submitValidation(ws, run, { agentId: 'v', dropped: [], escalate, keep: [], reviewId }));
     const reason = 'the code keeps the guard the criterion removes';
-    const criterion = 'Loop over the narrowed values with no runtime guard';
+    const criterion = `Loop over the narrowed values with no runtime guard${' and keep every branch explicit'.repeat(20)}`;
 
     await assert.rejects(validate([{ id: 'bug-kept-guard', reason }]), /bug-kept-guard.*decision.*criterion/);
     await assert.rejects(validate([{ criterion, decision: 1, id: 'bug-kept-guard', reason }]), /bug-kept-guard.*decision.*criterion/);
@@ -274,6 +274,29 @@ describe('review submissions', { concurrency: 4 }, () => {
     assert.ok(result.kind === 'fix');
     assert.equal(result.blocking, 1);
     assert.match(readFileSync(result.fixPath, 'utf8'), /\[high\] bug-kept-guard/);
+    assert.match(readFileSync(result.fixPath, 'utf8'), new RegExp(`- Does not meet criterion: ${criterion}`));
+  });
+
+  it('refuses a reviewer-supplied criterion, so only the validator can name one in the fix file', async () => {
+    using ws = workspace();
+    const { reviewId } = await openReview(ws);
+    const claimed = { ...finding('bug', 'high', 'claims-criterion'), criterion: 'Reviewer-chosen criterion' };
+    await assert.rejects(
+      step(ws, run => submitDomain(ws, run, { agentId: 'bug', domain: 'bug', findings: [claimed], reviewId, ...noFixItems('bug') })),
+      /bug-claims-criterion.*criterion.*validator/,
+    );
+    const { criterion: _refused, ...plain } = claimed;
+    for (const domain of REVIEW_DOMAINS) {
+      await step(ws, run =>
+        submitDomain(ws, run, { agentId: domain, domain, findings: domain === 'bug' ? [plain] : [], reviewId, ...noFixItems(domain) }),
+      );
+    }
+    await step(ws, run => submitValidation(ws, run, { agentId: 'v', dropped: [], keep: ['bug-claims-criterion'], reviewId }));
+    const result = await step(ws, run => recordReview(ws, run));
+    assert.ok(result.kind === 'fix');
+    const fix = readFileSync(result.fixPath, 'utf8');
+    assert.match(fix, /\[high\] bug-claims-criterion/);
+    assert.doesNotMatch(fix, /Does not meet criterion|Reviewer-chosen criterion/);
   });
 
   it('refuses to escalate a blocking finding with a criterion', async () => {
@@ -311,8 +334,8 @@ describe('review submissions', { concurrency: 4 }, () => {
     }
     const validate = (entry: object) => call('factory_review_validate', { dropped: [], escalate: [{ id: 'bug-kept-guard', reason: 'r', ...entry }], keep: [], reviewId }, 'factory-review-validator');
 
-    await assert.rejects(validate({}), /bug-kept-guard/);
-    await assert.rejects(validate({ criterion: 'c', decision: 1 }), /bug-kept-guard/);
+    await assert.rejects(validate({}), /bug-kept-guard.*decision.*criterion/);
+    await assert.rejects(validate({ criterion: 'c', decision: 1 }), /bug-kept-guard.*decision.*criterion/);
     await validate({ criterion: 'No runtime guard' });
     const result = await step(ws, run => recordReview(ws, run));
     assert.ok(result.kind === 'fix');

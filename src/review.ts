@@ -472,6 +472,7 @@ export function submitDomain(
   const ids = new Set<string>();
   for (const finding of findings) {
     if (finding.domain !== domain) throw new Error(`Finding "${finding.id}" must have domain "${domain}".`);
+    if (finding.criterion !== undefined) throw new Error(`Finding "${finding.id}" sets criterion, which only the validator sets when it escalates an observation; leave it out.`);
     if (!finding.id.startsWith(`${domain}-`)) throw new Error(`Finding "${finding.id}" must have an id starting "${domain}-".`);
     if (ids.has(finding.id)) throw new Error(`Duplicate finding id "${finding.id}"`);
     ids.add(finding.id);
