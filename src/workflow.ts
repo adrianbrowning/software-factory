@@ -872,6 +872,8 @@ function submittedAfterStackReady(run: Run) {
 }
 
 const reportNote = (slice: Slice) => `${reportFile(slice)} in the run directory`;
+const afterImplementer = (slice: Slice) =>
+  `, then read its report file (${reportNote(slice)}) and handle any stop report in its Open list, then call factory_checks.`;
 
 /** The one thing the orchestrator should do next, in words a model can act on. */
 export function nextAction(run: Run): string {
@@ -895,9 +897,9 @@ export function nextAction(run: Run): string {
   const where = `slice ${slice.id} "${slice.title}"`;
   switch (slice.phase) {
     case 'implement':
-      return `Spawn factory-implementer for ${where}, then read its report file (${reportNote(slice)}) and handle any stop report in its Open list, then call factory_checks.`;
+      return `Spawn factory-implementer for ${where}${afterImplementer(slice)}`;
     case 'fix':
-      return `Spawn factory-implementer in fix mode with ${slice.fixPath ?? 'the fix file'} for ${where}, then read its report file (${reportNote(slice)}) and handle any stop report in its Open list, then call factory_checks.`;
+      return `Spawn factory-implementer in fix mode with ${slice.fixPath ?? 'the fix file'} for ${where}${afterImplementer(slice)}`;
     case 'checks':
       return `Call factory_checks for ${where}.`;
     case 'review':
