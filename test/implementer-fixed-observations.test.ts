@@ -46,6 +46,8 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
     assert.deepEqual(ledger.map(entry => [entry.key, entry.placement]), [['01-r1:thermo-naming', 'fixed']]);
     assert.deepEqual(after.unplaced, []);
     assert.equal(after.fixItems.filter(item => item.id === OBSERVATION && item.round === after.fixFiles).length, 1);
+    const events = readRun(ws, 'demo').events.filter(event => event.kind === 'fixed-by-implementer');
+    assert.deepEqual(events.map(event => [event.slice, event.detail]), [[after.id, `01-r1: ${OBSERVATION} fixed in ${sha.slice(0, 7)}`]]);
   });
 
   it('lists it as a FIX ITEM of the next review, and an open verdict makes that review red', async () => {
@@ -61,6 +63,15 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
     assert.ok(verdicts.some(verdict => verdict.id !== OBSERVATION), 'the round has another fix item, which is fixed');
     await review(ws, opened.reviewId, [], [], verdicts);
     assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'fix');
+  });
+
+  it('places nothing for `already fixed` and `not a defect` lines against an unambiguous unplaced observation', async () => {
+    using ws = workspace({ maxRounds: 3 });
+    const sha = await redWithObservation(ws);
+    const before = JSON.stringify(state(ws));
+    const result = await report(ws, sha, [`${OBSERVATION}: already fixed`, `${OBSERVATION}: not a defect: fine`]);
+    assert.deepEqual(result.fixed, []);
+    assert.equal(JSON.stringify(state(ws)), before);
   });
 
   it('leaves the ledger and unplaced list alone for other lines, unknown or ambiguous ids and foreign shas', async () => {

@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { findUnplaced, placeObservations } from './ledger.ts';
 import { ownCommits } from './repo.ts';
 import { findingRecord } from './review-record.ts';
-import { activeSlice, reportPath, requireActive, type Run, type Slice, type Workspace, writeAtomic } from './run.ts';
+import { activeSlice, addEvent, reportPath, requireActive, type Run, type Slice, type Workspace, writeAtomic } from './run.ts';
 
 // One line each, so an item cannot add lines that read as factory output in the factory_checks reply.
 const reportItem = z.string().min(1).regex(/^[^\r\n]+$/, 'one line per item');
@@ -75,6 +75,7 @@ function recordFixedObservations(run: Run, slice: Slice, fixItems: string[], own
     if (entry === undefined || key === undefined || placed.has(key)) continue;
     placed.add(key);
     placeObservations(run, { id: entry.review }, slice, [entry.finding], 'fixed');
+    addEvent(run, 'fixed-by-implementer', `${entry.review}: ${entry.finding.id} fixed in ${match[3]}`, slice);
     if (slice.fixPath !== undefined) {
       const { item } = findingRecord(entry.finding, '', run.decisions);
       // Two reviews can keep the same id: the later one is listed as `<review>:<id>`, so each gets its own verdict.
