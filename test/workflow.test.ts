@@ -1288,6 +1288,38 @@ describe('intake next action', () => {
   });
 });
 
+describe('nextAction in implementer phases', () => {
+  const reportAssertions = (text: string) => {
+    assert.match(text, /read its report file \(reports\/01\.md/);
+    assert.match(text, /stop report in its Open list.*then call factory_checks/);
+  };
+
+  it('implement: names the report file and says to handle a stop report before factory_checks', async () => {
+    using ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    const text = nextAction(readRun(ws, 'demo'));
+    assert.match(text, /^Spawn factory-implementer for slice 01/);
+    reportAssertions(text);
+  });
+
+  it('fix: says the same together with the fix file', async () => {
+    using ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => reopenSlice(ws, run, '01', 'bug'));
+    const run = readRun(ws, 'demo');
+    const fixPath = run.slices[0]!.fixPath!;
+    const text = nextAction(run);
+    assert.equal(run.slices[0]!.phase, 'fix');
+    assert.ok(text.includes(fixPath));
+    reportAssertions(text);
+  });
+});
+
 describe('run state', () => {
   it('fails closed on a state file that does not match the schema', async () => {
     using ws = workspace();
