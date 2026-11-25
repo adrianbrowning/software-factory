@@ -3,9 +3,8 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
-import { evidenceLine } from './evidence.ts';
 import { renderFinding } from './finding-text.ts';
-import { findingLocation } from './ledger.ts';
+import { findingLocation, findingTitle } from './ledger.ts';
 import { type Decision, type Domain, type Finding, findingListSchema, OBSERVATION_CATEGORIES, reviewDir, reviewDomains, type Run, type Slice, type Workspace } from './run.ts';
 import type { FixRecord } from './workflow.ts';
 
@@ -130,7 +129,7 @@ export function targetingAfter(review: { id: string; sha: string }, domains: rea
 
 /** A finding as a fix record in `group`: its id and summary `[severity] <location>: title` as the fix item, and its location-free `title`. */
 export function findingRecord(finding: Finding, group: string, decisions: Decision[]): FixRecord & { title: string } {
-  const title = `[${finding.severity}] ${evidenceLine(finding.title, 500)}`;
-  const summary = `[${finding.severity}] ${findingLocation(finding)}: ${evidenceLine(finding.title, 500)}`;
+  const title = `[${finding.severity}] ${findingTitle(finding.title)}`;
+  const summary = `[${finding.severity}] ${findingLocation(finding)}: ${findingTitle(finding.title)}`;
   return { group, item: { id: finding.id, summary }, section: renderFinding(finding, decisions, '###'), title };
 }

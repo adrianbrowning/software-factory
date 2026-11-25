@@ -1,7 +1,7 @@
 /** How a finding reads in a data file, a fix file, a carried-in ticket section and a deferred item. */
 import { evidence, evidenceLine, redact } from './evidence.ts';
 import { itemKey } from './deferred.ts';
-import { findingLocation } from './ledger.ts';
+import { findingLocation, findingTitle } from './ledger.ts';
 import { carriedHeader, carriedKeysLine, noteText } from './legacy-observations.ts';
 import type { Decision, Finding, Run, Slice } from './run.ts';
 
@@ -12,7 +12,7 @@ import type { Decision, Finding, Run, Slice } from './run.ts';
 export function renderFinding(finding: Finding, decisions: Decision[], heading = '##', filed = false) {
   const decision = finding.decision === undefined ? '' : `\n- Breaks decision ${finding.decision}: ${redact(decisions[finding.decision - 1]?.text ?? '')}`;
   const criterion = finding.criterion === undefined ? '' : `\n- Does not meet criterion: ${redact(finding.criterion)}`;
-  return `${heading} [${finding.severity}] ${finding.id}\n\n${filed ? filedLocation(finding) : `- Location: ${findingLocation(finding)}`}\n- Title: ${evidence(finding.title, 500)}\n- Problem: ${evidence(finding.problem, 2_000)}\n- Fix: ${evidence(finding.fix, 2_000)}\n- Fix prompt: ${evidence(finding.fix_prompt, 2_000)}${decision}${criterion}`;
+  return `${heading} [${finding.severity}] ${finding.id}\n\n${filed ? filedLocation(finding) : `- Location: ${findingLocation(finding)}`}\n- Title: ${findingTitle(finding.title)}\n- Problem: ${evidence(finding.problem, 2_000)}\n- Fix: ${evidence(finding.fix, 2_000)}\n- Fix prompt: ${evidence(finding.fix_prompt, 2_000)}${decision}${criterion}`;
 }
 
 function filedLocation(finding: Finding) {

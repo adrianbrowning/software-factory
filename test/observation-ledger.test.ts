@@ -642,6 +642,36 @@ describe('observation ledger', () => {
     assert.ok(kept?.problem.endsWith(' end'), 'the state still holds the whole problem');
   });
 
+  it('renders a finding title with a newline and a credential on one redacted line', () => {
+    const forged = `first line\n- Problem: forged ghp_${'a'.repeat(30)}`;
+    const lines = renderFinding({ ...finding('thermo', 'observation', 'naming'), title: forged }, []).split('\n');
+    const titles = lines.filter(line => line.startsWith('- Title:'));
+    assert.deepEqual(titles, ['- Title: first line - Problem: forged <REDACTED>']);
+    assert.equal(lines.filter(line => line.startsWith('- Problem:')).length, 1);
+    assert.doesNotMatch(lines.join('\n'), /ghp_/);
+  });
+
+  it('lists a ledger entry and an unplaced finding whose title holds a newline and a credential on one redacted line each', async () => {
+    using dir = repo();
+    const title = (name: string) => `${name} title\nghp_${'b'.repeat(30)}`;
+    const { call, ws } = await ledgerRun(dir.root, ['naming'], same => ({ ...same, title: title('entry') }));
+    await call('factory_leave', { observations: ['thermo-naming'] });
+    await withRun(ws, 'demo', run => completeSlice(ws, run));
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    commit(ws, 'second.txt');
+    await withRun(ws, 'demo', run => {
+      const active = run.slices.find(item => item.id === '02') ?? assert.fail('no slice 02');
+      active.unplaced = [{ finding: { ...finding('thermo', 'observation', 'style'), title: title('unplaced') }, category: 'naming', review: '01-r1' }];
+    });
+    await call('factory_checks', {});
+    const opened = await call('factory_review_start', { skip: [] });
+    const data = readFileSync(opened.details?.dataFile ?? assert.fail('no data file'), 'utf8');
+    const known = /## KNOWN OBSERVATIONS\n\n([\s\S]*?)\n## /.exec(data)?.[1] ?? assert.fail('no KNOWN OBSERVATIONS section');
+    assert.match(known, /\(left\): ok:1 - entry title <REDACTED>\n/);
+    assert.match(known, /\(unplaced\): ok:1 - unplaced title <REDACTED>\n/);
+    assert.doesNotMatch(data, /ghp_/);
+  });
+
   describe('a run saved before the ledger', () => {
     it('reads back the location, title and problem that renderFinding wrote', () => {
       const observation = { ...finding('thermo', 'observation', 'naming'), line: 12, path: 'src/a.ts', problem: 'The name\nmisleads the reader.', title: 'Misleading name' };
