@@ -211,7 +211,7 @@ describe('implementer report', () => {
     const firstSha = sh(ws.root, 'rev-parse', '--short=12', 'HEAD');
     const first = await step(ws, run =>
       submitImplementerReport(ws, run, {
-        behaviors: [{ test: 'old test', behavior: 'old behavior', seenRed: false }],
+        behaviors: [{ test: 'old test', behavior: 'old behavior', seenRed: true, red: 'failed' }],
         commits: [`${firstSha} 01: first try`],
         open: [],
       }),
@@ -1167,7 +1167,7 @@ describe('reopen', () => {
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'second.test.ts');
     const second = sh(ws.root, 'log', '--format=%h %s', '-1');
-    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], commits: [second], open: [] }));
+    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [{ behavior: 'b', seenRed: true, red: 'failed', test: 't' }], commits: [second], open: [] }));
     await green(ws);
     await step(ws, run => completeSlice(ws, run));
 

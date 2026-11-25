@@ -98,7 +98,7 @@ describe('report test-file gate exemptions', () => {
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'work.test.ts');
-    await step(ws, async run => submitImplementerReport(ws, run, { behaviors: [{ behavior: 'a', seenRed: false, test: 't' }], commits: [], open: [] }));
+    await step(ws, async run => submitImplementerReport(ws, run, { behaviors: [{ behavior: 'a', seenRed: true, red: 'failed', test: 't' }], commits: [], open: [] }));
     assert.equal((await step(ws, run => runChecks(ws, run))).passed, false);
     await step(ws, async run => startImplementerSession(ws, run));
     commit(ws, 'ok');
