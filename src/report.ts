@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { findUnplaced, placeObservations } from './ledger.ts';
 import { ownCommits } from './repo.ts';
 import { findingRecord } from './review-record.ts';
-import { activeSlice, addEvent, reportPath, requireActive, type Run, type Slice, type Workspace, writeAtomic } from './run.ts';
+import { activeSlice, addEvent, reportPath, reviewIsOpen, requireActive, type Run, type Slice, type Workspace, writeAtomic } from './run.ts';
 
 // Guards only items sent through the factory_implementer_report tool: each item is one line (no \r, \n, U+2028, U+2029 or U+0085),
 // so it cannot add lines that read as factory output in the factory_checks reply. A reports/<slice>.md written directly is not checked.
@@ -114,7 +114,7 @@ export async function submitImplementerReport(ws: Workspace, run: Run, report: I
   const replaced = existsSync(path);
   writeAtomic(path, `${renderReport(report)}\n`);
   // An open review's data file already lists the fix items its scope reviewer must judge; adding more would leave it unable to give them.
-  const reviewOpen = slice.phase === 'review' && slice.review !== undefined;
+  const reviewOpen = reviewIsOpen(slice);
   const fixed = report.fixItems !== undefined && !reviewOpen ? recordFixedObservations(run, slice, report.fixItems, own) : [];
   const skippedForOpenReview = reviewOpen && report.fixItems?.some(line => FIXED_LINE.test(line)) === true;
   return { fixed, path, replaced, skippedForOpenReview };

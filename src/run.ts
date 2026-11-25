@@ -638,6 +638,11 @@ export function dropPass(slice: Slice, phase: Slice['phase']) {
   clearGreen(slice);
 }
 
+/** True while the slice is in review with its review set; the phase check is needed because `review` stays set after a green review. */
+export function reviewIsOpen(slice: Slice): slice is Slice & { review: NonNullable<Slice['review']> } {
+  return slice.phase === 'review' && slice.review !== undefined;
+}
+
 /** Discards the open review of a slice in review, whose reviewers can no longer finish it, for `reason`; returns its id, or undefined when there was none. */
 export function discardReview(run: Run, slice: Slice, reason: string) {
   const review = slice.phase === 'review' ? slice.review : undefined;
