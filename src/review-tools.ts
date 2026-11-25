@@ -9,7 +9,7 @@ import { defaultChoice, describeChoice, describePlan, placeObservationBatch, pla
 import { carryObservations, fixAfterGreen, leaveObservations, planCarry, planDefer, planFix, planLeave } from './observations.ts';
 import { renderFinding, storedNote } from './finding-text.ts';
 import { completeSlice, recordReview, startReview, submitDomain, submitValidation } from './review.ts';
-import { validationSchema } from './review-record.ts';
+import { escalateDescription, escalateInputSchema, validationSchema } from './review-record.ts';
 import { activeSlice, addEvent, findingSchema, fixVerdictSchema, readRun, REQUIRED_REVIEW_DOMAINS, REVIEW_DOMAINS, runDir, skippedDomainsSchema, ticketPath, withRun, type Workspace, writeAtomic } from './run.ts';
 import { submitHeadless } from './headless-submit.ts';
 import type { RunTool } from './tool-scope.ts';
@@ -46,7 +46,8 @@ const submitSchema = z.object({
     ),
   reviewId: z.string().min(1),
 });
-const validateSchema = validationSchema.extend({ reviewId: z.string().min(1) });
+/** The tool advertises the plain escalate item; `submitValidation` parses the entries with `validationSchema`, which refuses neither-or-both with the finding id. */
+const validateSchema = validationSchema.extend({ escalate: z.array(escalateInputSchema).default([]).describe(escalateDescription), reviewId: z.string().min(1) });
 const fixSchema = z.object({
   bug: z
     .string()

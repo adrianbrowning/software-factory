@@ -38,6 +38,17 @@ export function recordedFindings(ws: Workspace, run: Run, review: Review) {
   return { findings, missing };
 }
 
+const escalateBase = { id: z.string().min(1), reason: z.string().min(1) };
+const decisionField = z.number().int().positive().describe('Number of the recorded decision the code breaks; give exactly one of `decision` or `criterion`');
+const criterionField = z.string().min(1).describe('The quoted acceptance criterion the code does not meet, read literally; give exactly one of `decision` or `criterion`');
+export const escalateDescription = 'observation findings that show the code breaks a recorded user decision (`decision`) or does not meet an acceptance criterion as written (`criterion`); kept as high';
+
+/**
+ * An escalate entry as the factory_review_validate tool advertises it: `decision` and `criterion` both optional, with no
+ * anyOf or `not`, so the tool argument check lets a neither-or-both entry through and `validationSchema.parse` refuses it with the finding id.
+ */
+export const escalateInputSchema = z.strictObject({ ...escalateBase, criterion: criterionField.optional(), decision: decisionField.optional() });
+
 export const validationSchema = z.object({
   dropped: z
     .array(
@@ -67,15 +78,29 @@ export const validationSchema = z.object({
     .describe('critical/high findings the diff supports but that fail the correctness-or-requirements bar; kept as observations'),
   escalate: z
     .array(
-      z.object({
-        criterion: z.string().min(1).optional().describe('The quoted acceptance criterion the code does not meet, read literally; give exactly one of `decision` or `criterion`'),
-        decision: z.number().int().positive().optional().describe('Number of the recorded decision the code breaks; give exactly one of `decision` or `criterion`'),
-        id: z.string().min(1),
-        reason: z.string().min(1),
-      }),
+      z.union(
+        [
+          z.strictObject({
+            criterion: z.never().optional(),
+            decision: decisionField,
+            ...escalateBase,
+          }),
+          z.strictObject({
+            decision: z.never().optional(),
+            criterion: criterionField,
+            ...escalateBase,
+          }),
+        ],
+        {
+          error: issue => {
+            const id = typeof issue.input === 'object' && issue.input !== null && 'id' in issue.input ? String(issue.input.id) : '?';
+            return `"${id}": an escalate entry gives exactly one of \`decision\` (a recorded decision number) or \`criterion\` (the quoted acceptance criterion).`;
+          },
+        },
+      ),
     )
     .default([])
-    .describe('observation findings that show the code breaks a recorded user decision (`decision`) or does not meet an acceptance criterion as written (`criterion`); kept as high'),
+    .describe(escalateDescription),
   keep: z.array(z.string().min(1)).describe('Ids of findings the diff substantiates, one per distinct problem'),
 });
 
@@ -92,10 +117,8 @@ export function keptFindings(findings: Finding[], validation: Validation) {
     .filter(finding => validation.keep.includes(finding.id) || downgraded.has(finding.id) || escalated.has(finding.id))
     .map(finding => {
       if (downgraded.has(finding.id)) return { ...finding, category: finding.category ?? downgraded.get(finding.id), severity: 'observation' as const };
-      if (escalated.has(finding.id)) {
-        const { criterion, decision } = escalated.get(finding.id) ?? {};
-        return { ...finding, ...(criterion === undefined ? {} : { criterion }), ...(decision === undefined ? {} : { decision }), severity: 'high' as const };
-      }
+      const entry = escalated.get(finding.id);
+      if (entry !== undefined) return { ...finding, ...(entry.criterion === undefined ? { decision: entry.decision } : { criterion: entry.criterion }), severity: 'high' as const };
       return finding;
     });
 }
