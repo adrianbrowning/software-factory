@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { z } from 'zod';
+import { itemKey } from './deferred.ts';
 import { findUnplaced, placeObservations } from './ledger.ts';
 import { ownCommits } from './repo.ts';
 import { findingRecord } from './review-record.ts';
@@ -72,15 +73,16 @@ function recordFixedObservations(run: Run, slice: Slice, fixItems: string[], own
     if (match === null || prefix === undefined || !own.some(commit => commit.sha.startsWith(prefix))) continue;
     const found = findUnplaced(initial, match[2] ?? '');
     const entry = found.length === 1 ? found[0] : undefined;
-    const key = entry === undefined ? undefined : `${entry.review}:${entry.finding.id}`;
-    if (entry === undefined || key === undefined || placed.has(key)) continue;
+    if (entry === undefined) continue;
+    const key = itemKey(entry.review, entry.finding.id);
+    if (placed.has(key)) continue;
     placed.add(key);
     placeObservations(run, { id: entry.review }, slice, [entry.finding], 'fixed');
     addEvent(run, 'fixed-by-implementer', `${entry.review}: ${entry.finding.id} fixed in ${match[3]}`, slice);
     if (slice.fixPath !== undefined) {
       const { item } = findingRecord(entry.finding, '', run.decisions);
       // Two reviews can keep the same id: the later one is listed as `<review>:<id>`, so each gets its own verdict.
-      const id = slice.fixItems.some(existing => existing.id === entry.finding.id) ? `${entry.review}:${entry.finding.id}` : entry.finding.id;
+      const id = slice.fixItems.some(existing => existing.id === entry.finding.id) ? key : entry.finding.id;
       slice.fixItems.push({ id, path: slice.fixPath, round: slice.fixFiles, summary: item.summary });
     }
     recorded.push(key);
