@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { type Finding, readRun, REVIEW_DOMAINS, ticketPath, type Workspace } from '../src/run.ts';
+import { type Finding, findingSchema, readRun, REVIEW_DOMAINS, ticketPath, type Workspace } from '../src/run.ts';
 import { pathSkips, recordDecisions, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
 import { nextSlice } from '../src/workflow.ts';
 import { bindRun } from '../src/active-run.ts';
@@ -300,6 +300,25 @@ describe('review submissions', { concurrency: 4 }, () => {
     const fix = readFileSync(result.fixPath, 'utf8');
     assert.match(fix, /\[high\] bug-claims-criterion/);
     assert.doesNotMatch(fix, /Does not meet criterion|Reviewer-chosen criterion/);
+  });
+
+  it('refuses every findingSchema field described as set by the validator', async () => {
+    const samples: Record<string, unknown> = { criterion: 'Some acceptance criterion' };
+    const fields = Object.entries(findingSchema.shape)
+      .filter(([, schema]) => schema.description?.startsWith('Set by the validator'))
+      .map(([name]) => name);
+    assert.ok(fields.length > 0);
+    assert.ok(fields.includes('criterion'));
+    using ws = workspace();
+    const { reviewId } = await openReview(ws);
+    for (const field of fields) {
+      assert.ok(field in samples, `no sample value for validator-set field "${field}"`);
+      const claimed = { ...finding('bug', 'high', `claims-${field}`), [field]: samples[field] };
+      await assert.rejects(
+        step(ws, run => submitDomain(ws, run, { agentId: 'bug', domain: 'bug', findings: [claimed], reviewId, ...noFixItems('bug') })),
+        new RegExp(`bug-claims-${field}.*${field}`),
+      );
+    }
   });
 
   it('refuses to escalate a blocking finding with a criterion', async () => {
