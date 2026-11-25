@@ -30,7 +30,7 @@ export const implementerReportSchema = z.object({
     .array(reportItem)
     .optional()
     .describe('Fix mode only, and required there with at least one item; leave it out otherwise: each id from the fix file\'s "## Fix items", exactly as listed, with `fixed in <sha>`, `already fixed`, or `not a defect: <why>`. A line may also name an observation of the slice that is still unplaced (its id, or `<review>:<id>` when two reviews kept the same id, at the start of the line) with `fixed in <sha>` for a commit of the slice: the factory then records that observation as fixed, adds it to this round\'s fix items, and the next review\'s scope reviewer gives it a verdict'),
-  open: z.array(reportItem).describe('Anything unfinished, and any stop report (NEEDS SEAM, SLICE TOO BIG, MISSING DEPENDENCY); empty when nothing is open'),
+  open: z.array(reportItem).describe('Anything unfinished, any stop report (NEEDS SEAM, SLICE TOO BIG, MISSING DEPENDENCY), and any question about a change to a shared helper outside the ticket (code that callers outside the ticket use) that you left out of the commit; empty when nothing is open'),
 });
 export type ImplementerReport = z.infer<typeof implementerReportSchema>;
 
