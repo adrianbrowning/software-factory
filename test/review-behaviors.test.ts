@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { startImplementerSession, submitImplementerReport } from '../src/report.ts';
@@ -46,7 +47,7 @@ describe('review data file: implementer behaviors', { concurrency: 4 }, () => {
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
-    await step(ws, async run => submitImplementerReport(ws, run, { behaviors: [], commits: [], open: [] }));
+    await step(ws, async run => submitImplementerReport(ws, run, { behaviors: [], commits: [], open: ['NEEDS SEAM: x'] }));
     await step(ws, run => runChecks(ws, run));
     const section = behaviorsSection((await step(ws, run => startReview(ws, run))).dataFile);
     assert.match(section, /None\./);
@@ -59,7 +60,7 @@ describe('review data file after a fix round', () => {
     using ws = workspace({ maxRounds: 3 });
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
-    commit(ws, 'work.txt');
+    commit(ws, 'work.test.ts');
     await step(ws, async run =>
       submitImplementerReport(ws, run, { behaviors: [{ behavior: 'first', red: 'boom', seenRed: true, test: 'old-test' }], commits: [], open: [] }),
     );
@@ -79,5 +80,32 @@ describe('review data file after a fix round', () => {
     const section = behaviorsSection((await step(ws, run => startReview(ws, run))).dataFile);
     assert.match(section, /- new-test → second \(seen red: no\)/);
     assert.doesNotMatch(section, /old-test|secret-fix-item/);
+  });
+});
+
+describe('report test-file gate exemptions', () => {
+  it('stores an empty report for a slice without seams', async () => {
+    using ws = workspace();
+    await newRun(ws, [slice('Docs', [], { noTestReason: 'docs only', seams: [] })]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'doc.md');
+    const stored = await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [], open: [] }));
+    assert.equal(stored.replaced, false);
+  });
+
+  it('stores a fix-mode report of a seamed slice with no behavior and no test file in the fix commit', async () => {
+    using ws = workspace({ maxRounds: 3 });
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'work.test.ts');
+    await step(ws, async run => submitImplementerReport(ws, run, { behaviors: [{ behavior: 'a', seenRed: false, test: 't' }], commits: [], open: [] }));
+    assert.equal((await step(ws, run => runChecks(ws, run))).passed, false);
+    await step(ws, async run => startImplementerSession(ws, run));
+    commit(ws, 'ok');
+    const sha = sh(ws.root, 'rev-parse', 'HEAD');
+    const stored = await step(ws, run =>
+      submitImplementerReport(ws, run, { behaviors: [], commits: [`${sha.slice(0, 7)} 01: fix`], fixItems: ['check-f1-1: already fixed'], open: [] }),
+    );
+    assert.match(readFileSync(stored.path, 'utf8'), /Behaviors:\n- none\n/);
   });
 });

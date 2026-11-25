@@ -206,7 +206,7 @@ describe('implementer report', () => {
     using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
-    commit(ws, 'work.txt');
+    commit(ws, 'work.test.ts');
     const path = join(ws.root, '.scratch', 'demo', 'reports', '01.md');
     const firstSha = sh(ws.root, 'rev-parse', '--short=12', 'HEAD');
     const first = await step(ws, run =>
@@ -1165,9 +1165,9 @@ describe('reopen', () => {
     await green(ws);
     await step(ws, run => completeSlice(ws, run));
     await step(ws, run => nextSlice(ws, run));
-    commit(ws, 'second.txt');
+    commit(ws, 'second.test.ts');
     const second = sh(ws.root, 'log', '--format=%h %s', '-1');
-    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [second], open: [] }));
+    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], commits: [second], open: [] }));
     await green(ws);
     await step(ws, run => completeSlice(ws, run));
 

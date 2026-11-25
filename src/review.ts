@@ -47,6 +47,7 @@ import { renderFinding } from './finding-text.ts';
 import { domainFile, findingRecord, keptFindings, readRecorded, recordedFindings, sha256, targetingAfter, type Validation, validationFile, validationSchema } from './review-record.ts';
 import { fixAfterGreen } from './observations.ts';
 import { collectObservations, placeDefaults } from './place.ts';
+import { TEST_PATH } from './test-paths.ts';
 import { changedLines, changedPaths, targetedReview } from './targeted.ts';
 import { reportListsCommit, storedBehaviors, storedReport } from './report.ts';
 import { head, ownCommits, porcelain, requireOnBranchClean, snapshot } from './repo.ts';
@@ -301,7 +302,7 @@ const PATH_SKIPS: { contentMatches?: { content: RegExp; paths: RegExp }; domain:
   },
   {
     domain: 'test-validity',
-    matches: /(^|\/)(__tests__|tests?|specs?)\/|[._-](test|spec)\.[^/]+$|(^|\/)test_[^/]+$/,
+    matches: TEST_PATH,
     reason: 'no test file changed',
   },
   {
