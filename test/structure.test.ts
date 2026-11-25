@@ -14,7 +14,7 @@ const TICKET_DECISION = /decisions? \d+/i;
 type Comment = { line: number; text: string };
 
 /** The content of every listed path under `root` that exists, whatever its extension; binary files are decoded too, so an ASCII phrase in them is still found. */
-function textFilesOf(root: string, paths: string[]): Map<string, string> {
+function contentsOfFiles(root: string, paths: string[]): Map<string, string> {
   const found = new Map<string, string>();
   for (const path of paths) {
     if (!path || !existsSync(join(root, path))) continue;
@@ -480,13 +480,13 @@ describe('module mocking ban: the helpers', () => {
 
 const testFiles = tsFilesIn(TESTS);
 
-describe('reading tracked files for the test-scope check', () => {
+describe('reading every listed file for the test-scope check, binary files included', () => {
   it('reads text and binary files of any extension and skips missing ones', () => {
     using temp = tempDir('scope-');
     const dir = temp.root;
     writeFileSync(join(dir, 'ci.yml'), 'test files that assert on output');
     writeFileSync(join(dir, 'bin.dat'), Buffer.concat([Buffer.from('test files that assert on output'), Buffer.from([0])]));
-    const tracked = textFilesOf(dir, ['ci.yml', 'bin.dat', 'gone.txt']);
+    const tracked = contentsOfFiles(dir, ['ci.yml', 'bin.dat', 'gone.txt']);
     assert.deepEqual([...tracked.keys()], ['ci.yml', 'bin.dat']);
     assert.deepEqual(testScopeProblems('The implementer test-scope wording sits in one place:\n- `a.md`: one.\n', tracked), ['a.md: listed in AGENTS.md but does not hold "test files that assert on output"', 'ci.yml: holds "test files that assert on output" but is not in the AGENTS.md test-scope list', 'bin.dat: holds "test files that assert on output" but is not in the AGENTS.md test-scope list']);
   });
@@ -537,7 +537,7 @@ describe('structure of src/', () => {
 describe('structure of the implementer test-scope wording', () => {
   it('sits in exactly the files the AGENTS.md list names', () => {
     const root = fileURLToPath(new URL('../', import.meta.url));
-    const tracked = textFilesOf(root, execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' }).split('\0'));
+    const tracked = contentsOfFiles(root, execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' }).split('\0'));
     assert.deepEqual(testScopeProblems(tracked.get('AGENTS.md') ?? '', tracked), []);
   });
 });
