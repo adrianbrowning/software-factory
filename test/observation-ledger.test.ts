@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { beforeEach, describe, it } from 'node:test';
 import { ctx, load } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
@@ -823,5 +823,43 @@ describe('observation titles in confirm dialogs', () => {
     const bodies: string[] = [];
     await call('factory_defer', { note: '   ', observations: ['thermo-one'] }, asking(bodies));
     assert.deepEqual((bodies[0] ?? '').split('\n').filter(line => line.startsWith('- ')), ['- thermo-one: one']);
+  });
+});
+
+describe('slice ids of three digits through the tools', () => {
+  /** Renames slice `from` of the 'demo' run to `to` in its state file and its ticket, as a run that reached slice 100 holds it. */
+  function renumber(ws: Workspace, from: string, to: string) {
+    const before = readRun(ws, 'demo').slices.find(item => item.id === from) ?? assert.fail(`no slice ${from}`);
+    const oldTicket = ticketPath(ws, 'demo', before);
+    const path = statePath(ws, 'demo');
+    const state = JSON.parse(readFileSync(path, 'utf8')) as { slices: { id: string }[] };
+    state.slices.find(item => item.id === from)!.id = to;
+    writeFileSync(path, JSON.stringify(state));
+    forgetRun(ws, 'demo');
+    renameSync(oldTicket, ticketPath(ws, 'demo', { ...before, id: to }));
+  }
+
+  it('factory_decide, factory_carry and factory_place take id "100" for a pending slice', async () => {
+    using dir = repo();
+    const { call, ws } = await ledgerRun(dir.root, ['naming', 'style']);
+    renumber(ws, '02', '100');
+
+    await call('factory_carry', { observations: ['thermo-naming'], to: '100' });
+    await call('factory_place', { placements: [{ id: 'thermo-style', placement: 'carry', to: '100' }] });
+    assert.deepEqual(readRun(ws, 'demo').observations.map(item => [item.id, item.placement, item.to]), [['thermo-naming', 'carried', '100'], ['thermo-style', 'carried', '100']]);
+    await call('factory_decide', { decisions: [{ slice: '100', text: 'Second builds the export.' }] });
+    assert.deepEqual(readRun(ws, 'demo').slices.map(item => item.ownsDecisions), [[], [1]]);
+    assert.match(readFileSync(ticketPath(ws, 'demo', readRun(ws, 'demo').slices[1]!), 'utf8'), /Second builds the export\./);
+  });
+
+  it('factory_reopen takes id "100" for a done slice', async () => {
+    using dir = repo();
+    const { call, ws } = await ledgerRun(dir.root, ['naming']);
+    await call('factory_leave', { observations: ['thermo-naming'] });
+    await call('factory_complete_slice', {});
+    renumber(ws, '01', '100');
+
+    await call('factory_reopen', { reason: 'bug', slice: '100' });
+    assert.deepEqual(readRun(ws, 'demo').slices.map(item => [item.id, item.status]), [['100', 'active'], ['02', 'pending']]);
   });
 });
