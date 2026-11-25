@@ -17,7 +17,13 @@ describe('validation escalate entry', () => {
   });
 
   it('gives a field error, not the exactly-one message, for a wrong-typed decision', () => {
-    assert.throws(() => parse([{ ...entry, decision: '1' }]), error => error instanceof Error && !/exactly one/.test(error.message));
+    assert.throws(
+      () => parse([{ ...entry, decision: '1' }]),
+      error => error instanceof Error
+        && /"path":\s*\[\s*"decision"\s*\]/.test(error.message)
+        && /expected number, received string/.test(error.message)
+        && !/exactly one/.test(error.message),
+    );
   });
 
   it('strips an unknown key from an entry with one valid field', () => {
