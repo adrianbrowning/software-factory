@@ -55,6 +55,18 @@ describe('review data file: implementer behaviors', { concurrency: 4 }, () => {
   });
 });
 
+describe('review data file: ticket copy', () => {
+  it('shows the noTestReason and the pinning sentence of a seamed slice', async () => {
+    using ws = workspace();
+    await newRun(ws, [slice('Feature', undefined, { noTestReason: 'behavior stays the same' })]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const data = readFileSync((await step(ws, run => startReview(ws, run))).dataFile, 'utf8');
+    assert.match(data, /No test needs to go red first: behavior stays the same\. Tests on this slice pin the existing behavior: write them on the old code first, see them green, keep them green, and report them with seenRed false\./);
+  });
+});
+
 describe('review data file after a fix round', () => {
   it('lists only the fix round report behaviors, and keeps its fix file items out', async () => {
     using ws = workspace({ maxRounds: 3 });
