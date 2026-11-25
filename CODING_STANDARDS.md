@@ -40,6 +40,10 @@ When the owning feature's test pins a line's full wording, the assertion matches
 
 When a change alters a default or a branch condition, search the tests for the input that the changed branch reads. Check each test that sets that input. Each such test must still prove the behavior its name gives, or you update it. Example: `defaultChoice` changed so that a correctness observation on a `fromEndQueue` slice defaults to fix. Three sibling follow-up tests moved to `missing-test`, but the re-sliced follow-up test was missed, and it then passed for the wrong reason.
 
+## Negative type tests
+
+A `@ts-expect-error` test must fail only for the behavior its name gives. The value on the line after the directive is otherwise complete and valid, so the one type error is the one under test. The test also holds a positive control: the same value without the part under test, typed with no directive, which compiles. Past history: in issue-858 slice 01 a `Validation` literal omitted the required `downgrade` key, so the expected error came from the missing key and the test could never fail on the behavior it named. Copy the pattern of 'has no state with both decision and criterion' in test/review-record.test.ts. This is a reviewer judgement rule; no test enforces it.
+
 ## Script env in tests
 
 A test that spawns a script with `process.env` controls every variable the script reads. Otherwise the result depends on the developer's or CI's shell.
