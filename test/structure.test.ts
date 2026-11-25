@@ -19,7 +19,7 @@ function textFilesOf(root: string, paths: string[]): Map<string, string> {
   for (const path of paths) {
     if (!path || !existsSync(join(root, path))) continue;
     const buffer = readFileSync(join(root, path));
-    if (!buffer.includes(0)) found.set(path, buffer.toString('utf8'));
+    found.set(path, buffer.toString('latin1'));
   }
   return found;
 }
@@ -277,13 +277,13 @@ describe('structure checks: the helpers', () => {
 const testFiles = tsFilesIn(TESTS);
 
 describe('reading tracked files for the test-scope check', () => {
-  it('reads text files of any extension and skips binary and missing ones', () => {
+  it('reads text and binary files of any extension and skips missing ones', () => {
     const dir = mkdtempSync(join(tmpdir(), 'scope-'));
     writeFileSync(join(dir, 'ci.yml'), 'test files that assert on output');
-    writeFileSync(join(dir, 'bin.dat'), Buffer.from([65, 0, 66]));
+    writeFileSync(join(dir, 'bin.dat'), Buffer.concat([Buffer.from('test files that assert on output'), Buffer.from([0])]));
     const tracked = textFilesOf(dir, ['ci.yml', 'bin.dat', 'gone.txt']);
-    assert.deepEqual([...tracked.keys()], ['ci.yml']);
-    assert.deepEqual(testScopeProblems('The implementer test-scope wording sits in two places:\n', tracked), ['ci.yml: holds "test files that assert on output" but is not in the AGENTS.md test-scope list']);
+    assert.deepEqual([...tracked.keys()], ['ci.yml', 'bin.dat']);
+    assert.deepEqual(testScopeProblems('The implementer test-scope wording sits in two places:\n', tracked), ['ci.yml: holds "test files that assert on output" but is not in the AGENTS.md test-scope list', 'bin.dat: holds "test files that assert on output" but is not in the AGENTS.md test-scope list']);
   });
 });
 
