@@ -17,6 +17,7 @@ import {
   pauseRun,
   planReslice,
   planSlices,
+  renderTicket,
   reopenSlice,
   resolveBase,
   resumeRun,
@@ -176,6 +177,29 @@ describe('planSlices', () => {
     const ticket = (index: number) => readFileSync(ticketPath(ws, 'demo', run.slices[index] ?? assert.fail('no slice')), 'utf8');
     assert.ok(ticket(0).includes('\n2. Export is built by API. Built by slice 02 (API): this slice need not build it; report only code that contradicts it.\n'));
     assert.ok(ticket(1).includes('\n2. Export is built by API.\n'));
+  });
+
+  it('ends each ticket file with a note for the advisor, once, and leaves the shared ticket rendering without it', async () => {
+    using ws = workspace();
+    await start(ws);
+    await step(ws, run => recordDecisions(ws, run, ['Shared rule.']));
+    await step(ws, run => approvePlan(ws, run, planSlices(ws, run, [slice('Schema')])));
+    const run = readRun(ws, 'demo');
+    const first = run.slices[0] ?? assert.fail('no slice');
+    const ticket = readFileSync(ticketPath(ws, 'demo', first), 'utf8');
+    const note = ticket.slice(ticket.indexOf('## For the advisor'));
+    assert.ok(ticket.indexOf('## Decisions the user already made') < ticket.indexOf('## For the advisor'));
+    assert.equal(ticket.split('## For the advisor').length, 2);
+    assert.match(note, /## Acceptance criteria/);
+    assert.match(note, /## Decisions the user already made/);
+    assert.match(note, /question for the orchestrator/);
+    assert.ok(!renderTicket(run, first, 1000).includes('## For the advisor'));
+    await step(ws, current => nextSlice(ws, current));
+    await step(ws, current => amendSeams(ws, current, ['the clock']));
+    const amended = readFileSync(ticketPath(ws, 'demo', first), 'utf8');
+    assert.match(amended, /- the clock/);
+    assert.equal(amended.split('## For the advisor').length, 2);
+    assert.ok(amended.trimEnd().endsWith('instead of asking the implementer to change the code.'));
   });
 
   it('rejects an owned decision number that was not recorded or that two slices own', async () => {

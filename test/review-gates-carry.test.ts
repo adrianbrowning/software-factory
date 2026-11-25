@@ -25,6 +25,9 @@ describe('slice loop gates: carried observations', { concurrency: 4 }, () => {
     const ticket = readFileSync(ticketPath(ws, 'demo', second), 'utf8');
     assert.match(ticket, /## Carried-in work\n[\s\S]*### From green review 01-r1 of slice 01 "Feature"\n\nAlso log the parse time\.\n\nCarried keys: \(none\)\n\n### From green review 01-r1 of slice 01 "Feature"\n\n#### \[observation\] thermo-naming\n\n- Location: ok:1/);
     assert.doesNotMatch(ticket, /comments-stale/);
+    assert.ok(ticket.indexOf('## Carried-in work') < ticket.indexOf('## Decisions the user already made'));
+    assert.ok(ticket.indexOf('## Decisions the user already made') < ticket.indexOf('## For the advisor'));
+    assert.equal(ticket.split('## For the advisor').length, 2);
     const after = readRun(ws, 'demo').slices[0];
     assert.deepEqual({ ...after, unplaced: [] }, { ...before, unplaced: [] }, 'the active slice keeps its green review');
     assert.deepEqual(after?.unplaced.map(entry => entry.finding.id), ['comments-stale'], 'only the carried observation is placed');
@@ -37,6 +40,7 @@ describe('slice loop gates: carried observations', { concurrency: 4 }, () => {
     await step(ws, run => runChecks(ws, run));
     const { dataFile } = await step(ws, run => startReview(ws, run));
     assert.match(readFileSync(dataFile, 'utf8'), /## Carried-in work[\s\S]*Also log the parse time\.[\s\S]*#### \[observation\] thermo-naming/);
+    assert.doesNotMatch(readFileSync(dataFile, 'utf8'), /## For the advisor/);
   });
 
   it('refuses a carry with nothing to carry, without a green review, with unknown observation ids, or to a slice that is not pending', async () => {

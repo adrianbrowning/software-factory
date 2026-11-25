@@ -299,8 +299,15 @@ ${slice.carried.join('\n\n')}
 `;
 }
 
+/** Note at the end of every ticket file, addressed to an advisor that watches the implementer's session. The review data file's ticket copy (renderTicket) does not hold it. */
+const ADVISOR_NOTE = `
+## For the advisor
+
+Before you propose a change, read this ticket's \`## Acceptance criteria\` section and its \`## Decisions the user already made\` section. Propose no change (wording, behavior or test) that contradicts an acceptance criterion or a recorded decision. When you think a criterion or decision is wrong, say so as a question for the orchestrator instead of asking the implementer to change the code.
+`;
+
 export function writeTicket(ws: Workspace, run: Run, slice: Slice) {
-  writeAtomic(ticketPath(ws, run.feature, slice), renderTicket(run, slice, ws.config.sliceTokenBudget));
+  writeAtomic(ticketPath(ws, run.feature, slice), renderTicket(run, slice, ws.config.sliceTokenBudget) + ADVISOR_NOTE);
 }
 
 /**
