@@ -13,7 +13,7 @@ describe('saveRun validation', () => {
     const before = readFileSync(statePath(ws, 'demo'), 'utf8');
     await assert.rejects(
       seedUnplacedObservation(ws, 'Bad Id'),
-      (error: Error) => error.message.includes(statePath(ws, 'demo')) && error.message.includes('id'),
+      (error: Error) => error.message.includes(statePath(ws, 'demo')) && error.message.includes('finding.id') && error.message.includes('must match pattern'),
     );
     assert.equal(readFileSync(statePath(ws, 'demo'), 'utf8'), before);
     assert.ok(readRun(ws, 'demo'));
@@ -33,9 +33,13 @@ describe('saveRun validation', () => {
     using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     const before = readFileSync(statePath(ws, 'demo'), 'utf8');
+    const savedFile = `${statePath(ws, 'demo')}.saved`;
+    const savedBefore = readFileSync(savedFile, 'utf8');
     const run = readRun(ws, 'demo');
     (run.slices[0] as { phase: string }).phase = 'bogus';
     assert.throws(() => saveRun(ws, run), /state\.json/);
+    assert.equal(readFileSync(savedFile, 'utf8'), savedBefore);
+    assert.ok(readRun(ws, 'demo'));
     assert.equal(readFileSync(statePath(ws, 'demo'), 'utf8'), before);
   });
 });
