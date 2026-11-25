@@ -71,7 +71,7 @@ Example (issue-502 slice 03, past history): `criterion` was added to `findingSch
 
 ## Pair derived records with their source
 
-Pair a derived record with its source by mapping once to `{source, record}` pairs, or by building a `Map` keyed by a stable id. Never read a second, parallel array at the same index with a non-null assertion `!`. A length or order mismatch between the two arrays then gives `undefined` at runtime, and the `!` hides it from the type checker.
+Pair a derived record with its source by mapping once to `{source, record}` pairs, or by building a `Map` keyed by a stable id. Never read a second, parallel array at the same index with a non-null assertion `!`. If the derived array is shorter, the read gives `undefined` at runtime, and the `!` hides that from the type checker. If the order differs, a source is paired with another source's record, with no error at all.
 
 Forbidden:
 
