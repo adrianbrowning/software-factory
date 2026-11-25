@@ -30,7 +30,7 @@ Never wrap `.some()` or `.every()` in `assert.ok`: it prints only `false`. Use `
 
 A test outside the feature that owns a reply or summary line matches only that line's stable part, for example the command and the exit code. Only the owning feature's tests pin the full wording, so a wording change breaks one test file.
 
-When the owning feature's test pins a line's full wording, the assertion matches the whole line, anchored at both ends: `assert.equal` on the full line, or `assert.match` with a regex that starts with `^` and ends with `$`. Otherwise text can slip in between the parts of the line. Example: `/foo.*: failed/` passes for `foo: bar baz: failed` and for `foo: failed (extra)`, because `.*` allows any text between the command and `: failed`, and nothing stops a trailing suffix. Write `/^foo: failed$/` instead.
+When the owning feature's test pins a line's full wording, the assertion matches the whole line, anchored at both ends: `assert.equal` on the full line, or `assert.match` with a regex that starts with `^` and ends with `$`. The anchored regex also has no unconstrained wildcard such as `.*` or `.+` between the fixed parts of the line. Otherwise text can slip in between the parts of the line. Example: `/foo.*: failed/` passes for `foo: bar baz: failed` and for `foo: failed (extra)`, because `.*` allows any text between the command and `: failed`, and nothing stops a trailing suffix. Anchoring alone does not fix the gap: `/^foo.*: failed$/` is still forbidden, because it accepts `foo: bar baz: failed`. Write `/^foo: failed$/` instead.
 
 ## Tests for a changed branch
 
