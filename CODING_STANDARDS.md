@@ -77,6 +77,10 @@ Every rendering of one field uses one shared helper, not its own `evidence` or `
 
 Example (issue #589, past history): slice 01 put the reviewer-written symbol into location lines without redact, clip or single-line. Slice 04 fixed `findingLocation` with `evidenceLine(symbol, 200)`, and the review then found `filedLocation` in `src/finding-text.ts` still used `evidence(symbol, 500)`, so the same field rendered two ways.
 
+A confirm dialog and the action it confirms render the same field through the same helper, so the dialog never hides, redacts or reshapes text the action sends. If they differ, a user can approve publishing text the dialog did not show. Example: `retroTitle` in `src/retro.ts` renders the retro finding title both in the factory_retro confirm dialog in `src/index.ts` and in the `gh issue create` title in `fileFactoryIssues`.
+
+Example (issue-831 slice 04, past history): the dialog redacted retro titles while `gh issue create` posted the raw title, so a user could approve publishing a credential the dialog hid. An outside review caught it and slice 04 was reopened.
+
 ## Event order in tests
 
 A test that needs one event before another (stdout before stderr, one callback before another) orders them by a handshake or backpressure: the test or script waits until the first event is observed, then triggers the next. Never order events with a fixed sleep or timer. A fixed sleep passes on an idle machine and fails under load, for example parallel reviewer agents (issue 348).
