@@ -16,6 +16,15 @@ describe('validation escalate entry', () => {
     assert.throws(() => parse([{ ...entry, criterion: 'c', decision: 1 }]), /bug-a.*decision.*criterion/);
   });
 
+  it('gives a field error, not the exactly-one message, for a wrong-typed decision', () => {
+    assert.throws(() => parse([{ ...entry, decision: '1' }]), error => error instanceof Error && !/exactly one/.test(error.message));
+  });
+
+  it('strips an unknown key from an entry with one valid field', () => {
+    const [parsed] = parse([{ ...entry, decision: 1, extra: true }]).escalate;
+    assert.deepEqual(parsed, { decision: 1, id: 'bug-a', reason: 'r' });
+  });
+
   it('keeps an escalated finding as high carrying its decision or its criterion', () => {
     const findings = [finding('bug', 'observation', 'a'), finding('bug', 'observation', 'b')];
     const kept = keptFindings(findings, parse([{ decision: 2, id: 'bug-a', reason: 'r' }, { criterion: 'quoted', id: 'bug-b', reason: 'r' }]));
@@ -30,7 +39,7 @@ describe('Validation escalate entry type', () => {
   it('has no state with both decision and criterion', () => {
     const both = { criterion: 'c', decision: 1, id: 'bug-a', reason: 'r' };
     // @ts-expect-error an entry with both fields is not a Validation escalate entry
-    const validation: Validation = { dropped: [], escalate: [both], keep: [] };
+    const validation: Validation = { dropped: [], downgrade: [], escalate: [both], keep: [] };
     assert.ok(validation);
   });
 });
