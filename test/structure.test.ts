@@ -13,13 +13,13 @@ const TESTS = fileURLToPath(new URL('./', import.meta.url));
 const TICKET_DECISION = /decisions? \d+/i;
 type Comment = { line: number; text: string };
 
-/** The content of every listed path under `root` that exists, whatever its extension; binary files are decoded as latin1 so an ASCII phrase in them is still found. */
+/** The content of every listed path under `root` that exists, whatever its extension; binary files are decoded too, so an ASCII phrase in them is still found. */
 function textFilesOf(root: string, paths: string[]): Map<string, string> {
   const found = new Map<string, string>();
   for (const path of paths) {
     if (!path || !existsSync(join(root, path))) continue;
     const buffer = readFileSync(join(root, path));
-    found.set(path, buffer.toString('latin1'));
+    found.set(path, buffer.toString('utf8'));
   }
   return found;
 }
