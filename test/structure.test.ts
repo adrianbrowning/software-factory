@@ -93,6 +93,11 @@ export function someEveryAsserts(file: string, source: string) {
   return found;
 }
 
+/** The someEveryAsserts messages for each {name, source} file, prefixed `test/<name>`. */
+export function someEveryAssertsOf(files: { name: string; source: string }[]) {
+  return files.flatMap(file => someEveryAsserts(`test/${file.name}`, file.source));
+}
+
 /**
  * The files `source` imports from its own directory, by its static import and `export … from` declarations, side-effect
  * imports included. With `runtimeOnly`, a declaration that is wholly type-only (`import type`, `export type`) is left out:
@@ -274,6 +279,11 @@ describe('structure checks: the helpers', () => {
     assert.deepEqual(someEveryAsserts('test/x.test.ts', source), [1, 2, 3, 4, 5, 6].map(line => `test/x.test.ts:${line}: assert.ok over .${line === 2 ? 'every' : 'some'}() hides the failing value`));
   });
 
+  it('reports a some() assert.ok in a listed file as test/<name>:<line>', () => {
+    const source = 'const a = 1;\nassert.ok(arr.some(p));';
+    assert.deepEqual(someEveryAssertsOf([{ name: 'zz.test.ts', source }]), ['test/zz.test.ts:2: assert.ok over .some() hides the failing value']);
+  });
+
   it('lets assertions that print the failing value through', () => {
     const source = ['assert.ok(arr.find(p));', 'assert.deepEqual(arr.filter(p), []);', 'assert.equal(arr.some(p), true);', 'assert.ok(f(arr.some(p)));', 'assert.ok(x || arr.some(p));'].join('\n');
     assert.deepEqual(someEveryAsserts('test/x.test.ts', source), []);
@@ -344,7 +354,7 @@ describe('structure of test/', () => {
   });
 
   it('has no assert.ok over .some() or .every()', () => {
-    assert.deepEqual(testFiles.flatMap(file => someEveryAsserts(`test/${file.name}`, file.source)), []);
+    assert.deepEqual(someEveryAssertsOf(testFiles), []);
   });
 });
 
