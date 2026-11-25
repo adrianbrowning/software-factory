@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
+import { z } from 'zod';
 import { forgetRun, readRun, statePath } from '../src/run.ts';
 import { load } from './extension.ts';
 import { newRun, slice, workspace } from './helpers.ts';
@@ -47,7 +48,9 @@ describe('slice ids of three or more digits', () => {
     });
   }
 
-  it('factory_carry still accepts "end"', () => {
-    assert.equal(accepts('factory_carry', 'to', 'end') || JSON.stringify(load().get('factory_carry')?.parameters).includes('"end"'), true);
+  it('factory_carry parameters accept to "end" and refuse "ending"', () => {
+    const schema = z.fromJSONSchema((load().get('factory_carry') ?? assert.fail('no tool factory_carry')).parameters as z.core.JSONSchema.JSONSchema);
+    assert.equal(schema.safeParse({ observations: ['thermo-naming'], to: 'end' }).success, true);
+    assert.equal(schema.safeParse({ observations: ['thermo-naming'], to: 'ending' }).success, false);
   });
 });
