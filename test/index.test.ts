@@ -298,6 +298,23 @@ describe('implementer sessions', () => {
       assert.equal(readFileSync(file(repo.root), 'utf8'), before);
     });
 
+    it('stores a seen-red-less report with no test file change for a slice that has seams and a noTestReason', async () => {
+      using repo = emptyRepo();
+      const { call, implementer } = await startedRun(repo.root, 'true', { noTestReason: 'refactor, behavior unchanged' });
+      commitFile(repo.root, 'src/a.ts');
+      assert.match(await call('factory_implementer_report', { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], commits: [], open: [] }, implementer), /Stored the report/);
+    });
+
+    it('refuses a report with no behavior for a slice that has seams and a noTestReason, and keeps the earlier stored report', async () => {
+      using repo = emptyRepo();
+      const { call, implementer } = await startedRun(repo.root, 'true', { noTestReason: 'refactor, behavior unchanged' });
+      await call('factory_implementer_report', { behaviors: [], commits: [], open: ['NEEDS SEAM: x'] }, implementer);
+      const before = readFileSync(file(repo.root), 'utf8');
+      commitFile(repo.root, 'src/a.ts');
+      await assert.rejects(call('factory_implementer_report', { behaviors: [], commits: [], open: [] }, implementer), (error: Error) => /lists no behavior/.test(error.message) && /pins the code.*seenRed false/.test(error.message) && !/red-first/.test(error.message));
+      assert.equal(readFileSync(file(repo.root), 'utf8'), before);
+    });
+
     it('stores the report when a commit changes a test file', async () => {
       using repo = emptyRepo();
       const { call, implementer } = await startedRun(repo.root);
@@ -401,7 +418,7 @@ describe('implementer sessions', () => {
     using repo = emptyRepo();
     const refactor = await startedRun(repo.root, 'true', { noTestReason: 'behavior stays the same' });
     const ticket = readFileSync(/Ticket: ([^\\]+)/.exec(refactor.next)?.[1] ?? '', 'utf8');
-    assert.match(ticket, /no re-export only to match the seam\.\n\nNo test needs to go red first: behavior stays the same\. Tests on this slice pin the existing behavior: write them on the old code first, see them green, keep them green, and report them with seenRed false\.\n\n## Checks/);
+    assert.match(ticket, /no re-export only to match the seam\.\n\nNo test needs to go red first: behavior stays the same\. Tests on this slice pin the existing behavior: write them on the old code first, see them green, keep them green, and report them with seenRed false\. An existing test that already pins the code needs no new test file: list it as a behavior with seenRed false\.\n\n## Checks/);
     using plain = emptyRepo();
     const normal = await startedRun(plain.root);
     const normalTicket = readFileSync(/Ticket: ([^\\]+)/.exec(normal.next)?.[1] ?? '', 'utf8');
@@ -412,7 +429,7 @@ describe('implementer sessions', () => {
     using repo = emptyRepo();
     const refactor = await startedRun(repo.root, 'true', { noTestReason: 'Behavior stays the same.' });
     const ticket = readFileSync(/Ticket: ([^\\]+)/.exec(refactor.next)?.[1] ?? '', 'utf8');
-    assert.match(ticket, /\n\nNo test needs to go red first: Behavior stays the same\. Tests on this slice pin the existing behavior: write them on the old code first, see them green, keep them green, and report them with seenRed false\.\n\n## Checks/);
+    assert.match(ticket, /\n\nNo test needs to go red first: Behavior stays the same\. Tests on this slice pin the existing behavior: write them on the old code first, see them green, keep them green, and report them with seenRed false\. An existing test that already pins the code needs no new test file: list it as a behavior with seenRed false\.\n\n## Checks/);
   });
 
   it('says in the factory_next reply that factory_checks runs the full checks and the implementer runs only what it touched', async () => {

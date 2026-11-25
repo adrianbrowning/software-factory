@@ -63,7 +63,7 @@ describe('review data file: ticket copy', () => {
     commit(ws, 'ok');
     await step(ws, run => runChecks(ws, run));
     const data = readFileSync((await step(ws, run => startReview(ws, run))).dataFile, 'utf8');
-    assert.match(data, /No test needs to go red first: behavior stays the same\. Tests on this slice pin the existing behavior: write them on the old code first, see them green, keep them green, and report them with seenRed false\./);
+    assert.match(data, /No test needs to go red first: behavior stays the same\. Tests on this slice pin the existing behavior: write them on the old code first, see them green, keep them green, and report them with seenRed false\. An existing test that already pins the code needs no new test file: list it as a behavior with seenRed false\./);
   });
 });
 
