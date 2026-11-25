@@ -99,9 +99,9 @@ export async function fileFactoryIssues(ws: Workspace, findings: RetroFinding[])
   return { urls };
 }
 
-/** One retro finding title for a dialog: redacted, on one line, clipped at 500 characters. */
+/** One retro finding title for the retro dialogs and the filed GitHub issue title: redacted, on one line, clipped at 200 characters (GitHub rejects titles over 256). */
 export function retroTitle(title: string) {
-  return evidenceLine(title, 500);
+  return evidenceLine(title, 200);
 }
 
 /** The body of the headless retro gate: where the findings go, then one redacted one-line title per finding. */
