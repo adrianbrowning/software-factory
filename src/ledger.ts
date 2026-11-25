@@ -25,6 +25,11 @@ export function findingLocation(finding: Finding) {
   return finding.symbol === undefined ? place : `${evidenceLine(finding.symbol, 200)} (${place})`;
 }
 
+/** A finding's title for display, redacted, on one line and clipped at 500 characters. Takes a string, so it serves a finding's title and a ledger entry's stored title alike. */
+export function findingTitle(title: string) {
+  return evidenceLine(title, 500);
+}
+
 /** What a ledger entry keeps of its finding: where it points, and its title and problem in full, redacted. */
 export function ledgerText(finding: Finding) {
   return { location: findingLocation(finding), problem: redact(finding.problem), title: redact(finding.title) };
@@ -70,10 +75,10 @@ export const CARRIED_HERE = 'carried to this slice: check it';
  * marked `(unplaced)`; `None.` when there are neither. An entry carried to `slice` is marked `CARRIED_HERE`: a finding that it is unbuilt or wrong there is kept, not dropped as `same as <key>`.
  */
 export function renderKnownObservations(run: Run, slice: Pick<Slice, 'carried' | 'unplaced'>) {
-  const lines = run.observations.map(entry => `- \`${entry.key}\` (${entry.placement === 'carried' && isCarriedTo(entry, slice) ? `${entry.placement}; ${CARRIED_HERE}` : entry.placement}): ${entry.location} - ${evidenceLine(entry.title, 500)}\n  Problem: ${evidenceLine(entry.problem, 2_000)}`);
+  const lines = run.observations.map(entry => `- \`${entry.key}\` (${entry.placement === 'carried' && isCarriedTo(entry, slice) ? `${entry.placement}; ${CARRIED_HERE}` : entry.placement}): ${entry.location} - ${findingTitle(entry.title)}\n  Problem: ${evidenceLine(entry.problem, 2_000)}`);
   for (const { finding, review } of slice.unplaced) {
     const text = ledgerText(finding);
-    lines.push(`- \`${itemKey(review, finding.id)}\` (unplaced): ${text.location} - ${evidenceLine(text.title, 500)}\n  Problem: ${evidenceLine(text.problem, 2_000)}`);
+    lines.push(`- \`${itemKey(review, finding.id)}\` (unplaced): ${text.location} - ${findingTitle(text.title)}\n  Problem: ${evidenceLine(text.problem, 2_000)}`);
   }
   return lines.length === 0 ? 'None.' : lines.join('\n');
 }
