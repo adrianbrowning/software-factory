@@ -43,7 +43,7 @@ Example: `test/headless-backlog.test.ts` spawns `scripts/headless-backlog.sh`, w
 
 ## One-line agent text
 
-Free text that an agent wrote (a reviewer, validator, implementer or issue) and that a one-line field shows (a location, a title, a `Symbol` line) goes through `evidenceLine` from `src/evidence.ts`. It redacts credential shapes, collapses all whitespace to one line and clips to a limit. Never pass such text through `evidence`, `evidenceHead` or `redact` alone, and never show it raw: each leaves newlines or unbounded length in a field that must stay on one line.
+Free text that an agent wrote (a reviewer, validator, implementer or issue) and that a one-line field shows (a location, a title, a `Symbol` line) goes through `evidenceLine` from `src/evidence.ts`. It redacts credential shapes, collapses all whitespace to one line and clips to a limit. Never pass such text through `evidence` or `redact` alone, and never show it raw: each leaves newlines or unbounded length in a field that must stay on one line.
 
 Every rendering of one field uses one shared helper, not its own `evidence` or `evidenceLine` call. A finding's location is `findingLocation` and its title is `findingTitle`, both in `src/ledger.ts`. A second rendering that formats the same field on its own drifts from the first.
 
