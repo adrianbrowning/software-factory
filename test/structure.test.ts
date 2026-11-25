@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -541,6 +541,13 @@ describe('structure of the implementer test-scope wording', () => {
   });
 });
 
+function tsSourceTexts(root: string): string[] {
+  return ['src', 'test']
+    .flatMap(dir => readdirSync(join(root, dir), { recursive: true }).map(name => `${dir}/${String(name)}`))
+    .filter(path => path.endsWith('.ts') && path !== 'test/structure.test.ts')
+    .map(path => readFileSync(join(root, path), 'utf8'));
+}
+
 describe('structure of the CODING_STANDARDS.md references', () => {
   const paths = new Set(['src/a.ts', 'src']);
   const sources = ['export function evidenceHeadline() {}'];
@@ -562,10 +569,19 @@ describe('structure of the CODING_STANDARDS.md references', () => {
     const root = fileURLToPath(new URL('../', import.meta.url));
     const tracked = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean);
     const paths = new Set(tracked.flatMap(path => path.split('/').map((_, i, parts) => parts.slice(0, i + 1).join('/'))));
-    const texts = ['src', 'test']
-      .flatMap(dir => readdirSync(join(root, dir), { recursive: true }).map(name => `${dir}/${String(name)}`))
-      .filter(path => path.endsWith('.ts') && path !== 'test/structure.test.ts')
-      .map(path => readFileSync(join(root, path), 'utf8'));
+    const texts = tsSourceTexts(root);
     assert.deepEqual(standardsReferenceProblems(readFileSync(join(root, 'CODING_STANDARDS.md'), 'utf8'), paths, texts), []);
+  });
+
+  it('reads nested src/ and test/ .ts files and excludes only the root structure test', () => {
+    const root = mkdtempSync(join(tmpdir(), 'standards-'));
+    for (const dir of ['src/sub', 'test/sub']) mkdirSync(join(root, dir), { recursive: true });
+    writeFileSync(join(root, 'src/sub/a.ts'), 'srcNestedName');
+    writeFileSync(join(root, 'test/sub/b.ts'), 'testNestedName');
+    writeFileSync(join(root, 'test/sub/structure.test.ts'), 'nestedSameName');
+    writeFileSync(join(root, 'test/structure.test.ts'), 'rootExcludedName');
+    const texts = tsSourceTexts(root);
+    const text = '`srcNestedName` `testNestedName` `nestedSameName` `rootExcludedName`';
+    assert.deepEqual(standardsReferenceProblems(text, new Set(), texts), ['CODING_STANDARDS.md:1: `rootExcludedName` is in no src/ or test/ .ts file']);
   });
 });
