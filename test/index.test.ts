@@ -242,7 +242,15 @@ describe('implementer sessions', () => {
     it('refuses a report with no behavior and no stop report, naming the seams, and stores nothing', async () => {
       using repo = emptyRepo();
       const { call, implementer } = await startedRun(repo.root);
-      await assert.rejects(call('factory_implementer_report', { behaviors: [], commits: [], open: [] }, implementer), /seams \(cli\).*NEEDS SEAM/);
+      await assert.rejects(call('factory_implementer_report', { behaviors: [], commits: [], open: [] }, implementer), /seams \(cli\).*report lists no behavior.*NEEDS SEAM/);
+      assert.equal(existsSync(file(repo.root)), false);
+    });
+
+    it('refuses an empty behaviors list even when a commit changes a test file, and stores nothing', async () => {
+      using repo = emptyRepo();
+      const { call, implementer } = await startedRun(repo.root);
+      commitFile(repo.root, 'test/a.test.ts');
+      await assert.rejects(call('factory_implementer_report', { behaviors: [], commits: [], open: [] }, implementer), /report lists no behavior.*NEEDS SEAM/);
       assert.equal(existsSync(file(repo.root)), false);
     });
 
