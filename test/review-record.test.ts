@@ -19,10 +19,14 @@ describe('validation escalate entry', () => {
   it('gives a field error, not the exactly-one message, for a wrong-typed decision', () => {
     assert.throws(
       () => parse([{ ...entry, decision: '1' }]),
-      error => error instanceof Error
-        && /"path":\s*\[\s*"decision"\s*\]/.test(error.message)
-        && /expected number, received string/.test(error.message)
-        && !/exactly one/.test(error.message),
+      error => {
+        if (!(error instanceof Error) || /exactly one/.test(error.message)) return false;
+        type Issue = { errors?: Issue[][]; expected?: string; message?: string; path?: unknown[] };
+        const flatten = (issues: Issue[]): Issue[] => issues.flatMap(issue => [issue, ...flatten((issue.errors ?? []).flat())]);
+        return flatten(JSON.parse(error.message) as Issue[]).some(issue =>
+          issue.path?.length === 1 && issue.path[0] === 'decision'
+          && (issue.expected === 'number' || /expected number, received string/.test(issue.message ?? '')));
+      },
     );
   });
 
