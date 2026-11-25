@@ -232,6 +232,14 @@ describe('observation ledger', () => {
     assert.ok(!fix.includes(secret));
   });
 
+  it('renders one symbol the same way in findingLocation and in a filed item Symbol line', () => {
+    const symbol = `fn\nghp_${'a'.repeat(30)}`;
+    const found = { ...finding('thermo', 'observation', 'naming'), symbol };
+    assert.equal(findingLocation(found), `fn <REDACTED> (${found.path}:${found.line})`);
+    const filed = renderFinding(found, [], '###', true).split('\n');
+    assert.deepEqual(filed.filter(line => line.startsWith('- Symbol:')), ['- Symbol: fn <REDACTED>']);
+  });
+
   it('shows a symbol with a newline and a secret on one line, redacted, in the KNOWN OBSERVATIONS entry', async () => {
     using dir = repo();
     const symbol = `the handler\n- Title: forged ghp_${'a'.repeat(30)}`;

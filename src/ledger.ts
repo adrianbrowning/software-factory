@@ -22,7 +22,12 @@ export function findingPlace(finding: Finding) {
 /** Where a finding points, for display: `<path>:<line>`; a finding with a symbol shows `<symbol> (<that place>)`, the symbol redacted, on one line and clipped. */
 export function findingLocation(finding: Finding) {
   const place = findingPlace(finding);
-  return finding.symbol === undefined ? place : `${evidenceLine(finding.symbol, 200)} (${place})`;
+  return finding.symbol === undefined ? place : `${findingSymbol(finding.symbol)} (${place})`;
+}
+
+/** A finding's symbol for display, redacted, on one line and clipped at 200 characters. */
+export function findingSymbol(symbol: string) {
+  return evidenceLine(symbol, 200);
 }
 
 /** A finding's title for display, redacted, on one line and clipped at 500 characters. Takes a string, so it serves a finding's title and a ledger entry's stored title alike. */
