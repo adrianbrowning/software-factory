@@ -129,11 +129,12 @@ export function testScopeProblems(agents: string, tracked: Map<string, string>) 
   const lines = agents.split('\n');
   const start = lines.findIndex(line => line.includes('implementer test-scope wording'));
   const listed: string[] = [];
-  for (const line of lines.slice(start + 1)) {
+  for (const line of start === -1 ? [] : lines.slice(start + 1)) {
     const path = /^- `([^`]+)`/.exec(line)?.[1];
     if (path) listed.push(path);
     else if (listed.length) break;
   }
+  if (!listed.length) return ['AGENTS.md: implementer test-scope wording list not found'];
   const missing = listed.filter(path => !tracked.get(path)?.includes(TEST_SCOPE_PHRASE)).map(path => `${path}: listed in AGENTS.md but does not hold "${TEST_SCOPE_PHRASE}"`);
   const extra = [...tracked]
     .filter(([path, content]) => !listed.includes(path) && path !== 'AGENTS.md' && !path.startsWith('test/') && content.includes(TEST_SCOPE_PHRASE))
@@ -272,6 +273,16 @@ describe('structure checks: the helpers', () => {
     ]);
     assert.deepEqual(testScopeProblems(agents, tracked), ['src/b.ts: listed in AGENTS.md but does not hold "test files that assert on output"', 'c.md: holds "test files that assert on output" but is not in the AGENTS.md test-scope list']);
   });
+
+  it('reports one not-found problem when the anchor sentence is missing, ignoring the first bullet list', () => {
+    const agents = 'Submit list:\n- `src/index.ts`: one.\n- `src/submit.ts`: two.\n';
+    assert.deepEqual(testScopeProblems(agents, new Map()), ['AGENTS.md: implementer test-scope wording list not found']);
+  });
+
+  it('reports the same not-found problem when the anchor is followed by no backticked bullet paths', () => {
+    const agents = 'The implementer test-scope wording sits in two places:\n\n- plain bullet\n';
+    assert.deepEqual(testScopeProblems(agents, new Map()), ['AGENTS.md: implementer test-scope wording list not found']);
+  });
 });
 
 const testFiles = tsFilesIn(TESTS);
@@ -283,7 +294,7 @@ describe('reading tracked files for the test-scope check', () => {
     writeFileSync(join(dir, 'bin.dat'), Buffer.concat([Buffer.from('test files that assert on output'), Buffer.from([0])]));
     const tracked = textFilesOf(dir, ['ci.yml', 'bin.dat', 'gone.txt']);
     assert.deepEqual([...tracked.keys()], ['ci.yml', 'bin.dat']);
-    assert.deepEqual(testScopeProblems('The implementer test-scope wording sits in two places:\n', tracked), ['ci.yml: holds "test files that assert on output" but is not in the AGENTS.md test-scope list', 'bin.dat: holds "test files that assert on output" but is not in the AGENTS.md test-scope list']);
+    assert.deepEqual(testScopeProblems('The implementer test-scope wording sits in one place:\n- `a.md`: one.\n', tracked), ['a.md: listed in AGENTS.md but does not hold "test files that assert on output"', 'ci.yml: holds "test files that assert on output" but is not in the AGENTS.md test-scope list', 'bin.dat: holds "test files that assert on output" but is not in the AGENTS.md test-scope list']);
   });
 });
 
