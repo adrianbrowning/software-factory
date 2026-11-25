@@ -391,6 +391,19 @@ export function issueGh({ issues, owners = ['*'], repoView = 'echo o/r' }: Issue
 export const CHECKS_OK = { 'demo.md': '# Demo\n\nDo it.\n', '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) };
 export type Reply = { content: { text: string }[] };
 
+/** Runs run 'demo' through its one 'Feature' slice: approve the plan, take the slice, commit, run checks, review with `findings`, record, `beforeComplete`, then complete the slice. */
+export async function completeFeatureSlice(ws: Workspace, findings: Parameters<typeof review>[2], beforeComplete?: () => Promise<void>) {
+  await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')])));
+  await withRun(ws, 'demo', run => nextSlice(ws, run));
+  commit(ws, 'ok');
+  await withRun(ws, 'demo', run => runChecks(ws, run));
+  const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+  await review(ws, reviewId, findings);
+  await withRun(ws, 'demo', run => recordReview(ws, run));
+  await beforeComplete?.();
+  await withRun(ws, 'demo', run => completeSlice(ws, run));
+}
+
 /** A headless run with its one slice done, UI dialogs throwing, and the deferred sink `deferred`. With `deferEarlier`, the slice's green review lists one observation, deferred before the slice completes. */
 export async function retroDoneRun(root: string, deferred: unknown, deferEarlier = false) {
   writeFileSync(join(root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], headless: { submission: 'stop' }, ...(deferred === undefined ? {} : { deferred }) }));
@@ -404,15 +417,9 @@ export async function retroDoneRun(root: string, deferred: unknown, deferEarlier
   const call = async (name: string, params: unknown) => (await tools.get(name)?.execute('id', params, undefined, undefined, caller)) as Reply;
   await commands.get('factory')?.handler('headless demo.md', caller);
   const ws: Workspace = { config: loadConfig(root), root };
-  await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')])));
-  await withRun(ws, 'demo', run => nextSlice(ws, run));
-  commit(ws, 'ok');
-  await withRun(ws, 'demo', run => runChecks(ws, run));
-  const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
-  await review(ws, reviewId, deferEarlier ? [finding('thermo', 'observation', 'naming')] : []);
-  await withRun(ws, 'demo', run => recordReview(ws, run));
-  if (deferEarlier) await call('factory_defer', { observations: ['thermo-naming'] });
-  await withRun(ws, 'demo', run => completeSlice(ws, run));
+  await completeFeatureSlice(ws, deferEarlier ? [finding('thermo', 'observation', 'naming')] : [], async () => {
+    if (deferEarlier) await call('factory_defer', { observations: ['thermo-naming'] });
+  });
   return { call, ws };
 }
 
