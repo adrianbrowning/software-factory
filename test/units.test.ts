@@ -57,6 +57,16 @@ describe('test temp dirs', () => {
   });
 });
 
+/**
+ * Runs a script that writes `out`, waits for a marker file, then runs `stderrCommand`.
+ * The onStdout hook creates the marker, so stderr is written only after runShell recorded stdout.
+ * The wait is bounded by the runShell timeout, so a hook that never fires fails the test instead of hanging.
+ */
+function stdoutThenStderr(root: string, stderrCommand: string) {
+  const marker = join(root, 'stdout-seen');
+  return runShell(`echo out; while [ ! -e '${marker}' ]; do :; done; ${stderrCommand}`, root, 10_000, undefined, undefined, () => writeFileSync(marker, ''));
+}
+
 describe('runShell', () => {
   // A real child process: the process-group kill is the behavior under test, so the timeout uses the real clock.
   it('kills the whole process group on timeout', async () => {
@@ -90,19 +100,19 @@ describe('runShell', () => {
 
   it('reports stderr as the last stream when stderr gets the last non-whitespace output', async () => {
     using temp = dir();
-    const result = await runShell('echo out; sleep 0.2; echo err >&2', temp.root, 10_000);
+    const result = await stdoutThenStderr(temp.root, 'echo err >&2');
     assert.equal(result.lastStream, 'stderr');
   });
 
   it('ignores a whitespace-only chunk on stderr after stdout output', async () => {
     using temp = dir();
-    const result = await runShell(`echo out; sleep 0.2; printf ' \\t\\n\\v\\f\\r' >&2`, temp.root, 10_000);
+    const result = await stdoutThenStderr(temp.root, `printf ' \\t\\n\\v\\f\\r' >&2`);
     assert.equal(result.lastStream, 'stdout');
   });
 
   it('counts a chunk with leading whitespace followed by text as output', async () => {
     using temp = dir();
-    const result = await runShell(`echo out; sleep 0.2; printf '  x' >&2`, temp.root, 10_000);
+    const result = await stdoutThenStderr(temp.root, `printf '  x' >&2`);
     assert.equal(result.lastStream, 'stderr');
   });
 
@@ -114,7 +124,7 @@ describe('runShell', () => {
 
   it('counts a chunk of only non-ASCII whitespace (U+00A0) as output', async () => {
     using temp = dir();
-    const result = await runShell(`echo out; sleep 0.2; printf '\\302\\240' >&2`, temp.root, 10_000);
+    const result = await stdoutThenStderr(temp.root, `printf '\\302\\240' >&2`);
     assert.equal(result.lastStream, 'stderr');
   });
 

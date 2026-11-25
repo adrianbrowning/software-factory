@@ -40,7 +40,7 @@ function hasNonWhitespaceByte(chunk: Buffer) {
 /**
  * Runs `command` through `sh -c` (with `env`, default the process environment) in its own process group, so a timeout or `signal` abort kills the whole tree.
  */
-export function runShell(command: string, cwd: string, timeoutMs: number, signal?: AbortSignal, env?: NodeJS.ProcessEnv): Promise<CommandResult> {
+export function runShell(command: string, cwd: string, timeoutMs: number, signal?: AbortSignal, env?: NodeJS.ProcessEnv, onStdout?: (chunk: Buffer) => void): Promise<CommandResult> {
   const started = Date.now();
   const { promise, resolve } = Promise.withResolvers<CommandResult>();
   const stdout = new Tail();
@@ -71,6 +71,7 @@ export function runShell(command: string, cwd: string, timeoutMs: number, signal
   child.stdout.on('data', (chunk: Buffer) => {
     stdout.push(chunk);
     if (hasNonWhitespaceByte(chunk)) lastStream = 'stdout';
+    onStdout?.(chunk);
   });
   child.stderr.on('data', (chunk: Buffer) => {
     stderr.push(chunk);
