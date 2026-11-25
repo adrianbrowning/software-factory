@@ -357,7 +357,6 @@ describe('implementer sessions', () => {
   });
 
   describe('checks the slice adds to factory.json in the factory_checks reply', () => {
-    /** Commits `.omp/factory.json` holding `content`. */
     const commitConfig = (root: string, content: string) => {
       mkdirSync(join(root, '.omp'), { recursive: true });
       writeFileSync(join(root, '.omp', 'factory.json'), content);
