@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, it } from 'node:test';
+import { tempDir } from './helpers.ts';
 
 const SRC = fileURLToPath(new URL('../src/', import.meta.url));
 const MAX_LINES = 1000;
@@ -482,7 +482,8 @@ const testFiles = tsFilesIn(TESTS);
 
 describe('reading tracked files for the test-scope check', () => {
   it('reads text and binary files of any extension and skips missing ones', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'scope-'));
+    using temp = tempDir('scope-');
+    const dir = temp.root;
     writeFileSync(join(dir, 'ci.yml'), 'test files that assert on output');
     writeFileSync(join(dir, 'bin.dat'), Buffer.concat([Buffer.from('test files that assert on output'), Buffer.from([0])]));
     const tracked = textFilesOf(dir, ['ci.yml', 'bin.dat', 'gone.txt']);
@@ -578,7 +579,8 @@ describe('structure of the CODING_STANDARDS.md references', () => {
   });
 
   it('reads nested src/ and test/ .ts files and excludes only the root structure test', () => {
-    const root = mkdtempSync(join(tmpdir(), 'standards-'));
+    using temp = tempDir('standards-');
+    const root = temp.root;
     for (const dir of ['src/sub', 'test/sub']) mkdirSync(join(root, dir), { recursive: true });
     writeFileSync(join(root, 'src/sub/a.ts'), 'srcNestedName');
     writeFileSync(join(root, 'test/sub/b.ts'), 'testNestedName');
