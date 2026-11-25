@@ -6,7 +6,7 @@
 import { z } from 'zod';
 import { evidence, evidenceLine, redact } from './evidence.ts';
 import { draftOf, isRecordSlice, itemKey, requireSink } from './deferred.ts';
-import { findUnplaced, placeObservations, requireUnplaced } from './ledger.ts';
+import { findingTitle, findUnplaced, placeObservations, requireUnplaced } from './ledger.ts';
 import { carriedSections, renderFinding } from './finding-text.ts';
 import { findingRecord, keptFindings, readRecorded, recordedFindings, type Review, targetingAfter, validationFile, validationSchema } from './review-record.ts';
 import { addEvent, greenCommit, requireActive, type Finding, type Run, type Slice, type Workspace } from './run.ts';
@@ -161,7 +161,7 @@ export function planFix(ws: Workspace, run: Run, request: FixRequest) {
   const shownBug = bug === undefined ? undefined : redact(bug);
   const items = [
     ...(shownBug === undefined ? [] : [{ kind: 'bug' as const, label: 'bug', line: `- Bug: ${shownBug}` }]),
-    ...found.observations.map(finding => ({ kind: 'observation' as const, label: finding.id, line: `- ${finding.id}: ${finding.title}` })),
+    ...found.observations.map(finding => ({ kind: 'observation' as const, label: finding.id, line: `- ${finding.id}: ${findingTitle(finding.title)}` })),
   ];
   return { bug, items, shownBug, ...found, groups: found.groups ?? [{ observations: found.observations, review: found.review }] };
 }

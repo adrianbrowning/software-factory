@@ -2,9 +2,9 @@ import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { REVIEWER, VALIDATOR } from './agents.ts';
 import { deferItems, describeSink, itemKey, requireSink } from './deferred.ts';
-import { evidenceHead, evidenceLine } from './evidence.ts';
+import { evidenceLine } from './evidence.ts';
 import { confirmInteractive, gate } from './gates.ts';
-import { placeObservations } from './ledger.ts';
+import { findingTitle, placeObservations } from './ledger.ts';
 import { defaultChoice, describeChoice, describePlan, placeObservationBatch, placementSchema, planPlace } from './place.ts';
 import { carryObservations, fixAfterGreen, leaveObservations, planCarry, planDefer, planFix, planLeave } from './observations.ts';
 import { renderFinding, storedNote } from './finding-text.ts';
@@ -308,7 +308,7 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
       // Refuses a project without a sink, empty input, unknown ids, and ids the run already placed, without a dialog.
       const planned = planDefer(ws, readRun(ws, feature), params);
       const sink = describeSink(requireSink(ws));
-      const items = planned.drafts.map(draft => `- ${draft.id ?? 'Note'}: ${evidenceHead(draft.title, 200)}`);
+      const items = planned.drafts.map(draft => `- ${draft.id ?? 'Note'}: ${findingTitle(planned.observations.find(finding => finding.id === draft.id)?.title ?? params.note ?? draft.title)}`);
       if (!(await confirmInteractive(ctx, ws, feature, `Defer ${planned.drafts.length} items to ${sink.name}?`, `${items.join('\n')}\n\nSink: ${sink.line}.`))) {
         return reply(`The user did not defer the work. Ask how to handle the observations or the note.\nNext: ${nextAction(readRun(ws, feature))}`);
       }
@@ -339,7 +339,7 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
     async run(params, { feature, ws }, ctx) {
       // Refuses empty input, unknown ids, and ids the run already placed, without a dialog.
       const planned = planLeave(ws, readRun(ws, feature), params);
-      const items = planned.observations.map(finding => `- ${finding.id}: ${evidenceHead(finding.title, 200)}`);
+      const items = planned.observations.map(finding => `- ${finding.id}: ${findingTitle(finding.title)}`);
       const body = `${items.join('\n')}\n\nNo slice builds these and no sink gets them, and no later review of the run raises them again. Slice ${planned.slice.id} keeps its green review.`;
       if (!(await confirmInteractive(ctx, ws, feature, `Leave ${planned.observations.length} observations?`, body))) {
         return reply(`The user did not leave the observations. Ask how to handle them.\nNext: ${nextAction(readRun(ws, feature))}`);

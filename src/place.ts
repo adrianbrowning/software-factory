@@ -6,8 +6,8 @@
  */
 import { z } from 'zod';
 import { draftOf, deferItems, isRecordSlice, itemKey, requireSink } from './deferred.ts';
-import { evidenceHead, evidenceLine } from './evidence.ts';
-import { findingPlace, findUnplaced, placeObservations } from './ledger.ts';
+import { evidenceLine } from './evidence.ts';
+import { findingPlace, findingTitle, findUnplaced, placeObservations } from './ledger.ts';
 import { carriedSections, renderFinding } from './finding-text.ts';
 import { addEvent, DEFAULT_PLACEMENT, fixesOnceInSlice, greenCommit, Invalidated, requireActive, type Finding, type Run, type Slice, type Unplaced, type Workspace } from './run.ts';
 import { needsFullReview, writeTicket } from './workflow.ts';
@@ -87,7 +87,7 @@ export function planPlace(ws: Workspace, run: Run, request: PlaceRequest) {
 
 /** What the confirm dialog shows: one line per observation with its placement. */
 export function describePlan(items: Planned[]) {
-  return items.map(({ choice, entry, target }) => `- ${entry.finding.id} (${entry.category}): ${describeChoice(choice, target?.id)}. ${evidenceHead(entry.finding.title, 200)}`).join('\n');
+  return items.map(({ choice, entry, target }) => `- ${entry.finding.id} (${entry.category}): ${describeChoice(choice, target?.id)}. ${findingTitle(entry.finding.title)}`).join('\n');
 }
 
 const byReview = (items: Planned[]) => [...new Set(items.map(item => item.entry.review))].map(review => ({ findings: items.filter(item => item.entry.review === review).map(item => item.entry.finding), review: { id: review } }));
