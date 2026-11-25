@@ -10,6 +10,34 @@ import { nextSlice } from '../src/workflow.ts';
 import { commit, finding, fixItems, greenWithObservation, listInReport, newRun, review, sh, slice, step, workspace } from './helpers.ts';
 
 describe('fix items', { concurrency: 4 }, () => {
+  describe('sibling-comment note', () => {
+    const note = /search src\/, README\.md, agents\/ and skills\/ for key words of the fact the comment states and fix in this round every other comment the diff makes false for that fact/;
+
+    it('is in the fix file section of a blocking comments finding and not of a bug finding', async () => {
+      using ws = workspace({ maxRounds: 2 });
+      await newRun(ws, [slice('Feature')]);
+      await step(ws, run => nextSlice(ws, run));
+      commit(ws, 'ok');
+      await step(ws, run => runChecks(ws, run));
+      const opened = await step(ws, run => startReview(ws, run));
+      await review(ws, opened.reviewId, [finding('comments', 'high', 'stale'), finding('bug', 'high', 'crash')]);
+      const blocked = await step(ws, run => recordReview(ws, run));
+      assert.ok(blocked.kind === 'fix');
+      const fix = readFileSync(blocked.fixPath, 'utf8');
+      const comments = /### \[high\] comments-stale\n[\s\S]*?(?=\n### |$)/.exec(fix)?.[0] ?? assert.fail('no comments section');
+      const bug = /### \[high\] bug-crash\n[\s\S]*?(?=\n### |$)/.exec(fix)?.[0] ?? assert.fail('no bug section');
+      assert.match(comments, note);
+      assert.doesNotMatch(bug, /sibling|every other comment/);
+    });
+
+    it('is in the fix file section of a comments observation sent by factory_fix', async () => {
+      using ws = workspace({ maxRounds: 2 });
+      await greenWithObservation(ws, [finding('comments', 'observation', 'stale')]);
+      const fixed = await step(ws, run => fixAfterGreen(ws, run, { observations: ['comments-stale'] }, 'Fix now.'));
+      assert.match(readFileSync(fixed.fixPath, 'utf8'), note);
+    });
+  });
+
   it('plans one ordered item list: the redacted bug first, then the observations', async () => {
     using ws = workspace({ maxRounds: 2 });
     await greenWithObservation(ws);
