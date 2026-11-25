@@ -98,7 +98,7 @@ const STOP_REPORT = /NEEDS SEAM|SLICE TOO BIG|MISSING DEPENDENCY/;
  * Build mode, a slice with seams and an Open list naming no stop report: refuses a report that lists no behavior or whose
  * slice commits change no test file (the review's test-validity path rule). It also refuses a report whose behaviors all
  * have seenRed false (the gate cannot verify that a reported red line is true), but only for a slice without a
- * noTestReason: a seamed slice with a noTestReason is stored even when every behavior has seenRed false. Nothing is
+ * noTestReason: a seamed slice with a noTestReason is not refused for that reason when the other checks pass. Nothing is
  * stored when it refuses.
  */
 async function refuseUntestedSeamedSlice(ws: Workspace, slice: Slice, report: ImplementerReport, fixMode: boolean) {
