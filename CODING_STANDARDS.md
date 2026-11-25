@@ -91,4 +91,4 @@ Or key the records by id: `const byId = new Map(records.map((r) => [r.id, r]))`,
 
 An indexed read of a single array (for example `chunk[i]!` in `src/exec.ts`) pairs nothing and is outside this rule.
 
-Example (issue-671 slice 01, past history): `recordReview` paired `blocking[i]` with `findingRecords[i]!`. `src/review.ts` now pairs through a `Map` keyed by id, which is the pattern to copy.
+Example (issue-671 slice 01, past history): `recordReview` paired `blocking[i]` with `findingRecords[i]!`. `src/review.ts` now maps `blocking` once to `{ finding, record }` pairs (`pairs`), which is the pattern to copy.
