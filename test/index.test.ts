@@ -137,7 +137,7 @@ const emptyRepo = () => tempRepo('factory-index-', { 'README.md': 'base\n' });
 
 describe('implementer sessions', () => {
   /** Starts a run on slice 01 of the empty repo at `root`, with the main and factory-implementer callers. */
-  const startedRun = async (root: string, checks = 'true') => {
+  const startedRun = async (root: string, checks = 'true', sliceExtra: Record<string, unknown> = {}) => {
     const handlers = new Map<string, Handler>();
     const tools = load({ handlers });
     const main = {
@@ -150,7 +150,7 @@ describe('implementer sessions', () => {
     const implementer = { ...ctx('sub', 'factory-implementer'), cwd: root };
     const call = async (name: string, params: unknown, caller: unknown) => JSON.stringify(await tools.get(name)?.execute('id', params, undefined, undefined, caller));
     await call('factory_start', { feature: 'demo', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } }, main);
-    const feature = { acceptance: ['works'], blockedBy: [], estimateTokens: 500, seams: ['cli'], title: 'Feature', whatToBuild: 'Feature' };
+    const feature = { acceptance: ['works'], blockedBy: [], estimateTokens: 500, seams: ['cli'], title: 'Feature', whatToBuild: 'Feature', ...sliceExtra };
     await call('factory_plan', { baseRef: 'main', slices: [feature], trunk: 'main' }, main);
     const next = await call('factory_next', {}, main);
     return { call, handlers, implementer, main, next };
@@ -331,6 +331,18 @@ describe('implementer sessions', () => {
     const { next } = await startedRun(repo.root);
     assert.match(next, /Implementer report file: \S+\/\.scratch\/demo\/reports\/01\.md/);
     assert.match(next, /Spawn factory-implementer for slice 01.*read its report file \(reports\/01\.md.*handle any stop report in its Open list, then call factory_checks/);
+  });
+
+  it('tells the implementer in the ticket that a seam file is a location hint, only for a slice with seams', async () => {
+    using withSeams = emptyRepo();
+    const seamed = await startedRun(withSeams.root);
+    const ticket = readFileSync(/Ticket: ([^\\]+)/.exec(seamed.next)?.[1] ?? '', 'utf8');
+    assert.match(ticket, /## Test seams \(agreed at plan approval\)\n\n- cli\n\nEach seam is the public interface the tests go through\. A file named in a seam is a location hint[^\n]*test it at its new place[^\n]*no re-export only to match the seam/);
+    using without = emptyRepo();
+    const bare = await startedRun(without.root, 'true', { noTestReason: 'docs only', seams: [] });
+    const bareTicket = readFileSync(/Ticket: ([^\\]+)/.exec(bare.next)?.[1] ?? '', 'utf8');
+    assert.match(bareTicket, /## Test seams \(agreed at plan approval\)\n\nNone\. Reason: docs only\n\n## Checks/);
+    assert.doesNotMatch(bareTicket, /location hint/);
   });
 
   it('says in the factory_next reply that factory_checks runs the full checks and the implementer runs only what it touched', async () => {
