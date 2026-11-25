@@ -253,7 +253,7 @@ function renderDecisions(run: Run, slice: Slice) {
 export function renderTicket(run: Run, slice: Slice, budget: number) {
   const seams =
     slice.seams.length > 0
-      ? `${slice.seams.map(seam => `- ${seam}`).join('\n')}\n\nEach seam is the public interface the tests go through. A file named in a seam is a location hint: where that interface lived at plan time. When this slice moves the interface, test it at its new place and keep no re-export only to match the seam.`
+      ? `${slice.seams.map(seam => `- ${seam}`).join('\n')}\n\nEach seam is the public interface the tests go through. A file named in a seam is a location hint: where that interface lived at plan time. When this slice moves the interface, test it at its new place and keep no re-export only to match the seam.${slice.noTestReason === undefined ? '' : `\n\nNo test needs to go red first: ${slice.noTestReason}. Tests on this slice pin the existing behavior: write them on the old code first, see them green, keep them green, and report them with seenRed false.`}`
       : `None. Reason: ${slice.noTestReason ?? 'not given'}`;
   return `# ${slice.id}: ${slice.title}
 

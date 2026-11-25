@@ -397,6 +397,17 @@ describe('implementer sessions', () => {
     assert.doesNotMatch(bareTicket, /location hint/);
   });
 
+  it('shows the noTestReason and the pinning sentence in the ticket of a seamed slice that has one', async () => {
+    using repo = emptyRepo();
+    const refactor = await startedRun(repo.root, 'true', { noTestReason: 'behavior stays the same' });
+    const ticket = readFileSync(/Ticket: ([^\\]+)/.exec(refactor.next)?.[1] ?? '', 'utf8');
+    assert.match(ticket, /no re-export only to match the seam\.\n\nNo test needs to go red first: behavior stays the same\. Tests on this slice pin the existing behavior: write them on the old code first, see them green, keep them green, and report them with seenRed false\.\n\n## Checks/);
+    using plain = emptyRepo();
+    const normal = await startedRun(plain.root);
+    const normalTicket = readFileSync(/Ticket: ([^\\]+)/.exec(normal.next)?.[1] ?? '', 'utf8');
+    assert.doesNotMatch(normalTicket, /seenRed false|No test needs to go red/);
+  });
+
   it('says in the factory_next reply that factory_checks runs the full checks and the implementer runs only what it touched', async () => {
     using repo = emptyRepo();
     const { next } = await startedRun(repo.root);
