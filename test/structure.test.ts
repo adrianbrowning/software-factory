@@ -98,6 +98,23 @@ export function someEveryAssertsOf(files: { name: string; source: string }[]) {
   return files.flatMap(file => someEveryAsserts(`test/${file.name}`, file.source));
 }
 
+const SUB_SECOND_SLEEP = /\bsleep +0\.[0-9]/;
+const SUB_SECOND_ALLOW = /allow-sub-second-sleep:\s*[^\s*/"'`]/;
+
+/** One message per line of `source` holding a sub-second `sleep`, unless the same line carries `allow-sub-second-sleep: <reason>`. */
+export function subSecondSleeps(file: string, source: string) {
+  return source.split('\n').flatMap((line, i) =>
+    SUB_SECOND_SLEEP.test(line) && !SUB_SECOND_ALLOW.test(line)
+      ? [`${file}:${i + 1}: sub-second sleep orders events by timing; use a handshake, or mark a duration bound with allow-sub-second-sleep: <reason>`]
+      : [],
+  );
+}
+
+/** The subSecondSleeps messages for each {name, source} file, prefixed `test/<name>`. */
+export function subSecondSleepsOf(files: { name: string; source: string }[]) {
+  return files.flatMap(file => subSecondSleeps(`test/${file.name}`, file.source));
+}
+
 /**
  * The files `source` imports from its own directory, by its static import and `export … from` declarations, side-effect
  * imports included. With `runtimeOnly`, a declaration that is wholly type-only (`import type`, `export type`) is left out:
@@ -183,6 +200,40 @@ const tsFilesIn = (dir: string) =>
 const files = tsFilesIn(SRC);
 
 describe('structure checks: the helpers', () => {
+  it('subSecondSleeps flags sub-second sleeps with file and line, and nothing else', () => {
+    const sleep = (n: string) => 'sleep ' + n;
+    const source = ['a', `run("${sleep('0.2')}")`, `x; ${'sleep  ' + '0.05'}`, sleep('1'), sleep('5'), sleep('30'), sleep('0'), 'no' + sleep('0.2')].join('\n');
+    const found = subSecondSleeps('f.ts', source);
+    assert.equal(found.length, 2);
+    assert.match(found[0] ?? '', /^f\.ts:2:/);
+    assert.match(found[1] ?? '', /^f\.ts:3:/);
+  });
+
+  it('subSecondSleeps allows a line carrying the marker with a reason, not a marker on another line', () => {
+    const sleep = 'sleep ' + '0.2';
+    assert.deepEqual(subSecondSleeps('f.ts', `${sleep} // allow-sub-second-sleep: bounds a timeout`), []);
+    assert.equal(subSecondSleeps('f.ts', `// allow-sub-second-sleep: why\n${sleep}`).length, 1);
+  });
+
+  it('subSecondSleeps does not accept a marker without reason text', () => {
+    const sleep = 'sleep ' + '0.2';
+    assert.equal(subSecondSleeps('f.ts', `${sleep} /* allow-sub-second-sleep: */`).length, 1);
+    assert.equal(subSecondSleeps('f.ts', `${sleep} // allow-sub-second-sleep:   `).length, 1);
+    assert.equal(subSecondSleeps('f.ts', `${sleep} /* allow-sub-second-sleep: **/`).length, 1);
+    assert.equal(subSecondSleeps('f.ts', `${sleep} /* allow-sub-second-sleep: ***/`).length, 1);
+    assert.equal(subSecondSleeps('f.ts', `${sleep} "allow-sub-second-sleep:"`).length, 1);
+    assert.equal(subSecondSleeps('f.ts', `${sleep} \`allow-sub-second-sleep:\``).length, 1);
+    assert.deepEqual(subSecondSleeps('f.ts', `${sleep} /* allow-sub-second-sleep: why */`), []);
+    assert.deepEqual(subSecondSleeps('f.ts', `${sleep} // allow-sub-second-sleep: #852 bounds timeout`), []);
+    assert.deepEqual(subSecondSleeps('f.ts', `${sleep} // allow-sub-second-sleep: (why)`), []);
+  });
+
+  it('subSecondSleepsOf prefixes test/<name> and the line', () => {
+    const found = subSecondSleepsOf([{ name: 'x.test.ts', source: 'a\n' + 'sleep ' + '0.5' }]);
+    assert.equal(found.length, 1);
+    assert.match(found[0] ?? '', /^test\/x\.test\.ts:2:/);
+  });
+
   it('cites a comment with a decision number, by file and line', () => {
     const source = "const a = 1;\n/**\n * Per\n * decision 4, do it.\n */\nconst b = 2; // Decisions 12 and 13\n";
     assert.deepEqual(decisionCitations('src/x.ts', source), [
@@ -355,6 +406,10 @@ describe('structure of test/', () => {
 
   it('has no assert.ok over .some() or .every()', () => {
     assert.deepEqual(someEveryAssertsOf(testFiles), []);
+  });
+
+  it('has no sub-second sleep without an allow-sub-second-sleep marker', () => {
+    assert.deepEqual(subSecondSleepsOf(testFiles), []);
   });
 });
 
