@@ -4,7 +4,7 @@ import fs, { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from '
 import { syncBuiltinESMExports } from 'node:module';
 import { dirname, join, resolve } from 'node:path';
 import { beforeEach, describe, it, mock } from 'node:test';
-import { type Command, ctx, type Handler, load, type TestContext } from './extension.ts';
+import { type Command, ctx, type Handler, load, loadWithActiveTools, type TestContext } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
 import { redact } from '../src/evidence.ts';
 import { noteText } from '../src/legacy-observations.ts';
@@ -1464,12 +1464,11 @@ describe('active run in a fresh extension copy', () => {
     resetModuleState();
     const handlers = new Map<string, Handler>();
     const commands = new Map<string, Command>();
-    const probe: { activeTools?: () => string[] } = {};
-    const tools = load({ commands, handlers, initialActive, probe });
+    const { tools, activeTools } = loadWithActiveTools({ commands, handlers, initialActive });
     const notices: string[] = [];
     const main = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, editor: async () => 'true', notify: (message: string) => notices.push(message) } };
     const stop = async () => ((await handlers.get('session_stop')?.({ session_id: 'session', messages: [], type: 'session_stop' }, main)) as { reason: string }).reason;
-    const active = () => probe.activeTools?.() ?? [];
+    const active = activeTools;
     return { active, commands, main, notices, stop, tools, [Symbol.dispose]: () => repo[Symbol.dispose]() };
   };
 
@@ -1491,9 +1490,8 @@ describe('active run in a fresh extension copy', () => {
 
   it('replaces the default active tools with an explicit initialActive, including an empty list', async () => {
     for (const initialActive of [[], ['x']]) {
-      const probe: { activeTools?: () => string[] } = {};
-      load({ initialActive, probe });
-      assert.deepEqual(probe.activeTools?.(), initialActive);
+      const { activeTools } = loadWithActiveTools({ initialActive });
+      assert.deepEqual(activeTools(), initialActive);
     }
   });
 
