@@ -22,6 +22,10 @@ A refusal or error message that names a next step must name a step that works in
 
 Tests that assert on a section of a review data file extract it with `dataSection` or `fixItems` from `test/helpers.ts`, not with an inline regex that names the next section. Adding a section then breaks no test.
 
+## assert.ok over some/every
+
+Never wrap `.some()` or `.every()` in `assert.ok`: it prints only `false`. Use `assert.deepEqual(arr.filter(x => !pred(x)), [])` for `every`, `assert.ok(arr.find(pred), message with the array)` or `assert.match` on the found item for `some`, and `assert.deepEqual(arr.filter(pred), [])` for `!some`. `test/structure.test.ts` enforces it.
+
 ## Reply lines in tests
 
 A test outside the feature that owns a reply or summary line matches only that line's stable part, for example the command and the exit code. Only the owning feature's tests pin the full wording, so a wording change breaks one test file.

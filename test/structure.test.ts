@@ -68,6 +68,31 @@ export function unmatchedAsserts(file: string, source: string) {
   return found;
 }
 
+/** One message per assert.ok call, with or without a message argument, whose first argument has a `.some(...)` or `.every(...)` call among its top-level `&&` operands (parentheses and `!` ignored). */
+export function someEveryAsserts(file: string, source: string) {
+  const sf = ts.createSourceFile('x.ts', source, ts.ScriptTarget.Latest, true);
+  const found: string[] = [];
+  const operands = (expr: ts.Expression): ts.Expression[] => {
+    if (ts.isParenthesizedExpression(expr)) return operands(expr.expression);
+    if (ts.isPrefixUnaryExpression(expr) && expr.operator === ts.SyntaxKind.ExclamationToken) return operands(expr.operand);
+    if (ts.isBinaryExpression(expr) && expr.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken) return [...operands(expr.left), ...operands(expr.right)];
+    return [expr];
+  };
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && ts.isIdentifier(node.expression.expression) && node.expression.expression.text === 'assert' && node.expression.name.text === 'ok' && node.arguments[0] !== undefined) {
+      for (const operand of operands(node.arguments[0])) {
+        if (ts.isCallExpression(operand) && ts.isPropertyAccessExpression(operand.expression) && (operand.expression.name.text === 'some' || operand.expression.name.text === 'every')) {
+          found.push(`${file}:${sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1}: assert.ok over .${operand.expression.name.text}() hides the failing value`);
+          break;
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return found;
+}
+
 /**
  * The files `source` imports from its own directory, by its static import and `export … from` declarations, side-effect
  * imports included. With `runtimeOnly`, a declaration that is wholly type-only (`import type`, `export type`) is left out:
@@ -244,6 +269,16 @@ describe('structure checks: the helpers', () => {
     assert.deepEqual(unmatchedAsserts('test/x.test.ts', 'assert.throws(f, /x/);'), []);
   });
 
+  it('refuses assert.ok over a some/every operand, with or without a message, at the line the call starts', () => {
+    const source = ['assert.ok(arr.some(p));', 'assert.ok(arr.every(p));', 'assert.ok(!arr.some(p));', 'assert.ok(x && arr.some(p));', 'assert.ok((arr.some(p)));', "assert.ok(arr.some(p), 'msg');"].join('\n');
+    assert.deepEqual(someEveryAsserts('test/x.test.ts', source), [1, 2, 3, 4, 5, 6].map(line => `test/x.test.ts:${line}: assert.ok over .${line === 2 ? 'every' : 'some'}() hides the failing value`));
+  });
+
+  it('lets assertions that print the failing value through', () => {
+    const source = ['assert.ok(arr.find(p));', 'assert.deepEqual(arr.filter(p), []);', 'assert.equal(arr.some(p), true);', 'assert.ok(f(arr.some(p)));', 'assert.ok(x || arr.some(p));'].join('\n');
+    assert.deepEqual(someEveryAsserts('test/x.test.ts', source), []);
+  });
+
   it('refuses a re-export from a relative module, at the line the declaration starts', () => {
     const source = ["export { a } from './a.ts';", 'export {', '  b,', "} from '../b';", "export * from './c.ts';", "export * as d from './d.ts';", "export type { E } from './e.ts';"].join('\n');
     assert.deepEqual(reExportsOf('src/x.ts', source), [
@@ -306,6 +341,10 @@ describe('reading tracked files for the test-scope check', () => {
 describe('structure of test/', () => {
   it('has no assert.throws or assert.rejects without a message matcher', () => {
     assert.deepEqual(testFiles.flatMap(file => unmatchedAsserts(`test/${file.name}`, file.source)), []);
+  });
+
+  it('has no assert.ok over .some() or .every()', () => {
+    assert.deepEqual(testFiles.flatMap(file => someEveryAsserts(`test/${file.name}`, file.source)), []);
   });
 });
 
