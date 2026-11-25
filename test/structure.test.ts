@@ -634,21 +634,27 @@ describe('structure of the CODING_STANDARDS.md references', () => {
   });
 });
 
-function sharedReferenceProblems(reviewDir: string, referencesDir: string): string[] {
-  const problems: string[] = [];
+function sharedReferences(reviewDir: string): { file: string; ref: string }[] {
+  const found: { file: string; ref: string }[] = [];
   for (const name of readdirSync(reviewDir).filter(n => n.endsWith('.md')).sort()) {
     const text = readFileSync(join(reviewDir, name), 'utf8');
-    for (const match of text.matchAll(/<reference dir>\/\.\.\/([^\s`<>]+?\.md)/g)) {
-      if (!existsSync(join(referencesDir, match[1]!))) problems.push(`${name}: <reference dir>/../${match[1]} is missing from the references directory`);
-    }
+    for (const match of text.matchAll(/<reference dir>\/\.\.\/([^\s`<>]+?\.md)/g)) found.push({ file: name, ref: match[1]! });
   }
-  return problems;
+  return found;
+}
+
+function sharedReferenceProblems(reviewDir: string, referencesDir: string): string[] {
+  return sharedReferences(reviewDir)
+    .filter(({ ref }) => !existsSync(join(referencesDir, ref)))
+    .map(({ file, ref }) => `${file}: <reference dir>/../${ref} is missing from the references directory`);
 }
 
 describe('structure of the review references', () => {
   it('every shared reference path named in review/*.md exists', () => {
     const references = fileURLToPath(new URL('../skills/software-factory/references', import.meta.url));
     assert.deepEqual(sharedReferenceProblems(join(references, 'review'), references), []);
+    const names = new Set(sharedReferences(join(references, 'review')).map(r => r.ref));
+    assert.ok(names.has('known-observations.md') && names.has('prose-rules.md'), `found: ${[...names].join(', ')}`);
   });
 
   it('reports a shared reference path whose file is missing', () => {
