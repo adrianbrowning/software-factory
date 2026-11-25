@@ -1174,7 +1174,7 @@ describe('reopen', () => {
       [['done', 'ready', undefined], ['pending', 'checks', undefined], ['pending', 'checks', undefined]],
     );
 
-    await step(ws, current => nextSlice(ws, current));
+    const next = await step(ws, current => nextSlice(ws, current));
     assert.deepEqual([next?.id, next?.phase, sh(ws.root, 'branch', '--show-current')], ['02', 'checks', second]);
     await step(ws, current => runChecks(ws, current));
     assert.equal((await step(ws, current => startReview(ws, current))).reviewId, '02-r2');
@@ -1291,7 +1291,7 @@ describe('follow-up slice', () => {
       ],
     );
 
-    await step(ws, current => nextSlice(ws, current));
+    const next = await step(ws, current => nextSlice(ws, current));
     assert.deepEqual([next?.id, next?.phase, sh(ws.root, 'rev-parse', 'HEAD')], ['02', 'implement', greenCommit(done)]);
   });
 
