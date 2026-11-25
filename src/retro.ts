@@ -90,7 +90,7 @@ export async function fileFactoryIssues(ws: Workspace, findings: RetroFinding[])
   const urls: Record<string, string> = {};
   for (const finding of findings) {
     try {
-      urls[finding.title] = (await gh(ws.root, 'issue', 'create', '-R', ws.config.factoryRepo, '--title', finding.title, '--body', retroIssueBody(finding))).trim();
+      urls[finding.title] = (await gh(ws.root, 'issue', 'create', '-R', ws.config.factoryRepo, '--title', retroTitle(finding.title), '--body', retroIssueBody(finding))).trim();
     } catch (error) {
       return { error: error instanceof Error ? error.message : String(error), urls };
     }

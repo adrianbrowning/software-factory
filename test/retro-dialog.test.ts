@@ -7,7 +7,7 @@ import { retroTitle } from '../src/retro.ts';
 import { withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, planSlices } from '../src/workflow.ts';
-import { CHECKS_OK, commit, review, slice, tempRepo } from './helpers.ts';
+import { CHECKS_OK, commit, fakeGh, review, slice, tempRepo } from './helpers.ts';
 
 beforeEach(() => resetModuleState());
 
@@ -17,6 +17,7 @@ const TITLE = `first\nsecond ${TOKEN}`;
 describe('factory_retro confirm dialog', () => {
   it('shows an apply finding and a file-issue finding whose title spans lines and holds a credential as one redacted line each', async () => {
     using repo = tempRepo('factory-retro-dialog-', CHECKS_OK);
+    using gh = fakeGh();
     const confirms: string[] = [];
     const confirm = async (_title: string, message: string) => {
       confirms.push(message);
@@ -44,6 +45,9 @@ describe('factory_retro confirm dialog', () => {
     assert.match(dialog, /^- first second <REDACTED>$/m);
     assert.match(dialog, /^## first second <REDACTED>$/m);
     assert.ok(!dialog.includes(TOKEN));
+    const args = gh.args();
+    assert.ok(args.includes('--title first second <REDACTED> --body'), args);
+    assert.ok(!args.includes(TOKEN));
   });
 
   it('retroTitle puts a headless gate list entry on one redacted line, clipped at 500 characters', () => {
