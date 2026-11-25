@@ -26,3 +26,5 @@ Prove hook or child-session behavior with a real omp run, see docs/smoke-testing
 Tests run on node:test, not vitest; run one test file with `sh scripts/test.sh <file>` or `pnpm run test <file>`.
 
 When a change makes a `src/` file longer, adds a `src/` file, or moves code between `src/` modules, run `sh scripts/test.sh test/structure.test.ts` before committing. It enforces the 1000-line limit per `src/` file, no ticket decision citations in comments, no runtime import cycles, and no re-export shims between `src/` modules.
+
+`test/structure.test.ts` also checks the implementer test-scope wording places: each file listed above must hold "test files that assert on output", and no other git-tracked file outside `test/` and `AGENTS.md` may. When you add or remove a place, edit the list above; the test reads it.
