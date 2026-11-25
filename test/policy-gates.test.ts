@@ -20,8 +20,8 @@ const GATES = ['resume', 'plan', 'reslice', 'decide', 'seams', 'fix', 'carry', '
 type Stage = 'intake' | 'active' | 'green' | 'done';
 type Reply = { content: { text: string }[] };
 
-/** A headless run in the repo at `root`, whose UI throws on any dialog, taken to `stage` with `titles` slices. */
-async function headlessRun(root: string, stage: Stage, policy: Record<string, string>, titles = ['Feature'], extra: Record<string, unknown> = {}) {
+/** A headless run in the repo at `root`, whose UI throws on any dialog, taken to `stage` with `titles` slices; `flags` follow `/factory headless demo.md`. */
+async function headlessRun(root: string, stage: Stage, policy: Record<string, string>, titles = ['Feature'], extra: Record<string, unknown> = {}, flags = '') {
   writeFileSync(join(root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], headless: { submission: 'stop', ...policy }, ...extra }));
   sh(root, 'commit', '-qam', 'policy');
   const commands = new Map<string, Command>();
@@ -33,7 +33,7 @@ async function headlessRun(root: string, stage: Stage, policy: Record<string, st
   };
   const caller = { ...ctx('main', 'main'), cwd: root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: noDialog, notify() {}, select: noDialog } };
   const call = async (name: string, params: unknown) => (await tools.get(name)?.execute('id', params, undefined, undefined, caller)) as Reply;
-  await commands.get('factory')?.handler('headless demo.md', caller);
+  await commands.get('factory')?.handler(`headless demo.md${flags}`, caller);
   const ws: Workspace = { config: loadConfig(root), root };
   if (stage !== 'intake') {
     await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, titles.map(title => slice(title)))));
@@ -399,10 +399,47 @@ describe('headless round limits', () => {
     assert.equal(run.status, 'paused');
   });
 
-  it('pins the headless fix budget to 3 rounds whatever maxRounds is configured', async () => {
+  it('gives a headless slice 3 fix rounds whatever maxRounds is, and headlessMaxRounds when it is configured', async () => {
     using repo = tempRepo('factory-limits-', CHECKS_OK);
     const { ws } = await headlessRun(repo.root, 'active', {}, ['Feature'], { maxRounds: 5 });
     assert.equal(readRun(ws, 'demo').slices[0]?.roundLimit, 3);
+    using configured = tempRepo('factory-limits-', CHECKS_OK);
+    const set = await headlessRun(configured.root, 'active', {}, ['One', 'Two'], { headlessMaxRounds: 7, maxRounds: 5 });
+    assert.deepEqual(readRun(set.ws, 'demo').slices.map(slice => slice.roundLimit), [7, 7]);
+  });
+
+  it('keeps the fix rounds of --max-rounds, else of the config at start, for every slice of the run, also after the config changes', async () => {
+    using repo = tempRepo('factory-limits-', CHECKS_OK);
+    const { call, ws } = await headlessRun(repo.root, 'active', {}, ['Feature'], { headlessMaxRounds: 7 }, ' --max-rounds 5');
+    assert.equal(readRun(ws, 'demo').slices[0]?.roundLimit, 5);
+    writeFileSync(join(repo.root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], headless: { submission: 'stop' }, headlessMaxRounds: 2 }));
+    sh(repo.root, 'commit', '-qam', 'fewer rounds');
+    await call('factory_reslice', { slices: [slice('Part one'), slice('Part two')] });
+    assert.deepEqual(readRun(ws, 'demo').slices.map(item => item.roundLimit), [5, 5]);
+    using configured = tempRepo('factory-limits-', CHECKS_OK);
+    const set = await headlessRun(configured.root, 'active', {}, ['Feature'], { headlessMaxRounds: 7 });
+    writeFileSync(join(configured.root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], headless: { submission: 'stop' }, headlessMaxRounds: 2 }));
+    sh(configured.root, 'commit', '-qam', 'fewer rounds');
+    await set.call('factory_reslice', { slices: [slice('Part one'), slice('Part two')] });
+    assert.deepEqual(readRun(set.ws, 'demo').slices.map(item => item.roundLimit), [7, 7]);
+  });
+
+  it('on resume reports the run fix rounds for new slices and the saved limit of the active slice when it differs', async () => {
+    using repo = tempRepo('factory-limits-', CHECKS_OK);
+    const { ws } = await headlessRun(repo.root, 'active', {}, ['One', 'Two'], { headlessMaxRounds: 7 });
+    // A slice saved before the run kept its fix rounds can hold another limit.
+    await withRun(ws, 'demo', run => {
+      run.status = 'paused';
+      run.slices[0]!.status = 'done';
+      run.slices[1]!.status = 'active';
+      run.slices[1]!.roundLimit = 4;
+    });
+    writeFileSync(join(repo.root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], headless: { submission: 'stop' }, headlessMaxRounds: 2 }));
+    sh(repo.root, 'commit', '-qam', 'fewer rounds');
+    resetModuleState();
+    const resumed = (await headlessRunCaller(repo.root).call('factory_start', { resume: 'demo' })) as Reply;
+    assert.match(resumed.content[0]?.text ?? '', /Fix rounds per slice: 7 \(active slice 02: 4\)\./);
+    assert.equal(readRun(ws, 'demo').slices[1]?.roundLimit, 4);
   });
 
   it('clears the unresolved record when a decision reopens the review and the next review is green', async () => {

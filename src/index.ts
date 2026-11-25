@@ -58,9 +58,9 @@ import {
   resolveStall,
   resumeRun,
   saveChecks,
+  sliceRounds,
   startRun,
   summarize,
-  HEADLESS_FIX_ROUNDS,
 } from './workflow.ts';
 import { fileFactoryIssues, type FiledIssues, headlessRetroGateBody, parseRetro, recordRetro, retroDrafts, retroIssueBody, retroSchema, retroTitle } from './retro.ts';
 import { sourceInputSchema } from './source.ts';
@@ -232,7 +232,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
   }
 
   /** Shared by `factory_start` and `/factory headless`; only the command passes `mode`, because factory_start always creates interactive runs. */
-  async function startOrResume(params: z.infer<typeof startSchema> & { base?: string; mode?: Run['mode'] }, { entry, ws }: { entry: RootEntry; ws: Workspace }, ctx: ExtensionContext) {
+  async function startOrResume(params: z.infer<typeof startSchema> & { base?: string; maxRounds?: number; mode?: Run['mode'] }, { entry, ws }: { entry: RootEntry; ws: Workspace }, ctx: ExtensionContext) {
     const sessionId = ctx.sessionManager.getSessionId();
     let run: Run;
     const notes: string[] = [];
@@ -285,6 +285,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
         },
         base: pinned,
         feature: params.feature,
+        maxRounds: params.maxRounds,
         mode,
         sessionId,
         source: loaded.source,
@@ -298,8 +299,11 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
       open === undefined
         ? ''
         : `\nOpen review ${open.reviewId}: Data file: ${open.dataFile}; Reference dir: ${open.referenceDir}; Findings dir: ${open.findingsDir}; domains with no submission: ${open.missingDomains.length === 0 ? 'none' : open.missingDomains.join(', ')}; validation submitted: ${open.validated ? 'yes' : 'no'}`;
+    const rounds = sliceRounds(ws, run);
+    const active = activeSlice(run);
+    const activeRounds = active === undefined || active.roundLimit === rounds ? '' : ` (active slice ${active.id}: ${active.roundLimit})`;
     return reply(
-      `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${run.mode === 'headless' ? HEADLESS_FIX_ROUNDS : ws.config.maxRounds}.${warned}${branchNote === '' ? '' : `\n${branchNote}`}\nNext: ${nextAction(run)}${openText}`,
+      `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${rounds}${activeRounds}.${warned}${branchNote === '' ? '' : `\n${branchNote}`}\nNext: ${nextAction(run)}${openText}`,
       summary,
     );
   }
@@ -594,7 +598,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
   });
 
   pi.registerCommand('factory', {
-    description: 'Software factory: /factory <issue> | headless <issue> [--related refs] [--base branch] | resume <feature> | pause | status | checks | submit [feature]',
+    description: 'Software factory: /factory <issue> | headless <issue> [--related refs] [--base branch] [--max-rounds n] | resume <feature> | pause | status | checks | submit [feature]',
     async handler(args, ctx) {
       const [verb = '', ...rest] = args.trim().split(/\s+/);
       const argument = rest.join(' ');
@@ -665,12 +669,12 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
         return;
       }
       if (verb === 'headless') {
-        if (argument === '') throw new Error('Usage: /factory headless <issue ref> [--related <ref>,<ref>,...] [--base <local branch>]');
+        if (argument === '') throw new Error('Usage: /factory headless <issue ref> [--related <ref>,<ref>,...] [--base <local branch>] [--max-rounds <n>]');
         // The command starts the run itself, so its mode is headless whatever the model does next.
         const target = headlessTarget(argument);
         const feature = target.feature;
         const source = target.source;
-        await startOrResume({ ...(target.base === undefined ? {} : { base: target.base }), feature, mode: 'headless', source }, { entry: await cachedRoot(ctx.cwd), ws }, ctx);
+        await startOrResume({ ...(target.base === undefined ? {} : { base: target.base }), feature, ...(target.maxRounds === undefined ? {} : { maxRounds: target.maxRounds }), mode: 'headless', source }, { entry: await cachedRoot(ctx.cwd), ws }, ctx);
         sendContinuation(`A headless software-factory run "${feature}" is started for: ${argument}\nRead skill://software-factory and continue it from its next action (${nextAction(readRun(ws, feature))}).`);
         return;
       }

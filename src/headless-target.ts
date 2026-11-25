@@ -3,26 +3,29 @@ import { requireFeatureName } from './feature-name.ts';
 import { RELATED_MAX, type SourceInput } from './source.ts';
 
 /**
- * What `/factory headless <issue ref> [--related <ref>,<ref>] [--base <branch>]` starts a run from, and the run's name. A GitHub issue (`102`, `#102`, or its
+ * What `/factory headless <issue ref> [--related <ref>,<ref>] [--base <branch>] [--max-rounds <n>]` starts a run from, and the run's name. A GitHub issue (`102`, `#102`, or its
  * URL) is named `issue-<n>` after its number; anything else is an issue file, named after its file name in kebab-case.
  * `--base` names the local branch the run builds on, returned as `base`. `--related` adds issue refs (number, `#number` or issue URL) as `source.related`; it needs a GitHub primary ref.
+ * `--max-rounds` sets the run's fix rounds per slice, returned as `maxRounds`.
  */
-export function headlessTarget(argument: string): { base?: string; feature: string; source: SourceInput } {
-  const { base, rest } = extractBase(argument);
+export function headlessTarget(argument: string): { base?: string; feature: string; maxRounds?: number; source: SourceInput } {
+  const rounds = extractFlag(argument, 'max-rounds', 'number', 'a positive whole number');
+  if (rounds.value !== undefined && !(/^[1-9]\d*$/.test(rounds.value) && Number.isSafeInteger(Number(rounds.value)))) throw new Error('--max-rounds needs a value: a positive whole number.');
+  const { value: base, rest } = extractFlag(rounds.rest, 'base', 'branch', 'the name of an existing local branch');
   const target = targetWithoutBase(rest);
-  return base === undefined ? target : { base, ...target };
+  return { ...(base === undefined ? {} : { base }), ...target, ...(rounds.value === undefined ? {} : { maxRounds: Number(rounds.value) }) };
 }
 
-/** Takes `--base <branch>` out of the argument, wherever it sits after the primary ref. */
-function extractBase(argument: string) {
-  const flag = /\s+--base(?=\s|$)(?:\s+(\S+))?/g;
+/** Takes `--<name> <value>` out of the argument, wherever it sits after the primary ref. */
+function extractFlag(argument: string, name: string, noun: string, value: string) {
+  const flag = new RegExp(`\\s+--${name}(?=\\s|$)(?:\\s+(\\S+))?`, 'g');
   const found = [...argument.matchAll(flag)];
-  if (found.length > 1) throw new Error('--base takes one branch; it was given more than once.');
+  if (found.length > 1) throw new Error(`--${name} takes one ${noun}; it was given more than once.`);
   const match = found[0];
   if (match === undefined) return { rest: argument };
-  const base = match[1];
-  if (base === undefined || base.startsWith('--')) throw new Error('--base needs a value: the name of an existing local branch.');
-  return { base, rest: argument.slice(0, match.index) + argument.slice(match.index + match[0].length) };
+  const given = match[1];
+  if (given === undefined || given.startsWith('--')) throw new Error(`--${name} needs a value: ${value}.`);
+  return { rest: argument.slice(0, match.index) + argument.slice(match.index + match[0].length), value: given };
 }
 
 function targetWithoutBase(argument: string): { feature: string; source: SourceInput } {

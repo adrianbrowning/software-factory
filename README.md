@@ -197,6 +197,11 @@ given together in either order after the issue. A headless run's base is fixed a
 /factory headless 294 --base issue-293-top-slice --related 260
 ```
 
+`/factory headless <issue> --max-rounds <n>` sets the run's fix rounds per slice to a positive whole number `n`. Without
+it the run takes `headlessMaxRounds` from `.omp/factory.json`. The run keeps this value from its start: every slice it
+plans, reslices or appends gets it, also after the config changes, and `/factory resume` keeps it. It can be given with
+`--base` and `--related` in any order after the issue.
+
 Run it from a worktree of the repository, with checks configured (a headless start refuses a repository with no checks).
 The issue-text, planning, stop-report, observation and retro rules of a headless run are in `skills/software-factory/SKILL.md`.
 
@@ -225,7 +230,9 @@ pauses does not stop the next one; only a run that omp leaves `running` (at `--m
 batch, because it blocks every new run in the worktree. The script prints each run's status and PR URLs, and the reason
 of each paused run, and exits 1 when any issue did not end with a done run whose PRs are open. Set `OMP` (default
 `,omp`), `OMP_ARGS` (extra omp flags, split on spaces, for example `--advisor`), `PLUGIN_DIR` (default the installed
-plugin), `MAX_COST` (default 25) and `MAX_TIME` (default 5400); the logs go to `<git dir>/headless-backlog/`. Set these
+plugin), `MAX_COST` (default 25), `MAX_TIME` (default 5400) and `MAX_ROUNDS` (unset by default; when set, each new run
+gets `--max-rounds $MAX_ROUNDS`, and a resumed run keeps the value it started with; a value that is not a positive whole
+number of at most 15 digits exits 2 before any run); the logs go to `<git dir>/headless-backlog/`. Set these
 in the environment instead of editing the script: the script's test runs the working-tree copy. The script is safe to
 run from the worktree that the runs use, also when a run checks out a branch that changes `scripts/headless-backlog.sh`:
 the shell has read the whole script before the first run starts.
@@ -379,6 +386,7 @@ working tree, and unknown keys are rejected.
 | `checkPath` | `[]` | Directories put before the omp process `PATH` when checks run. Each entry is an absolute path or starts with `~/`. Use it when a check command is not found (exit 127), for example `["~/Library/pnpm/bin"]`. Find the directory with `command -v <tool>` in your terminal |
 | `checkTimeoutMs` | `600000` | Per-check timeout; the whole process group is killed |
 | `maxRounds` | `3` | Fix rounds per slice before the user decides to continue or pause; each continue, and each yes to the `/factory resume` question on a stalled run, adds this many |
+| `headlessMaxRounds` | `3` | Fix rounds per slice in a headless run (`/factory headless`), unless `--max-rounds` sets them. The run keeps the value from its start. A headless run never raises them: when a slice uses them up, its open items go on record as accepted-unresolved, or the run pauses when its checks are red |
 | `headless.<gate>` | `auto` | Headless runs only (`/factory headless`); interactive runs never read it. One key per gate: `resume`, `plan`, `reslice`, `decide`, `seams`, `fix`, `carry`, `reopen`, `followUp`, `retro`, `checks`, `submission`. `auto` proceeds and records an `autonomous` run event naming the gate; `stop` pauses the run with a reason naming the gate and throws (except `submission`: `stop` opens no PRs and leaves the run with its status, see the paragraph on `headless.submission` above; `auto` opens draft PRs through `gh stack`) (`checks` has no run yet, so it refuses the start). The orchestrator can pause a headless run itself with `factory_pause`. Text from issue authors outside the repository is always left out of a headless run, and a headless start without configured checks saves the detected ones, else refuses. |
 | `deferred` | unset | Where `factory_defer` sends green-review observations and notes, and where a headless run's accepted-unresolved findings go by themselves: `{ "kind": "file", "path": "docs/factory-deferred.md" }` (path optional; items queue on the run for the file to be written) or `{ "kind": "github" }` (one `gh issue create` per item, the issue URL stored). Each item names the run, slice and review id (an item filed from a finding also names the finding's symbol first, the path:line marked as the location at filing time, and the commit the review was made on; a note names only run, slice and review), and `factory_status` lists them with their locations. An interactive run asks the user before `factory_defer` files or queues anything (a headless run does not ask). Ids the observation ledger already holds (carried, deferred, fixed or left) are refused. With no sink, `factory_defer` is refused and accepted-unresolved findings stay on the slice and in its event. |
 | `sliceTokenBudget` | `400000` | Planned context per slice: 40% of a 1M window |
