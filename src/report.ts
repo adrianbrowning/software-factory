@@ -95,18 +95,20 @@ function recordFixedObservations(run: Run, slice: Slice, fixItems: string[], own
 const STOP_REPORT = /NEEDS SEAM|SLICE TOO BIG|MISSING DEPENDENCY/;
 
 /**
- * Build mode, a slice with seams and an Open list naming no stop report: refuses a report that lists no behavior or whose
- * slice commits change no test file (the review's test-validity path rule). It also refuses a report whose behaviors all
- * have seenRed false (the gate cannot verify that a reported red line is true), but only for a slice without a
- * noTestReason: a seamed slice with a noTestReason is not refused for that reason when the other checks pass. Nothing is
- * stored when it refuses.
+ * Build mode, a slice with seams and an Open list naming no stop report: refuses a report that lists no behavior. For a
+ * slice without a noTestReason it also refuses a report whose slice commits change no test file (the review's
+ * test-validity path rule) and one whose behaviors all have seenRed false (the gate cannot verify that a reported red
+ * line is true). A seamed slice with a noTestReason (for example a behavior-preserving refactor that relies on existing
+ * tests) is exempt from both of those rules but still needs one behavior, such as the existing test that pins the code.
+ * Nothing is stored when it refuses.
  */
 async function refuseUntestedSeamedSlice(ws: Workspace, slice: Slice, report: ImplementerReport, fixMode: boolean) {
   if (fixMode || slice.seams.length === 0 || report.open.some(item => STOP_REPORT.test(item))) return;
   const noBehaviors = report.behaviors.length === 0;
+  if (!noBehaviors && slice.noTestReason !== undefined) return;
   const changed = noBehaviors ? [] : await changedPaths(ws.root, `${slice.parentBranch}...refs/heads/${slice.branch}`);
   if (!noBehaviors && changed.some(file => TEST_PATH.test(file))) {
-    if (slice.noTestReason !== undefined || report.behaviors.some(entry => entry.seenRed)) return;
+    if (report.behaviors.some(entry => entry.seenRed)) return;
     throw new Error(
       `Nothing stored. Slice ${slice.id} has test seams (${slice.seams.join('; ')}) but no behavior was seen red. To see a test red honestly: revert the production change for that test, run the test, watch it fail, restore the change, then report the failing run as seenRed true with a one-line red.`,
     );
