@@ -571,7 +571,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
           ...(retro.apply.length > 0 ? ['Final slice applying to this repository:', ...retro.apply.map(finding => `- ${retroTitle(finding.title)}`), ''] : []),
           ...(retro.file.length > 0
             ? [
-                `Issues on ${repo}${repo === DEFAULT_FACTORY_REPO ? '' : ` (configured in .omp/factory.json, not the default ${DEFAULT_FACTORY_REPO})`}; each body is posted exactly as shown, but a title shown here is redacted and on one line and may differ from the posted title:`,
+                `Issues on ${repo}${repo === DEFAULT_FACTORY_REPO ? '' : ` (configured in .omp/factory.json, not the default ${DEFAULT_FACTORY_REPO})`}; each title is posted as shown (redacted, on one line) and each body exactly as shown:`,
                 ...retro.file.map(finding => `\n## ${retroTitle(finding.title)}\n${retroIssueBody(finding)}`),
               ]
             : []),
