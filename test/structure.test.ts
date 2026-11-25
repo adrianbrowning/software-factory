@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
@@ -11,6 +12,17 @@ const MAX_LINES = 1000;
 const TESTS = fileURLToPath(new URL('./', import.meta.url));
 const TICKET_DECISION = /decisions? \d+/i;
 type Comment = { line: number; text: string };
+
+/** The text of every listed path under `root` that exists and is not binary (no NUL byte), whatever its extension. */
+function textFilesOf(root: string, paths: string[]): Map<string, string> {
+  const found = new Map<string, string>();
+  for (const path of paths) {
+    if (!path || !existsSync(join(root, path))) continue;
+    const buffer = readFileSync(join(root, path));
+    if (!buffer.includes(0)) found.set(path, buffer.toString('utf8'));
+  }
+  return found;
+}
 
 /** Every `//` comment and block comment in `source` with its first line. String, template and regex literals are not comments. */
 export function commentsOf(source: string): Comment[] {
@@ -264,6 +276,17 @@ describe('structure checks: the helpers', () => {
 
 const testFiles = tsFilesIn(TESTS);
 
+describe('reading tracked files for the test-scope check', () => {
+  it('reads text files of any extension and skips binary and missing ones', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'scope-'));
+    writeFileSync(join(dir, 'ci.yml'), 'test files that assert on output');
+    writeFileSync(join(dir, 'bin.dat'), Buffer.from([65, 0, 66]));
+    const tracked = textFilesOf(dir, ['ci.yml', 'bin.dat', 'gone.txt']);
+    assert.deepEqual([...tracked.keys()], ['ci.yml']);
+    assert.deepEqual(testScopeProblems('The implementer test-scope wording sits in two places:\n', tracked), ['ci.yml: holds "test files that assert on output" but is not in the AGENTS.md test-scope list']);
+  });
+});
+
 describe('structure of test/', () => {
   it('has no assert.throws or assert.rejects without a message matcher', () => {
     assert.deepEqual(testFiles.flatMap(file => unmatchedAsserts(`test/${file.name}`, file.source)), []);
@@ -293,12 +316,7 @@ describe('structure of src/', () => {
 describe('structure of the implementer test-scope wording', () => {
   it('sits in exactly the files the AGENTS.md list names', () => {
     const root = fileURLToPath(new URL('../', import.meta.url));
-    const tracked = new Map(
-      execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' })
-        .split('\0')
-        .filter(path => path && existsSync(join(root, path)) && /\.(md|ts|json|sh)$/.test(path))
-        .map(path => [path, readFileSync(join(root, path), 'utf8')] as const),
-    );
+    const tracked = textFilesOf(root, execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' }).split('\0'));
     assert.deepEqual(testScopeProblems(tracked.get('AGENTS.md') ?? '', tracked), []);
   });
 });
