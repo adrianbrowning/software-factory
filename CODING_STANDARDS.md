@@ -159,3 +159,13 @@ Write one of these instead:
 - Reach a plugin file through a path the agent is given, for example `<reference dir>/../known-observations.md`.
 
 Example (issue-260, past history): a slice put `test/helpers.ts` in a skill, and the slice was reopened. This is a reviewer judgement rule; no test enforces it.
+
+## Test fakes return state
+
+A test fake that exposes state a test reads (for example the active tool list) returns it from its load function. It does not fill a mutable out-parameter that the test passes in and reads back with a fallback such as `?? []`.
+
+Copy `loadWithActiveTools` in `test/extension.ts`: it returns `activeTools`, and `resumeSetup` in `test/index.test.ts` reads that returned state.
+
+Example (issue-770 slice 01, past history): the fake's getActiveTools was exposed through a mutable `probe` out-parameter that the test read with `?? []`, and an unused `activated` array was left in `resumeSetup`.
+
+The rule covers state a new or changed fake exposes. The existing recording options of `load` and `loadWithActiveTools` (activated, sent, sentOptions, handlers, commands) are not migrated. This is a reviewer judgement rule; no test enforces it.
