@@ -115,6 +115,32 @@ export function subSecondSleepsOf(files: { name: string; source: string }[]) {
   return files.flatMap(file => subSecondSleeps(`test/${file.name}`, file.source));
 }
 
+const MODULE_MOCK_FIX = 'extract a pure builder from src/ and test it instead of mocking a module';
+
+/** One message per line holding a `mock.module(...)` or `t.mock.module(...)` call in code, at the line the call starts. Comments, strings and other `mock` members are not calls. */
+export function mockModuleCalls(file: string, source: string) {
+  const sf = ts.createSourceFile('x.ts', source, ts.ScriptTarget.Latest, true);
+  const lines = new Set<number>();
+  const visit = (node: ts.Node) => {
+    if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'module') {
+      const target = node.expression.expression;
+      if ((ts.isIdentifier(target) && target.text === 'mock') || (ts.isPropertyAccessExpression(target) && target.name.text === 'mock')) {
+        lines.add(sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sf);
+  return [...lines].sort((a, b) => a - b).map(line => `${file}:${line}: mock.module call; ${MODULE_MOCK_FIX}`);
+}
+
+/** One message per line of a script text holding `--experimental-test-module-mocks`. */
+export function moduleMockFlag(file: string, script: string) {
+  return script.split('\n').flatMap((line, i) =>
+    line.includes('--experimental-test-module-mocks') ? [`${file}:${i + 1}: --experimental-test-module-mocks enables module mocking; ${MODULE_MOCK_FIX}`] : [],
+  );
+}
+
 /**
  * The files `source` imports from its own directory, by its static import and `export … from` declarations, side-effect
  * imports included. With `runtimeOnly`, a declaration that is wholly type-only (`import type`, `export type`) is left out:
@@ -386,6 +412,28 @@ describe('structure checks: the helpers', () => {
   });
 });
 
+describe('module mocking ban: the helpers', () => {
+  it('reports each line holding a mock.module call, in both forms, as test/<name>:<line> naming the pure-builder fix', () => {
+    const source = ["import { mock } from 'node:test';", "mock.module('./a.ts', {});", 'it("x", t => {', "  t.mock.module('./b.ts', {});", '  mock.module(', "    './c.ts',", '  );', '});'].join('\n');
+    const fix = 'extract a pure builder from src/ and test it instead of mocking a module';
+    assert.deepEqual(mockModuleCalls('test/x.test.ts', source), [
+      `test/x.test.ts:2: mock.module call; ${fix}`,
+      `test/x.test.ts:4: mock.module call; ${fix}`,
+      `test/x.test.ts:5: mock.module call; ${fix}`,
+    ]);
+  });
+
+  it('lets mock.module text in comments and strings, and mock.method and mock.fn calls, through', () => {
+    const source = ["// mock.module('./a.ts', {});", "/* t.mock.module('./a.ts') */", "const s = \"mock.module('./a.ts')\";", 'const t = `mock.module(x)`;', "mock.method(obj, 'f');", 'const f = mock.fn();'].join('\n');
+    assert.deepEqual(mockModuleCalls('test/x.test.ts', source), []);
+  });
+
+  it('reports the module-mocks flag in a script text at its line, naming the flag and the pure-builder fix', () => {
+    const script = 'a\nexec node --experimental-test-module-mocks --test "$@"\n';
+    assert.deepEqual(moduleMockFlag('scripts/test.sh', script), ['scripts/test.sh:2: --experimental-test-module-mocks enables module mocking; extract a pure builder from src/ and test it instead of mocking a module']);
+  });
+});
+
 const testFiles = tsFilesIn(TESTS);
 
 describe('reading tracked files for the test-scope check', () => {
@@ -410,6 +458,14 @@ describe('structure of test/', () => {
 
   it('has no sub-second sleep without an allow-sub-second-sleep marker', () => {
     assert.deepEqual(subSecondSleepsOf(testFiles), []);
+  });
+
+  it('has no mock.module call', () => {
+    assert.deepEqual(testFiles.flatMap(file => mockModuleCalls(`test/${file.name}`, file.source)), []);
+  });
+
+  it('has no module-mocks flag in scripts/test.sh', () => {
+    assert.deepEqual(moduleMockFlag('scripts/test.sh', readFileSync(fileURLToPath(new URL('../scripts/test.sh', import.meta.url)), 'utf8')), []);
   });
 });
 

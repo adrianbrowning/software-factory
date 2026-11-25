@@ -14,6 +14,10 @@ The handlers for `before_subagent_spawn`, `turn_end` and `session_stop` run in e
 
 `src/index.ts` and `src/agents.ts` keep run state at module level, and every test in a file shares it. Every test file that loads the extension calls `resetModuleState()` in a `beforeEach` hook, so each test starts with no runs, stop attempts, cached roots or audited sessions, and passes or fails on its own state alone. Never reset inside a fixture: a second fixture call in the same test must keep the runs the first one started.
 
+## No module mocking in tests
+
+Tests never call `mock.module` (or `t.mock.module`), and `scripts/test.sh` never passes `--experimental-test-module-mocks`. `test/structure.test.ts` enforces both: it fails with a `file:line` message for each call in the top-level `test/*.ts` files and for the flag in `scripts/test.sh`. To test code that needs a mocked module, extract a pure builder from `src/` and test the builder instead. `mock.method` and `mock.fn` stay allowed.
+
 ## Refusal messages
 
 A refusal or error message that names a next step must name a step that works in the state that produced the refusal, and a test runs that step once after the refusal. Example: the ambiguity refusal in `resolveObservations` told the orchestrator to carry the items as a free-text note, but a note-only `factory_carry` needs an active slice with a green review, and the refusal happened with no active slice.
