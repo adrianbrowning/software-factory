@@ -56,6 +56,11 @@ Your task gives you the review id and the data file (PR metadata, full diff, cha
 - Very large inputs causing timeouts or memory issues
 - Concurrent requests for the same resource (create-create race)
 
+**Guards (a condition that refuses, skips, warns or narrows)**
+- When a finding is about a guard, list every input and state that reaches it before you write the finding: each branch of the condition, the empty, missing, malformed and boundary cases, and the states before and after the guard.
+- Report every case the guard gets wrong in that one finding, not one finding per case, and name each case in both `problem` and `fix`. Otherwise each fix surfaces the next adjacent case in the following review.
+- When a finding in `## FIX ITEMS` was about a guard, check the whole edge set of the fixed guard again, not only the case that was fixed, and report any case still wrong in one finding.
+
 **Prose rules (a diff that adds or changes a rule in a skill or agent prompt; in scope despite the runtime focus)**
 - A new or changed prohibition: does it also block valid cases outside its purpose? Example: a rule against duplicate tests that forbids every new test on an already covered path, including a test that covers a different behavior.
 - A new rule that drops or downgrades a finding or verdict: test it against a false-match case where it gives the wrong verdict. Example: a rule that drops a missing-test finding when any test asserts on the message fragment, even when that test does not reach the named path.
