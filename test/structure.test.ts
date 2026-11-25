@@ -117,7 +117,7 @@ export function subSecondSleepsOf(files: { name: string; source: string }[]) {
 
 const MODULE_MOCK_FIX = 'extract a pure builder from src/ and test it instead of mocking a module';
 
-/** One message per line holding a `mock.module(...)` or `t.mock.module(...)` call in code, at the line the call starts. Comments, strings and other `mock` members are not calls. */
+/** One message per line holding a `mock.module(...)` or `t.mock.module(...)` call in code, at the line of the `module` name. Comments, strings and other `mock` members are not calls. */
 export function mockModuleCalls(file: string, source: string) {
   const sf = ts.createSourceFile('x.ts', source, ts.ScriptTarget.Latest, true);
   const lines = new Set<number>();
@@ -125,7 +125,7 @@ export function mockModuleCalls(file: string, source: string) {
     if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'module') {
       const target = node.expression.expression;
       if ((ts.isIdentifier(target) && target.text === 'mock') || (ts.isPropertyAccessExpression(target) && target.name.text === 'mock')) {
-        lines.add(sf.getLineAndCharacterOfPosition(node.getStart(sf)).line + 1);
+        lines.add(sf.getLineAndCharacterOfPosition(node.expression.name.getStart(sf)).line + 1);
       }
     }
     ts.forEachChild(node, visit);
@@ -426,6 +426,10 @@ describe('module mocking ban: the helpers', () => {
   it('lets mock.module text in comments and strings, and mock.method and mock.fn calls, through', () => {
     const source = ["// mock.module('./a.ts', {});", "/* t.mock.module('./a.ts') */", "const s = \"mock.module('./a.ts')\";", 'const t = `mock.module(x)`;', "mock.method(obj, 'f');", 'const f = mock.fn();'].join('\n');
     assert.deepEqual(mockModuleCalls('test/x.test.ts', source), []);
+  });
+
+  it('reports a call whose receiver sits on an earlier line at the line of .mock.module', () => {
+    assert.deepEqual(mockModuleCalls('test/x.test.ts', "t\n  .mock.module('./x');"), [`test/x.test.ts:2: mock.module call; ${MODULE_MOCK_FIX}`]);
   });
 
   it('reports the module-mocks flag in a script text at its line, naming the flag and the pure-builder fix', () => {
