@@ -68,3 +68,27 @@ Example (forbidden): `runShell` cases that run `echo out; sleep 0.2; echo err >&
 A finding field that only the validator sets (for example `criterion`, set when the validator escalates an observation for an unmet acceptance criterion) does not belong on the reviewer input schema of `factory_review_submit`, which is `findingSchema` in `src/run.ts`. Reviewers submit through that schema, so a field on it is a field a reviewer can set. If such a field must stay on the shared schema, `submitDomain` in `src/review.ts` refuses a finding that sets it, and a test submits one such finding and expects the refusal.
 
 Example (issue-502 slice 03, past history): `criterion` was added to `findingSchema`, and reviewers could set it until a fix round made `submitDomain` refuse it. The refusal of `criterion` in `submitDomain` is the pattern to copy.
+
+## Pair derived records with their source
+
+Pair a derived record with its source by mapping once to `{source, record}` pairs, or by building a `Map` keyed by a stable id. Never read a second, parallel array at the same index with a non-null assertion `!`. A length or order mismatch between the two arrays then gives `undefined` at runtime, and the `!` hides it from the type checker.
+
+Forbidden:
+
+```ts
+const records = blocking.map(toRecord);
+for (let i = 0; i < blocking.length; i++) use(blocking[i], records[i]!);
+```
+
+Copy:
+
+```ts
+const pairs = blocking.map((source) => ({ source, record: toRecord(source) }));
+for (const { source, record } of pairs) use(source, record);
+```
+
+Or key the records by id: `const byId = new Map(records.map((r) => [r.id, r]))`, then read `byId.get(source.id)` and handle the missing case.
+
+An indexed read of a single array (for example `chunk[i]!` in `src/exec.ts`) pairs nothing and is outside this rule.
+
+Example (issue-671 slice 01, past history): `recordReview` paired `blocking[i]` with `findingRecords[i]!`. `src/review.ts` now pairs through a `Map` keyed by id, which is the pattern to copy.
