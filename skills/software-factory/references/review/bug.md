@@ -11,7 +11,7 @@ Your task gives you the review id and the data file (PR metadata, full diff, cha
 
 2. For any file with non-trivial logic changes, read the full file to understand context.
 
-3. Find real runtime bugs only — skip style, test coverage gaps (that's the testing domain), and security (that's the security domain).
+3. Find real runtime bugs only — skip style, test coverage gaps (that's the testing domain), and security (that's the security domain). The one exception is a prose rule a diff adds or changes in a skill or agent prompt: the "Prose rules" checks below are in scope.
 
 4. Only report findings you're >= 60% confident about.
 
@@ -56,10 +56,15 @@ Your task gives you the review id and the data file (PR metadata, full diff, cha
 - Very large inputs causing timeouts or memory issues
 - Concurrent requests for the same resource (create-create race)
 
+**Prose rules (a diff that adds or changes a rule in a skill or agent prompt; in scope despite the runtime focus)**
+- A new or changed prohibition: does it also block valid cases outside its purpose? Example: a rule against duplicate tests that forbids every new test on an already covered path, including a test that covers a different behavior.
+- A new rule that drops or downgrades a finding or verdict: test it against a false-match case where it gives the wrong verdict. Example: a rule that drops a missing-test finding when any test asserts on the message fragment, even when that test does not reach the named path.
+
+
 ## DO NOT flag
 
 - Style issues (linter catches those)
-- Missing tests (the testing domain handles that)
+- Missing tests (the testing domain handles that); this does not apply to the prose-rule checks above
 - Security/auth issues (the security domain handles that)
 - Things you're less than 60% confident about
 
