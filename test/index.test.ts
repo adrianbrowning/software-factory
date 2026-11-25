@@ -975,6 +975,7 @@ describe('used-up fix budget', () => {
     const reply = await call('factory_start', { resume: 'demo' }, { confirm: async () => true });
     assert.match(reply.content[0]?.text ?? '', new RegExp(`Slice 01 works on ${branch}, but other is checked out and resume did not switch it`));
     assert.equal(execFileSync('git', ['branch', '--show-current'], { cwd: repo.root, encoding: 'utf8' }).trim(), 'other');
+    assert.equal(execFileSync('git', ['status', '--porcelain=v1', '--untracked-files=no'], { cwd: repo.root, encoding: 'utf8' }), ' M .omp/factory.json\n');
     assert.equal(readFileSync(tracked, 'utf8'), dirty);
   });
 
