@@ -104,7 +104,7 @@ async function refuseUntestedSeamedSlice(ws: Workspace, slice: Slice, report: Im
   const noBehaviors = report.behaviors.length === 0;
   const changed = noBehaviors ? [] : await changedPaths(ws.root, `${slice.parentBranch}...refs/heads/${slice.branch}`);
   if (!noBehaviors && changed.some(file => TEST_PATH.test(file))) {
-    if (report.behaviors.some(entry => entry.seenRed)) return;
+    if (slice.noTestReason !== undefined || report.behaviors.some(entry => entry.seenRed)) return;
     throw new Error(
       `Nothing stored. Slice ${slice.id} has test seams (${slice.seams.join('; ')}) but no behavior was seen red. To see a test red honestly: revert the production change for that test, run the test, watch it fail, restore the change, then report the failing run as seenRed true with a one-line red.`,
     );

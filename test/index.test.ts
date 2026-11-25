@@ -281,6 +281,13 @@ describe('implementer sessions', () => {
       assert.match(await call('factory_implementer_report', { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], commits: [], open: [] }, implementer), /Stored the report/);
     });
 
+    it('stores an all-unseen-red report for a slice that has seams and a noTestReason', async () => {
+      using repo = emptyRepo();
+      const { call, implementer } = await startedRun(repo.root, 'true', { noTestReason: 'docs only' });
+      commitFile(repo.root, 'test/a.test.ts');
+      assert.match(await call('factory_implementer_report', { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], commits: [], open: [] }, implementer), /Stored the report/);
+    });
+
     it('refuses a report whose commits change no test file, and keeps the earlier stored report', async () => {
       using repo = emptyRepo();
       const { call, implementer } = await startedRun(repo.root);
