@@ -19,7 +19,8 @@
 # The chain-vs-separate decision at the end of each issue is made once, in chain_next.
 # Usage: scripts/headless-backlog.sh [--separate] <issue> [<issue> ...]   (issue: 102, #102 or a GitHub issue URL)
 # Env: OMP (default ,omp), OMP_ARGS (extra omp flags, split on spaces, e.g. --advisor), PLUGIN_DIR (default the
-#      installed plugin), MAX_COST (USD, default 25), MAX_TIME (seconds, default 5400), LOG_DIR (default
+#      installed plugin), MAX_COST (USD, default 25), MAX_TIME (seconds, default 5400), MAX_ROUNDS (fix rounds per
+#      slice, passed as --max-rounds to each new run; unset: headlessMaxRounds in factory.json), LOG_DIR (default
 #      <git dir>/headless-backlog, so no log makes the tree dirty).
 # A run that exists and is not done is resumed (`/factory resume`, which takes no --base); a submitted done run is
 # skipped. Run the script again to continue. Exits 1 when any issue did not end with a done run whose PRs are open.
@@ -32,6 +33,11 @@ separate=0
 if [ "${1:-}" = --separate ]; then separate=1; shift; fi
 [ $# -gt 0 ] || { echo 'usage: headless-backlog.sh [--separate] <issue> [<issue> ...]' >&2; exit 2; }
 omp=${OMP:-,omp}
+# At most 15 digits, so the value is a safe integer for the factory as well.
+case ${MAX_ROUNDS:-} in
+  '') ;;
+  0* | *[!0-9]* | ????????????????*) echo "MAX_ROUNDS must be a positive whole number of at most 15 digits, not \"$MAX_ROUNDS\"" >&2; exit 2 ;;
+esac
 plugin=${PLUGIN_DIR:-$HOME/.omp/plugins/node_modules/software-factory}
 command -v "$omp" >/dev/null || { echo "$omp is not on PATH; set OMP to the omp command" >&2; exit 2; }
 command -v jq >/dev/null || { echo 'jq is required' >&2; exit 2; }
@@ -189,7 +195,7 @@ for ref in "$@"; do
       failed=1
       continue
       ;;
-    'no run') prompt="/factory headless $ref${base:+ --base $base}" ;;
+    'no run') prompt="/factory headless $ref${base:+ --base $base}${MAX_ROUNDS:+ --max-rounds $MAX_ROUNDS}" ;;
     *)
       [ "$separate" = 1 ] || base_check "$feature" || break
       prompt="/factory resume $feature"

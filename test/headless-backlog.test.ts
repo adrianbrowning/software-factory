@@ -48,10 +48,10 @@ function linkTools(tools: string, names: readonly string[] = NO_GH_TOOLS): strin
  * The repo has a local origin and a fake gh: every slice branch named in `existing` or `cases` is on origin at the green
  * commit (GREEN) and has an open PR, except as `world` says: `noPr` has no PR, `closedPr` only a closed one, `mergedPr`
  * a merged one, `ghFails` makes `gh pr list` fail for it, `moved` is on origin at another commit and `unpushed` is not on origin. Every slice branch also exists locally at GREEN, except `localMoved` (at another commit) and `localMissing` (absent).
- * `options.noGh` leaves gh off PATH. `options.baseRef` sets baseRef in .omp/factory.json; `options.originHead` points refs/remotes/origin/HEAD at that branch. `options.ompArgs` sets OMP_ARGS (empty by default).
+ * `options.noGh` leaves gh off PATH. `options.baseRef` sets baseRef in .omp/factory.json; `options.originHead` points refs/remotes/origin/HEAD at that branch. `options.ompArgs` sets OMP_ARGS and `options.maxRounds` sets MAX_ROUNDS (both empty by default).
  * Besides the prompts, the fake logs its whole argument list as `argv`.
  */
-function runBacklog(existing: Record<number, string>, cases: string, args: string[], world: Partial<Record<'closedPr' | 'ghFails' | 'localMissing' | 'localMoved' | 'mergedPr' | 'moved' | 'noPr' | 'unpushed', readonly string[]>> = {}, options: { noGh?: boolean; ghStderr?: Record<string, string>; baseRef?: string; originHead?: string; ompArgs?: string; worktreeScript?: boolean } = {}) {
+function runBacklog(existing: Record<number, string>, cases: string, args: string[], world: Partial<Record<'closedPr' | 'ghFails' | 'localMissing' | 'localMoved' | 'mergedPr' | 'moved' | 'noPr' | 'unpushed', readonly string[]>> = {}, options: { noGh?: boolean; ghStderr?: Record<string, string>; baseRef?: string; originHead?: string; ompArgs?: string; maxRounds?: string; worktreeScript?: boolean } = {}) {
   using dir = tempDir('backlog-');
   const repo = join(dir.root, 'repo');
   mkdirSync(repo);
@@ -107,7 +107,7 @@ function runBacklog(existing: Record<number, string>, cases: string, args: strin
   const result = spawnSync('sh', [scriptPath, ...args], {
     cwd: repo,
     encoding: 'utf8',
-    env: { ...inherited, CALLS: calls, OMP: join(bin, ',omp'), OMP_ARGS: options.ompArgs ?? '', PATH: path, PLUGIN_DIR: dir.root },
+    env: { ...inherited, CALLS: calls, MAX_ROUNDS: options.maxRounds ?? '', OMP: join(bin, ',omp'), OMP_ARGS: options.ompArgs ?? '', PATH: path, PLUGIN_DIR: dir.root },
   });
   let prompts: string[] = [];
   let argv: string[] = [];
@@ -220,6 +220,16 @@ describe('scripts/headless-backlog.sh', () => {
     const result = runBacklog({ 3: submitted(3, ['01']), 4: state('paused', undefined, ['issue-4/01'], 'issue-3/01') }, fake, ['3', '4', '5']);
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(result.prompts, ['/factory resume issue-4', '/factory headless 5 --base issue-4/01']);
+  });
+
+  it('adds --max-rounds from MAX_ROUNDS to a new run, not to a resumed one', () => {
+    const fake = [
+      `  "/factory resume issue-4") ${writeState(4, submitted(4, ['01'], 'issue-3/01'))} ;;`,
+      `  "/factory headless 5 --base issue-4/01 --max-rounds 5") ${writeState(5, submitted(5, ['01'], 'issue-4/01'))} ;;`,
+    ].join('\n');
+    const result = runBacklog({ 3: submitted(3, ['01']), 4: state('paused', undefined, ['issue-4/01'], 'issue-3/01') }, fake, ['3', '4', '5'], {}, { maxRounds: '5' });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(result.prompts, ['/factory resume issue-4', '/factory headless 5 --base issue-4/01 --max-rounds 5']);
   });
 
   it('puts OMP_ARGS before the prompt, and shows the pause reason of a paused run on one line', () => {
@@ -527,6 +537,18 @@ describe('scripts/headless-backlog.sh with a ref that is no issue', () => {
     assert.match(result.summary, /^nope: skipped, not an issue number/m);
     assert.match(result.summary, /^Stopped: nope did not end done with a submit/m);
   });
+});
+
+describe('scripts/headless-backlog.sh with a bad MAX_ROUNDS', () => {
+  for (const bad of ['0', '05', 'x', '5 --base other', '1234567890123456']) {
+    it(`exits 2 for "${bad}" before any run, also a resume`, () => {
+      const paused = JSON.stringify({ events: [], slices: [], status: 'paused' });
+      const result = runBacklog({ 3: paused }, '', ['--separate', '3', '4'], {}, { maxRounds: bad });
+      assert.equal(result.status, 2);
+      assert.match(result.stderr, /MAX_ROUNDS must be a positive whole number/);
+      assert.deepEqual(result.prompts, []);
+    });
+  }
 });
 
 describe('scripts/headless-backlog.sh without gh on PATH', () => {

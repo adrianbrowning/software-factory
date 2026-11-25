@@ -384,6 +384,8 @@ const runSchema = z.object({
   deferred: z.array(deferredItemSchema).default([]),
   events: z.array(z.object({ at: text, detail: z.string(), kind: text, slice: z.string().optional() })),
   feature: text,
+  /** Fix rounds per slice of a headless run, fixed when it starts: `--max-rounds`, else `headlessMaxRounds` in factory.json. Absent in interactive runs and in headless runs from before it was kept. */
+  headlessMaxRounds: z.number().int().positive().optional(),
   /** Existing local branch that `/factory submit` fast-forwards to the top slice, instead of opening PRs. */
   landOn: text.optional(),
   /**

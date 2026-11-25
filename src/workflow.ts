@@ -151,7 +151,7 @@ export async function saveChecks(ws: Workspace, checks: string[]) {
 }
 
 /** Creates the run and saves it once; `annotate` adds events to it before that first save, so they exist whenever the run does. */
-export async function startRun(ws: Workspace, input: { annotate?: ((run: Run) => void) | undefined; feature: string; mode?: Run['mode'] | undefined; sessionId: string; source: Source; base?: { branch: string; sha: string } | undefined }) {
+export async function startRun(ws: Workspace, input: { annotate?: ((run: Run) => void) | undefined; feature: string; maxRounds?: number | undefined; mode?: Run['mode'] | undefined; sessionId: string; source: Source; base?: { branch: string; sha: string } | undefined }) {
   requireFeatureName(input.feature);
   if (existsSync(statePath(ws, input.feature))) {
     throw new Error(`Run "${input.feature}" already exists. Use /factory resume ${input.feature}.`);
@@ -174,6 +174,7 @@ export async function startRun(ws: Workspace, input: { annotate?: ((run: Run) =>
     deferred: [],
     events: [],
     feature: input.feature,
+    ...(input.mode === 'headless' ? { headlessMaxRounds: input.maxRounds ?? ws.config.headlessMaxRounds } : {}),
     mode: input.mode ?? 'interactive',
     models: ws.config.models,
     observations: [],
@@ -207,6 +208,11 @@ function slugify(title: string) {
   return cut > 0 ? full.slice(0, cut) : full.slice(0, 40);
 }
 
+/** Fix rounds a new slice of the run gets: the headless run's saved rounds (the config's for a run from before they were kept), else `maxRounds`. */
+export function sliceRounds(ws: Workspace, run: Run) {
+  return run.mode === 'headless' ? (run.headlessMaxRounds ?? ws.config.headlessMaxRounds) : ws.config.maxRounds;
+}
+
 function makeSlice(ws: Workspace, run: Run, input: SliceInput, index: number, parentBranch: string): Slice {
   const id = String(index + 1).padStart(2, '0');
   return {
@@ -223,7 +229,7 @@ function makeSlice(ws: Workspace, run: Run, input: SliceInput, index: number, pa
     peakContextTokens: 0,
     phase: 'implement',
     reviews: 0,
-    roundLimit: run.mode === 'headless' ? ws.config.headlessMaxRounds : ws.config.maxRounds,
+    roundLimit: sliceRounds(ws, run),
     stalled: false,
     status: 'pending',
     unplaced: [],

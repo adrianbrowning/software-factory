@@ -547,6 +547,20 @@ describe('headlessTarget', () => {
     assert.throws(() => headlessTarget('294 --base a --base b'), /--base takes one branch/);
   });
 
+  it('takes --max-rounds with --base and --related, in any order', () => {
+    assert.deepEqual(headlessTarget('294 --max-rounds 5'), { feature: 'issue-294', maxRounds: 5, source: { kind: 'github', ref: '294' } });
+    const expected = { base: 'b', feature: 'issue-294', maxRounds: 12, source: { kind: 'github', ref: '294', related: ['260'] } };
+    assert.deepEqual(headlessTarget('294 --max-rounds 12 --base b --related 260'), expected);
+    assert.deepEqual(headlessTarget('294 --base b --related 260 --max-rounds 12'), expected);
+  });
+
+  it('refuses --max-rounds without a positive whole number, or given twice', () => {
+    assert.throws(() => headlessTarget('294 --max-rounds'), /--max-rounds needs a value: a positive whole number/);
+    assert.throws(() => headlessTarget('294 --max-rounds --base b'), /--max-rounds needs a value/);
+    for (const bad of ['0', '-1', '2.5', 'three', '05', '9007199254740993', '1'.repeat(400)]) assert.throws(() => headlessTarget(`294 --max-rounds ${bad}`), /--max-rounds needs a value: a positive whole number/);
+    assert.throws(() => headlessTarget('294 --max-rounds 2 --max-rounds 3'), /--max-rounds takes one number/);
+  });
+
   it('refuses invalid --related input', () => {
     assert.throws(() => headlessTarget('ticket.md --related 260'), /GitHub issue as the primary/);
     assert.throws(() => headlessTarget('294 --related'), /--related needs a value/);
