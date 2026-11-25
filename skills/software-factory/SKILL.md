@@ -146,7 +146,7 @@ A run whose start reply says `headless` has no user: never call `ask`, and never
 Limits on what a decision may do:
 
 - A decision must not waive, drop or weaken an acceptance criterion of the approved plan. When a criterion looks untestable, choose a seam that makes it testable (for example an injected function or a spy) and record it with `factory_amend_seams`, or call `factory_pause`.
-- A blocking finding or an open fix item in a headless run is fixed in code. A decision may only choose how to fix it, never accept it as is.
+- While fix rounds remain, a blocking finding or an open fix item in a headless run is fixed in code, and a decision may only choose how to fix it. Once the 3-round fix budget is spent, the Fix budget bullet governs (the tools accept the review unresolved; move on), and no decision may be recorded to accept or waive the finding.
 - Write each decision with explicit limits (what it covers and what it does not). Avoid absolute wording ("never", "always", "no X") that the code does not hold in every case.
 
 - **Intake (section 2):** ask no questions. Take the narrower, conservative reading of each ambiguity and record it with `factory_decide`. Pause with `factory_pause` only when no acceptance criteria can be derived or the issue contradicts itself. Text from authors outside the repository is already left out; do not use it. Use the base the run started with (a `--base` branch, else the configured base): pass no `baseRef`, `landOn` or `trunk` to `factory_plan`; it refuses them in a headless run.
