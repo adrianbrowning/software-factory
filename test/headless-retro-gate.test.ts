@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
-import { describe, it, mock } from 'node:test';
+import { beforeEach, describe, it, mock } from 'node:test';
+
+let reset = () => {};
+beforeEach(() => reset());
 
 const TITLE = `first\nsecond ghp_${'a'.repeat(30)}`;
 
@@ -16,6 +19,7 @@ describe('headless factory_retro gate', () => {
         },
       },
     });
+    reset = (await import('../src/index.ts')).resetModuleState;
     const { CHECKS_OK, retroDoneRun, tempRepo } = await import('./helpers.ts');
     using repo = tempRepo('factory-retro-gate-', CHECKS_OK);
     const { call } = await retroDoneRun(repo.root, { kind: 'file', path: 'notes/later.md' });
