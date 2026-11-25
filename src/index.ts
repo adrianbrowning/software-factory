@@ -67,7 +67,7 @@ import { sourceInputSchema } from './source.ts';
 
 const DEFAULT_FACTORY_REPO = 'adrianbrowning/software-factory';
 /** Tools `factory_start` activates; they stay out of every other session's tool list. */
-const ORCHESTRATION_TOOLS = [
+export const ORCHESTRATION_TOOLS = [
   'factory_pause',
   'factory_plan',
   'factory_next',
