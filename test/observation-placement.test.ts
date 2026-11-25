@@ -313,7 +313,7 @@ describe('batched observation placement', () => {
     assert.equal(run.waiting.length, 1);
     assert.ok(!text.includes('SPY-SUBMITTED'), 'a slice back in fix opens no PRs');
     assert.deepEqual(submitted, [], 'a slice back in fix does not call submitHeadless');
-    assert.ok(!run.events.some(event => ['submit', 'submit-failed', 'submission-stop'].includes(event.kind) || event.detail.includes('gate submission')), 'a slice back in fix records no submission');
+    assert.deepEqual(run.events.filter(event => ['submit', 'submit-failed', 'submission-stop'].includes(event.kind) || event.detail.includes('gate submission')), [], 'a slice back in fix records no submission');
     assert.deepEqual(run.observations.map(entry => [entry.id, entry.placement]), [['thermo-gap', 'carried'], ['thermo-doc', 'fixed']]);
     commit(ws, 'doc.txt');
     await withRun(ws, 'demo', current => runChecks(ws, current));

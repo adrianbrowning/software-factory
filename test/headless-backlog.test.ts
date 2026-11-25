@@ -152,7 +152,7 @@ describe('scripts/headless-backlog.sh', () => {
     assert.match(result.summary, /^6: skipped, run done, no PRs \(submit-failed;/m);
     assert.match(result.summary, /^Stopped: issue-7 is still running/m);
     assert.doesNotMatch(result.summary, /^9:/m);
-    assert.ok(result.logs.some(f => f.endsWith('.log')));
+    assert.ok(result.logs.find(f => f.endsWith('.log')), `no .log file in ${JSON.stringify(result.logs)}`);
     assert.doesNotMatch(result.tree, /\.log$/m);
   });
 

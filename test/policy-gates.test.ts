@@ -73,7 +73,7 @@ describe('headless config', () => {
   it('defaults every gate to auto, accepts stop per gate, and refuses an unknown key', () => {
     const defaults = parseConfig({}).headless;
     assert.deepEqual(Object.keys(defaults).toSorted(), [...GATES].toSorted());
-    assert.ok(Object.values(defaults).every(value => value === 'auto'));
+    assert.deepEqual(Object.values(defaults).filter(value => value !== 'auto'), []);
     assert.equal(parseConfig({ headless: { retro: 'stop' } }).headless.retro, 'stop');
     assert.equal(parseConfig({ headless: { retro: 'stop' } }).headless.plan, 'auto');
     assert.throws(() => parseConfig({ headless: { nope: 'auto' } }), /Unrecognized key: "nope"/);
@@ -134,7 +134,8 @@ describe('headless gates', () => {
     resetModuleState();
     await headlessRunCaller(repo.root).call('factory_start', { resume: 'demo' });
     assert.equal(readRun(ws, 'demo').status, 'running');
-    assert.ok(readRun(ws, 'demo').events.some(event => event.kind === 'autonomous' && /\bresume\b/.test(event.detail)));
+    const resumeEvents = readRun(ws, 'demo').events;
+    assert.ok(resumeEvents.find(event => event.kind === 'autonomous' && /\bresume\b/.test(event.detail)), `no autonomous resume event in ${JSON.stringify(resumeEvents)}`);
     assert.deepEqual(dialogs, []);
   });
 
@@ -237,7 +238,7 @@ describe('factory_pause', () => {
     const run = readRun(ws, 'demo');
     assert.equal(run.status, 'intake');
     assert.equal(run.slices.length, 0);
-    assert.ok(run.events.some(event => event.kind === 'resume'));
+    assert.ok(run.events.find(event => event.kind === 'resume'), `no resume event in ${JSON.stringify(run.events)}`);
   });
 
   it('refuses an interactive run', async () => {
@@ -274,7 +275,8 @@ describe('headless start', () => {
     await run.headless('demo.md');
     const ws: Workspace = { config: loadConfig(detected.root), root: detected.root };
     assert.deepEqual(readRun(ws, 'demo').checks.length, 1);
-    assert.ok(readRun(ws, 'demo').events.some(event => event.kind === 'autonomous' && /checks/.test(event.detail)));
+    const checkEvents = readRun(ws, 'demo').events;
+    assert.ok(checkEvents.find(event => event.kind === 'autonomous' && /checks/.test(event.detail)), `no autonomous checks event in ${JSON.stringify(checkEvents)}`);
 
     using bare = tempRepo('factory-nodetect-', { ...TICKET, 'README.md': 'base\n' });
     await assert.rejects(headlessRunCaller(bare.root).headless('demo.md'), /Headless gate "checks": the repository has no configured checks and none could be detected/);

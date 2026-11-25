@@ -173,7 +173,7 @@ describe('factory_defer', () => {
     const { call, ws } = await sinkRun(repo.root, { kind: 'github' });
     const reply = await call('factory_defer', { note: 'Log the parse time.', observations: ['thermo-naming', 'thermo-style'] });
     assert.equal(gh.calls().length, 3);
-    assert.ok(gh.calls().every(line => line.startsWith('issue create ')));
+    assert.deepEqual(gh.calls().filter(line => !line.startsWith('issue create ')), []);
     const items = readRun(ws, 'demo').deferred;
     assert.deepEqual(items.map(item => item.location), ['https://github.com/o/r/issues/1', 'https://github.com/o/r/issues/2', 'https://github.com/o/r/issues/3']);
     assert.deepEqual(items.map(item => item.id), [undefined, 'thermo-naming', 'thermo-style']);
@@ -361,8 +361,9 @@ describe('accepted unresolved findings go to the sink', () => {
     const { call, ws } = await fourthReview(repo.root, { kind: 'github' }, `Use token ${secret} for the API`);
     await call('factory_review_record', {});
     const run = readRun(ws, 'demo');
-    assert.ok(run.deferred.some(item => item.body.includes('Breaks decision 1')));
-    assert.ok(run.deferred.every(item => !item.body.includes(secret)));
+    const bodies = run.deferred.map(item => item.body);
+    assert.ok(run.deferred.find(item => item.body.includes('Breaks decision 1')), `no deferred item mentions decision 1: ${JSON.stringify(bodies)}`);
+    assert.deepEqual(run.deferred.filter(item => item.body.includes(secret)), []);
     assert.ok(gh.args().includes('Breaks decision 1'));
     assert.ok(!gh.args().includes(secret));
   });
@@ -374,8 +375,8 @@ describe('accepted unresolved findings go to the sink', () => {
     const { call, ws } = await fourthReview(repo.root, { kind: 'github' }, undefined, `leaks ${secret}`);
     await call('factory_review_record', {});
     const run = readRun(ws, 'demo');
-    assert.ok(run.deferred.some(item => item.id === 'bug-b' && item.body.includes('Scope reviewer: still broken') && item.body.includes('leaks <REDACTED>')));
-    assert.ok(run.deferred.every(item => !item.body.includes(secret) && !item.title.includes(secret)));
+    assert.ok(run.deferred.find(item => item.id === 'bug-b' && item.body.includes('Scope reviewer: still broken') && item.body.includes('leaks <REDACTED>')), `no matching deferred bug-b in ${JSON.stringify(run.deferred)}`);
+    assert.deepEqual(run.deferred.filter(item => item.body.includes(secret) || item.title.includes(secret)), []);
     assert.ok(!gh.args().includes(secret));
   });
 
@@ -390,7 +391,7 @@ describe('accepted unresolved findings go to the sink', () => {
     const run = readRun(ws, 'demo');
     assert.ok(run.slices[0]?.unresolved);
     assert.deepEqual(run.deferred.map(item => item.id).toSorted(), ['bug-b', 'thermo-a']);
-    assert.ok(run.deferred.every(item => item.kind === 'unresolved' && item.location.startsWith('https://github.com/o/r/issues/') && item.body.includes('Review: 01-r4')));
+    assert.deepEqual(run.deferred.filter(item => !(item.kind === 'unresolved' && item.location.startsWith('https://github.com/o/r/issues/') && item.body.includes('Review: 01-r4'))), []);
   });
 
   it('github: an accepted-unresolved finding is filed with symbol, location at filing time and commit; an open fix item gets the commit only', async () => {

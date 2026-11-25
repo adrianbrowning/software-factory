@@ -37,7 +37,8 @@ describe('submit: failed stack calls', () => {
     assert.ok(failure instanceof Error, 'the failure comes back in the result');
     assert.match(failure.message, /submitted.*not all PR titles were set.*\/factory submit again sets them/s);
     assert.doesNotMatch(failure.message, /Already added/);
-    assert.ok(readRun(ws, 'demo').events.some(event => event.kind === 'submit'), 'the submit event is saved with the run');
+    const events = readRun(ws, 'demo').events;
+    assert.ok(events.find(event => event.kind === 'submit'), `the submit event is saved with the run: ${JSON.stringify(events)}`);
     assert.equal(sh(ws.root, 'branch', '--show-current'), branches.at(-1), 'a failed title step stays on the top slice gh stack left');
   });
 

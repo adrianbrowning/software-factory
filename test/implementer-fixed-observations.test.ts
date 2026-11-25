@@ -61,7 +61,7 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
     const verdicts = readRun(ws, 'demo').slices[0]!.fixItems.map(item =>
       item.id === OBSERVATION ? { id: item.id, reason: 'still wrong', status: 'open' as const } : { id: item.id, reason: 'the diff fixes it', status: 'fixed' as const },
     );
-    assert.ok(verdicts.some(verdict => verdict.id !== OBSERVATION), 'the round has another fix item, which is fixed');
+    assert.ok(verdicts.find(verdict => verdict.id !== OBSERVATION), `the round has another fix item, which is fixed: ${JSON.stringify(verdicts)}`);
     await review(ws, opened.reviewId, [], [], verdicts);
     assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'fix');
   });

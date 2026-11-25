@@ -129,7 +129,7 @@ describe('submit: a run on a base branch', () => {
     const branches = await baseRun(ws, 2, 'B');
     using gh = fakeGh({ stack: ['A', 'B', ...branches, 'X'] });
     await assert.rejects(step(ws, run => submitStack(ws, run)), /outside the run: X/);
-    assert.ok(!gh.calls().some(call => call.startsWith('stack submit')));
+    assert.deepEqual(gh.calls().filter(call => call.startsWith('stack submit')), []);
   });
 
   it('refuses a base branch that is in no stack and returns the checkout to where it started', async () => {
@@ -146,7 +146,7 @@ describe('submit: a run on a base branch', () => {
     const branches = await baseRun(ws, 2, 'B');
     using gh = fakeGh({ stack: ['A', 'B', 'C'], unstacked: [branches[0] ?? ''] });
     await assert.rejects(step(ws, run => submitStack(ws, run)), /base branch B is not the top of its gh stack/);
-    assert.ok(!gh.calls().some(call => call.startsWith('stack add') || call.startsWith('stack init') || call.startsWith('stack submit')));
+    assert.deepEqual(gh.calls().filter(call => call.startsWith('stack add') || call.startsWith('stack init') || call.startsWith('stack submit')), []);
     assert.equal(sh(ws.root, 'branch', '--show-current'), 'main');
   });
 });
