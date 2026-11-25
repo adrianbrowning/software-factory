@@ -179,8 +179,20 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
     const result = await report(ws, sha, [`\`01-r0:${OBSERVATION}\` fixed in ${short}`, `\`01-r1:${OBSERVATION}\` fixed in ${short}`]);
     assert.deepEqual(result.fixed.toSorted(), ['01-r0:thermo-naming', '01-r1:thermo-naming']);
     const ids = readRun(ws, 'demo').slices[0]!.fixItems.map(item => item.id).filter(id => id.endsWith(OBSERVATION));
-    assert.equal(new Set(ids).size, 2);
+    assert.deepEqual(ids.toSorted(), ['01-r1:thermo-naming', 'thermo-naming']);
     assert.deepEqual(state(ws).ledger.map(entry => entry.key).toSorted(), ['01-r0:thermo-naming', '01-r1:thermo-naming']);
+    await step(ws, run => runChecks(ws, run));
+    const opened = await step(ws, run => startReview(ws, run));
+    const listed = fixItems(opened.dataFile);
+    assert.match(listed, /^- `thermo-naming` \(/m);
+    assert.match(listed, /^- `01-r1:thermo-naming` \(/m);
+    const verdicts = readRun(ws, 'demo').slices[0]!.fixItems.map(item => ({
+      id: item.id,
+      reason: 'checked',
+      status: item.id === '01-r1:thermo-naming' ? ('open' as const) : ('fixed' as const),
+    }));
+    await review(ws, opened.reviewId, [], [], verdicts);
+    assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'fix');
   });
 
   it('does not accept a commit of another checked-out branch as a slice commit', async () => {
