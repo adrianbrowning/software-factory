@@ -104,21 +104,21 @@ const STOP_REPORT = /NEEDS SEAM|SLICE TOO BIG|MISSING DEPENDENCY/;
  */
 async function refuseUntestedSeamedSlice(ws: Workspace, slice: Slice, report: ImplementerReport, fixMode: boolean) {
   if (fixMode || slice.seams.length === 0 || report.open.some(item => STOP_REPORT.test(item))) return;
-  const noBehaviors = report.behaviors.length === 0;
-  if (!noBehaviors && slice.noTestReason !== undefined) return;
-  const changed = noBehaviors ? [] : await changedPaths(ws.root, `${slice.parentBranch}...refs/heads/${slice.branch}`);
-  if (!noBehaviors && changed.some(file => TEST_PATH.test(file))) {
-    if (report.behaviors.some(entry => entry.seenRed)) return;
-    throw new Error(
-      `Nothing stored. Slice ${slice.id} has test seams (${slice.seams.join('; ')}) but no behavior was seen red. To see a test red honestly: revert the production change for that test, run the test, watch it fail, restore the change, then report the failing run as seenRed true with a one-line red.`,
-    );
-  }
+  const prefix = `Nothing stored. Slice ${slice.id} has test seams (${slice.seams.join('; ')}) but`;
   const advice = slice.noTestReason !== undefined
     ? 'List the test that pins the code (an existing one is fine) in behaviors with seenRed false, or report NEEDS SEAM in Open.'
     : 'Commit a red-first test through one of these seams and report it in behaviors, or report NEEDS SEAM in Open.';
-  throw new Error(
-    `Nothing stored. Slice ${slice.id} has test seams (${slice.seams.join('; ')}) but ${noBehaviors ? 'the report lists no behavior' : `its commits past ${slice.parentBranch} change no test file`}. ${advice}`,
-  );
+  if (report.behaviors.length === 0) throw new Error(`${prefix} the report lists no behavior. ${advice}`);
+  if (slice.noTestReason !== undefined) return;
+  const changed = await changedPaths(ws.root, `${slice.parentBranch}...refs/heads/${slice.branch}`);
+  if (!changed.some(file => TEST_PATH.test(file))) {
+    throw new Error(`${prefix} its commits past ${slice.parentBranch} change no test file. ${advice}`);
+  }
+  if (!report.behaviors.some(entry => entry.seenRed)) {
+    throw new Error(
+      `${prefix} no behavior was seen red. To see a test red honestly: revert the production change for that test, run the test, watch it fail, restore the change, then report the failing run as seenRed true with a one-line red.`,
+    );
+  }
 }
 
 /** Stores the implementer's report for the active slice in the run dir; a later call replaces it. */
