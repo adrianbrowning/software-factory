@@ -127,7 +127,7 @@ const emptyRepo = () => tempRepo('factory-index-', { 'README.md': 'base\n' });
 
 describe('implementer sessions', () => {
   /** Starts a run on slice 01 of the empty repo at `root`, with the main and factory-implementer callers. */
-  const startedRun = async (root: string, checks = 'true') => {
+  const startedRun = async (root: string, checks = 'true', seamed = false) => {
     const handlers = new Map<string, Handler>();
     const tools = load({ handlers });
     const main = {
@@ -140,7 +140,7 @@ describe('implementer sessions', () => {
     const implementer = { ...ctx('sub', 'factory-implementer'), cwd: root };
     const call = async (name: string, params: unknown, caller: unknown) => JSON.stringify(await tools.get(name)?.execute('id', params, undefined, undefined, caller));
     await call('factory_start', { feature: 'demo', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } }, main);
-    const feature = { acceptance: ['works'], blockedBy: [], estimateTokens: 500, seams: ['cli'], title: 'Feature', whatToBuild: 'Feature' };
+    const feature = { acceptance: ['works'], blockedBy: [], estimateTokens: 500, title: 'Feature', whatToBuild: 'Feature', ...(seamed ? { seams: ['cli'] } : { noTestReason: 'docs only', seams: [] }) };
     await call('factory_plan', { baseRef: 'main', slices: [feature], trunk: 'main' }, main);
     const next = await call('factory_next', {}, main);
     return { call, handlers, implementer, main, next };
@@ -220,6 +220,49 @@ describe('implementer sessions', () => {
     });
     assert.equal(readFileSync(file, 'utf8'), before);
     assert.match(await call('factory_implementer_report', report([], ['third']), implementer), /Replaced the stored report/);
+  });
+
+  describe('a seamed slice', () => {
+    const file = (root: string) => join(root, '.scratch', 'demo', 'reports', '01.md');
+    const behavior = { behavior: 'b', seenRed: false, test: 't' };
+    const commitFile = (root: string, name: string) => {
+      mkdirSync(dirname(join(root, name)), { recursive: true });
+      writeFileSync(join(root, name), 'x\n');
+      git(root, 'add', '.');
+      git(root, 'commit', '-qm', name);
+    };
+
+    it('refuses a report with no behavior and no stop report, naming the seams, and stores nothing', async () => {
+      using repo = emptyRepo();
+      const { call, implementer } = await startedRun(repo.root, 'true', true);
+      await assert.rejects(call('factory_implementer_report', { behaviors: [], commits: [], open: [] }, implementer), /seams \(cli\).*NEEDS SEAM/);
+      assert.equal(existsSync(file(repo.root)), false);
+    });
+
+    it('refuses a report whose commits change no test file, and keeps the earlier stored report', async () => {
+      using repo = emptyRepo();
+      const { call, implementer } = await startedRun(repo.root, 'true', true);
+      await call('factory_implementer_report', { behaviors: [], commits: [], open: ['NEEDS SEAM: x'] }, implementer);
+      const before = readFileSync(file(repo.root), 'utf8');
+      commitFile(repo.root, 'src/a.ts');
+      await assert.rejects(call('factory_implementer_report', { behaviors: [behavior], commits: [], open: [] }, implementer), /change no test file.*NEEDS SEAM/);
+      assert.equal(readFileSync(file(repo.root), 'utf8'), before);
+    });
+
+    it('stores the report when a commit changes a test file', async () => {
+      using repo = emptyRepo();
+      const { call, implementer } = await startedRun(repo.root, 'true', true);
+      commitFile(repo.root, 'test/a.test.ts');
+      assert.match(await call('factory_implementer_report', { behaviors: [behavior], commits: [], open: [] }, implementer), /Stored the report/);
+    });
+
+    it('stores a report with no behavior when Open names a stop report', async () => {
+      using repo = emptyRepo();
+      const { call, implementer } = await startedRun(repo.root, 'true', true);
+      for (const stop of ['NEEDS SEAM: x', 'SLICE TOO BIG: y', 'MISSING DEPENDENCY: z']) {
+        assert.match(await call('factory_implementer_report', { behaviors: [], commits: [], open: [stop] }, implementer), /Stored the report|Replaced the stored report/);
+      }
+    });
   });
 
   it('rejects a report item that spans more than one line', async () => {

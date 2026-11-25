@@ -3,6 +3,8 @@ import { z } from 'zod';
 import { itemKey } from './deferred.ts';
 import { findUnplaced, placeObservations } from './ledger.ts';
 import { ownCommits } from './repo.ts';
+import { TEST_PATH } from './test-paths.ts';
+import { changedPaths } from './targeted.ts';
 import { findingRecord } from './review-record.ts';
 import { activeSlice, addEvent, reportPath, reviewIsOpen, requireActive, type Run, type Slice, type Workspace, writeAtomic } from './run.ts';
 
@@ -90,6 +92,22 @@ function recordFixedObservations(run: Run, slice: Slice, fixItems: string[], own
   return recorded;
 }
 
+const STOP_REPORT = /NEEDS SEAM|SLICE TOO BIG|MISSING DEPENDENCY/;
+
+/**
+ * Build mode, a slice with seams and an Open list naming no stop report: refuses a report that lists no behavior or whose
+ * slice commits change no test file (the review's test-validity path rule). Nothing is stored then.
+ */
+async function refuseUntestedSeamedSlice(ws: Workspace, slice: Slice, report: ImplementerReport, fixMode: boolean) {
+  if (fixMode || slice.seams.length === 0 || report.open.some(item => STOP_REPORT.test(item))) return;
+  const noBehaviors = report.behaviors.length === 0;
+  const changed = noBehaviors ? [] : await changedPaths(ws.root, `${slice.parentBranch}...refs/heads/${slice.branch}`);
+  if (!noBehaviors && changed.some(file => TEST_PATH.test(file))) return;
+  throw new Error(
+    `Nothing stored. Slice ${slice.id} has test seams (${slice.seams.join('; ')}) but ${noBehaviors ? 'the report lists no behavior' : `its commits past ${slice.parentBranch} change no test file`}. Commit a red-first test through one of these seams and report it in behaviors, or report NEEDS SEAM in Open.`,
+  );
+}
+
 /** Stores the implementer's report for the active slice in the run dir; a later call replaces it. */
 export async function submitImplementerReport(ws: Workspace, run: Run, report: ImplementerReport) {
   const slice = requireActive(run);
@@ -112,6 +130,7 @@ export async function submitImplementerReport(ws: Workspace, run: Run, report: I
       `Nothing stored. These commits items do not start with the sha of a commit on slice ${slice.id} past ${slice.parentBranch}:\n${rejected.join('\n')}\nThe slice's commits:\n${own.map(commit => commit.oneline).join('\n') || '(none)'}\nList each as \`<short sha> <subject>\`.`,
     );
   }
+  await refuseUntestedSeamedSlice(ws, slice, report, fixMode);
   const path = reportPath(ws, run.feature, slice);
   const replaced = existsSync(path);
   writeAtomic(path, `${renderReport(report)}\n`);
@@ -159,7 +178,7 @@ export function reportListsCommit(ws: Workspace, run: Run, slice: Slice, sha: st
 
 /** Whether the stored report lists every sha in `shas` (at least one) in Commits and names no stop report in Open. */
 export function reportCoversCommits(ws: Workspace, run: Run, slice: Slice, shas: string[]) {
-  const stopped = (reportSection(ws, run, slice, 'Open') ?? []).some(item => /NEEDS SEAM|SLICE TOO BIG|MISSING DEPENDENCY/.test(item));
+  const stopped = (reportSection(ws, run, slice, 'Open') ?? []).some(item => STOP_REPORT.test(item));
   return shas.length > 0 && !stopped && shas.every(sha => reportListsCommit(ws, run, slice, sha));
 }
 

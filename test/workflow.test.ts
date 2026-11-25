@@ -204,7 +204,7 @@ describe('implementer report', () => {
 
   it('replaces the stored report with a later one and shows it in the checks result', async () => {
     using ws = workspace();
-    await newRun(ws, [slice('Feature')]);
+    await newRun(ws, [slice('Feature', [], { noTestReason: 'docs', seams: [] })]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'work.txt');
     const path = join(ws.root, '.scratch', 'demo', 'reports', '01.md');
@@ -1158,7 +1158,7 @@ describe('reopen', () => {
 
   it('does not show the old implementer report of a restacked slice in its checks result', async () => {
     using ws = workspace({ maxRounds: 2 });
-    await newRun(ws, [slice('First'), slice('Second', ['First'])]);
+    await newRun(ws, [slice('First'), slice('Second', ['First'], { noTestReason: 'docs', seams: [] })]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
     commit(ws, 'first.txt');
