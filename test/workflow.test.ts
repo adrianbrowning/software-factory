@@ -194,6 +194,12 @@ describe('planSlices', () => {
     assert.match(note, /## Decisions the user already made/);
     assert.match(note, /question for the orchestrator/);
     assert.ok(!renderTicket(run, first, 1000).includes('## For the advisor'));
+    await step(ws, current => nextSlice(ws, current));
+    await step(ws, current => amendSeams(ws, current, ['the clock']));
+    const amended = readFileSync(ticketPath(ws, 'demo', first), 'utf8');
+    assert.match(amended, /- the clock/);
+    assert.equal(amended.split('## For the advisor').length, 2);
+    assert.ok(amended.trimEnd().endsWith('instead of asking the implementer to change the code.'));
   });
 
   it('rejects an owned decision number that was not recorded or that two slices own', async () => {
@@ -1168,7 +1174,7 @@ describe('reopen', () => {
       [['done', 'ready', undefined], ['pending', 'checks', undefined], ['pending', 'checks', undefined]],
     );
 
-    const next = await step(ws, current => nextSlice(ws, current));
+    await step(ws, current => nextSlice(ws, current));
     assert.deepEqual([next?.id, next?.phase, sh(ws.root, 'branch', '--show-current')], ['02', 'checks', second]);
     await step(ws, current => runChecks(ws, current));
     assert.equal((await step(ws, current => startReview(ws, current))).reviewId, '02-r2');
@@ -1285,7 +1291,7 @@ describe('follow-up slice', () => {
       ],
     );
 
-    const next = await step(ws, current => nextSlice(ws, current));
+    await step(ws, current => nextSlice(ws, current));
     assert.deepEqual([next?.id, next?.phase, sh(ws.root, 'rev-parse', 'HEAD')], ['02', 'implement', greenCommit(done)]);
   });
 
