@@ -1643,7 +1643,7 @@ describe('factory_start git architecture warning', () => {
     assert.deepEqual(JSON.parse(readFileSync(join(repo.root, '.scratch', 'checks.json'), 'utf8')).checks, ['a', 'b']);
   });
 
-  it('a headless start with no configured checks records the gate decision with the saved list', async () => {
+  it('a headless start with no configured checks saves the detected checks and records the gate checks (auto) decision naming them', async () => {
     using repo = tempRepo('factory-headless-auto-checks-', { 'package.json': JSON.stringify({ scripts: { lint: 'x', test: 'y' } }), 'ticket.md': '# Add the widget\n\nBuild it.\n' });
     const commands = new Map<string, Command>();
     load({ commands });
