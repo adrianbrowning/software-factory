@@ -78,6 +78,7 @@ export function workspace(overrides: Partial<FactoryConfig> = {}): Workspace & D
       checkTimeoutMs: 10_000,
       factoryRepo: 'acme/factory',
       headless: parseConfig({}).headless,
+      headlessMaxRounds: 3,
       maxRounds: 1,
       models: {},
       scratchDir: '.scratch',

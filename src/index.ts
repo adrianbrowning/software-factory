@@ -60,7 +60,6 @@ import {
   saveChecks,
   startRun,
   summarize,
-  HEADLESS_FIX_ROUNDS,
 } from './workflow.ts';
 import { fileFactoryIssues, type FiledIssues, parseRetro, recordRetro, retroDrafts, retroIssueBody, retroSchema } from './retro.ts';
 import { sourceInputSchema } from './source.ts';
@@ -298,8 +297,11 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
       open === undefined
         ? ''
         : `\nOpen review ${open.reviewId}: Data file: ${open.dataFile}; Reference dir: ${open.referenceDir}; Findings dir: ${open.findingsDir}; domains with no submission: ${open.missingDomains.length === 0 ? 'none' : open.missingDomains.join(', ')}; validation submitted: ${open.validated ? 'yes' : 'no'}`;
+    const rounds = run.mode === 'headless' ? ws.config.headlessMaxRounds : ws.config.maxRounds;
+    const active = activeSlice(run);
+    const activeRounds = active === undefined || active.roundLimit === rounds ? '' : ` (active slice ${active.id}: ${active.roundLimit})`;
     return reply(
-      `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${run.mode === 'headless' ? HEADLESS_FIX_ROUNDS : ws.config.maxRounds}.${warned}${branchNote === '' ? '' : `\n${branchNote}`}\nNext: ${nextAction(run)}${openText}`,
+      `Run "${run.feature}" is ${run.status}. Checks: ${run.checks.join('; ')}. Models: ${describeModels(run.models)}. Slice budget: ${ws.config.sliceTokenBudget} tokens. Fix rounds per slice: ${rounds}${activeRounds}.${warned}${branchNote === '' ? '' : `\n${branchNote}`}\nNext: ${nextAction(run)}${openText}`,
       summary,
     );
   }

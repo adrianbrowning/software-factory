@@ -397,10 +397,31 @@ describe('headless round limits', () => {
     assert.equal(run.status, 'paused');
   });
 
-  it('pins the headless fix budget to 3 rounds whatever maxRounds is configured', async () => {
+  it('gives a headless slice 3 fix rounds whatever maxRounds is, and headlessMaxRounds when it is configured', async () => {
     using repo = tempRepo('factory-limits-', CHECKS_OK);
     const { ws } = await headlessRun(repo.root, 'active', {}, ['Feature'], { maxRounds: 5 });
     assert.equal(readRun(ws, 'demo').slices[0]?.roundLimit, 3);
+    using configured = tempRepo('factory-limits-', CHECKS_OK);
+    const set = await headlessRun(configured.root, 'active', {}, ['One', 'Two'], { headlessMaxRounds: 7, maxRounds: 5 });
+    assert.deepEqual(readRun(set.ws, 'demo').slices.map(slice => slice.roundLimit), [7, 7]);
+  });
+
+  it('on resume reports the configured fix rounds for new slices and the saved limit of the active slice when it differs', async () => {
+    using repo = tempRepo('factory-limits-', CHECKS_OK);
+    const { ws } = await headlessRun(repo.root, 'active', {}, ['One', 'Two'], { headlessMaxRounds: 7 });
+    // A reslice or an appended slice takes the config of its own time, so the slices of one run can differ.
+    await withRun(ws, 'demo', run => {
+      run.status = 'paused';
+      run.slices[0]!.status = 'done';
+      run.slices[1]!.status = 'active';
+      run.slices[1]!.roundLimit = 4;
+    });
+    writeFileSync(join(repo.root, '.omp/factory.json'), JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], headless: { submission: 'stop' }, headlessMaxRounds: 2 }));
+    sh(repo.root, 'commit', '-qam', 'fewer rounds');
+    resetModuleState();
+    const resumed = (await headlessRunCaller(repo.root).call('factory_start', { resume: 'demo' })) as Reply;
+    assert.match(resumed.content[0]?.text ?? '', /Fix rounds per slice: 2 \(active slice 02: 4\)\./);
+    assert.equal(readRun(ws, 'demo').slices[1]?.roundLimit, 4);
   });
 
   it('clears the unresolved record when a decision reopens the review and the next review is green', async () => {

@@ -196,6 +196,8 @@ const configSchema = z
     factoryRepo: text.default('adrianbrowning/software-factory'),
     /** Headless gate policy, one key per gate. */
     headless: headlessSchema.prefault({}),
+    /** Fix rounds a headless slice gets; a headless run never raises them. */
+    headlessMaxRounds: positiveInt.default(3),
     /** Fix rounds a slice gets before it stalls for a user decision; each "continue" grants this many more. */
     maxRounds: positiveInt.default(3),
     /** Model per factory role (plus reasoning effort for the orchestrator only), snapshotted into each run at start. Unset roles inherit. */
