@@ -124,8 +124,10 @@ export const sliceInputSchema = z.object({
   acceptance: z.array(text).min(1).describe('Checkable acceptance criteria'),
   blockedBy: z.array(text).describe('Titles of slices that must finish first'),
   estimateTokens: z.number().int().positive().describe('Estimated implementer context tokens for the whole slice'),
-  /** Why the slice has no test seams (docs or config only). Plan validation requires it when `seams` is empty. */
-  noTestReason: text.optional().describe('Only when seams is empty: why the slice has nothing to test'),
+  /** Why the slice has no test seams (docs or config only), or, with seams, why a behavior-preserving refactor needs no red test first. Plan validation requires it when `seams` is empty. */
+  noTestReason: text
+    .optional()
+    .describe('Empty seams: why the slice has nothing to test. With seams: a behavior-preserving refactor, why no test needs to go red first'),
   /** Numbers of recorded decisions this slice builds; a slice before it marks them as built later (renderDecisions). */
   ownsDecisions: z
     .array(z.number().int().positive())
