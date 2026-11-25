@@ -562,7 +562,10 @@ describe('structure of the CODING_STANDARDS.md references', () => {
     const root = fileURLToPath(new URL('../', import.meta.url));
     const tracked = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean);
     const paths = new Set(tracked.flatMap(path => path.split('/').map((_, i, parts) => parts.slice(0, i + 1).join('/'))));
-    const texts = [...files.map(file => file.source), ...testFiles.filter(file => file.name !== 'structure.test.ts').map(file => file.source)];
+    const texts = ['src', 'test']
+      .flatMap(dir => readdirSync(join(root, dir), { recursive: true }).map(name => `${dir}/${String(name)}`))
+      .filter(path => path.endsWith('.ts') && path !== 'test/structure.test.ts')
+      .map(path => readFileSync(join(root, path), 'utf8'));
     assert.deepEqual(standardsReferenceProblems(readFileSync(join(root, 'CODING_STANDARDS.md'), 'utf8'), paths, texts), []);
   });
 });
