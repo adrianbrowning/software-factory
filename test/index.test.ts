@@ -311,7 +311,7 @@ describe('implementer sessions', () => {
       await call('factory_implementer_report', { behaviors: [], commits: [], open: ['NEEDS SEAM: x'] }, implementer);
       const before = readFileSync(file(repo.root), 'utf8');
       commitFile(repo.root, 'src/a.ts');
-      await assert.rejects(call('factory_implementer_report', { behaviors: [], commits: [], open: [] }, implementer), /lists no behavior/);
+      await assert.rejects(call('factory_implementer_report', { behaviors: [], commits: [], open: [] }, implementer), (error: Error) => /lists no behavior/.test(error.message) && /pins the code.*seenRed false/.test(error.message) && !/red-first/.test(error.message));
       assert.equal(readFileSync(file(repo.root), 'utf8'), before);
     });
 

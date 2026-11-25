@@ -113,8 +113,11 @@ async function refuseUntestedSeamedSlice(ws: Workspace, slice: Slice, report: Im
       `Nothing stored. Slice ${slice.id} has test seams (${slice.seams.join('; ')}) but no behavior was seen red. To see a test red honestly: revert the production change for that test, run the test, watch it fail, restore the change, then report the failing run as seenRed true with a one-line red.`,
     );
   }
+  const advice = slice.noTestReason !== undefined
+    ? 'List the test that pins the code (an existing one is fine) in behaviors with seenRed false, or report NEEDS SEAM in Open.'
+    : 'Commit a red-first test through one of these seams and report it in behaviors, or report NEEDS SEAM in Open.';
   throw new Error(
-    `Nothing stored. Slice ${slice.id} has test seams (${slice.seams.join('; ')}) but ${noBehaviors ? 'the report lists no behavior' : `its commits past ${slice.parentBranch} change no test file`}. Commit a red-first test through one of these seams and report it in behaviors, or report NEEDS SEAM in Open.`,
+    `Nothing stored. Slice ${slice.id} has test seams (${slice.seams.join('; ')}) but ${noBehaviors ? 'the report lists no behavior' : `its commits past ${slice.parentBranch} change no test file`}. ${advice}`,
   );
 }
 
