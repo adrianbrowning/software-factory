@@ -305,6 +305,24 @@ describe('implementer sessions', () => {
         assert.match(await call('factory_implementer_report', { behaviors: [], commits: [], open: [stop] }, implementer), /Stored the report|Replaced the stored report/);
       }
     });
+
+    it('stores an all-unseen-red report when Open names any stop report', async () => {
+      using repo = emptyRepo();
+      const { call, implementer } = await startedRun(repo.root);
+      commitFile(repo.root, 'test/a.test.ts');
+      for (const stop of ['NEEDS SEAM: x', 'SLICE TOO BIG: y', 'MISSING DEPENDENCY: z']) {
+        assert.match(await call('factory_implementer_report', { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], commits: [], open: [stop] }, implementer), /Stored the report|Replaced the stored report/);
+      }
+    });
+
+    it('stores an all-unseen-red report in fix mode', async () => {
+      using repo = emptyRepo();
+      const { call, implementer } = await startedRun(repo.root);
+      commitFile(repo.root, 'test/a.test.ts');
+      const sha = String(git(repo.root, 'rev-parse', 'HEAD')).trim();
+      await withRun({ config: loadConfig(repo.root), root: repo.root }, 'demo', run => { run.slices[0]!.fixFromSha = sha; });
+      assert.match(await call('factory_implementer_report', { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], commits: [], fixItems: ['bug-f1: not a defect: x'], open: [] }, implementer), /Stored the report/);
+    });
   });
 
   it('rejects a report item that spans more than one line', async () => {
