@@ -13,7 +13,7 @@ const TESTS = fileURLToPath(new URL('./', import.meta.url));
 const TICKET_DECISION = /decisions? \d+/i;
 type Comment = { line: number; text: string };
 
-/** The text of every listed path under `root` that exists and is not binary (no NUL byte), whatever its extension. */
+/** The content of every listed path under `root` that exists, whatever its extension; binary files are decoded as latin1 so an ASCII phrase in them is still found. */
 function textFilesOf(root: string, paths: string[]): Map<string, string> {
   const found = new Map<string, string>();
   for (const path of paths) {
