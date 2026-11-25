@@ -62,9 +62,12 @@ describe('test temp dirs', () => {
  * The onStdout hook creates the marker, so stderr is written only after runShell recorded stdout.
  * The wait is bounded by the runShell timeout, so a hook that never fires fails the test instead of hanging.
  */
-function stdoutThenStderr(root: string, stderrCommand: string) {
+async function stdoutThenStderr(root: string, stderrCommand: string) {
   const marker = join(root, 'stdout-seen');
-  return runShell(`echo out; while [ ! -e '${marker}' ]; do :; done; ${stderrCommand}`, root, 10_000, undefined, undefined, () => writeFileSync(marker, ''));
+  const result = await runShell(`echo out; while [ ! -e '${marker}' ]; do :; done; ${stderrCommand}`, root, 10_000, undefined, undefined, () => writeFileSync(marker, ''));
+  assert.equal(result.timedOut, false, 'the onStdout hook never fired');
+  assert.equal(result.exitCode, 0);
+  return result;
 }
 
 describe('runShell', () => {
