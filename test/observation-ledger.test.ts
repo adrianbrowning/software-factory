@@ -744,3 +744,31 @@ describe('observation ledger', () => {
     });
   });
 });
+
+describe('observation titles in confirm dialogs', () => {
+  const title = `first\nsecond ghp_${'a'.repeat(30)}`;
+  const shape = (found: Finding) => ({ ...found, title });
+  const asking = (bodies: string[]): Ui => ({ confirm: async (_title, body) => (bodies.push(body), true) });
+
+  it('factory_place shows a multi-line titled observation on one redacted line', async () => {
+    using dir = repo();
+    const { call } = await ledgerRun(dir.root, ['place'], shape);
+    const bodies: string[] = [];
+    await call('factory_place', { placements: [] }, asking(bodies));
+    assert.match(bodies[0] ?? '', /^- thermo-place \([^)]*\): .*\. first second <REDACTED>$/m);
+    assert.doesNotMatch(bodies[0] ?? '', /ghp_/);
+  });
+
+  it('factory_leave, factory_defer and factory_fix show such an observation on one redacted line', async () => {
+    using dir = repo();
+    const { call } = await ledgerRun(dir.root, ['leave', 'defer', 'fix'], shape);
+    const bodies: string[] = [];
+    await call('factory_leave', { observations: ['thermo-leave'] }, asking(bodies));
+    await call('factory_defer', { observations: ['thermo-defer'] }, asking(bodies));
+    await call('factory_fix', { observations: ['thermo-fix'], reason: 'tidy' }, asking(bodies));
+    for (const [index, id] of ['leave', 'defer', 'fix'].entries()) {
+      assert.match(bodies[index] ?? '', new RegExp(`^- thermo-${id}: (demo\\/01: )?first second <REDACTED>$`, 'm'), id);
+      assert.doesNotMatch(bodies[index] ?? '', /ghp_/, id);
+    }
+  });
+});
