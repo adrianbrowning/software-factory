@@ -64,13 +64,26 @@ describe('test temp dirs', () => {
  */
 async function stdoutThenStderr(root: string, stderrCommand: string) {
   const marker = join(root, 'stdout-seen');
-  const result = await runShell(`echo out; while [ ! -e '${marker}' ]; do :; done; ${stderrCommand}`, root, 10_000, undefined, undefined, () => writeFileSync(marker, ''));
+  const result = await runShell(`echo out; while [ ! -e stdout-seen ]; do :; done; ${stderrCommand}`, root, 10_000, undefined, undefined, () => writeFileSync(marker, ''));
   assert.equal(result.timedOut, false, 'the onStdout hook never fired');
   assert.equal(result.exitCode, 0);
   return result;
 }
 
 describe('runShell', () => {
+  it('passes every stdout chunk to the onStdout hook', async () => {
+    using temp = dir();
+    const marker = join(temp.root, 'first-seen');
+    const chunks: Buffer[] = [];
+    const result = await runShell(`printf a; while [ ! -e first-seen ]; do :; done; printf b`, temp.root, 10_000, undefined, undefined, chunk => {
+      chunks.push(chunk);
+      writeFileSync(marker, '');
+    });
+    assert.equal(result.timedOut, false, 'the onStdout hook never fired');
+    assert.ok(chunks.length > 1);
+    assert.equal(Buffer.concat(chunks).toString(), result.stdout);
+  });
+
   // A real child process: the process-group kill is the behavior under test, so the timeout uses the real clock.
   it('kills the whole process group on timeout', async () => {
     using temp = dir();
