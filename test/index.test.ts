@@ -408,6 +408,13 @@ describe('implementer sessions', () => {
     assert.doesNotMatch(normalTicket, /seenRed false|No test needs to go red/);
   });
 
+  it('renders one period after a noTestReason that already ends with a period', async () => {
+    using repo = emptyRepo();
+    const refactor = await startedRun(repo.root, 'true', { noTestReason: 'Behavior stays the same.' });
+    const ticket = readFileSync(/Ticket: ([^\\]+)/.exec(refactor.next)?.[1] ?? '', 'utf8');
+    assert.match(ticket, /\n\nNo test needs to go red first: Behavior stays the same\. Tests on this slice pin the existing behavior: write them on the old code first, see them green, keep them green, and report them with seenRed false\.\n\n## Checks/);
+  });
+
   it('says in the factory_next reply that factory_checks runs the full checks and the implementer runs only what it touched', async () => {
     using repo = emptyRepo();
     const { next } = await startedRun(repo.root);
