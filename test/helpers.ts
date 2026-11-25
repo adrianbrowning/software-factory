@@ -283,44 +283,47 @@ export const prCalls = (count: number) =>
  * (top) branch, `stack top` to the stack's top branch, and `stack add <branch>` to the branch it adds.
  */
 export function submitFakeGh({ stack, checkoutFailure = NO_STACK, unstacked = [], fail = '', onFail = ':', onSubmit = ':', submitted }: FakeGh) {
-  const temp = tempDir('factory-gh-');
+  const temp = tempDir('factory-gh-', dir => {
+    const log = join(dir, 'calls');
+    const view = join(dir, 'view.json');
+    if (typeof stack === 'string') writeFileSync(view, stack);
+    else if (stack !== undefined) {
+      writeFileSync(view, JSON.stringify({ branches: stack.map(name => ({ name })), currentBranch: stack[0], trunk: 'main' }));
+      writeFileSync(join(dir, 'top'), stack.at(-1) ?? '');
+    }
+    const loose = join(dir, 'unstacked');
+    writeFileSync(loose, unstacked.map(name => `${name}\n`).join(''));
+    const atSubmit = join(dir, 'at-submit.json');
+    // `stack add <branch>` appends the branch to the served stack, as gh-stack does, and the stack top moves to it.
+    const append = `const f=require('fs');try{const v=JSON.parse(f.readFileSync('${view}','utf8'));v.branches.push({name:process.argv[1]});f.writeFileSync('${view}',JSON.stringify(v));f.writeFileSync('${join(dir, 'top')}',process.argv[1])}catch{}`;
+    const after = join(dir, 'submitted.json');
+    if (submitted !== undefined) {
+      const items = submitted.map(({ name, pr }) => (pr === undefined ? { name } : { name, pr: { number: pr, url: `https://example.test/pull/${pr}`, state: 'OPEN' } }));
+      writeFileSync(after, JSON.stringify({ branches: items, currentBranch: submitted.at(-1)?.name, trunk: 'main' }));
+    }
+    const script = [
+      '#!/bin/sh',
+      // A newline in an argument (a PR body) is logged as \\036, so each call stays one line.
+      `printf '%s\\n' "$(printf '%s' "$*" | tr '\\n' '\\036')" >> '${log}'`,
+      `if [ "$1 $2" = "stack checkout" ] && { [ ! -f '${view}' ] || grep -qx "$3" '${loose}'; }; then echo "${checkoutFailure.stderr}" >&2; exit ${checkoutFailure.code}; fi`,
+      `if [ "$1 $2" = "stack checkout" ]; then git switch -q "$3" || exit 1; fi`,
+      `if [ "$1 $2" = "stack view" ]; then cat '${view}' || exit 1; fi`,
+      `if [ "$1 $2" = "stack init" ]; then eval "git switch -q \\"\\\${$#}\\"" || exit 1; fi`,
+      `if [ "$1 $2" = "stack top" ]; then git switch -q "$(cat '${join(dir, 'top')}')" || exit 1; fi`,
+      `if [ "$1 $2" = "stack add" ]; then git switch -q "$3" || exit 1; node -e "${append}" "$3"; grep -vx "$3" '${loose}' > '${loose}.tmp'; mv '${loose}.tmp' '${loose}'; fi`,
+      `if [ "$1 $2" = '${fail}' ]; then ${onFail}; exit 1; fi`,
+      `if [ "$1 $2" = "stack submit" ]; then ${onSubmit}; fi`,
+      `if [ "$1 $2" = "stack submit" ]; then cp '${view}' '${atSubmit}'; fi`,
+      `if [ "$1 $2" = "stack submit" ] && [ -f '${after}' ]; then cp '${after}' '${view}'; fi`,
+      'exit 0',
+      '',
+    ].join('\n');
+    writeFileSync(join(dir, 'gh'), script);
+    chmodSync(join(dir, 'gh'), 0o755);
+  });
   const dir = temp.root;
   const log = join(dir, 'calls');
-  const view = join(dir, 'view.json');
-  if (typeof stack === 'string') writeFileSync(view, stack);
-  else if (stack !== undefined) {
-    writeFileSync(view, JSON.stringify({ branches: stack.map(name => ({ name })), currentBranch: stack[0], trunk: 'main' }));
-    writeFileSync(join(dir, 'top'), stack.at(-1) ?? '');
-  }
-  const loose = join(dir, 'unstacked');
-  writeFileSync(loose, unstacked.map(name => `${name}\n`).join(''));
   const atSubmit = join(dir, 'at-submit.json');
-  // `stack add <branch>` appends the branch to the served stack, as gh-stack does, and the stack top moves to it.
-  const append = `const f=require('fs');try{const v=JSON.parse(f.readFileSync('${view}','utf8'));v.branches.push({name:process.argv[1]});f.writeFileSync('${view}',JSON.stringify(v));f.writeFileSync('${join(dir, 'top')}',process.argv[1])}catch{}`;
-  const after = join(dir, 'submitted.json');
-  if (submitted !== undefined) {
-    const items = submitted.map(({ name, pr }) => (pr === undefined ? { name } : { name, pr: { number: pr, url: `https://example.test/pull/${pr}`, state: 'OPEN' } }));
-    writeFileSync(after, JSON.stringify({ branches: items, currentBranch: submitted.at(-1)?.name, trunk: 'main' }));
-  }
-  const script = [
-    '#!/bin/sh',
-    // A newline in an argument (a PR body) is logged as \\036, so each call stays one line.
-    `printf '%s\\n' "$(printf '%s' "$*" | tr '\\n' '\\036')" >> '${log}'`,
-    `if [ "$1 $2" = "stack checkout" ] && { [ ! -f '${view}' ] || grep -qx "$3" '${loose}'; }; then echo "${checkoutFailure.stderr}" >&2; exit ${checkoutFailure.code}; fi`,
-    `if [ "$1 $2" = "stack checkout" ]; then git switch -q "$3" || exit 1; fi`,
-    `if [ "$1 $2" = "stack view" ]; then cat '${view}' || exit 1; fi`,
-    `if [ "$1 $2" = "stack init" ]; then eval "git switch -q \\"\\\${$#}\\"" || exit 1; fi`,
-    `if [ "$1 $2" = "stack top" ]; then git switch -q "$(cat '${join(dir, 'top')}')" || exit 1; fi`,
-    `if [ "$1 $2" = "stack add" ]; then git switch -q "$3" || exit 1; node -e "${append}" "$3"; grep -vx "$3" '${loose}' > '${loose}.tmp'; mv '${loose}.tmp' '${loose}'; fi`,
-    `if [ "$1 $2" = '${fail}' ]; then ${onFail}; exit 1; fi`,
-    `if [ "$1 $2" = "stack submit" ]; then ${onSubmit}; fi`,
-    `if [ "$1 $2" = "stack submit" ]; then cp '${view}' '${atSubmit}'; fi`,
-    `if [ "$1 $2" = "stack submit" ] && [ -f '${after}' ]; then cp '${after}' '${view}'; fi`,
-    'exit 0',
-    '',
-  ].join('\n');
-  writeFileSync(join(dir, 'gh'), script);
-  chmodSync(join(dir, 'gh'), 0o755);
   process.env.PATH = `${dir}:${process.env.PATH}`;
   const raw = () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').map(call => call.replaceAll('\x1e', '\n')) : []);
   return {
@@ -357,15 +360,17 @@ export interface IssueGh {
  * (`api`) and `repo view`. `viewed()` lists the ref of each `issue view` call.
  */
 export function issueGh({ issues, owners = ['*'], repoView = 'echo o/r' }: IssueGh) {
-  const temp = tempDir('factory-fake-gh-');
+  const temp = tempDir('factory-fake-gh-', root => {
+    const log = join(root, 'viewed');
+    const cases = Object.entries(issues).map(([number, issue]) => `  ${number}) echo '${JSON.stringify(issue)}';;`).join('\n');
+    const association = owners.length === 0 ? 'echo NONE' : `case "$2" in ${owners.join('|')}) echo OWNER;; *) echo NONE;; esac`;
+    writeFileSync(
+      join(root, 'gh'),
+      `#!/bin/sh\nif [ "$1" = repo ]; then ${repoView}; exit 0; fi\nif [ "$1" = issue ]; then echo "$3" >> '${log}'; case "\${3##*/}" in\n${cases}\nesac; else ${association}; fi\n`,
+    );
+    chmodSync(join(root, 'gh'), 0o755);
+  });
   const log = join(temp.root, 'viewed');
-  const cases = Object.entries(issues).map(([number, issue]) => `  ${number}) echo '${JSON.stringify(issue)}';;`).join('\n');
-  const association = owners.length === 0 ? 'echo NONE' : `case "$2" in ${owners.join('|')}) echo OWNER;; *) echo NONE;; esac`;
-  writeFileSync(
-    join(temp.root, 'gh'),
-    `#!/bin/sh\nif [ "$1" = repo ]; then ${repoView}; exit 0; fi\nif [ "$1" = issue ]; then echo "$3" >> '${log}'; case "\${3##*/}" in\n${cases}\nesac; else ${association}; fi\n`,
-  );
-  chmodSync(join(temp.root, 'gh'), 0o755);
   const path = prependPath(temp.root);
   return {
     viewed: () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : []),
