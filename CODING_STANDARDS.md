@@ -116,3 +116,14 @@ return reply(`${summary}${unchanged}${flagged}${newChecks}`);
 The `factory_checks` handler in `src/index.ts` is the pattern to copy: `unchanged`, `flagged` and `newChecks` are separate consts, each named for its content, and the reply template joins them.
 
 Example (issue-377 retro, past history): the flagged-files text was appended onto `unchanged`, so a const named for "no new commits" held flagged-file text too. It is now the separate `flagged` const. This is a reviewer judgement rule; no test enforces it.
+
+## Plugin text cites no plugin-only paths
+
+Text in files under `skills/` and `agents/` must not cite a file or directory that exists only in this plugin's repository (for example `test/helpers.ts`, `src/index.ts`, `scripts/test.sh`) as if it were in the working repository. That text runs as prompt text in every repository the factory works on, where such a path does not exist or names a different file, so the agent looks for the wrong thing or trusts the wrong file.
+
+Write one of these instead:
+
+- Describe the thing generically, for example "the repository's test helpers".
+- Reach a plugin file through a path the agent is given, for example `<reference dir>/../known-observations.md`.
+
+Example (issue-260, past history): a slice put `test/helpers.ts` in a skill, and the slice was reopened. This is a reviewer judgement rule; no test enforces it.
