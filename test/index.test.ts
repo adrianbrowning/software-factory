@@ -337,7 +337,7 @@ describe('implementer sessions', () => {
     using withSeams = emptyRepo();
     const seamed = await startedRun(withSeams.root);
     const ticket = readFileSync(/Ticket: ([^\\]+)/.exec(seamed.next)?.[1] ?? '', 'utf8');
-    assert.match(ticket, /## Test seams \(agreed at plan approval\)\n\n- cli\n\nA file named in a seam is a location hint[^\n]*test it at its new place[^\n]*no re-export only to match the seam/);
+    assert.match(ticket, /## Test seams \(agreed at plan approval\)\n\n- cli\n\nEach seam is the public interface the tests go through\. A file named in a seam is a location hint[^\n]*test it at its new place[^\n]*no re-export only to match the seam/);
     using without = emptyRepo();
     const bare = await startedRun(without.root, 'true', { noTestReason: 'docs only', seams: [] });
     const bareTicket = readFileSync(/Ticket: ([^\\]+)/.exec(bare.next)?.[1] ?? '', 'utf8');
