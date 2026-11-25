@@ -305,11 +305,14 @@ describe('implementer sessions', () => {
       assert.match(await call('factory_implementer_report', { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], commits: [], open: [] }, implementer), /Stored the report/);
     });
 
-    it('refuses a report with no behavior for a slice that has seams and a noTestReason', async () => {
+    it('refuses a report with no behavior for a slice that has seams and a noTestReason, and keeps the earlier stored report', async () => {
       using repo = emptyRepo();
       const { call, implementer } = await startedRun(repo.root, 'true', { noTestReason: 'refactor, behavior unchanged' });
+      await call('factory_implementer_report', { behaviors: [], commits: [], open: ['NEEDS SEAM: x'] }, implementer);
+      const before = readFileSync(file(repo.root), 'utf8');
       commitFile(repo.root, 'src/a.ts');
       await assert.rejects(call('factory_implementer_report', { behaviors: [], commits: [], open: [] }, implementer), /lists no behavior/);
+      assert.equal(readFileSync(file(repo.root), 'utf8'), before);
     });
 
     it('stores the report when a commit changes a test file', async () => {
