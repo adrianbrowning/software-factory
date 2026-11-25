@@ -132,7 +132,7 @@ export function testScopeProblems(agents: string, tracked: Map<string, string>) 
   for (const line of start === -1 ? [] : lines.slice(start + 1)) {
     const path = /^- `([^`]+)`/.exec(line)?.[1];
     if (path) listed.push(path);
-    else if (listed.length) break;
+    else if (listed.length || line.trim() !== '') break;
   }
   if (!listed.length) return ['AGENTS.md: implementer test-scope wording list not found'];
   const missing = listed.filter(path => !tracked.get(path)?.includes(TEST_SCOPE_PHRASE)).map(path => `${path}: listed in AGENTS.md but does not hold "${TEST_SCOPE_PHRASE}"`);
@@ -281,6 +281,11 @@ describe('structure checks: the helpers', () => {
 
   it('reports the same not-found problem when the anchor is followed by no backticked bullet paths', () => {
     const agents = 'The implementer test-scope wording sits in two places:\n\n- plain bullet\n';
+    assert.deepEqual(testScopeProblems(agents, new Map()), ['AGENTS.md: implementer test-scope wording list not found']);
+  });
+
+  it('does not parse a later unrelated list after an anchor followed by a plain bullet', () => {
+    const agents = 'The implementer test-scope wording sits in two places:\n\n- plain bullet\n\n- `other.md`: x.\n';
     assert.deepEqual(testScopeProblems(agents, new Map()), ['AGENTS.md: implementer test-scope wording list not found']);
   });
 });
