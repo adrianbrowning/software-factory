@@ -48,6 +48,7 @@ Break the work into **tracer bullets** (Matt Pocock's `to-tickets` rules):
 - A change that depends on filesystem semantics (case folding, Unicode normalization, links) gets its own slice. The first job of that slice is a matrix of filesystem tests over those cases.
 - Each slice fits one fresh implementer inside the slice budget from `factory_start` (default 400k tokens, 40% of a 1M window), counting exploration, tests, and debugging. Estimate from the files to read and change; split anything near the budget.
 - Each slice names its **seams**: the public interfaces its tests go through (tdd skill). A slice with nothing to test gives a `noTestReason`.
+- A criterion that needs a call-level assertion (a function is or is not called) gets a seam that names the injected function or spy the test goes through.
 - In a slice that names seams, each acceptance criterion about behavior must be observable through at least one of the slice's named seams. A slice with a `noTestReason`, and criteria about prose (docs, skills, prompts), are exempt. A criterion about a side effect or its absence (for example "nothing is stored", "no report file is written") needs the seam that performs that side effect, such as the registered tool, not a pure function such as a schema parse, which writes nothing and so makes the assertion vacuous.
 - `factory_start` always creates interactive runs; only the `/factory headless` command makes a headless run. When a slice's acceptance covers headless behavior, name the `/factory headless` command as its seam.
 - Each acceptance criterion states an observable behavior. For a deduplication or extraction refactor, name the code paths (functions, call sites) that must use the shared helper; do not use a whole-file text count ("string X occurs once in file F"), because a comment or doc string holding the same text trips it and pushes the implementer into unrelated rewrites.
@@ -141,6 +142,12 @@ Tell the user the branches in stack order and what `/factory submit` does: it op
 ## Headless runs
 
 A run whose start reply says `headless` has no user: never call `ask`, and never wait for an answer. Every step above that asks the user takes the branch below instead. Record each choice with `factory_decide` (it is marked AUTONOMOUS; reviewers check the code against it, it is not a waiver). When you cannot resolve something, call `factory_pause` with the reason and stop.
+
+Limits on what a decision may do:
+
+- A decision must not waive, drop or weaken an acceptance criterion of the approved plan. When a criterion looks untestable, choose a seam that makes it testable (for example an injected function or a spy) and record it with `factory_amend_seams`, or call `factory_pause`.
+- A blocking finding or an open fix item in a headless run is fixed in code. A decision may only choose how to fix it, never accept it as is.
+- Write each decision with explicit limits (what it covers and what it does not). Avoid absolute wording ("never", "always", "no X") that the code does not hold in every case.
 
 - **Intake (section 2):** ask no questions. Take the narrower, conservative reading of each ambiguity and record it with `factory_decide`. Pause with `factory_pause` only when no acceptance criteria can be derived or the issue contradicts itself. Text from authors outside the repository is already left out; do not use it. Use the base the run started with (a `--base` branch, else the configured base): pass no `baseRef`, `landOn` or `trunk` to `factory_plan`; it refuses them in a headless run.
 - **Planning rule (section 3):** about 150k tokens per slice; one behavior per slice; a concurrency, locking, security or filesystem-semantics (case folding, Unicode normalization, links) change gets its own slice. Call `factory_plan` with no dialog; it approves on its own.
