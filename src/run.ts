@@ -132,7 +132,7 @@ export const sliceInputSchema = z.object({
     .optional()
     .describe('Numbers of decisions recorded before the plan that this slice builds; each decision has at most one owning slice'),
   /** Public interfaces the tests go through, agreed with the user at plan approval (tdd skill). */
-  seams: z.array(text).describe('Public interfaces the tests go through (tdd skill seams)'),
+  seams: z.array(text).describe('Public interfaces the tests go through (tdd skill seams): name the interface (function, tool or command); a file may be added as an optional location hint'),
   title: text,
   whatToBuild: text.describe('End-to-end behavior from the user perspective, not a layer list'),
 });
