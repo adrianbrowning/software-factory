@@ -4,6 +4,7 @@ import softwareFactory from '../src/index.ts';
 
 type Registered = {
   execute: (...args: unknown[]) => Promise<unknown>;
+  defaultInactive?: boolean;
   name: string;
   parameters: { properties?: Record<string, unknown>; required?: string[] };
 };
@@ -12,14 +13,14 @@ export type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 
 export type Command = { handler: (args: string, ctx: unknown) => Promise<void> };
 
-type LoadOptions = { activated?: string[]; commands?: Map<string, Command>; handlers?: Map<string, Handler>; initialActive?: string[]; sent?: string[]; sentOptions?: unknown[]; thinking?: () => string | undefined; checkGit?: () => string | undefined; submit?: typeof submitHeadless | undefined };
+type LoadOptions = { activated?: string[]; commands?: Map<string, Command>; handlers?: Map<string, Handler>; initialActive?: string[] | undefined; probe?: { activeTools?: () => string[] }; sent?: string[]; sentOptions?: unknown[]; thinking?: () => string | undefined; checkGit?: () => string | undefined; submit?: typeof submitHeadless | undefined };
 
-/** Registers the extension against a recording `pi` and returns its tools by name; `activated` collects what setActiveTools gets, `initialActive` is the active-tool list before any setActiveTools, `handlers` records its event hooks, `commands` its slash commands, `sent` the messages passed to pi.sendUserMessage, `thinking` gives pi.getThinkingLevel, `submit` replaces the headless submission. */
-export function load({ activated = [], commands = new Map(), handlers = new Map(), initialActive = [], sent = [], sentOptions = [], thinking = () => 'off', checkGit, submit }: LoadOptions = {}) {
+/** Registers the extension against a recording `pi` and returns its tools by name; `activated` collects what setActiveTools gets, `initialActive` replaces the default active-tool list (the registered tools without defaultInactive) before any setActiveTools, `handlers` records its event hooks, `commands` its slash commands, `sent` the messages passed to pi.sendUserMessage, `thinking` gives pi.getThinkingLevel, `submit` replaces the headless submission. */
+export function load({ activated = [], commands = new Map(), handlers = new Map(), initialActive, probe, sent = [], sentOptions = [], thinking = () => 'off', checkGit, submit }: LoadOptions = {}) {
   const tools = new Map<string, Registered>();
-  let active: string[] = initialActive;
+  let active = initialActive;
   const pi = {
-    getActiveTools: () => active,
+    getActiveTools: () => active ?? [...tools.values()].filter(tool => tool.defaultInactive !== true).map(tool => tool.name),
     getThinkingLevel: thinking,
     sendUserMessage(message: string, options?: unknown) {
       sentOptions.push(options);
@@ -40,6 +41,7 @@ export function load({ activated = [], commands = new Map(), handlers = new Map(
     },
     setLabel() {},
   };
+  if (probe) probe.activeTools = pi.getActiveTools;
   softwareFactory(pi as unknown as ExtensionAPI, checkGit, submit);
   return tools;
 }
