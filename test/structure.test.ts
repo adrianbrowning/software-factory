@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
@@ -104,6 +105,28 @@ export function cyclesOf(graph: Map<string, string[]>) {
   }
   for (const file of graph.keys()) visit(file);
   return [...cycles.values()];
+}
+
+const TEST_SCOPE_PHRASE = 'test files that assert on output';
+
+/**
+ * One message per file the AGENTS.md implementer test-scope list names that lacks the key phrase, and per tracked file outside
+ * the list that holds it. Files under test/ and AGENTS.md are exempt from the second rule. `tracked` maps path to content.
+ */
+export function testScopeProblems(agents: string, tracked: Map<string, string>) {
+  const lines = agents.split('\n');
+  const start = lines.findIndex(line => line.includes('implementer test-scope wording'));
+  const listed: string[] = [];
+  for (const line of lines.slice(start + 1)) {
+    const path = /^- `([^`]+)`/.exec(line)?.[1];
+    if (path) listed.push(path);
+    else if (listed.length) break;
+  }
+  const missing = listed.filter(path => !tracked.get(path)?.includes(TEST_SCOPE_PHRASE)).map(path => `${path}: listed in AGENTS.md but does not hold "${TEST_SCOPE_PHRASE}"`);
+  const extra = [...tracked]
+    .filter(([path, content]) => !listed.includes(path) && path !== 'AGENTS.md' && !path.startsWith('test/') && content.includes(TEST_SCOPE_PHRASE))
+    .map(([path]) => `${path}: holds "${TEST_SCOPE_PHRASE}" but is not in the AGENTS.md test-scope list`);
+  return [...missing, ...extra];
 }
 
 const lineCount = (source: string) => source.split('\n').length - (source.endsWith('\n') ? 1 : 0);
@@ -223,6 +246,20 @@ describe('structure checks: the helpers', () => {
     const source = ['const x = 1;', 'export { x };', 'export const y = 2;', "import { z } from './z.ts';", "export { q } from 'zod';", "export { r } from '.internal/r';", "// export { a } from './a.ts';", "const s = \"export { a } from './a.ts'\";"].join('\n');
     assert.deepEqual(reExportsOf('src/x.ts', source), []);
   });
+
+  it('reports a listed file without the key phrase and an unlisted file with it, but not files under test/ or AGENTS.md', () => {
+    const agents = ['The implementer test-scope wording sits in two places:', '- `a.md`: one.', '- `src/b.ts`: two.', '', 'Other text.', '- `c.md`: not in the list.'].join('\n');
+    const phrase = 'test files that assert on output';
+    const tracked = new Map([
+      ['AGENTS.md', agents + phrase],
+      ['a.md', `x ${phrase} y`],
+      ['src/b.ts', 'nothing'],
+      ['c.md', phrase],
+      ['test/t.test.ts', phrase],
+      ['d.md', 'unrelated'],
+    ]);
+    assert.deepEqual(testScopeProblems(agents, tracked), ['src/b.ts: listed in AGENTS.md but does not hold "test files that assert on output"', 'c.md: holds "test files that assert on output" but is not in the AGENTS.md test-scope list']);
+  });
 });
 
 const testFiles = tsFilesIn(TESTS);
@@ -250,5 +287,18 @@ describe('structure of src/', () => {
 
   it('has no re-export shim between its modules', () => {
     assert.deepEqual(files.flatMap(file => reExportsOf(`src/${file.name}`, file.source)), []);
+  });
+});
+
+describe('structure of the implementer test-scope wording', () => {
+  it('sits in exactly the files the AGENTS.md list names', () => {
+    const root = fileURLToPath(new URL('../', import.meta.url));
+    const tracked = new Map(
+      execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' })
+        .split('\0')
+        .filter(path => path && existsSync(join(root, path)) && /\.(md|ts|json|sh)$/.test(path))
+        .map(path => [path, readFileSync(join(root, path), 'utf8')] as const),
+    );
+    assert.deepEqual(testScopeProblems(tracked.get('AGENTS.md') ?? '', tracked), []);
   });
 });
