@@ -776,9 +776,18 @@ describe('observation titles in confirm dialogs', () => {
     await call('factory_defer', { observations: ['thermo-defer'] }, asking(bodies));
     await call('factory_fix', { observations: ['thermo-fix'], reason: 'tidy' }, asking(bodies));
     for (const [index, id] of ['leave', 'defer', 'fix'].entries()) {
-      assert.match(bodies[index] ?? '', new RegExp(`^- thermo-${id}: (demo\\/01: )?first second <REDACTED>$`, 'm'), id);
+      assert.match(bodies[index] ?? '', new RegExp(`^- thermo-${id}: first second <REDACTED>$`, 'm'), id);
       assert.doesNotMatch(bodies[index] ?? '', /ghp_/, id);
     }
+  });
+
+  it('factory_defer shows a multi-line note holding a credential on one redacted line', async () => {
+    using dir = repo();
+    const { call } = await ledgerRun(dir.root, ['noted']);
+    const bodies: string[] = [];
+    await call('factory_defer', { note: title }, asking(bodies));
+    assert.match(bodies[0] ?? '', /^- Note: first second <REDACTED>$/m);
+    assert.doesNotMatch(bodies[0] ?? '', /ghp_/);
   });
 
   it('factory_defer clips the dialog title at 500 characters, not the 200 of the issue title', async () => {

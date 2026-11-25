@@ -1,5 +1,6 @@
 import { join } from 'node:path';
 import { z } from 'zod';
+import type { DeferredSink } from './config.ts';
 import { retroDraft, retroKey } from './deferred.ts';
 import { evidence, evidenceLine } from './evidence.ts';
 import { gh } from './exec.ts';
@@ -101,6 +102,12 @@ export async function fileFactoryIssues(ws: Workspace, findings: RetroFinding[])
 /** One retro finding title for a dialog: redacted, on one line, clipped at 500 characters. */
 export function retroTitle(title: string) {
   return evidenceLine(title, 500);
+}
+
+/** The body of the headless retro gate: where the findings go, then one redacted one-line title per finding. */
+export function headlessRetroGateBody(deferred: DeferredSink | undefined, retro: Pick<Retro, 'findings'>) {
+  const where = deferred === undefined ? 'nowhere: no deferred sink is configured' : deferred.kind === 'github' ? 'GitHub issues on this repository' : `the sink file ${deferred.path}`;
+  return `${retro.findings.length} findings go to ${where}:\n${retro.findings.map(finding => `- ${retroTitle(finding.title)}`).join('\n')}`;
 }
 
 /**
