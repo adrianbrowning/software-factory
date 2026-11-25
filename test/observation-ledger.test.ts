@@ -747,6 +747,7 @@ describe('observation ledger', () => {
 
 describe('observation titles in confirm dialogs', () => {
   const title = `first\nsecond ghp_${'a'.repeat(30)}`;
+  const longTitle = `${'w'.repeat(300)} end`;
   const shape = (found: Finding) => ({ ...found, title });
   const asking = (bodies: string[]): Ui => ({ confirm: async (_title, body) => (bodies.push(body), true) });
 
@@ -770,5 +771,13 @@ describe('observation titles in confirm dialogs', () => {
       assert.match(bodies[index] ?? '', new RegExp(`^- thermo-${id}: (demo\\/01: )?first second <REDACTED>$`, 'm'), id);
       assert.doesNotMatch(bodies[index] ?? '', /ghp_/, id);
     }
+  });
+
+  it('factory_defer clips the dialog title at 500 characters, not the 200 of the issue title', async () => {
+    using dir = repo();
+    const { call } = await ledgerRun(dir.root, ['long'], found => ({ ...found, title: longTitle }));
+    const bodies: string[] = [];
+    await call('factory_defer', { observations: ['thermo-long'] }, asking(bodies));
+    assert.ok((bodies[0] ?? '').includes(`: ${longTitle}\n`), 'the whole 304-character title shows');
   });
 });
