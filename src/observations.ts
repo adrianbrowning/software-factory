@@ -126,7 +126,7 @@ export function carryObservations(ws: Workspace, run: Run, request: CarryRequest
 export type DeferRequest = { note?: string | undefined; observations?: string[] | undefined };
 
 /**
- * One draft per observation and note, with the observations and the green review and slice that list them. Throws
+ * One draft per observation and note, with the normalized `note` (undefined for none or a whitespace-only one), the observations and the green review and slice that list them. Throws
  * without a deferred sink, for a request with neither ids nor a note, and for ids that are unknown or already placed.
  * Does not change the run.
  */
@@ -139,6 +139,7 @@ export function planDefer(ws: Workspace, run: Run, request: DeferRequest) {
   requireUnplaced(run, review.id, observations);
   const noted = run.deferred.filter(item => item.review === review.id && item.kind === 'note').length;
   return {
+    note,
     drafts: [
       ...(note === undefined ? [] : [draftOf(run, slice, review.id, { detail: redact(note), key: itemKey(review.id, `note:${noted + 1}`), kind: 'note', title: note })]),
       ...observations.map(finding => draftOf(run, slice, review.id, { commit: review.sha, detail: renderFinding(finding, run.decisions, '###', true), id: finding.id, key: itemKey(review.id, finding.id), kind: 'observation', title: finding.title })),
