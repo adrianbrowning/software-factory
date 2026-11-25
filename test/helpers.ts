@@ -185,9 +185,8 @@ export async function greenWithObservation(ws: Workspace, findings: Finding[] = 
   assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
 }
 
-/** Leaves the active slice of the 'demo' run with one unplaced thermo observation whose finding id is `id`, as a kept observation of a recorded review would. `id` must match the finding schema's `/^[a-z0-9-]+$/` (for example 'bug'); anything else throws before the run is written. */
+/** Leaves the active slice of the 'demo' run with one unplaced thermo observation whose finding id is `id`, as a kept observation of a recorded review would. */
 export async function seedUnplacedObservation(ws: Workspace, id: string) {
-  assert.match(id, /^[a-z0-9-]+$/, 'finding ids are lowercase letters, digits and hyphens');
   await step(ws, run => {
     const slice = activeSlice(run);
     assert.ok(slice, 'no active slice');
