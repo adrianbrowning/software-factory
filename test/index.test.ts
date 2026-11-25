@@ -1464,14 +1464,13 @@ describe('active run in a fresh extension copy', () => {
     resetModuleState();
     const handlers = new Map<string, Handler>();
     const commands = new Map<string, Command>();
-    const activated: string[] = [];
     const probe: { activeTools?: () => string[] } = {};
-    const tools = load({ activated, commands, handlers, initialActive, probe });
+    const tools = load({ commands, handlers, initialActive, probe });
     const notices: string[] = [];
     const main = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, editor: async () => 'true', notify: (message: string) => notices.push(message) } };
     const stop = async () => ((await handlers.get('session_stop')?.({ session_id: 'session', messages: [], type: 'session_stop' }, main)) as { reason: string }).reason;
     const active = () => probe.activeTools?.() ?? [];
-    return { active, activated, commands, main, notices, stop, tools, [Symbol.dispose]: () => repo[Symbol.dispose]() };
+    return { active, commands, main, notices, stop, tools, [Symbol.dispose]: () => repo[Symbol.dispose]() };
   };
 
   it('tells the orchestrator to resume in the stop block reason and /factory status while the factory tools are not loaded, and not once they are', async () => {
