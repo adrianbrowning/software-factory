@@ -39,6 +39,11 @@ Your task gives you the review id and the data file (PR metadata, full diff, cha
 - Expecting string when could be number or undefined
 - Assuming an API/DB response always has a certain shape
 
+**Parsers of factory-written formats**
+- When the diff adds or changes code that parses a format the factory itself writes (slice ids, slice titles, branch names, carried headers, review keys, ticket or fix-file sections), find the writer of that format and check the parser against the writer's full value range, not only the common case: ids of any digit count, titles with any characters the writer allows
+- Example: `makeSlice` in `src/workflow.ts` pads slice ids to at least two digits, so a parser that matches `/^\d{2}$/` refuses slice 100 and later
+- In the finding, name the writer and a value it writes that the parser gets wrong
+
 **Error swallowing**
 - `try/catch` blocks that suppress errors silently (no log, no re-throw)
 - Promise rejections swallowed in `.catch(() => {})`
