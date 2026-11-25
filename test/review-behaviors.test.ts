@@ -10,7 +10,7 @@ const behaviorsSection = (dataFile: string) => dataSection(dataFile, 'IMPLEMENTE
 describe('review data file: implementer behaviors', { concurrency: 4 }, () => {
   it('lists the stored report behaviors with their seen-red marks as untrusted claims, and nothing else of the report', async () => {
     using ws = workspace();
-    await newRun(ws, [slice('Feature', [], { noTestReason: 'docs', seams: [] })]);
+    await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
     const first = sh(ws.root, 'rev-parse', '--short=12', 'HEAD');
@@ -33,7 +33,7 @@ describe('review data file: implementer behaviors', { concurrency: 4 }, () => {
 
   it('says no implementer report was stored when none was', async () => {
     using ws = workspace();
-    await newRun(ws, [slice('Feature', [], { noTestReason: 'docs', seams: [] })]);
+    await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
     await step(ws, run => runChecks(ws, run));
@@ -43,10 +43,10 @@ describe('review data file: implementer behaviors', { concurrency: 4 }, () => {
 
   it('says None. when the stored report has no behaviors', async () => {
     using ws = workspace();
-    await newRun(ws, [slice('Feature', [], { noTestReason: 'docs', seams: [] })]);
+    await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
-    await step(ws, async run => submitImplementerReport(ws, run, { behaviors: [], commits: [], open: [] }));
+    await step(ws, async run => submitImplementerReport(ws, run, { behaviors: [], commits: [], open: ['NEEDS SEAM: x'] }));
     await step(ws, run => runChecks(ws, run));
     const section = behaviorsSection((await step(ws, run => startReview(ws, run))).dataFile);
     assert.match(section, /None\./);
@@ -57,9 +57,9 @@ describe('review data file: implementer behaviors', { concurrency: 4 }, () => {
 describe('review data file after a fix round', () => {
   it('lists only the fix round report behaviors, and keeps its fix file items out', async () => {
     using ws = workspace({ maxRounds: 3 });
-    await newRun(ws, [slice('Feature', [], { noTestReason: 'docs', seams: [] })]);
+    await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
-    commit(ws, 'work.txt');
+    commit(ws, 'work.test.ts');
     await step(ws, async run =>
       submitImplementerReport(ws, run, { behaviors: [{ behavior: 'first', red: 'boom', seenRed: true, test: 'old-test' }], commits: [], open: [] }),
     );

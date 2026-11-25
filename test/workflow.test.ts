@@ -204,9 +204,9 @@ describe('implementer report', () => {
 
   it('replaces the stored report with a later one and shows it in the checks result', async () => {
     using ws = workspace();
-    await newRun(ws, [slice('Feature', [], { noTestReason: 'docs', seams: [] })]);
+    await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
-    commit(ws, 'work.txt');
+    commit(ws, 'work.test.ts');
     const path = join(ws.root, '.scratch', 'demo', 'reports', '01.md');
     const firstSha = sh(ws.root, 'rev-parse', '--short=12', 'HEAD');
     const first = await step(ws, run =>
@@ -1158,16 +1158,16 @@ describe('reopen', () => {
 
   it('does not show the old implementer report of a restacked slice in its checks result', async () => {
     using ws = workspace({ maxRounds: 2 });
-    await newRun(ws, [slice('First'), slice('Second', ['First'], { noTestReason: 'docs', seams: [] })]);
+    await newRun(ws, [slice('First'), slice('Second', ['First'])]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
     commit(ws, 'first.txt');
     await green(ws);
     await step(ws, run => completeSlice(ws, run));
     await step(ws, run => nextSlice(ws, run));
-    commit(ws, 'second.txt');
+    commit(ws, 'second.test.ts');
     const second = sh(ws.root, 'log', '--format=%h %s', '-1');
-    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [second], open: [] }));
+    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], commits: [second], open: [] }));
     await green(ws);
     await step(ws, run => completeSlice(ws, run));
 
