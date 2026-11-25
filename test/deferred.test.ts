@@ -375,10 +375,7 @@ describe('accepted unresolved findings go to the sink', () => {
     const { call, ws } = await fourthReview(repo.root, { kind: 'github' }, undefined, `leaks ${secret}`);
     await call('factory_review_record', {});
     const run = readRun(ws, 'demo');
-    const bugB = run.deferred.find(item => item.id === 'bug-b');
-    assert.ok(bugB, `no deferred bug-b: ${JSON.stringify(run.deferred.map(item => item.id))}`);
-    assert.match(bugB.body, /Scope reviewer: still broken/);
-    assert.match(bugB.body, /leaks <REDACTED>/);
+    assert.ok(run.deferred.find(item => item.id === 'bug-b' && item.body.includes('Scope reviewer: still broken') && item.body.includes('leaks <REDACTED>')), `no matching deferred bug-b in ${JSON.stringify(run.deferred)}`);
     assert.deepEqual(run.deferred.filter(item => item.body.includes(secret) || item.title.includes(secret)), []);
     assert.ok(!gh.args().includes(secret));
   });
