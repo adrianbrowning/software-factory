@@ -315,6 +315,42 @@ describe('implementer sessions', () => {
       assert.equal(readFileSync(file(repo.root), 'utf8'), before);
     });
 
+    it('refuses with the exact full text of each of the four refusals', async () => {
+      const none = { behaviors: [], commits: [], open: [] };
+      const seen = { behaviors: [{ ...behavior, seenRed: false, red: undefined }], commits: [], open: [] };
+      const redFirst = 'Commit a red-first test through one of these seams and report it in behaviors, or report NEEDS SEAM in Open.';
+      const message = async (call: (name: string, args: unknown, who: never) => Promise<unknown>, args: unknown, who: unknown) => {
+        try {
+          await call('factory_implementer_report', args, who as never);
+        } catch (error) {
+          return (error as Error).message;
+        }
+        return 'stored';
+      };
+      {
+        using repo = emptyRepo();
+        const { call, implementer } = await startedRun(repo.root);
+        assert.equal(await message(call, none, implementer), `Nothing stored. Slice 01 has test seams (cli) but the report lists no behavior. ${redFirst}`);
+        commitFile(repo.root, 'src/a.ts');
+        const refused = await message(call, { ...none, behaviors: [behavior] }, implementer);
+        const parent = /past (\S+) change/.exec(refused)?.[1];
+        assert.equal(refused, `Nothing stored. Slice 01 has test seams (cli) but its commits past ${parent} change no test file. ${redFirst}`);
+        commitFile(repo.root, 'test/a.test.ts');
+        assert.equal(
+          await message(call, seen, implementer),
+          'Nothing stored. Slice 01 has test seams (cli) but no behavior was seen red. To see a test red honestly: revert the production change for that test, run the test, watch it fail, restore the change, then report the failing run as seenRed true with a one-line red.',
+        );
+      }
+      {
+        using repo = emptyRepo();
+        const { call, implementer } = await startedRun(repo.root, 'true', { noTestReason: 'refactor, behavior unchanged' });
+        assert.equal(
+          await message(call, none, implementer),
+          'Nothing stored. Slice 01 has test seams (cli) but the report lists no behavior. List the test that pins the code (an existing one is fine) in behaviors with seenRed false, or report NEEDS SEAM in Open.',
+        );
+      }
+    });
+
     it('stores the report when a commit changes a test file', async () => {
       using repo = emptyRepo();
       const { call, implementer } = await startedRun(repo.root);
