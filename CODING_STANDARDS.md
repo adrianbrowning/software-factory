@@ -44,6 +44,10 @@ When a change alters a default or a branch condition, search the tests for the i
 
 A `@ts-expect-error` test must fail only for the behavior its name gives. The value on the line after the directive is otherwise complete and valid, so the one type error is the one under test. The test also holds a positive control: the same value without the part under test, typed with no directive, which compiles. Past history: in issue-858 slice 01 a `Validation` literal omitted the required `downgrade` key, so the expected error came from the missing key and the test could never fail on the behavior it named. Copy the pattern of 'has no state with both decision and criterion' in test/review-record.test.ts. This is a reviewer judgement rule; no test enforces it.
 
+## Zod union errors and strictness
+
+In a zod schema in `src/`, a custom `error` function on a `z.union` returns its message text only for the input case the message describes and returns `undefined` for every other case, so zod's default issue still reports a wrong-typed field or an unknown key. A change to a schema's shape does not change its object strictness (`z.object` versus `z.strictObject`) as a side effect. Copy the escalate union in `validationSchema` in `src/review-record.ts`. Past history: in issue-858 slice 01 a union error fired for every `invalid_union` issue, which hid wrong-typed fields and unknown keys behind one message, and the schema switched to `z.strictObject` along the way. This is a reviewer judgement rule; no test enforces it.
+
 ## Script env in tests
 
 A test that spawns a script with `process.env` controls every variable the script reads. Otherwise the result depends on the developer's or CI's shell.
