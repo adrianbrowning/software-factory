@@ -2,7 +2,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync } from 'nod
 import { createHash } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import { z } from 'zod';
-import { effectiveModels } from './config.ts';
+import { checkListSchema, effectiveModels } from './config.ts';
 import { evidence, evidenceLine } from './evidence.ts';
 import { git } from './exec.ts';
 import { isRecordSlice, recordFailed, waitsForRecord } from './deferred.ts';
@@ -128,7 +128,6 @@ export async function headlessBase(ws: Workspace, run: Run, params: { baseRef?: 
   return { baseRef: run.baseRef, baseSha: run.baseSha, trunk: run.trunk };
 }
 
-const checksSchema = z.array(z.string().trim().min(1)).min(1, 'Choose at least one check command.');
 const checksPath = (ws: Workspace) => join(ws.root, ws.config.scratchDir, 'checks.json');
 
 /**
@@ -139,12 +138,12 @@ export function repoChecks(ws: Workspace): string[] {
   if (ws.config.checks !== undefined) return ws.config.checks;
   const path = checksPath(ws);
   if (!existsSync(path)) return [];
-  return z.object({ checks: checksSchema }).parse(JSON.parse(readFileSync(path, 'utf8'))).checks;
+  return z.object({ checks: checkListSchema }).parse(JSON.parse(readFileSync(path, 'utf8'))).checks;
 }
 
 /** Saves the user's choice of checks for this repository in the scratch dir, which git ignores. */
 export async function saveChecks(ws: Workspace, checks: string[]) {
-  const parsed = checksSchema.parse(checks);
+  const parsed = checkListSchema.parse(checks);
   await excludeScratch(ws);
   writeAtomic(checksPath(ws), `${JSON.stringify({ checks: parsed }, null, 2)}\n`);
   return parsed;
@@ -157,7 +156,7 @@ export async function startRun(ws: Workspace, input: { annotate?: ((run: Run) =>
     throw new Error(`Run "${input.feature}" already exists. Use /factory resume ${input.feature}.`);
   }
   const source = sourceSchema.parse(input.source);
-  const checks = checksSchema.parse(repoChecks(ws));
+  const checks = checkListSchema.parse(repoChecks(ws));
   // Without input.base the base is resolved and pinned at plan approval, where the user can still pick a
   // different one; the plan event records it. With input.base (headless --base) it is pinned here and never changes.
   const configured = await configuredBase(ws);
@@ -790,7 +789,7 @@ function recordedFilesIntact(ws: Workspace, run: Run, review: NonNullable<Slice[
  */
 export async function resumeRun(ws: Workspace, run: Run, sessionId: string) {
   const filled = run.checks.length === 0;
-  if (filled) run.checks = checksSchema.parse(repoChecks(ws));
+  if (filled) run.checks = checkListSchema.parse(repoChecks(ws));
   const wasPaused = run.status === 'paused';
   if (activeSlice(run)?.stalled) resolveStall(ws, run, 'continue');
   const active = activeSlice(run);

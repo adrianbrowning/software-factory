@@ -103,8 +103,8 @@ export async function ensureChecks(ctx: ExtensionContext, ws: Workspace, mode: R
     if (ws.config.headless.checks === 'stop') throw new Error('Headless gate "checks" is set to stop and the repository has no configured checks. Configure checks in .omp/factory.json, or set headless.checks to auto.');
     const detected = suggestChecks(ws.root, ws.config).chosen;
     if (detected.length === 0) throw new Error('Headless gate "checks": the repository has no configured checks and none could be detected (no lint, typecheck, or test script). Set "checks" in .omp/factory.json, then start again.');
-    await saveChecks(ws, detected);
-    return [`gate checks (auto): saved the detected checks: ${detected.join('; ')}`];
+    const saved = await saveChecks(ws, detected);
+    return [`gate checks (auto): saved the detected checks: ${saved.join('; ')}`];
   }
   for (;;) {
     const checks = await chooseChecks(ctx, ws);

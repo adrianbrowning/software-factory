@@ -1632,6 +1632,29 @@ describe('factory_start git architecture warning', () => {
     assert.match(resumed, /Run \\"demo\\"/);
   });
 
+  it('/factory checks saves and announces the list without repeated commands', async () => {
+    using repo = tempRepo('factory-checks-dedupe-', { 'README.md': 'x\n' });
+    const commands = new Map<string, Command>();
+    load({ commands });
+    const notices: string[] = [];
+    const main = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, editor: async () => 'a\nb\na', notify: (message: string) => notices.push(message) } };
+    await commands.get('factory')?.handler('checks', main);
+    assert.match(notices.at(-1) ?? '', /^Saved checks: a; b\. /);
+    assert.deepEqual(JSON.parse(readFileSync(join(repo.root, '.scratch', 'checks.json'), 'utf8')).checks, ['a', 'b']);
+  });
+
+  it('a headless start with no configured checks records the gate decision with the saved list', async () => {
+    using repo = tempRepo('factory-headless-auto-checks-', { 'package.json': JSON.stringify({ scripts: { lint: 'x', test: 'y' } }), 'ticket.md': '# Add the widget\n\nBuild it.\n' });
+    const commands = new Map<string, Command>();
+    load({ commands });
+    const main = { ...ctx('main', 'main'), cwd: repo.root, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, notify() {} } };
+    await commands.get('factory')?.handler('headless ticket.md', main);
+    const ws = { config: loadConfig(repo.root), root: repo.root };
+    const saved = JSON.parse(readFileSync(join(repo.root, '.scratch', 'checks.json'), 'utf8')).checks as string[];
+    assert.ok(saved.length > 0);
+    assert.deepEqual(readRun(ws, 'ticket').events.filter(event => event.kind === 'autonomous').map(event => event.detail), [`gate checks (auto): saved the detected checks: ${saved.join('; ')}`]);
+  });
+
   it('does not run the check for /factory headless', async () => {
     using repo = tempRepo('factory-gitwarn-headless-', CHECKS_OK);
     writeFileSync(join(repo.root, 'demo.md'), '# Demo\n\nDo it\n');

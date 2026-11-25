@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { readRun } from '../src/run.ts';
 import { recordReview, runChecks, startReview } from '../src/review.ts';
-import { nextAction, nextSlice, pauseRun, planFollowUp, resolveStall, resumeRun, saveChecks, startRun } from '../src/workflow.ts';
+import { nextAction, nextSlice, pauseRun, planFollowUp, resolveStall, repoChecks, resumeRun, saveChecks, startRun } from '../src/workflow.ts';
 import { checkRuns, commit, countedCheck, finding, fixItems, green, newRun, review, sh, slice, start, step, tempDir, workspace } from './helpers.ts';
 
 describe('slice loop gates: checks and the fix budget', { concurrency: 4 }, () => {
@@ -284,13 +284,30 @@ describe('slice loop gates: checks and the fix budget', { concurrency: 4 }, () =
   it('marks only the occurrence that failed as flaky when a check command is listed twice', async () => {
     using counter = tempDir('factory-dup-');
     const dup = `echo x >> '${counter.root}/n'; [ "$(wc -l < '${counter.root}/n')" -ne 1 ]`;
-    using ws = workspace({ checks: [dup, dup] });
+    using ws = workspace({ checks: [dup] });
     await newRun(ws, [slice('Feature')]);
+    await step(ws, run => {
+      run.checks = [dup, dup];
+    });
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'work.txt');
     const result = await step(ws, run => runChecks(ws, run));
     assert.ok(result.passed);
     assert.equal(result.summary.filter(line => /flaky/.test(line)).length, 1);
+  });
+
+  it('saveChecks writes and returns the normalized list; blank-only lists are refused', async () => {
+    using ws = workspace({ checks: undefined });
+    assert.deepEqual(await saveChecks(ws, [' a ', 'a', '', 'b']), ['a', 'b']);
+    assert.deepEqual(JSON.parse(readFileSync(join(ws.root, ws.config.scratchDir, 'checks.json'), 'utf8')).checks, ['a', 'b']);
+    await assert.rejects(saveChecks(ws, ['  ']), /Choose at least one check command\./);
+  });
+
+  it('repoChecks reads a hand-written checks.json through the shared schema', async () => {
+    using ws = workspace({ checks: undefined });
+    await saveChecks(ws, ['x']);
+    writeFileSync(join(ws.root, ws.config.scratchDir, 'checks.json'), JSON.stringify({ checks: [' a ', 'a', '  ', 'b'] }));
+    assert.deepEqual(repoChecks(ws), ['a', 'b']);
   });
 
   it('reports a check that runs past its timeout', async () => {
