@@ -92,3 +92,27 @@ Or key the records by id: `const byId = new Map(records.map((r) => [r.id, r]))`,
 An indexed read of a single array (for example `chunk[i]!` in `src/exec.ts`) pairs nothing and is outside this rule.
 
 Example (issue-671 slice 01, past history): `recordReview` paired `blocking[i]` with `findingRecords[i]!`. `src/review.ts` now maps `blocking` once to `{ finding, record }` pairs (`pairs`), which is the pattern to copy.
+
+## One const per reply part
+
+When a tool handler adds a new part to a reply, the part gets its own named const, joined in the reply template. Never append it onto an existing const whose name describes other content: the name then no longer matches the content, and the next reader trusts the name.
+
+Forbidden:
+
+```ts
+let unchanged = result.unchanged ? '\nNo new commits since the fix file.' : '';
+unchanged += await flaggedFilesSection(ws.root); // flagged text under a name that says "unchanged"
+return reply(`${summary}${unchanged}${newChecks}`);
+```
+
+Copy:
+
+```ts
+const unchanged = result.unchanged ? '\nNo new commits since the fix file.' : '';
+const flagged = await flaggedFilesSection(ws.root);
+return reply(`${summary}${unchanged}${flagged}${newChecks}`);
+```
+
+The `factory_checks` handler in `src/index.ts` is the pattern to copy: `unchanged`, `flagged` and `newChecks` are separate consts, each named for its content, and the reply template joins them.
+
+Example (issue-377 retro, past history): the flagged-files text was appended onto `unchanged`, so a const named for "no new commits" held flagged-file text too. It is now the separate `flagged` const. This is a reviewer judgement rule; no test enforces it.
