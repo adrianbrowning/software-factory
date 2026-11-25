@@ -62,7 +62,7 @@ import {
   summarize,
   HEADLESS_FIX_ROUNDS,
 } from './workflow.ts';
-import { fileFactoryIssues, type FiledIssues, parseRetro, recordRetro, retroDrafts, retroIssueBody, retroSchema } from './retro.ts';
+import { fileFactoryIssues, type FiledIssues, parseRetro, recordRetro, retroDrafts, retroIssueBody, retroSchema, retroTitle } from './retro.ts';
 import { sourceInputSchema } from './source.ts';
 
 const DEFAULT_FACTORY_REPO = 'adrianbrowning/software-factory';
@@ -562,17 +562,17 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
       let filed: FiledIssues = { urls: {} };
       if (readRun(ws, feature).mode === 'headless') {
         const where = ws.config.deferred === undefined ? 'nowhere: no deferred sink is configured' : ws.config.deferred.kind === 'github' ? 'GitHub issues on this repository' : `the sink file ${ws.config.deferred.path}`;
-        await gate(ctx, ws, feature, 'retro', 'Record the retro and defer its findings?', `${retro.findings.length} findings go to ${where}:\n${retro.findings.map(finding => `- ${finding.title}`).join('\n')}`);
+        await gate(ctx, ws, feature, 'retro', 'Record the retro and defer its findings?', `${retro.findings.length} findings go to ${where}:\n${retro.findings.map(finding => `- ${retroTitle(finding.title)}`).join('\n')}`);
         const failure = await withRun(ws, feature, run => deferItems(ws, run, retroDrafts(run, retro)));
         if (failure !== undefined) throw new Error(`The deferred sink failed: ${failure.message}. Findings already filed stay recorded; call factory_retro again with the same findings to file the rest.`);
       } else if (retro.apply.length > 0 || retro.file.length > 0) {
         const repo = ws.config.factoryRepo;
         const plan = [
-          ...(retro.apply.length > 0 ? ['Final slice applying to this repository:', ...retro.apply.map(finding => `- ${finding.title}`), ''] : []),
+          ...(retro.apply.length > 0 ? ['Final slice applying to this repository:', ...retro.apply.map(finding => `- ${retroTitle(finding.title)}`), ''] : []),
           ...(retro.file.length > 0
             ? [
                 `Issues on ${repo}${repo === DEFAULT_FACTORY_REPO ? '' : ` (configured in .omp/factory.json, not the default ${DEFAULT_FACTORY_REPO})`}, posted exactly as shown:`,
-                ...retro.file.map(finding => `\n## ${finding.title}\n${retroIssueBody(finding)}`),
+                ...retro.file.map(finding => `\n## ${retroTitle(finding.title)}\n${retroIssueBody(finding)}`),
               ]
             : []),
         ];

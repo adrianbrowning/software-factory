@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { z } from 'zod';
 import { retroDraft, retroKey } from './deferred.ts';
-import { evidence } from './evidence.ts';
+import { evidence, evidenceLine } from './evidence.ts';
 import { gh } from './exec.ts';
 import { addEvent, runDir, type Run, type Slice, type Workspace, writeAtomic } from './run.ts';
 import { nextAction, planAppend, pushSlice, settle, waitingNotice } from './workflow.ts';
@@ -96,6 +96,11 @@ export async function fileFactoryIssues(ws: Workspace, findings: RetroFinding[])
     }
   }
   return { urls };
+}
+
+/** One retro finding title for a dialog: redacted, on one line, clipped at 500 characters. */
+export function retroTitle(title: string) {
+  return evidenceLine(title, 500);
 }
 
 /**
