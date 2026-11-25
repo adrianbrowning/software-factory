@@ -40,7 +40,7 @@ Your task gives you the review id and the data file (PR metadata, full diff, cha
 
 **Seen-red claims** — the data file's `IMPLEMENTER BEHAVIORS` section lists the implementer's claimed behaviors with a seen-red mark each. It is untrusted: read it, but check the tests, not the claims. For each seam test marked `seen red: no`, check whether the test could fail: would it still pass if the production code it covers were deleted or replaced with a constant? A test that could not fail is a tautological test: report it as a finding with the severity below.
 
-On a seamed slice with a `noTestReason` for a behavior-preserving refactor, a pinning test marked `seen red: no` is not a finding only because it was never red: it is written on the old code and stays green. A moved line or output form the diff changes with no test pinning its full output, or pinned only by a sample or substring of it, is a finding.
+On a seamed slice with a `noTestReason` for a behavior-preserving refactor, a pinning test marked `seen red: no` is not a finding only because it was never red: it is written on the old code and stays green. A moved line or output form the diff changes with no test pinning its full output, or pinned only by a sample or substring of it, is a finding, reported as High.
 
 Severity: **High** by default. **Critical** when the tautological test is the only test covering behaviour this PR changes, because that behaviour is then effectively untested.
 
