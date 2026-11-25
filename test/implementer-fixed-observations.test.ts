@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { ctx, load } from './extension.ts';
@@ -193,6 +194,9 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
     }));
     await review(ws, opened.reviewId, [], [], verdicts);
     assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'fix');
+    const fixFile = readFileSync(readRun(ws, 'demo').slices[0]!.fixPath!, 'utf8');
+    const openSection = fixFile.slice(fixFile.indexOf('## Open fix items from'));
+    assert.deepEqual([...openSection.matchAll(/^### `([^`]+)`$/gm)].map(match => match[1]), ['01-r1:thermo-naming']);
   });
 
   it('does not accept a commit of another checked-out branch as a slice commit', async () => {
