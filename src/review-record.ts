@@ -127,9 +127,12 @@ export function targetingAfter(review: { id: string; sha: string }, domains: rea
   return { base: review.sha, domains: [...new Set(domains)], from: review.id };
 }
 
-/** A finding as a fix record in `group`: its id and summary `[severity] <location>: title` as the fix item, and its location-free `title`. */
+const SIBLING_COMMENT_NOTE =
+  '\n- Sibling comments: search src/, README.md, agents/ and skills/ for key words of the fact the comment states and fix in this round every other comment the diff makes false for that fact, not only the one at this location.';
+
+/** A finding as a fix record in `group`: its id and summary `[severity] <location>: title` as the fix item, and its location-free `title`. A comments-domain finding's section ends with the sibling-comment note. */
 export function findingRecord(finding: Finding, group: string, decisions: Decision[]): FixRecord & { title: string } {
   const title = `[${finding.severity}] ${findingTitle(finding.title)}`;
   const summary = `[${finding.severity}] ${findingLocation(finding)}: ${findingTitle(finding.title)}`;
-  return { group, item: { id: finding.id, summary }, section: renderFinding(finding, decisions, '###'), title };
+  return { group, item: { id: finding.id, summary }, section: renderFinding(finding, decisions, '###') + (finding.domain === 'comments' ? SIBLING_COMMENT_NOTE : ''), title };
 }

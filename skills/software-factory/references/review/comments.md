@@ -11,7 +11,7 @@ Your task gives you the review id and the data file (PR metadata, full diff, cha
 1. Read the data file.
    Apply the shared KNOWN OBSERVATIONS and TARGETED REVIEW rules in `<reference dir>/../known-observations.md` (the reference dir's parent).
 
-2. List every comment on a `+` line: `//`, `/* */`, `#`, `<!-- -->`, JSDoc/TSDoc, docstrings, and commented-out code. Also list existing comments next to changed code, in case the change made them false.
+2. List every comment on a `+` line: `//`, `/* */`, `#`, `<!-- -->`, JSDoc/TSDoc, docstrings, and commented-out code. Also list existing comments next to changed code, in case the change made them false. When the diff makes a comment false, grep distinctive key words of the fact it states across `src/` and `README.md` (and the other tracked prose files), and report every comment the diff makes false for that one fact in one finding that lists each `path:line`, at the severity of the most severe. One fact gives one finding.
 
 3. For each comment, read the code around it (the whole file when needed) and apply the rules below.
 
