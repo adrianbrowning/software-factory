@@ -99,7 +99,7 @@ export function someEveryAssertsOf(files: { name: string; source: string }[]) {
 }
 
 const SUB_SECOND_SLEEP = /\bsleep +0\.[0-9]/;
-const SUB_SECOND_ALLOW = /allow-sub-second-sleep:\s*\S/;
+const SUB_SECOND_ALLOW = /allow-sub-second-sleep:\s*(?!\*\/)\S/;
 
 /** One message per line of `source` holding a sub-second `sleep`, unless the same line carries `allow-sub-second-sleep: <reason>`. */
 export function subSecondSleeps(file: string, source: string) {
@@ -213,6 +213,13 @@ describe('structure checks: the helpers', () => {
     const sleep = 'sleep ' + '0.2';
     assert.deepEqual(subSecondSleeps('f.ts', `${sleep} // allow-sub-second-sleep: bounds a timeout`), []);
     assert.equal(subSecondSleeps('f.ts', `// allow-sub-second-sleep: why\n${sleep}`).length, 1);
+  });
+
+  it('subSecondSleeps does not accept a marker without reason text', () => {
+    const sleep = 'sleep ' + '0.2';
+    assert.equal(subSecondSleeps('f.ts', `${sleep} /* allow-sub-second-sleep: */`).length, 1);
+    assert.equal(subSecondSleeps('f.ts', `${sleep} // allow-sub-second-sleep:   `).length, 1);
+    assert.deepEqual(subSecondSleeps('f.ts', `${sleep} /* allow-sub-second-sleep: why */`), []);
   });
 
   it('subSecondSleepsOf prefixes test/<name> and the line', () => {
