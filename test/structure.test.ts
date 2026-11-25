@@ -561,8 +561,12 @@ describe('structure of the CODING_STANDARDS.md references', () => {
   });
 
   it('reports the 1-based line, skips fenced blocks, other span kinds and past-history paragraphs', () => {
-    const text = ['ok', '', '```', '`goneName` `src/no.ts`', '```', '', '`factory_carry` `Map` `OMP` `assert.ok` `test/helpers.ts`', '', 'Example (past history): `goneName`', 'and `src/no.ts`', '', '`goneName`', ''].join('\n');
+    const text = ['ok', '', '```', '`goneName` `src/no.ts`', '```', '', '`factory_carry` `Map` `OMP` `assert.ok` `test/helpers.ts` `node`', '', 'Example (past history): `goneName`', 'and `src/no.ts`', '', '`goneName`', ''].join('\n');
     assert.deepEqual(standardsReferenceProblems(text, paths, sources), ['CODING_STANDARDS.md:12: `goneName` is in no src/ or test/ .ts file']);
+  });
+
+  it('reports a name a source holds only at the end of a longer word', () => {
+    assert.deepEqual(standardsReferenceProblems('`evidenceHead`\n', paths, ['const xevidenceHead = 1']), ['CODING_STANDARDS.md:1: `evidenceHead` is in no src/ or test/ .ts file']);
   });
 
   it('finds no stale reference in the real CODING_STANDARDS.md', () => {
