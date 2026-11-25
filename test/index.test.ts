@@ -122,12 +122,12 @@ describe('stopDecision', () => {
 
 const git = (root: string, ...args: string[]) => execFileSync('git', args, { cwd: root });
 
-/** Commits a test-path file, so a build-mode report for a slice with seams passes the factory's test-file gate. */
-const commitTest = (root: string) => {
-  mkdirSync(join(root, 'test'), { recursive: true });
-  writeFileSync(join(root, 'test', 'work.test.ts'), 'x\n');
+/** Commits a file with the given subject, so a build-mode report for a slice with seams passes the factory's test-file gate. */
+const commitFile = (root: string, name: string, subject = name) => {
+  mkdirSync(dirname(join(root, name)), { recursive: true });
+  writeFileSync(join(root, name), 'x\n');
   git(root, 'add', '.');
-  git(root, 'commit', '-qm', 'add test');
+  git(root, 'commit', '-qm', subject);
 };
 
 const oneBehavior = [{ behavior: 'does it', seenRed: true, red: 'failed', test: 'it works' }];
@@ -180,7 +180,7 @@ describe('implementer sessions', () => {
     using repo = emptyRepo();
     const { root } = repo;
     const { call, handlers, implementer, main } = await startedRun(root);
-    commitTest(root);
+    commitFile(root, 'test/work.test.ts');
     await call('factory_implementer_report', { behaviors: oneBehavior, commits: [], open: ['first round'] }, implementer);
 
     const checks = call('factory_checks', {}, main);
@@ -194,8 +194,7 @@ describe('implementer sessions', () => {
     using repo = emptyRepo();
     const { root } = repo;
     const { call, implementer } = await startedRun(root);
-    commitTest(root);
-    git(root, 'commit', '-q', '--amend', '-m', 'work done');
+    commitFile(root, 'test/work.test.ts', 'work done');
     const sha = git(root, 'rev-parse', 'HEAD').toString().trim();
     const otherSha = git(root, 'rev-parse', 'HEAD~1').toString().trim();
     const report = (commits: string[], open: string[] = []) => ({ behaviors: oneBehavior, commits, open });
@@ -232,12 +231,6 @@ describe('implementer sessions', () => {
   describe('a seamed slice', () => {
     const file = (root: string) => join(root, '.scratch', 'demo', 'reports', '01.md');
     const behavior = { behavior: 'b', seenRed: true, red: 'failed', test: 't' };
-    const commitFile = (root: string, name: string) => {
-      mkdirSync(dirname(join(root, name)), { recursive: true });
-      writeFileSync(join(root, name), 'x\n');
-      git(root, 'add', '.');
-      git(root, 'commit', '-qm', name);
-    };
 
     it('refuses a report with no behavior and no stop report, naming the seams, and stores nothing', async () => {
       using repo = emptyRepo();
@@ -405,7 +398,7 @@ describe('implementer sessions', () => {
   it('refuses a report item holding a Unicode line separator, and stores nothing', async () => {
     using repo = emptyRepo();
     const { call, implementer } = await startedRun(repo.root);
-    commitTest(repo.root);
+    commitFile(repo.root, 'test/work.test.ts');
     const file = join(repo.root, '.scratch', 'demo', 'reports', '01.md');
     for (const sep of ['\u2028', '\u2029', '\u0085']) {
       await assert.rejects(call('factory_implementer_report', { behaviors: oneBehavior, commits: [], open: [`one${sep}two`] }, implementer), /one line per item/);
@@ -418,7 +411,7 @@ describe('implementer sessions', () => {
   it('refuses a behavior whose seen-red evidence contradicts itself or spans lines, and stores nothing', async () => {
     using repo = emptyRepo();
     const { call, implementer } = await startedRun(repo.root);
-    commitTest(repo.root);
+    commitFile(repo.root, 'test/work.test.ts');
     const open = ['x'];
     const refused = (behavior: object, message: RegExp) => assert.rejects(call('factory_implementer_report', { behaviors: [behavior], commits: [], open }, implementer), message);
     await refused({ test: 't', behavior: 'b', seenRed: true }, /red is required/);
@@ -432,7 +425,7 @@ describe('implementer sessions', () => {
   it('stores each behavior on one line with its seen-red evidence', async () => {
     using repo = emptyRepo();
     const { call, implementer } = await startedRun(repo.root);
-    commitTest(repo.root);
+    commitFile(repo.root, 'test/work.test.ts');
     const behaviors = [
       { test: 'a', behavior: 'does a', seenRed: true, red: 'a threw' },
       { test: 'b', behavior: 'does b', seenRed: false },
@@ -491,7 +484,7 @@ describe('implementer sessions', () => {
     using repo = emptyRepo();
     const { root } = repo;
     const { call, implementer, main } = await startedRun(root);
-    commitTest(root);
+    commitFile(root, 'test/work.test.ts');
     await call('factory_implementer_report', { behaviors: oneBehavior, commits: [], open: [] }, implementer);
     await call('factory_checks', {}, main);
     const reply = await call('factory_review_start', { skip: [] }, main);
