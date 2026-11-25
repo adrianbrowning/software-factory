@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from '@oh-my-pi/pi-coding-agent';
 import { existsSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
 import { z } from 'zod';
 import { bindRun } from './active-run.ts';
 import { auditChild, IMPLEMENTER, resetAudit, SPAWN_ROLES } from './agents.ts';
@@ -366,7 +366,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
         approvePlan(ws, current, planSlices(ws, current, params.slices, base), base);
         return current;
       });
-      return reply(`Plan approved. Tickets are in ${join(ws.config.scratchDir, feature, 'issues')}.\nNext: ${nextAction(run)}`);
+      return reply(`Plan approved. Tickets are in ${posix.join(ws.config.scratchDir, feature, 'issues')}.\nNext: ${nextAction(run)}`);
     },
   });
 
@@ -587,7 +587,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
       }
       const recorded = await withRun(ws, feature, run => {
         const slice = recordRetro(ws, run, retro, filed);
-        const lines = [`Retro written to ${join(ws.config.scratchDir, feature, 'retro.md')}.`];
+        const lines = [`Retro written to ${posix.join(ws.config.scratchDir, feature, 'retro.md')}.`];
         if (slice !== undefined) lines.push(`Added slice ${slice.id} "${slice.title}".`);
         lines.push(...Object.values(filed.urls));
         if (filed.error !== undefined) lines.push(`Filing stopped: ${filed.error}. Unfiled findings are marked in retro.md.`);
