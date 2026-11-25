@@ -774,6 +774,9 @@ function recordedFilesIntact(ws: Workspace, run: Run, review: NonNullable<Slice[
  * (see `copyPauseCause`), also when it paused at a stall; a run with status stalled or a slice outside fix leaves the file alone.
  * A running run's active slice at `implement` whose branch has own commits that the stored implementer report lists in
  * full, with no stop report in Open, moves to `checks` and records a resume event.
+ * Tests: the main files are test/workflow.test.ts (unit tests of resumeRun) and test/index.test.ts (the factory_start
+ * resume tests); test/review-gates-checks.test.ts and test/headless.test.ts also test resume behavior. Run all four
+ * for a resumeRun change, and search test/ for `resumeRun(` and `resume: '` to find the other resume tests.
  */
 export async function resumeRun(ws: Workspace, run: Run, sessionId: string) {
   const filled = run.checks.length === 0;
