@@ -50,8 +50,28 @@ describe('factory_retro confirm dialog', () => {
     assert.ok(!args.includes(TOKEN));
   });
 
-  it('retroTitle puts a headless gate list entry on one redacted line, clipped at 500 characters', () => {
+  it('retroTitle puts a headless gate list entry on one redacted line, clipped at 200 characters', () => {
     assert.equal(retroTitle(TITLE), 'first second <REDACTED>');
-    assert.ok(retroTitle('x'.repeat(600)).startsWith('x'.repeat(500)) && retroTitle('x'.repeat(600)).length < 502);
+    assert.equal(retroTitle('x'.repeat(600)), `${'x'.repeat(200)}…`);
+  });
+
+  it('files a 300-character finding title clipped to 200 characters plus an ellipsis', async () => {
+    using repo = tempRepo('factory-retro-title-', CHECKS_OK);
+    using gh = fakeGh();
+    const caller = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, notify() {} } };
+    const tools = load();
+    const call = (name: string, params: unknown) => tools.get(name)?.execute('id', params, undefined, undefined, caller) ?? Promise.reject(new Error('no tool'));
+    await call('factory_start', { feature: 'demo', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } });
+    const ws: Workspace = { config: loadConfig(repo.root), root: repo.root };
+    await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')])));
+    await withRun(ws, 'demo', run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+    await review(ws, reviewId, []);
+    await withRun(ws, 'demo', run => recordReview(ws, run));
+    await withRun(ws, 'demo', run => completeSlice(ws, run));
+    await call('factory_retro', { findings: [{ action: 'file-issue', category: 'agents-md', detail: 'The skill is vague', severity: 'medium', target: 'factory', title: 'y'.repeat(300) }] });
+    assert.ok(gh.args().includes(`--title ${'y'.repeat(200)}… --body`), gh.args());
   });
 });
