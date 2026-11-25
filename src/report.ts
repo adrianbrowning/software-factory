@@ -26,7 +26,7 @@ const behaviorSchema = z
 
 /** The implementer's final report. The factory keeps it, so a follow-up turn (an advisor note) cannot lose it. */
 export const implementerReportSchema = z.object({
-  behaviors: z.array(behaviorSchema).describe('Each test, the behavior it proves, and whether you saw it fail first; empty when you wrote no test'),
+  behaviors: z.array(behaviorSchema).describe('Each test, the behavior it proves, and whether you saw it fail first; empty only for a slice without test seams or when Open names a stop report (NEEDS SEAM, SLICE TOO BIG, MISSING DEPENDENCY); in build mode a slice with seams is refused with an empty list'),
   commits: z.array(reportItem).describe('Each commit you made, as `<short sha> <subject>`; empty when you made none'),
   fixItems: z
     .array(reportItem)
