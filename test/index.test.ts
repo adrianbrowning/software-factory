@@ -130,7 +130,7 @@ const commitTest = (root: string) => {
   git(root, 'commit', '-qm', 'add test');
 };
 
-const oneBehavior = [{ behavior: 'does it', seenRed: false, test: 'it works' }];
+const oneBehavior = [{ behavior: 'does it', seenRed: true, red: 'failed', test: 'it works' }];
 
 /** A temp git repository with no package.json and no workflows, removed when the `using` scope that holds it ends. */
 const emptyRepo = () => tempRepo('factory-index-', { 'README.md': 'base\n' });
@@ -231,7 +231,7 @@ describe('implementer sessions', () => {
 
   describe('a seamed slice', () => {
     const file = (root: string) => join(root, '.scratch', 'demo', 'reports', '01.md');
-    const behavior = { behavior: 'b', seenRed: false, test: 't' };
+    const behavior = { behavior: 'b', seenRed: true, red: 'failed', test: 't' };
     const commitFile = (root: string, name: string) => {
       mkdirSync(dirname(join(root, name)), { recursive: true });
       writeFileSync(join(root, name), 'x\n');
@@ -252,6 +252,33 @@ describe('implementer sessions', () => {
       commitFile(repo.root, 'test/a.test.ts');
       await assert.rejects(call('factory_implementer_report', { behaviors: [], commits: [], open: [] }, implementer), /report lists no behavior.*NEEDS SEAM/);
       assert.equal(existsSync(file(repo.root)), false);
+    });
+
+    it('refuses a report whose behaviors are all unseen red, keeps the earlier report, and says how to see red', async () => {
+      using repo = emptyRepo();
+      const { call, implementer } = await startedRun(repo.root);
+      await call('factory_implementer_report', { behaviors: [], commits: [], open: ['NEEDS SEAM: x'] }, implementer);
+      const before = readFileSync(file(repo.root), 'utf8');
+      commitFile(repo.root, 'test/a.test.ts');
+      await assert.rejects(
+        call('factory_implementer_report', { behaviors: [{ ...behavior, seenRed: false, red: undefined }], commits: [], open: [] }, implementer),
+        /Slice 01.*no behavior was seen red.*revert the production change/,
+      );
+      assert.equal(readFileSync(file(repo.root), 'utf8'), before);
+      assert.match(await call('factory_implementer_report', { behaviors: [{ ...behavior, seenRed: false, red: undefined }, behavior], commits: [], open: [] }, implementer), /Replaced the stored report/);
+    });
+
+    it('does not apply the seen-red rule when Open names a stop report', async () => {
+      using repo = emptyRepo();
+      const { call, implementer } = await startedRun(repo.root);
+      commitFile(repo.root, 'test/a.test.ts');
+      assert.match(await call('factory_implementer_report', { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], commits: [], open: ['SLICE TOO BIG: y'] }, implementer), /Stored the report/);
+    });
+
+    it('stores an all-unseen-red report for a slice with a noTestReason', async () => {
+      using repo = emptyRepo();
+      const { call, implementer } = await startedRun(repo.root, 'true', { noTestReason: 'docs only', seams: [] });
+      assert.match(await call('factory_implementer_report', { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], commits: [], open: [] }, implementer), /Stored the report/);
     });
 
     it('refuses a report whose commits change no test file, and keeps the earlier stored report', async () => {
@@ -310,7 +337,7 @@ describe('implementer sessions', () => {
     await refused({ test: 't\nx', behavior: 'b', seenRed: false }, /one line per item/);
     await refused({ test: 't', behavior: 'b\nx', seenRed: false }, /one line per item/);
     await refused({ test: 't', behavior: 'b', seenRed: true, red: 'a\nb' }, /one line per item/);
-    assert.match(await call('factory_implementer_report', { behaviors: [{ test: 't', behavior: 'b', seenRed: false }], commits: [], open }, implementer), /Stored the report/);
+    assert.match(await call('factory_implementer_report', { behaviors: [{ test: 't', behavior: 'b', seenRed: true, red: 'failed' }], commits: [], open }, implementer), /Stored the report/);
   });
 
   it('stores each behavior on one line with its seen-red evidence', async () => {

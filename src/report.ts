@@ -95,14 +95,20 @@ function recordFixedObservations(run: Run, slice: Slice, fixItems: string[], own
 const STOP_REPORT = /NEEDS SEAM|SLICE TOO BIG|MISSING DEPENDENCY/;
 
 /**
- * Build mode, a slice with seams and an Open list naming no stop report: refuses a report that lists no behavior or whose
- * slice commits change no test file (the review's test-validity path rule). Nothing is stored then.
+ * Build mode, a slice with seams and an Open list naming no stop report: refuses a report that lists no behavior, whose
+ * slice commits change no test file (the review's test-validity path rule), or whose behaviors all have seenRed false
+ * (it cannot verify a reported red line is true). Nothing is stored then.
  */
 async function refuseUntestedSeamedSlice(ws: Workspace, slice: Slice, report: ImplementerReport, fixMode: boolean) {
   if (fixMode || slice.seams.length === 0 || report.open.some(item => STOP_REPORT.test(item))) return;
   const noBehaviors = report.behaviors.length === 0;
   const changed = noBehaviors ? [] : await changedPaths(ws.root, `${slice.parentBranch}...refs/heads/${slice.branch}`);
-  if (!noBehaviors && changed.some(file => TEST_PATH.test(file))) return;
+  if (!noBehaviors && changed.some(file => TEST_PATH.test(file))) {
+    if (report.behaviors.some(entry => entry.seenRed)) return;
+    throw new Error(
+      `Nothing stored. Slice ${slice.id} has test seams (${slice.seams.join('; ')}) but no behavior was seen red. To see a test red honestly: revert the production change for that test, run the test, watch it fail, restore the change, then report the failing run as seenRed true with a one-line red.`,
+    );
+  }
   throw new Error(
     `Nothing stored. Slice ${slice.id} has test seams (${slice.seams.join('; ')}) but ${noBehaviors ? 'the report lists no behavior' : `its commits past ${slice.parentBranch} change no test file`}. Commit a red-first test through one of these seams and report it in behaviors, or report NEEDS SEAM in Open.`,
   );
