@@ -9,7 +9,7 @@ import { draftOf, deferItems, isRecordSlice, itemKey, requireSink } from './defe
 import { evidenceLine } from './evidence.ts';
 import { findingPlace, findingTitle, findUnplaced, placeObservations } from './ledger.ts';
 import { carriedSections, renderFinding } from './finding-text.ts';
-import { addEvent, DEFAULT_PLACEMENT, fixesOnceInSlice, greenCommit, Invalidated, requireActive, type Finding, type Run, type Slice, type Unplaced, type Workspace } from './run.ts';
+import { addEvent, sliceIdSchema, DEFAULT_PLACEMENT, fixesOnceInSlice, greenCommit, Invalidated, requireActive, type Finding, type Run, type Slice, type Unplaced, type Workspace } from './run.ts';
 import { needsFullReview, writeTicket } from './workflow.ts';
 
 export const PLACE_CHOICES = ['fix', 'carry', 'end', 'defer', 'leave'] as const;
@@ -18,7 +18,7 @@ export type PlaceChoice = (typeof PLACE_CHOICES)[number];
 export const placementSchema = z.object({
   id: z.string().min(1).describe('Observation id, for example "thermo-naming"; "<review>:<id>" when two reviews of the slice kept the same id'),
   placement: z.enum(PLACE_CHOICES).describe('fix: the implementer fixes it in this slice; carry: into the ticket of the pending slice named by "to"; end: the queue for the next factory_follow_up slice; defer: the deferred sink; leave: record it and never raise it again'),
-  to: z.string().regex(/^\d{2}$/).optional().describe('For carry only: id of the pending slice whose ticket takes it, for example "03"'),
+  to: sliceIdSchema.optional().describe('For carry only: id of the pending slice whose ticket takes it, for example "03"'),
 });
 export type PlaceRequest = { placements: z.infer<typeof placementSchema>[] };
 

@@ -29,6 +29,9 @@ export type Domain = (typeof REVIEW_DOMAINS)[number];
  */
 export const REQUIRED_REVIEW_DOMAINS = ['bug', 'scope'] as const satisfies readonly Domain[];
 
+/** A slice id: two or more digits, for example "04" or "100". */
+export const sliceIdSchema = z.string().regex(/^\d{2,}$/);
+
 const text = z.string().min(1);
 
 export const SEVERITIES = ['critical', 'high', 'observation'] as const;
@@ -225,7 +228,7 @@ const sliceSchema = sliceInputSchema.extend({
   green: z.object({ decisions: z.number().int().nonnegative().optional(), targeted: z.literal(true).optional() }).optional(),
   /** Whether the slice's last full green review stands: set by a full green, cleared by a red review and by a fix round that counts. A targeted green completes the slice only while it holds. */
   fullGreen: z.boolean().optional(),
-  id: z.string().regex(/^\d{2}$/),
+  id: sliceIdSchema,
   /** Decision numbers (1-based) the slice builds; a state file from before ownership owns none. */
   ownsDecisions: z.array(z.number().int().positive()).default([]),
   parentBranch: text,
