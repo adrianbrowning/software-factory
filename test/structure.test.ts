@@ -638,7 +638,7 @@ function sharedReferenceProblems(reviewDir: string, referencesDir: string): stri
   const problems: string[] = [];
   for (const name of readdirSync(reviewDir).filter(n => n.endsWith('.md')).sort()) {
     const text = readFileSync(join(reviewDir, name), 'utf8');
-    for (const match of text.matchAll(/<reference dir>\/\.\.\/([A-Za-z0-9._-]+\.md)/g)) {
+    for (const match of text.matchAll(/<reference dir>\/\.\.\/([^\s`<>]+?\.md)/g)) {
       if (!existsSync(join(referencesDir, match[1]!))) problems.push(`${name}: <reference dir>/../${match[1]} is missing from the references directory`);
     }
   }
@@ -655,7 +655,7 @@ describe('structure of the review references', () => {
     using temp = tempDir('refs-');
     mkdirSync(join(temp.root, 'review'));
     writeFileSync(join(temp.root, 'known-observations.md'), 'x');
-    writeFileSync(join(temp.root, 'review/a.md'), 'Apply `<reference dir>/../known-observations.md` and `<reference dir>/../prose-rulez.md`.');
-    assert.deepEqual(sharedReferenceProblems(join(temp.root, 'review'), temp.root), ['a.md: <reference dir>/../prose-rulez.md is missing from the references directory']);
+    writeFileSync(join(temp.root, 'review/a.md'), 'Apply `<reference dir>/../known-observations.md` and `<reference dir>/../prose-rulez.md` and `<reference dir>/../prose+rules.md`.');
+    assert.deepEqual(sharedReferenceProblems(join(temp.root, 'review'), temp.root), ['a.md: <reference dir>/../prose-rulez.md is missing from the references directory', 'a.md: <reference dir>/../prose+rules.md is missing from the references directory']);
   });
 });
