@@ -41,10 +41,11 @@ describe('headless retro: Record slice tickets and review', () => {
     const reply = (await call('factory_review_start', { skip: [] })).content[0]?.text ?? '';
     const opened = readRun(ws, 'demo').slices[1]?.review ?? assert.fail('no review');
     assert.match(reply, /bug, scope, comments/);
-    assert.ok(opened.skipped.length >= 7 && opened.skipped.every(entry => /light review/.test(entry.reason) || /factory path rule/.test(entry.reason)));
-    assert.ok(!opened.skipped.some(entry => ['bug', 'scope', 'comments'].includes(entry.domain)));
-    assert.ok(opened.skipped.some(entry => entry.domain === 'security' && /light review/.test(entry.reason)));
-    assert.ok(opened.skipped.some(entry => entry.domain === 'testing' && /light review/.test(entry.reason)), 'seams do not bring testing back');
+    assert.ok(opened.skipped.length >= 7);
+    assert.deepEqual(opened.skipped.filter(entry => !(/light review/.test(entry.reason) || /factory path rule/.test(entry.reason))), []);
+    assert.deepEqual(opened.skipped.filter(entry => ['bug', 'scope', 'comments'].includes(entry.domain)), []);
+    assert.ok(opened.skipped.find(entry => entry.domain === 'security' && /light review/.test(entry.reason)), `no security light review skip in ${JSON.stringify(opened.skipped)}`);
+    assert.ok(opened.skipped.find(entry => entry.domain === 'testing' && /light review/.test(entry.reason)), `seams do not bring testing back: ${JSON.stringify(opened.skipped)}`);
   });
 
   it('an ordinary slice titled like the Record slice still defers its review items', async () => {

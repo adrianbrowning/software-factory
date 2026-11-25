@@ -38,7 +38,8 @@ describe('self-host warning', () => {
     assert.ok(warning.includes(LOADED), 'names the loaded plugin root');
     assert.match(warning, /gates, agents and references come from the loaded checkout/);
     const ws: Workspace = { config: loadConfig(repo.root), root: repo.root };
-    assert.ok(readRun(ws, 'demo').events.some(event => event.kind === 'warning' && event.detail === warning.slice('Warning: '.length)));
+    const events = readRun(ws, 'demo').events;
+    assert.ok(events.find(event => event.kind === 'warning' && event.detail === warning.slice('Warning: '.length)), `no matching warning event in ${JSON.stringify(events)}`);
   });
 
   it('resume and factory_review_start in the plugin repo warn the same way with no UI', async () => {

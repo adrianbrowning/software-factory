@@ -324,6 +324,6 @@ describe('fitDeferred', () => {
   it('clips a location longer than the budget, so one item cannot outgrow it', () => {
     const lines = fitDeferred([{ location: `docs/${'d'.repeat(70_000)}.md`, title: 'huge' }, { location: 'b.md', title: 'second' }], 700);
     assert.ok(lines.join('\n').length + 1 <= 700, `length ${lines.join('\n').length}`);
-    assert.ok(lines.some(line => line.includes('(truncated)')));
+    assert.ok(lines.find(line => line.includes('(truncated)')), `no truncated line in ${JSON.stringify(lines)}`);
   });
 });

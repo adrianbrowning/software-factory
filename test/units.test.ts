@@ -41,7 +41,7 @@ describe('test temp dirs', () => {
       using dir = tempDir('factory-unit-');
       using ws = workspace();
       roots = [dir.root, ws.root];
-      assert.ok(roots.every(root => existsSync(root)));
+      assert.deepEqual(roots.filter(root => !existsSync(root)), []);
     }
     assert.deepEqual(roots.filter(root => existsSync(root)), []);
   });

@@ -143,13 +143,16 @@ describe('review submissions', { concurrency: 4 }, () => {
     commit(ws, 'ok');
     commit(ws, 'plain.js', 'module.exports = 1;\n');
     const plain = await step(ws, run => runChecks(ws, run));
-    assert.ok(plain.passed && plain.pathSkipped.some(entry => entry.domain === 'react-ts'));
-    assert.ok((await step(ws, run => startReview(ws, run))).pathSkipped.some(entry => entry.domain === 'react-ts'));
+    assert.ok(plain.passed);
+    assert.ok(plain.pathSkipped.find(entry => entry.domain === 'react-ts'), `react-ts not skipped: ${JSON.stringify(plain.pathSkipped)}`);
+    const plainReview = await step(ws, run => startReview(ws, run));
+    assert.ok(plainReview.pathSkipped.find(entry => entry.domain === 'react-ts'), `react-ts not skipped: ${JSON.stringify(plainReview.pathSkipped)}`);
 
     commit(ws, 'view.js', "const React = require('react');\n");
     const react = await step(ws, run => runChecks(ws, run));
-    assert.ok(react.passed && !react.pathSkipped.some(entry => entry.domain === 'react-ts'));
-    assert.ok(!(await step(ws, run => startReview(ws, run))).pathSkipped.some(entry => entry.domain === 'react-ts'));
+    assert.ok(react.passed);
+    assert.deepEqual(react.pathSkipped.filter(entry => entry.domain === 'react-ts'), []);
+    assert.deepEqual((await step(ws, run => startReview(ws, run))).pathSkipped.filter(entry => entry.domain === 'react-ts'), []);
   });
 
   it('skips path-ruled-out domains unless kept, alongside the orchestrator skips', async () => {

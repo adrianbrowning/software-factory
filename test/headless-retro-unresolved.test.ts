@@ -20,7 +20,7 @@ describe('headless retro: Record slices accepted unresolved', () => {
     assert.equal(accepted.slices[1]?.record, true);
     assert.equal(accepted.deferred.length, 1);
     assert.ok((accepted.slices[1]?.unresolved ?? []).length > 0);
-    assert.ok(accepted.events.some(event => event.kind === 'accepted-unresolved' && /not deferred/.test(event.detail)));
+    assert.ok(accepted.events.find(event => event.kind === 'accepted-unresolved' && /not deferred/.test(event.detail)), `no accepted-unresolved event in ${JSON.stringify(accepted.events)}`);
     await withRun(ws, 'demo', current => completeSlice(ws, current));
     const run = readRun(ws, 'demo');
     assert.deepEqual(run.slices.map(item => item.title), ['Feature', 'Record deferred items', 'Record deferred items 2']);

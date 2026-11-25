@@ -21,7 +21,7 @@ describe('headless submit', () => {
     const stops = events.filter(event => event.kind === 'submission-stop');
     assert.equal(stops.length, 1, 'a repeated submission records the stop once');
     assert.match(stops[0]?.detail ?? '', /gate submission \(stop\): no PRs opened/);
-    assert.ok(!events.some(event => event.kind === 'autonomous' && /submission/.test(event.detail)), 'the PR bodies list autonomous events only');
+    assert.deepEqual(events.filter(event => event.kind === 'autonomous' && /submission/.test(event.detail)), [], 'the PR bodies list autonomous events only');
     assert.deepEqual(gh.calls(), []);
   });
 
@@ -38,8 +38,8 @@ describe('headless submit', () => {
       assert.match(text, /No done slice is below slice 01, so no PRs were opened/);
       assert.deepEqual(gh.calls(), []);
       const { events } = readRun(ws, 'demo');
-      assert.ok(!events.some(event => /gate submission/.test(event.detail)), 'a submission that was never eligible leaves no gate event');
-      assert.ok(!events.some(event => event.kind === 'submission-stop'), 'the no-done-slice check comes before the submission policy');
+      assert.deepEqual(events.filter(event => /gate submission/.test(event.detail)), [], 'a submission that was never eligible leaves no gate event');
+      assert.deepEqual(events.filter(event => event.kind === 'submission-stop'), [], 'the no-done-slice check comes before the submission policy');
     });
   }
 
@@ -56,7 +56,8 @@ describe('headless submit', () => {
     assert.deepEqual(gh.calls(), [`stack checkout ${branches[0]}`, `stack init --base main ${branches[0]}`, 'stack submit --auto', 'stack view --json', ...prCalls(1)]);
     assert.match(text, /https:\/\/example\.test\/pull\/101/);
     assert.match(gh.bodies().get(101) ?? '', /S1/);
-    assert.ok(readRun(ws, 'demo').events.some(event => event.kind === 'submit'));
+    const submitEvents = readRun(ws, 'demo').events;
+    assert.ok(submitEvents.find(event => event.kind === 'submit'), `no submit event in ${JSON.stringify(submitEvents)}`);
     assert.deepEqual(readRun(ws, 'demo').events.filter(event => event.kind === 'autonomous' && event.detail.startsWith('gate submission')).map(event => event.detail), ['gate submission (auto): opening or updating draft PRs']);
   });
 

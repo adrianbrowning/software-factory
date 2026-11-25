@@ -78,7 +78,7 @@ describe('headless submit: stopped stacks and gh failures', () => {
     assert.ok(gh.calls().includes('stack submit --auto'));
     assert.match(text, /Submission failed[\s\S]*push rejected[\s\S]*\/factory submit retries it/);
     assert.match(text, /\nNext: [^\n]*$/, 'the reply ends with the Next line');
-    assert.ok(run.events.some(event => event.kind === 'submit-failed'));
+    assert.ok(run.events.find(event => event.kind === 'submit-failed'), `no submit-failed event in ${JSON.stringify(run.events)}`);
   });
 
   it('saves the autonomous gate event and submit-failed, but no submit event, when gh stack submit fails', async () => {

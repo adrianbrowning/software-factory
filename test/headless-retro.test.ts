@@ -20,7 +20,7 @@ describe('headless retro', () => {
     assert.ok(existsSync(join(runDir(ws, 'demo'), 'retro.md')));
     assert.equal(run.retroRecorded, true);
     assert.deepEqual(run.deferred.map(item => item.title).toSorted(), ['demo/retro: Lint rule', 'demo/retro: Minor thing', 'demo/retro: Vague skill']);
-    assert.ok(run.deferred.every(item => item.location === 'notes/later.md' && item.review === 'retro'));
+    assert.deepEqual(run.deferred.filter(item => !(item.location === 'notes/later.md' && item.review === 'retro')), []);
     assert.deepEqual(gh.calls(), []);
     assert.deepEqual(run.slices.map(item => item.title), ['Feature', 'Record deferred items']);
     assert.equal(run.status, 'running');
@@ -33,7 +33,7 @@ describe('headless retro', () => {
     assert.deepEqual(status.slices.map(item => item.title), ['Feature', 'Record deferred items']);
     assert.match(status.nextAction, /factory_next/);
     assert.equal(status.deferred.length, 3);
-    assert.ok(status.deferred.every(item => item.location === 'notes/later.md' && item.slice === 'retro'));
+    assert.deepEqual(status.deferred.filter(item => !(item.location === 'notes/later.md' && item.slice === 'retro')), []);
   });
 
   it('github sink: files one issue per finding on the project, none on the factory repository, and adds no slice', async () => {
@@ -43,8 +43,8 @@ describe('headless retro', () => {
     await call('factory_retro', { findings: FINDINGS });
     const run = readRun(ws, 'demo');
     assert.equal(gh.calls().filter(args => args.startsWith('issue create')).length, 3);
-    assert.ok(gh.calls().every(args => !args.includes(' -R ')));
-    assert.ok(run.deferred.every(item => item.location.startsWith('https://github.com/o/r/issues/')));
+    assert.deepEqual(gh.calls().filter(args => args.includes(' -R ')), []);
+    assert.deepEqual(run.deferred.filter(item => !item.location.startsWith('https://github.com/o/r/issues/')), []);
     assert.equal(run.slices.length, 1);
     assert.equal(run.status, 'done');
   });
