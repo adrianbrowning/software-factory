@@ -36,6 +36,8 @@ When the plan gives a decision's work to one slice, give the decision that ownin
 
 Before you record a decision or write an acceptance criterion that says a path or guard has no test, and before you ask a slice for a new test, search the test files for distinctive key words of the path's message, not for the full literal message, because tests often assert on a regex or a substring. Also search for the path's call path, for example the failure tests of the function that reaches it. A match alone proves nothing: read each matching test, and count the path as tested only when a test reaches that path and asserts on its output. Only when no such test exists may you record the path as untested; do not ask a slice for a duplicate of the behavior or guard an existing test already covers. Existing coverage of a path does not rule out a new test for changed behavior or an uncovered case on that path.
 
+When the issue (for example a retro finding) reports that an agent broke a rule its prompt already states, first search the agent file, the skill and the ticket text for that rule. When the rule is already there, the prompt line has failed once. Plan a check that does not depend on the same agent obeying it, for example a gate in a `factory_*` tool or a check by a second agent (for example the review validator). Do not plan only another prompt line.
+
 ## 3. Slice
 
 Break the work into **tracer bullets** (Matt Pocock's `to-tickets` rules):
