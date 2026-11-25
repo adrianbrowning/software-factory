@@ -315,6 +315,17 @@ describe('implementer sessions', () => {
       assert.equal(readFileSync(file(repo.root), 'utf8'), before);
     });
 
+    it('refuses with the no-test-file message, not the seen-red one, when only a non-test file is committed and no behavior is seen red', async () => {
+      using repo = emptyRepo();
+      const { call, implementer } = await startedRun(repo.root);
+      commitFile(repo.root, 'src/a.ts');
+      await assert.rejects(
+        call('factory_implementer_report', { behaviors: [{ ...behavior, seenRed: false, red: undefined }], commits: [], open: [] }, implementer),
+        (error: Error) => /change no test file/.test(error.message) && !/no behavior was seen red/.test(error.message),
+      );
+      assert.equal(existsSync(file(repo.root)), false);
+    });
+
     it('refuses with the exact full text of each of the four refusals', async () => {
       const none = { behaviors: [], commits: [], open: [] };
       const seen = { behaviors: [{ ...behavior, seenRed: false, red: undefined }], commits: [], open: [] };
@@ -331,9 +342,9 @@ describe('implementer sessions', () => {
         using repo = emptyRepo();
         const { call, implementer } = await startedRun(repo.root);
         assert.equal(await message(call, none, implementer), `Nothing stored. Slice 01 has test seams (cli) but the report lists no behavior. ${redFirst}`);
+        const parent = String(git(repo.root, 'rev-parse', 'HEAD')).trim();
         commitFile(repo.root, 'src/a.ts');
         const refused = await message(call, { ...none, behaviors: [behavior] }, implementer);
-        const parent = /past (\S+) change/.exec(refused)?.[1];
         assert.equal(refused, `Nothing stored. Slice 01 has test seams (cli) but its commits past ${parent} change no test file. ${redFirst}`);
         commitFile(repo.root, 'test/a.test.ts');
         assert.equal(
