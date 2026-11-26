@@ -771,7 +771,7 @@ async function pairCommits(ws: Workspace, entry: { old: string; tip: string; par
  * goes back to pending (see restartSlice). A moved slice's implementer report is rewritten to the rebased shas: its old
  * own commits pair with the new ones by position, when the counts match and each pair has the same subject. When they
  * do not pair (for example the rebase dropped an empty commit), the report is removed. At the restart a report is kept
- * only when each of its Commits items names a current own commit of the slice, and is removed otherwise: a branch
+ * only when it has at least one Commits item and each of its Commits items names a current own commit of the slice, and is removed otherwise: a branch
  * rebased by hand was not moved here, so its report with the pre-rebase shas is removed.
  */
 async function restack(ws: Workspace, run: Run, reopened: Slice, doneSha: string) {
