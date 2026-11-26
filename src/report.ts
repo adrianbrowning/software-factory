@@ -233,7 +233,7 @@ export function reportCoversCommits(ws: Workspace, run: Run, slice: Slice, shas:
 export async function moveReportedToChecks(ws: Workspace, run: Run, slice: Slice) {
   const fix = slice.phase === 'fix' && slice.fixFromSha !== undefined;
   if ((slice.phase !== 'implement' && !fix) || !(await sliceBranchExists(ws, slice))) return;
-  const roundShas = fix ? new Set((await git(ws.root, 'rev-list', `${slice.fixFromSha}..HEAD`)).split('\n').filter(Boolean)) : undefined;
+  const roundShas = fix ? new Set((await git(ws.root, 'rev-list', `${slice.fixFromSha}..refs/heads/${slice.branch}`)).split('\n').filter(Boolean)) : undefined;
   const commits = (await ownCommits(ws, slice)).filter(commit => roundShas?.has(commit.sha) ?? true);
   if (!reportCoversCommits(ws, run, slice, commits.map(commit => commit.sha))) return;
   slice.phase = 'checks';
