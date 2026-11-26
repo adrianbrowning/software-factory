@@ -483,7 +483,7 @@ user or plugin agent named `scout`, which replaces omp's bundled `scout`, is rou
 ## Run state
 
 `<scratchDir>/<feature>/` holds `state.json` (schema-validated on every read), `issue.md`, one ticket per slice
-under `issues/`, fix files under `fixes/`, the latest implementer report per slice under `reports/<slice>.md`, review
+under `issues/`, fix files under `fixes/`, the latest implementer report per slice under `reports/<slice>.md` (with a factory-written `Factory-observed typecheck:` section after `Checks:`: the last unfiltered run of each typecheck command of the run's checks that the factory saw in the implementer's bash calls, or a line saying it saw none), review
 data, per-domain findings, validation and `review.json` under
 `reviews/<slice>-r<n>/`, `confirmed/` (the exact redacted note or bug text each `factory_carry` or `factory_fix` dialog shows, one file per distinct text), and `retro.md`. Each fix file lists its fix items under `## Fix items`: review findings by id,
 and factory-assigned ids for a bug (`bug-f<N>`), a reopen reason (`reopen-f<N>`), a failed check (`check-f<N>-<k>`),
@@ -491,7 +491,7 @@ and a working tree the checks changed (`tree-f<N>`). The section of a comments-d
 section with each not-done slice stacked after the reviewed one, in stack order (id, title, what to build, acceptance
 criteria), or says none follows; reviewers and the validator do not count work a later slice lists as a gap in this
 slice. Then come each check's result and duration on the reviewed commit, a `## KNOWN OBSERVATIONS` section with the observation ledger (None when empty), a `## FIX ITEMS` section with every fix item
-from the fix rounds since the last recorded review (id, fix file and round, summary; None when there are none), a `## IMPLEMENTER BEHAVIORS` section with the Behaviors (test, behavior, seen-red mark) of the slice's latest stored implementer report as untrusted claims (or a line saying no report was stored; commits, fix items and open items stay out), the
+from the fix rounds since the last recorded review (id, fix file and round, summary; None when there are none), a `## IMPLEMENTER BEHAVIORS` section with the Behaviors (test, behavior, seen-red mark) of the slice's latest stored implementer report as untrusted claims (or a line saying no report was stored; commits, fix items, checks, the factory-observed typecheck section and open items stay out), the
 diff, and the changed files. A decision can name the slice that builds it (`factory_decide` item `{ text, slice }`, or
 `ownsDecisions` on a `factory_plan` slice); that slice's state keeps the decision numbers it owns, and the tickets and
 review data of the slices before it mark the decision as built by that slice, so their reviewers report only code

@@ -411,7 +411,7 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   return { ...reviewPaths(ws, run, id), domains: reviewDomains(skipped), pathSkipped: byPath, reviewId: id };
 }
 
-/** The IMPLEMENTER BEHAVIORS section: only the Behaviors of the latest stored report, as untrusted claims; its commits, fix items, checks and open items stay out. */
+/** The IMPLEMENTER BEHAVIORS section: only the Behaviors of the latest stored report, as untrusted claims; its commits, fix items, checks, the factory-observed typecheck section and open items stay out. */
 function renderBehaviors(ws: Workspace, run: Run, slice: Slice) {
   const behaviors = storedBehaviors(ws, run, slice);
   const body =

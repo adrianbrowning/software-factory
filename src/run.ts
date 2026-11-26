@@ -254,6 +254,8 @@ const sliceSchema = sliceInputSchema.extend({
   /** Set by a red review, and by an observation-only fix round: the next review is targeted, over `domains` (plus the required ones), on the changes since `base`, the commit of the review `from`. Cleared when a review is recorded. */
   targeting: z.object({ base: sha, domains: z.array(z.enum(REVIEW_DOMAINS)), from: text }).optional(),
   status: z.enum(['active', 'done', 'pending']),
+  /** Exit code of the last unfiltered run of each typecheck command the factory saw in the current implementer session (see ./typecheck.ts); a new implementer session clears it. */
+  typecheckRuns: z.record(z.string(), z.number().int()).optional(),
   /** Set when a headless run accepted the slice with blocking findings or open fix items left after its last fix round: one line per item, prefixed `blocking finding` or `open fix item`, then `id: summary` when it has an id. Green stands in for them; an interactive run never completes such a slice. */
   unresolved: z.array(text).optional(),
 });
