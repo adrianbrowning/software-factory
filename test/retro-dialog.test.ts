@@ -50,7 +50,7 @@ describe('factory_retro confirm dialog', () => {
     assert.ok(!args.includes(TOKEN));
   });
 
-  it('retroTitle puts a headless gate list entry on one redacted line, clipped at 200 characters', () => {
+  it('retroTitle redacts, joins lines, and clips at 200 characters', () => {
     assert.equal(retroTitle(TITLE), 'first second <REDACTED>');
     assert.equal(retroTitle('x'.repeat(600)), `${'x'.repeat(200)}…`);
   });
