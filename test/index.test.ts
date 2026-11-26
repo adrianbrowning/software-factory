@@ -1486,6 +1486,39 @@ describe('used-up fix budget', () => {
       assert.doesNotMatch(added.content[0]?.text ?? '', /Overlap with done slices/);
       assert.match(added.content[0]?.text ?? '', /^Slice 02 "Polish" is added on .*, with the waiting carried items \(2\)\.\nNext: /);
     });
+
+    /** Slice 02 of a two-slice run changes `other`; the waiting item queued from slice 01 is left in the queue. */
+    async function twoDone(ws: Workspace, call: (name: string, params: unknown, ui?: Ui) => Promise<Reply>) {
+      await queued(ws, call, ['ok']);
+      await withRun(ws, 'demo', run => nextSlice(ws, run));
+      commit(ws, 'other');
+      await withRun(ws, 'demo', run => { const second = run.slices[1]; if (second !== undefined) second.status = 'done'; });
+    }
+
+    it('compares only the observation\'s own slice: a path only another done slice changed gives no overlap', async () => {
+      using repo = budgetRepo();
+      const { call, ws } = await budgetRun(repo.root, ['Feature', 'Second']);
+      await twoDone(ws, call);
+      await withRun(ws, 'demo', run => { for (const entry of run.observations) if (entry.id === 'thermo-ok') entry.location = 'other:1'; });
+      const state = readRun(ws, 'demo');
+      assert.equal(state.observations.find(entry => entry.id === 'thermo-ok')?.slice, '01');
+      assert.deepEqual(state.slices.map(item => item.status), ['done', 'done']);
+      const asked: string[] = [];
+      const added = await call('factory_follow_up', followUp, { confirm: async (_title: string, body: string) => (asked.push(body), true) });
+      assert.equal(asked.length, 1);
+      assert.doesNotMatch(asked[0] ?? '', /Overlap with done slices/);
+      assert.doesNotMatch(added.content[0]?.text ?? '', /Overlap with done slices/);
+    });
+
+    it('lists a waiting item whose ledger location has the symbol (path:line) form', async () => {
+      using repo = budgetRepo();
+      const { call, ws } = await budgetRun(repo.root, ['Feature', 'Second']);
+      await twoDone(ws, call);
+      await withRun(ws, 'demo', run => { for (const entry of run.observations) if (entry.id === 'thermo-ok') entry.location = 'parse (ok:7)'; });
+      const key = `${readRun(ws, 'demo').observations.find(entry => entry.id === 'thermo-ok')?.key}`;
+      const added = await call('factory_follow_up', followUp, { confirm: async () => true });
+      assert.ok((added.content[0]?.text ?? '').includes(`- ${key} (ok): slice 01 "Feature" changed this file; `));
+    });
   });
 
   it('does not send a paused stall to the retro while carried items wait', async () => {
