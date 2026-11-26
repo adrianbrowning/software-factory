@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { startImplementerSession, storedReport, submitImplementerReport } from '../src/report.ts';
@@ -1201,13 +1201,15 @@ describe('reopen', () => {
     return sha;
   }
 
-  async function reopenFixAndComplete(ws: Workspace, file = 'first.txt') {
+  /** Reopens 01, fixes it, and completes it; `beforeComplete` runs once the fix is reviewed, before the restack. */
+  async function reopenFixAndComplete(ws: Workspace, file = 'first.txt', beforeComplete?: () => void) {
     await step(ws, run => reopenSlice(ws, run, '01', 'first.txt must say fixed'));
     commit(ws, file, 'fixed\n');
     await step(ws, run => runChecks(ws, run));
     const reviewed = await step(ws, run => startReview(ws, run));
     await review(ws, reviewed.reviewId, []);
     await step(ws, run => recordReview(ws, run));
+    beforeComplete?.();
     await step(ws, run => completeSlice(ws, run));
     await step(ws, run => nextSlice(ws, run));
   }
@@ -1231,6 +1233,33 @@ describe('reopen', () => {
     assert.ok(stored.startsWith(before.trimEnd()));
     assert.ok(stored.includes(second));
     assert.doesNotMatch(stored, /No implementer report was submitted/);
+  });
+
+  /** Slice 02 active with one commit and a hand-written report; reopening 01 restarts 02 at checks, and `commits` renders the report's Commits items from that commit's short sha. */
+  async function reopenWithReport(ws: Workspace, commits: (sha: string) => string[]) {
+    await newRun(ws, [slice('First'), slice('Second', ['First'])]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'second.test.ts');
+    const path = reportPath(ws, 'demo', readRun(ws, 'demo').slices[1] ?? assert.fail('no slice'));
+    writeAtomic(path, `Implementer report:\nCommits:\n${commits(sh(ws.root, 'rev-parse', '--short=12', 'HEAD')).map(item => `- ${item}`).join('\n')}\nBehaviors:\n- none\nOpen:\n- none\n`);
+    assert.ok(existsSync(path));
+    await step(ws, run => reopenSlice(ws, run, '01', 'bug'));
+    assert.equal(readRun(ws, 'demo').slices[1]?.phase, 'checks');
+    return path;
+  }
+
+  it('removes the report with no Commits items of a slice that restarts at checks', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    assert.ok(!existsSync(await reopenWithReport(ws, () => ['none'])));
+  });
+
+  it('removes the report of a slice that restarts at checks when one Commits item names no current own commit', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    assert.ok(!existsSync(await reopenWithReport(ws, sha => [`${sha} 02: second.test.ts`, 'deadbeef1234 02: stale'])));
   });
 
   it('rewrites the implementer report of a restacked slice to the rebased shas in its checks result and review data', async () => {
@@ -1262,6 +1291,35 @@ describe('reopen', () => {
     using ws = workspace({ maxRounds: 2 });
     await twoDone(ws, ['first.test.ts', 'fixed\n'], undefined, 'extra.test.ts');
     await reopenFixAndComplete(ws, 'first.test.ts');
+    const checked = await step(ws, run => runChecks(ws, run));
+    assert.match(checked.report, /^No implementer report was submitted for slice 02 \(factory_implementer_report\)\./);
+  });
+
+  it('removes the implementer report of a later slice the user rebased by hand, so no pre-rebase sha shows in its checks result', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    const old = await twoDone(ws);
+    const [first, second] = readRun(ws, 'demo').slices.map(item => item.branch);
+    const oldFirst = tip(ws, first ?? assert.fail('no branch'));
+    await reopenFixAndComplete(ws, 'first.txt', () => {
+      sh(ws.root, 'rebase', '--onto', first ?? '', oldFirst, second ?? '');
+      sh(ws.root, 'switch', '-q', first ?? '');
+    });
+    assert.notEqual(sh(ws.root, 'rev-parse', '--short=12', 'HEAD'), old);
+    const checked = await step(ws, run => runChecks(ws, run));
+    assert.match(checked.report, /^No implementer report was submitted for slice 02 \(factory_implementer_report\)\./);
+    assert.doesNotMatch(checked.report, new RegExp(old.slice(0, 7)));
+  });
+
+  it('removes the implementer report of a restacked slice whose rebased commit has a different subject', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    await twoDone(ws);
+    await reopenFixAndComplete(ws, 'first.txt', () => {
+      // A prepare-commit-msg hook rewrites the subject of the commit the restack's rebase picks, so the counts match and one subject differs.
+      const hook = join(ws.root, '.git', 'hooks', 'prepare-commit-msg');
+      writeFileSync(hook, "#!/bin/sh\nsed -i.bak 's/^02: /02 reworded: /' \"$1\"\n");
+      chmodSync(hook, 0o755);
+    });
+    assert.equal(sh(ws.root, 'log', '--format=%s', '-1'), '02 reworded: second.test.ts');
     const checked = await step(ws, run => runChecks(ws, run));
     assert.match(checked.report, /^No implementer report was submitted for slice 02 \(factory_implementer_report\)\./);
   });

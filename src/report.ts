@@ -182,6 +182,15 @@ export function reportListsCommit(ws: Workspace, run: Run, slice: Slice, sha: st
   });
 }
 
+/** Whether the stored report has at least one Commits item and every Commits item starts with a hex prefix (at least 7 characters) of one of `shas`. */
+export function reportNamesOnly(ws: Workspace, run: Run, slice: Slice, shas: string[]) {
+  const items = reportSection(ws, run, slice, 'Commits') ?? [];
+  return items.length > 0 && items.every(item => {
+    const prefix = commitPrefix(item);
+    return prefix !== undefined && shas.some(sha => sha.startsWith(prefix));
+  });
+}
+
 /** Whether the stored report lists every sha in `shas` (at least one) in Commits and names no stop report in Open. */
 export function reportCoversCommits(ws: Workspace, run: Run, slice: Slice, shas: string[]) {
   const stopped = (reportSection(ws, run, slice, 'Open') ?? []).some(item => STOP_REPORT.test(item));

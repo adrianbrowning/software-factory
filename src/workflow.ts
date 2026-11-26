@@ -15,7 +15,7 @@ import {
 } from './run.ts';
 import { moveCarried } from './legacy-observations.ts';
 import { copyPauseCause } from './pause-cause.ts';
-import { clearReport, reportCoversCommits } from './report.ts';
+import { clearReport, reportCoversCommits, reportNamesOnly } from './report.ts';
 import { alignToSliceBranch, head, ownCommits, requireClean, requireOnBranchClean, sliceBranchExists, snapshot } from './repo.ts';
 
 export const UNTRUSTED_NOTE =
@@ -668,18 +668,19 @@ export function startFix(run: Run, slice: Slice, sha: string, written: ReturnTyp
 
 /**
  * Sends a slice back to pending and clears its checks and review. A slice with commits past its parent restarts at
- * checks on its existing branch (see nextSlice) and keeps its stored implementer report: its commits did not change here,
- * and a restack rewrites the report to the rebased shas first, or removes it when the rebased commits cannot be paired (see restack). One without starts again at implement and
- * its report is removed.
+ * checks on its existing branch (see nextSlice) and keeps its stored implementer report only when each of the report's
+ * Commits items (at least one) names a current own commit of the slice; otherwise the report is removed, so
+ * factory_checks never shows a pre-rebase sha (restack rewrites the shas of the slices it rebases first; a branch
+ * rebased by hand still lists the old ones, so its report goes). One without commits starts at implement, report removed.
  */
 export async function restartSlice(ws: Workspace, run: Run, slice: Slice) {
-  const own = (await git(ws.root, 'rev-list', '--count', `${slice.parentBranch}..refs/heads/${slice.branch}`)).trim();
+  const own = await ownCommits(ws, slice);
   slice.status = 'pending';
-  dropPass(slice, own === '0' ? 'implement' : 'checks');
+  dropPass(slice, own.length === 0 ? 'implement' : 'checks');
   slice.targeting = undefined;
   slice.fixPath = undefined;
   slice.fixFromSha = undefined;
-  if (own === '0') clearReport(ws, run.feature, slice);
+  if (!reportNamesOnly(ws, run, slice, own.map(commit => commit.sha))) clearReport(ws, run.feature, slice);
   writeTicket(ws, run, slice);
 }
 

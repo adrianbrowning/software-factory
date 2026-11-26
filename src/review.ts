@@ -768,9 +768,11 @@ async function pairCommits(ws: Workspace, entry: { old: string; tip: string; par
  * tip onto the parent's new tip, so it keeps only its own commits. Every old tip is snapshotted into a backup ref
  * before the first rebase. A child already on its parent's new tip (rebased by hand) stays as it is. A failed rebase
  * puts every branch back at its old tip, pauses the run, and throws. Each later slice that moved, or was not done,
- * goes back to pending. A moved slice keeps its implementer report, rewritten to the rebased shas: its old own commits
- * pair with the new ones by position, when the counts match and each pair has the same subject. When they do not pair
- * (for example the rebase dropped an empty commit), the report is removed.
+ * goes back to pending (see restartSlice). A moved slice's implementer report is rewritten to the rebased shas: its old
+ * own commits pair with the new ones by position, when the counts match and each pair has the same subject. When they
+ * do not pair (for example the rebase dropped an empty commit), the report is removed. At the restart a report is kept
+ * only when it has at least one Commits item and each of its Commits items names a current own commit of the slice, and is removed otherwise: a branch
+ * rebased by hand was not moved here, so its report with the pre-rebase shas is removed.
  */
 async function restack(ws: Workspace, run: Run, reopened: Slice, doneSha: string) {
   const later: { old: string; slice: Slice }[] = [];
