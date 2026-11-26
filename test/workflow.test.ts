@@ -1181,7 +1181,7 @@ describe('reopen', () => {
   });
 
   /** Slices 01 and 02 done, 02 with a stored report; `second` is what 02 commits ([file, content]) and `report` renders the report text from its short sha. */
-  async function twoDone(ws: Workspace, second: [string, string] = ['second.test.ts', 'x\n'], report?: (sha: string) => string) {
+  async function twoDone(ws: Workspace, second: [string, string] = ['second.test.ts', 'x\n'], report?: (sha: string) => string, extra?: string) {
     await newRun(ws, [slice('First'), slice('Second', ['First'])]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -1191,6 +1191,7 @@ describe('reopen', () => {
     await step(ws, run => nextSlice(ws, run));
     commit(ws, second[0], second[1]);
     sh(ws.root, 'commit', '--amend', '-qm', `02: ${second[0]}`);
+    if (extra !== undefined) commit(ws, extra);
     const sha = sh(ws.root, 'rev-parse', '--short=12', 'HEAD');
     const line = `${sha} ${sh(ws.root, 'log', '--format=%s', '-1')}`;
     if (report === undefined) await step(ws, run => submitImplementerReport(ws, run, { behaviors: [{ behavior: 'b', seenRed: true, red: 'failed', test: 't' }], commits: [line], open: [] }));
@@ -1259,12 +1260,10 @@ describe('reopen', () => {
 
   it('removes the implementer report of a restacked slice whose commit the rebase dropped', async () => {
     using ws = workspace({ maxRounds: 2 });
-    await twoDone(ws, ['first.test.ts', 'fixed\n']);
+    await twoDone(ws, ['first.test.ts', 'fixed\n'], undefined, 'extra.test.ts');
     await reopenFixAndComplete(ws, 'first.test.ts');
-    await assert.rejects(
-      step(ws, run => runChecks(ws, run)),
-      /No implementer report was submitted for slice 02 \(factory_implementer_report\)\./,
-    );
+    const checked = await step(ws, run => runChecks(ws, run));
+    assert.match(checked.report, /^No implementer report was submitted for slice 02 \(factory_implementer_report\)\./);
   });
 
   it('removes the stored report of a slice restartSlice sends back to implement', async () => {
