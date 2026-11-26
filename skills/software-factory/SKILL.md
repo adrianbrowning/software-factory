@@ -172,4 +172,4 @@ A run whose start reply says `headless` has no user: never call `ask`, and never
 Limits on what a decision may do:
 
 - A decision must not waive, drop or weaken an acceptance criterion of the approved plan. When a criterion looks untestable, choose a seam that makes it testable (for example an injected function or a spy) and record it with `factory_amend_seams`, or call `factory_pause`.
-- While fix rounds remain, a blocking finding or an open fix item in a headless run is fixed in code, and a decision may only choose how to fix it. Once the 3-round fix budget is spent, the Fix budget bullet governs (the tools accept the review unresolved; move on), and no decision may be recorded to accept or waive the finding.
+- While fix rounds remain, a blocking finding or an open fix item in a headless run is fixed in code, and a decision may only choose how to fix it. Once the fix budget is spent, the Fix budget bullet governs (the tools accept the review unresolved; move on), and no decision may be recorded to accept or waive the finding.
