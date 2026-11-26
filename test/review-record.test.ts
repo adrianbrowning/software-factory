@@ -48,6 +48,9 @@ describe('validation escalate entry', () => {
 describe('Validation escalate entry type', () => {
   it('has no state with both decision and criterion', () => {
     const both = { criterion: 'c', decision: 1, id: 'bug-a', reason: 'r' };
+    const one = { criterion: 'c', id: 'bug-a', reason: 'r' };
+    const control: Validation = { dropped: [], downgrade: [], escalate: [one], keep: [] };
+    assert.ok(control);
     // @ts-expect-error an entry with both fields is not a Validation escalate entry
     const validation: Validation = { dropped: [], downgrade: [], escalate: [both], keep: [] };
     assert.ok(validation);
