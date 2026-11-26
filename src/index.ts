@@ -37,13 +37,14 @@ import { decisionInputSchema, planDecisions, recordDecisions, runChecks } from '
 import { recordSelfHostWarning, setLoadedPlugin } from './self-host.ts';
 import { registerReviewTools } from './review-tools.ts';
 import { requireFeatureName } from './feature-name.ts';
-import { headlessTarget } from './headless-target.ts';
+import { headlessStartMessage, headlessTarget } from './headless-target.ts';
 import { decideStall, emptySchema, reply, STALL_DESCRIPTION } from './tool-replies.ts';
 import {
   addFollowUp,
   amendSeams,
   applyReslice,
   approvePlan,
+  configuredBase,
   headlessBase,
   localBranchSha,
   markPaused,
@@ -676,7 +677,8 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
         const feature = target.feature;
         const source = target.source;
         await startOrResume({ ...(target.base === undefined ? {} : { base: target.base }), feature, ...(target.maxRounds === undefined ? {} : { maxRounds: target.maxRounds }), mode: 'headless', source }, { entry: await cachedRoot(ctx.cwd), ws }, ctx);
-        sendContinuation(`A headless software-factory run "${feature}" is started for: ${argument}\nRead skill://software-factory and continue it from its next action (${nextAction(readRun(ws, feature))}).`);
+        const started = readRun(ws, feature);
+        sendContinuation(`A headless software-factory run "${feature}" is started for: ${argument}\n${headlessStartMessage(started, await configuredBase(ws))}\nRead skill://software-factory and continue it from its next action (${nextAction(started)}).`);
         return;
       }
       sendContinuation(`Start a software-factory run for: ${args.trim()}\nRead skill://software-factory and follow it.`);

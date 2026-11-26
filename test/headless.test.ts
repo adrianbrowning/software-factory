@@ -636,3 +636,44 @@ describe('headlessTarget', () => {
     assert.throws(() => headlessTarget('294 --related abc'), /"abc" is not one/);
   });
 });
+
+describe('/factory headless start message names the base', () => {
+  const baseOf = (root: string) => readRun({ config: loadConfig(root), root }, 'ticket');
+
+  it('without --base names the configured base and the PR target, with no warning', async () => {
+    using repo = tempRepo('factory-headless-msg-', CHECKS_OK);
+    const { command, sent } = session(repo.root);
+    await command('headless ticket.md');
+    const message = sent[0] ?? '';
+    assert.ok(message.includes(`Base: ${baseOf(repo.root).baseRef} (the configured base)`), message);
+    assert.ok(message.includes('PRs target main'), message);
+    assert.ok(message.includes('slice 01 branches from it when the plan is approved'), message);
+    assert.ok(!message.includes('is not the configured base'), message);
+  });
+
+  it('with a --base that is neither the configured base nor the trunk names the pinned sha and warns', async () => {
+    using repo = tempRepo('factory-headless-msg-', CHECKS_OK);
+    sh(repo.root, 'switch', '-q', '-c', 'feat/base');
+    sh(repo.root, 'commit', '-q', '--allow-empty', '-m', 'on base');
+    const pinned = sh(repo.root, 'rev-parse', 'HEAD');
+    sh(repo.root, 'switch', '-q', 'main');
+    const { command, sent } = session(repo.root);
+    await command('headless ticket.md --base feat/base');
+    const message = sent[0] ?? '';
+    assert.ok(message.includes(`Base: feat/base at ${pinned.slice(0, 12)}`), message);
+    assert.ok(message.includes('PRs target main'), message);
+    assert.match(message, /"feat\/base" is not the configured base \(main\) or the PR target \(main\); the stack carries the commits of feat\/base until it merges/);
+    assert.ok(message.includes('skill://software-factory'), message);
+    assert.ok(message.includes('"ticket"'), message);
+  });
+
+  it('with --base equal to the trunk names the sha and holds no warning', async () => {
+    using repo = tempRepo('factory-headless-msg-', CHECKS_OK);
+    const pinned = sh(repo.root, 'rev-parse', 'main');
+    const { command, sent } = session(repo.root);
+    await command('headless ticket.md --base main');
+    const message = sent[0] ?? '';
+    assert.ok(message.includes(`Base: main at ${pinned.slice(0, 12)}`), message);
+    assert.ok(!message.includes('is not the configured base'), message);
+  });
+});

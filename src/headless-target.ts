@@ -64,3 +64,17 @@ function headlessPrimary(ref: string): { feature: string; source: SourceInput } 
   if (name === '') throw new Error(`Cannot name a run after "${ref}". Give an issue number, an issue URL, or a file with letters or digits in its name.`);
   return { feature: requireFeatureName(name), source: { kind: 'file', ref } };
 }
+
+/**
+ * The start line a `/factory headless` run sends the orchestrator: it names the run's base and the branch its PRs target.
+ * Without `--base` the base is the configured base (`configured`); with `--base` it is that branch at the first 12
+ * characters of its pinned sha, and a base that is neither the configured base nor the trunk adds a warning that the
+ * stack carries that branch's commits until it merges.
+ */
+export function headlessStartMessage(run: { baseBranch?: string | undefined; baseRef: string; baseSha?: string | undefined; trunk: string }, configured: string): string {
+  const branch = run.baseBranch;
+  if (branch === undefined) return `Base: ${run.baseRef} (the configured base); PRs target ${run.trunk}; slice 01 branches from it when the plan is approved.`;
+  const named = `Base: ${branch} at ${(run.baseSha ?? '').slice(0, 12)}; PRs target ${run.trunk}.`;
+  if (branch === configured || branch === run.trunk) return named;
+  return `${named} Warning: "${branch}" is not the configured base (${configured}) or the PR target (${run.trunk}); the stack carries the commits of ${branch} until it merges.`;
+}

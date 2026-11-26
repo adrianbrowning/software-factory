@@ -51,7 +51,7 @@ async function branchName(root: string, ref: string) {
  * `default_base` in scripts/headless-backlog.sh repeats this order: a change to the order must be made in both, because
  * chain check 3 compares a run's `baseRef` with `default_base` and would refuse correct first runs.
  */
-async function configuredBase(ws: Workspace) {
+export async function configuredBase(ws: Workspace) {
   if (ws.config.baseRef !== undefined) return ws.config.baseRef;
   try {
     const ref = (await git(ws.root, 'symbolic-ref', '--quiet', 'refs/remotes/origin/HEAD')).trim();
