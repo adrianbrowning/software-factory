@@ -1445,6 +1445,22 @@ describe('used-up fix budget', () => {
       assert.match(event?.detail ?? '', /Overlap with done slices \(file-level\):\n- \S+ \(ok\): slice 01/);
     });
 
+    it('keeps every overlap line in the headless gate event when the block is longer than the event clip', async () => {
+      using repo = budgetRepo();
+      const { call, ws } = await budgetRun(repo.root, ['Feature']);
+      const ids = Array.from({ length: 14 }, (_, index) => `many${index}`);
+      await queued(ws, call, ids);
+      await withRun(ws, 'demo', run => { run.mode = 'headless'; });
+      const added = await call('factory_follow_up', { ...followUp, whatToBuild: 'Long. '.repeat(1_000) }, {});
+      const keys = readRun(ws, 'demo').observations.filter(entry => ids.includes(entry.id.replace('thermo-', ''))).map(entry => entry.key);
+      assert.equal(keys.length, 14);
+      const detail = readRun(ws, 'demo').events.find(item => item.detail.includes('gate followUp (auto)'))?.detail ?? '';
+      const block = (added.content[0]?.text ?? '').slice((added.content[0]?.text ?? '').indexOf('Overlap with done slices'), (added.content[0]?.text ?? '').indexOf('\nNext: '));
+      assert.ok(block.length > 2_000);
+      assert.ok(detail.includes(block));
+      for (const key of keys) assert.ok(detail.includes(`- ${key} (ok):`));
+    });
+
     it('holds no overlap text when no waiting item overlaps', async () => {
       using repo = budgetRepo();
       const { call, ws } = await budgetRun(repo.root, ['Feature']);

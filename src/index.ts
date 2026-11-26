@@ -11,7 +11,7 @@ import { gitArchWarning } from './git-arch.ts';
 import { followUpOverlap } from './follow-up-overlap.ts';
 import { carriedKeys } from './legacy-observations.ts';
 import { deferItems } from './deferred.ts';
-import { chooseChecks, ensureChecks, gate, loadSource } from './gates.ts';
+import { chooseChecks, ensureChecks, GATE_BODY_LIMIT, gate, loadSource } from './gates.ts';
 import {
   activeSlice,
   addEvent,
@@ -537,11 +537,13 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
       const carried = current.waiting.length === 0 ? '' : `\n\nThe slice also takes the carried items waiting on the run (${current.waiting.length}).`;
       const overlap = await followUpOverlap(ws.root, current);
       const head = `${params.whatToBuild}\n\nAcceptance:\n${params.acceptance.map(item => `- ${item}`).join('\n')}`;
-      // A headless gate event clips its body at 2,000 characters; clip the free text first so the carried and overlap lines stay in it.
-      const room = Math.max(0, 1_800 - carried.length - overlap.length);
+      // A headless gate event holds the whole overlap block: only the free text is clipped to the room left under GATE_BODY_LIMIT (none when the block fills it), and the gate gets no event limit.
+      const tail = `\n\nThe slice branches from ${planned.parentBranch}. The slices below it are not changed. The run needs a new retro before /factory submit.`;
+      const overlapPart = overlap === '' ? '' : `\n\n${overlap}`;
+      const room = Math.max(0, GATE_BODY_LIMIT - carried.length - overlapPart.length - tail.length - 1);
       const shownHead = current.mode === 'headless' && head.length > room ? `${head.slice(0, room)}…` : head;
-      const body = `${shownHead}${carried}${overlap === '' ? '' : `\n\n${overlap}`}\n\nThe slice branches from ${planned.parentBranch}. The slices below it are not changed. The run needs a new retro before /factory submit.`;
-      if (!(await gate(ctx, ws, feature, 'followUp', `Add follow-up slice "${params.title}"?`, body))) {
+      const body = `${shownHead}${carried}${overlapPart}${tail}`;
+      if (!(await gate(ctx, ws, feature, 'followUp', `Add follow-up slice "${params.title}"?`, body, Number.POSITIVE_INFINITY))) {
         return reply('The user did not add the follow-up slice. Ask how to handle the work.');
       }
       return withRun(ws, feature, run => {
