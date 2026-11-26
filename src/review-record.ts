@@ -56,7 +56,7 @@ export const validationSchema = z.object({
           .string()
           .min(1)
           .optional()
-          .describe('Kept finding id this one repeats; the kept one must be at least as severe'),
+          .describe('Kept finding id this one repeats; the kept one must be at least as severe. A blocking finding citing an autonomous decision may only be dropped as a duplicate of a kept blocking finding citing the same decision'),
         id: z.string().min(1),
         reason: z.string().min(1),
       }),

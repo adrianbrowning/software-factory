@@ -491,12 +491,12 @@ describe('review submissions', { concurrency: 4 }, () => {
 });
 
 describe('autonomous decisions', { concurrency: 4 }, () => {
-  async function decisionReview(ws: Workspace, mode: 'headless' | 'interactive') {
+  async function decisionReview(ws: Workspace, mode: 'headless' | 'interactive', texts = ['Narrow reading: no export.']) {
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => void (run.mode = mode));
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
-    await step(ws, run => recordDecisions(ws, run, ['Narrow reading: no export.']));
+    await step(ws, run => recordDecisions(ws, run, texts));
     await step(ws, run => runChecks(ws, run));
     return step(ws, run => startReview(ws, run, [], ['react-ts', 'test-validity', 'devops']));
   }
@@ -543,5 +543,57 @@ describe('autonomous decisions', { concurrency: 4 }, () => {
     }
     const result = await step(ws, run => submitValidation(ws, run, { agentId: 'v', dropped: [{ id: 'react-ts-cited', reason: 'x' }], keep: ['bug-dup'], reviewId }));
     assert.equal(result.dropped, 1);
+  });
+
+  describe('merging duplicates that cite the same autonomous decision', () => {
+    const refusal = /autonomous decision cannot be dropped or downgraded/;
+    async function submitted(ws: Workspace, findings: Partial<Record<Finding['domain'], Finding[]>>) {
+      const { reviewId } = await decisionReview(ws, 'headless', ['Narrow reading: no export.', 'Second decision.']);
+      for (const domain of REVIEW_DOMAINS) {
+        await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings: findings[domain] ?? [], reviewId, ...noFixItems(domain) }));
+      }
+      return (input: object) => step(ws, run => submitValidation(ws, run, { agentId: 'v', dropped: [], keep: [], reviewId, ...input }));
+    }
+    const cites = (domain: Finding['domain'], severity: Finding['severity'], name: string, decision?: number): Finding => ({
+      ...finding(domain, severity, name),
+      ...(decision === undefined ? {} : { decision }),
+    });
+
+    it('lets the validator drop a duplicate of a kept high finding with the same decision, so the fix file has one section', async () => {
+      using ws = workspace();
+      const validate = await submitted(ws, { bug: [cites('bug', 'high', 'a', 1)], 'react-ts': [cites('react-ts', 'high', 'b', 1)] });
+      await validate({ dropped: [{ duplicateOf: 'bug-a', id: 'react-ts-b', reason: 'same problem' }], keep: ['bug-a'] });
+      const result = await step(ws, run => recordReview(ws, run));
+      assert.ok(result.kind === 'fix');
+      const fix = readFileSync(result.fixPath, 'utf8');
+      assert.match(fix, /### \[high\] bug-a/);
+      assert.doesNotMatch(fix, /react-ts-b/);
+    });
+
+    it('lets the validator drop a duplicate of an observation escalated for the same decision', async () => {
+      using ws = workspace();
+      const validate = await submitted(ws, { bug: [{ ...cites('bug', 'observation', 'o'), category: 'structure' }], 'react-ts': [cites('react-ts', 'high', 'b', 1)] });
+      const result = await validate({ dropped: [{ duplicateOf: 'bug-o', id: 'react-ts-b', reason: 'same problem' }], escalate: [{ decision: 1, id: 'bug-o', reason: 'breaks it' }] });
+      assert.equal(result.dropped, 1);
+    });
+
+    it('still refuses every other drop of such a finding, and names the remedy', async () => {
+      using ws = workspace();
+      const validate = await submitted(ws, {
+        bug: [cites('bug', 'high', 'a', 1), cites('bug', 'high', 'plain'), cites('bug', 'high', 'other', 2), cites('bug', 'high', 'down', 1), { ...cites('bug', 'observation', 'obs'), category: 'structure' }],
+        'react-ts': [cites('react-ts', 'high', 'b', 1)],
+      });
+      const rest = ['bug-a', 'bug-plain', 'bug-other', 'bug-down', 'bug-obs'];
+      const drop = (duplicateOf?: string) => [{ ...(duplicateOf === undefined ? {} : { duplicateOf }), id: 'react-ts-b', reason: 'x' }];
+      await assert.rejects(validate({ dropped: drop(), keep: rest }), refusal);
+      await assert.rejects(validate({ dropped: drop('bug-plain'), keep: rest }), refusal);
+      await assert.rejects(validate({ dropped: drop('bug-other'), keep: rest }), refusal);
+      await assert.rejects(validate({ downgrade: [{ id: 'bug-down', reason: 'x' }], dropped: drop('bug-down'), keep: rest.filter(id => id !== 'bug-down') }), refusal);
+      await assert.rejects(validate({ dropped: drop('bug-obs'), keep: rest }), refusal);
+      await assert.rejects(
+        validate({ dropped: drop(), keep: rest }),
+        /keep it, or drop it as a duplicate of a kept blocking finding that cites the same decision/,
+      );
+    });
   });
 });
