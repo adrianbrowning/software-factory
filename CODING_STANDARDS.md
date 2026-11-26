@@ -69,7 +69,7 @@ Example (forbidden): `runShell` cases that run `echo out; sleep 0.2; echo err >&
 
 ## Validator-only finding fields
 
-A finding field that only the validator sets (for example `criterion`, set when the validator escalates an observation for an unmet acceptance criterion) does not belong on the reviewer input schema of `factory_review_submit`, which is `findingSchema` in `src/run.ts`. Reviewers submit through that schema, so a field on it is a field a reviewer can set. If such a field must stay on the shared schema, `submitDomain` in `src/review.ts` refuses a finding that sets it, and a test submits one such finding and expects the refusal.
+A finding field that only the validator sets (for example `criterion`, set when the validator escalates an observation for an unmet acceptance criterion) does not belong on the reviewer input schema of `factory_review_submit`, which is `findingSchema` in `src/run.ts`. Reviewers submit through that schema, so a field on it is a field a reviewer can set. If such a field must stay on the shared schema, its `.describe()` text on `findingSchema` starts with "Set by the validator", and `submitDomain` in `src/review.ts` refuses a finding that sets it. The test 'refuses every findingSchema field described as set by the validator' in `test/review.test.ts` selects those fields from the schema, submits one finding per field through `submitDomain`, and expects the refusal; it fails, naming the field, when the field has no sample value in the test.
 
 Example (issue-502 slice 03, past history): `criterion` was added to `findingSchema`, and reviewers could set it until a fix round made `submitDomain` refuse it. The refusal of `criterion` in `submitDomain` is the pattern to copy.
 
