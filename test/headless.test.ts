@@ -7,6 +7,7 @@ import { type Command, ctx, load } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
 import { forgetRun, readRun, runDir, saveRun, statePath } from '../src/run.ts';
 import { loadSource } from '../src/gates.ts';
+import { fetchGithubIssue, githubSource, sourceInputSchema } from '../src/source.ts';
 import { resetModuleState } from '../src/index.ts';
 import { headlessTarget } from '../src/headless-target.ts';
 import { issueGh, prependPath, sh, slice, tempDir, tempRepo } from './helpers.ts';
@@ -238,6 +239,66 @@ describe('factory_start with related issues', () => {
     const ws = { config: loadConfig(repo.root), root: repo.root };
     assert.equal('related' in readRun(ws, 'demo').source, false);
     assert.match(readFileSync(join(runDir(ws, 'demo'), 'issue.md'), 'utf8'), /^# Primary\n\nSource: github 242 \(https:\/\/github.com\/o\/r\/issues\/242\)\n\n/);
+  });
+});
+
+describe('factory_start filing time', () => {
+  const issue = (n: string, over: Record<string, unknown> = {}) => ({ author: { login: 'owner' }, body: `Text ${n}.`, comments: [], title: `T${n}`, url: `https://github.com/o/r/issues/${n}`, ...over });
+  const start = async (issues: Record<string, unknown>, source: Record<string, unknown>) => {
+    using _gh = issueGh({ issues, owners: ['*/242', '*/126'] });
+    using repo = tempRepo('factory-gh-filed-', CHECKS_OK);
+    const tools = load({ commands: new Map(), sent: [], sentOptions: [] });
+    const main = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, notify() {} } };
+    await tools.get('factory_start')?.execute('id', { feature: 'demo', source }, undefined, undefined, main);
+    const ws = { config: loadConfig(repo.root), root: repo.root };
+    return { issueMd: readFileSync(join(runDir(ws, 'demo'), 'issue.md'), 'utf8'), run: readRun(ws, 'demo') };
+  };
+
+  it('shows each issue its own filing time on its Source line', async () => {
+    const { issueMd, run } = await start({ '126': issue('126', { createdAt: '2026-10-01T09:00:00Z' }), '242': issue('242', { createdAt: '2026-11-01T10:00:00Z' }) }, { kind: 'github', ref: '242', related: ['126'] });
+    assert.match(issueMd, /^Source: github 242 \(https:\/\/github.com\/o\/r\/issues\/242\), filed 2026-11-01T10:00:00Z$/m);
+    assert.match(issueMd, /^Source: github 126 \(https:\/\/github.com\/o\/r\/issues\/126\), filed 2026-10-01T09:00:00Z$/m);
+    assert.equal(run.source.createdAt, '2026-11-01T10:00:00Z');
+    assert.equal(run.source.related?.[0]?.createdAt, '2026-10-01T09:00:00Z');
+  });
+
+  it('keeps the plain Source line when gh gives no createdAt', async () => {
+    const { issueMd, run } = await start({ '242': issue('242') }, { kind: 'github', ref: '242' });
+    assert.match(issueMd, /^Source: github 242 \(https:\/\/github.com\/o\/r\/issues\/242\)$/m);
+    assert.equal('createdAt' in run.source, false);
+  });
+
+  it('githubSource stores createdAt on the primary and each related item, and omits it when absent', async () => {
+    const approve = async () => true;
+    const withTime = await githubSource('242', { ...issue('242'), authorAssociation: 'OWNER', createdAt: 'A' } as never, approve, [{ issue: { ...issue('126'), authorAssociation: 'OWNER', createdAt: 'B' } as never, ref: '126' }], 'o/r');
+    assert.equal(withTime.createdAt, 'A');
+    assert.equal(withTime.related?.[0]?.createdAt, 'B');
+    const without = await githubSource('242', { ...issue('242'), authorAssociation: 'OWNER' } as never, approve, [{ issue: { ...issue('126'), authorAssociation: 'OWNER' } as never, ref: '126' }], 'o/r');
+    assert.equal('createdAt' in without, false);
+    assert.equal('createdAt' in (without.related?.[0] ?? {}), false);
+  });
+
+  it('a file source has no filed suffix, and jira and text inputs drop a supplied createdAt', async () => {
+    using repo = tempRepo('factory-file-filed-', { ...CHECKS_OK, 'issue.md': '# F\n\nDo.\n' });
+    const tools = load({ commands: new Map(), sent: [], sentOptions: [] });
+    const main = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, notify() {} } };
+    await tools.get('factory_start')?.execute('id', { feature: 'demo', source: { kind: 'file', ref: 'issue.md' } }, undefined, undefined, main);
+    const ws = { config: loadConfig(repo.root), root: repo.root };
+    assert.doesNotMatch(readFileSync(join(runDir(ws, 'demo'), 'issue.md'), 'utf8'), /filed/);
+    assert.equal('createdAt' in sourceInputSchema.parse({ body: 'b', createdAt: 'X', kind: 'jira', ref: 'J-1', title: 't' }), false);
+    assert.equal('createdAt' in sourceInputSchema.parse({ body: 'b', createdAt: 'X', kind: 'text', ref: 'r', title: 't' }), false);
+  });
+
+  it('asks gh for createdAt next to the other fields', async () => {
+    const temp = tempDir('factory-gh-fields-', root => {
+      writeFileSync(join(root, 'gh'), `#!/bin/sh\nif [ "$1" = issue ]; then echo "$*" > '${join(root, 'args')}'; echo '${JSON.stringify(issue('242'))}'; else echo OWNER; fi\n`);
+      chmodSync(join(root, 'gh'), 0o755);
+    });
+    using _temp = temp;
+    using _path = prependPath(temp.root);
+    using repo = tempRepo('factory-gh-fields-', CHECKS_OK);
+    await fetchGithubIssue({ config: loadConfig(repo.root), root: repo.root }, '242');
+    assert.equal(readFileSync(join(temp.root, 'args'), 'utf8').trim(), 'issue view 242 --json author,body,comments,createdAt,title,url');
   });
 });
 
