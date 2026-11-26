@@ -45,7 +45,7 @@ import {
   writeAtomic,
 } from './run.ts';
 import { renderFinding } from './finding-text.ts';
-import { domainFile, findingRecord, keptFindings, readRecorded, recordedFindings, sha256, targetingAfter, type Validation, validationFile, validationSchema } from './review-record.ts';
+import { domainFile, escalatedDecision, findingRecord, keptFindings, readRecorded, recordedFindings, sha256, targetingAfter, type Validation, validationFile, validationSchema } from './review-record.ts';
 import { fixAfterGreen } from './observations.ts';
 import { collectObservations, placeDefaults } from './place.ts';
 import { TEST_PATH } from './test-paths.ts';
@@ -571,12 +571,12 @@ function checkCoverage(findings: Finding[], validation: Validation, decisionCoun
   const notBlocking = downgraded.filter(id => byId.get(id)?.severity === 'observation');
   if (notBlocking.length > 0) throw new Error(`Only critical or high findings can be downgraded: ${notBlocking.join(', ')}`);
   const rank = (finding: Finding) => SEVERITIES.indexOf(escalated.includes(finding.id) ? 'high' : finding.severity);
-  // The decision a kept blocking finding cites: its own field, or for an escalated finding without one, its escalate entry's.
+  // The decision a kept blocking finding cites: its own field, or for an escalated finding its escalate entry's decision when given, else its own.
   const keptBlockingDecision = (id: string) => {
     const finding = byId.get(id);
     if (finding === undefined) return undefined;
     const entry = validation.escalate.find(candidate => candidate.id === id);
-    if (entry !== undefined) return finding.decision ?? entry.decision;
+    if (entry !== undefined) return escalatedDecision(finding, entry);
     return validation.keep.includes(id) && finding.severity !== 'observation' ? finding.decision : undefined;
   };
   const usesAutonomous = validation.dropped.filter(entry => {
