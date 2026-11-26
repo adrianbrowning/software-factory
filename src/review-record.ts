@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { z } from 'zod';
+import { evidenceLine } from './evidence.ts';
 import { renderFinding } from './finding-text.ts';
 import { findingLocation, findingTitle } from './ledger.ts';
 import { type Decision, type Domain, type Finding, findingListSchema, OBSERVATION_CATEGORIES, reviewDir, reviewDomains, type Run, type Slice, type Workspace } from './run.ts';
@@ -100,6 +101,10 @@ export const validationSchema = z.object({
     )
     .default([])
     .describe(escalateDescription),
+  fixWarnings: z
+    .array(z.object({ id: z.string().min(1), warning: z.string().min(1) }))
+    .default([])
+    .describe('Optional: for a blocking finding (kept at critical or high, or escalated) whose suggested fix (Fix or Fix prompt) narrows behavior beyond the cited decision or acceptance criterion, the input or case the fix would reject that the wording allows'),
   keep: z.array(z.string().min(1)).describe('Ids of findings the diff substantiates, one per distinct problem'),
 });
 
@@ -133,9 +138,13 @@ export function targetingAfter(review: { id: string; sha: string }, domains: rea
 const SIBLING_COMMENT_NOTE =
   '\n- Sibling comments: search src/, README.md, agents/ and skills/ for key words of the fact the comment states and fix in this round every other comment the diff makes false for that fact, not only the one at this location.';
 
-/** A finding as a fix record in `group`: its id and summary `[severity] <location>: title` as the fix item, and its location-free `title`. A comments-domain finding's section ends with the sibling-comment note. */
-export function findingRecord(finding: Finding, group: string, decisions: Decision[]): FixRecord & { title: string } {
+/**
+ * A finding as a fix record in `group`: its id and summary `[severity] <location>: title` as the fix item, and its location-free `title`. The section of a
+ * finding with a validator `warning` on its suggested fix holds the warning line after its decision or criterion line; a comments-domain finding's section ends with the sibling-comment note.
+ */
+export function findingRecord(finding: Finding, group: string, decisions: Decision[], warning?: string): FixRecord & { title: string } {
   const title = `[${finding.severity}] ${findingTitle(finding.title)}`;
   const summary = `[${finding.severity}] ${findingLocation(finding)}: ${findingTitle(finding.title)}`;
-  return { group, item: { id: finding.id, summary }, section: renderFinding(finding, decisions, '###') + (finding.domain === 'comments' ? SIBLING_COMMENT_NOTE : ''), title };
+  const warned = warning === undefined ? '' : `\n- Validator warning on the suggested fix (meet the cited decision or acceptance criterion as written, not a narrower fix): ${evidenceLine(warning, 1_000)}`;
+  return { group, item: { id: finding.id, summary }, section: renderFinding(finding, decisions, '###') + warned + (finding.domain === 'comments' ? SIBLING_COMMENT_NOTE : ''), title };
 }
