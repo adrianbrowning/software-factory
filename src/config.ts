@@ -180,17 +180,19 @@ const deferredSchema = z.discriminatedUnion('kind', [
 ]);
 export type DeferredSink = z.infer<typeof deferredSchema>;
 
+/** A list of check commands: each trimmed, blanks dropped, repeats removed in first-seen order, and at least one left. */
+export const checkListSchema = z
+  .array(z.string())
+  .transform(list => [...new Set(list.map(command => command.trim()).filter(command => command !== ''))])
+  .pipe(z.array(z.string()).min(1, 'Choose at least one check command.'));
+
 const configSchema = z
   .object({
     /** Ref the first slice branches from. Unset: the remote default branch from `origin/HEAD`, else `origin/main`. */
     baseRef: text.optional(),
     branchPrefix: text.default('factory'),
     /** Checks a new run starts with, in order. Unset: the first run asks the user and saves the choice in `scratchDir`. */
-    checks: z
-      .array(z.string())
-      .transform(list => [...new Set(list.map(command => command.trim()).filter(command => command !== ''))])
-      .pipe(z.array(z.string()).min(1))
-      .optional(),
+    checks: checkListSchema.optional(),
     /** Directories put before the omp process PATH when checks run. Each is absolute or starts with `~/`. */
     checkPath: z.array(text).default([]),
     checkTimeoutMs: positiveInt.default(10 * 60 * 1_000),

@@ -630,8 +630,8 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
           ctx.ui.notify(`Checks unchanged: ${repoChecks(ws).join('; ') || 'none chosen'}.`, 'info');
           return;
         }
-        await saveChecks(ws, checks);
-        ctx.ui.notify(`Saved checks: ${checks.join('; ')}. New runs use them; a run that already started keeps its checks.`, 'info');
+        const saved = await saveChecks(ws, checks);
+        ctx.ui.notify(`Saved checks: ${saved.join('; ')}. New runs use them; a run that already started keeps its checks.`, 'info');
         return;
       }
       if (verb === 'resume') {
