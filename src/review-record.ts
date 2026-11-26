@@ -105,7 +105,7 @@ export const validationSchema = z.object({
   fixWarnings: z
     .array(z.object({ id: z.string().min(1), warning: z.string().min(1) }))
     .default([])
-    .describe('Optional: for a kept finding (in keep, downgrade or escalate) whose suggested fix (Fix or Fix prompt) narrows behavior beyond the cited decision or acceptance criterion, the input or case the fix would reject that the wording allows'),
+    .describe('Optional: for a kept finding (in keep, downgrade or escalate) whose suggested fix (Fix or Fix prompt) narrows behavior beyond the cited decision or acceptance criterion, or is a prose fix that leaves out a case, mode or input that any numbered decision or acceptance criterion gives for the rule (cited or not), the input or case the fix would reject or leave out that the wording allows'),
   keep: z.array(z.string().min(1)).describe('Ids of findings the diff substantiates, one per distinct problem'),
 });
 
