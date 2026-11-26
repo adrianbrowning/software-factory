@@ -600,8 +600,8 @@ function checkCoverage(findings: Finding[], validation: Validation, decisionCoun
   const warnedIds = validation.fixWarnings.map(entry => entry.id);
   const repeated = warnedIds.filter((id, index) => warnedIds.indexOf(id) !== index);
   if (repeated.length > 0) throw new Error(`A fixWarnings id appears twice: ${[...new Set(repeated)].join(', ')}`);
-  const warnedNotBlocking = warnedIds.filter(id => !escalated.includes(id) && !(validation.keep.includes(id) && byId.get(id)?.severity !== 'observation'));
-  if (warnedNotBlocking.length > 0) throw new Error(`A fixWarnings id must name a finding that blocks after validation (kept at critical or high, or escalated): ${warnedNotBlocking.join(', ')}`);
+  const unkept = warnedIds.filter(id => !escalated.includes(id) && !downgraded.includes(id) && !validation.keep.includes(id));
+  if (unkept.length > 0) throw new Error(`A fixWarnings id must name a finding the validation keeps (in keep, downgrade or escalate): ${unkept.join(', ')}`);
   for (const entry of validation.escalate) {
     if (entry.decision !== undefined && entry.decision > decisionCount) {
       throw new Error(`"${entry.id}" names decision ${entry.decision}, but the review data lists ${decisionCount} decisions.`);
@@ -623,7 +623,7 @@ function checkCoverage(findings: Finding[], validation: Validation, decisionCoun
 /**
  * The validator only selects: every raw finding is kept, downgraded to an observation, escalated to high for a broken
  * decision or an unmet acceptance criterion, or dropped with a reason. It adds no finding and rewrites no text, except a fix warning:
- * the text it adds beside a blocking finding (`fixWarnings`) when the suggested fix narrows the cited decision or criterion, shown in the fix file. The same validator may replace its
+ * the text it adds beside a kept finding (in keep, downgrade or escalate; `fixWarnings`) when the suggested fix narrows the cited decision or criterion. The warning is stored in the validation file; the fix file of a red review shows it for a blocking finding. The same validator may replace its
  * validation once (to correct its verdict) until the review is recorded.
  */
 export function submitValidation(
