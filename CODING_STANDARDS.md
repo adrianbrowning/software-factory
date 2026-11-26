@@ -48,6 +48,12 @@ A `@ts-expect-error` test must fail only for the behavior its name gives. The va
 
 In a zod schema in `src/`, a custom `error` function on a `z.union` returns its message text only for the input case the message describes and returns `undefined` for every other case, so zod's default issue still reports a wrong-typed field or an unknown key. A change to a schema's shape does not change its object strictness (`z.object` versus `z.strictObject`) as a side effect. Copy the escalate union in `validationSchema` in `src/review-record.ts`. Past history: in issue-858 slice 01 a union error fired for every `invalid_union` issue, which hid wrong-typed fields and unknown keys behind one message, and the schema switched to `z.strictObject` along the way. This is a reviewer judgement rule; no test enforces it.
 
+## Permissive tool parameter schemas
+
+When a change touches a zod schema that a tool registers as `parameters` (through `toolRegistrar` in `src/tool-scope.ts`), review the JSON schema that the schema exposes (`z.toJSONSchema`). The omp host refuses arguments that fail the exposed JSON schema with its own generic message, before execute runs. A rule whose error message matters (for example a message that names the finding id) is enforced in execute, by the zod parse, and not in the exposed JSON schema. Advertise a permissive item, and let the zod parse in execute refuse the bad input. Copy `escalateInputSchema` in `src/review-record.ts`, which `validateSchema` in `src/review-tools.ts` advertises. The test 'advertises an escalate item with decision and criterion both optional, so the tool argument check cannot refuse a neither-or-both entry before the factory names the finding' in test/index.test.ts asserts that the advertised escalate item has no anyOf, oneOf or `not`.
+
+Past history: in issue-858 slice 01 the advertised escalate item had a union, so omp refused a neither-or-both entry with its generic message and the factory could not name the finding. Fix round r1 changed the advertised item to the plain item. This is a reviewer judgement rule; no test enforces it.
+
 ## Script env in tests
 
 A test that spawns a script with `process.env` controls every variable the script reads. Otherwise the result depends on the developer's or CI's shell.
