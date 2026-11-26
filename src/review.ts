@@ -193,7 +193,8 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   const commits = own.map(commit => commit.oneline).join('\n');
   if (own.length === 0) throw new Error(`Slice ${slice.id} has no commits past ${slice.parentBranch}. The implementer must commit the slice work first.\n${report}`);
   // A fix round's commits (past the fix file's commit) must all be in the stored report, so the orchestrator reads a report that matches the work.
-  if (slice.phase === 'fix' && slice.fixFromSha !== undefined) {
+  // This also holds in phase 'checks' with fixFromSha set: resume moves a reported fix round there, and a commit made after the move must be reported too.
+  if ((slice.phase === 'fix' || slice.phase === 'checks') && slice.fixFromSha !== undefined) {
     const roundShas = new Set((await git(ws.root, 'rev-list', `${slice.fixFromSha}..HEAD`)).split('\n').filter(Boolean));
     const unlisted = own.filter(commit => roundShas.has(commit.sha) && !reportListsCommit(ws, run, slice, commit.sha));
     if (unlisted.length > 0) {
