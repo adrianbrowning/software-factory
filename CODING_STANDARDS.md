@@ -169,3 +169,13 @@ Copy `loadWithActiveTools` in `test/extension.ts`: it returns `activeTools`, and
 Example (issue-770 slice 01, past history): the fake's getActiveTools was exposed through a mutable `probe` out-parameter that the test read with `?? []`, and an unused `activated` array was left in `resumeSetup`.
 
 The rule covers state a new or changed fake exposes. The existing recording options of `load` and `loadWithActiveTools` (activated, sent, sentOptions, handlers, commands) are not migrated. This is a reviewer judgement rule; no test enforces it.
+
+## Error-text assertions in tests
+
+A test assertion on error or refusal text (`includes`, `match`, a regex) matches a fragment that only the specific cause under test produces, such as a field path (`finding.id`) or a schema message (`must match pattern`). It never matches a short common word that the fixed message prefix or other fixed text of the message can contain, because such an assertion can never fail.
+
+Copy the test 'rejects a withRun mutation that leaves an invalid value and keeps the previous state' in `test/save-run.test.ts`: it asserts on `finding.id` and `must match pattern`.
+
+Example (issue-735 slice 01, past history): `includes('id')` also matched 'invalid' in the `saveRun` message prefix 'Refusing to save invalid factory state', so the assertion passed whatever the cause.
+
+This is a reviewer judgement rule; no test enforces it.
