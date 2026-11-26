@@ -115,6 +115,11 @@ describe('review submissions', { concurrency: 4 }, () => {
       'src/client.mjs': 'import { createRoot } from "react-dom/client";\n',
       'src/legacy.cjs': "const { jsx } = require('react/jsx-runtime');\n",
       'src/useThing.ts': "import { useState } from 'react';\nexport const useThing = () => useState(0);\n",
+      'src/app.ts': 'export const a = 1;\n',
+      'lib/a.mts': 'export const b = 2;\n',
+      'b.cts': 'module.exports = 3;\n',
+      'ui/View.tsx': 'export const V = () => <div />;\n',
+      'c.jsx': 'export const C = () => <p />;\n',
       'lib/client.mts': 'import { createRoot } from "react-dom/client";\n',
     };
     const skipsFor = async (files: string[]) => (await pathSkips(files, async file => contents[file])).map(entry => entry.domain);
@@ -125,7 +130,9 @@ describe('review submissions', { concurrency: 4 }, () => {
     for (const file of ['src/plain.js', 'lib/a.mjs', 'b.cjs', 'src/app.ts', 'lib/a.mts', 'b.cts', 'src/gone.ts']) {
       assert.ok((await skipsFor([file])).includes('react-ts'), file);
     }
-    assert.ok(!(await pathSkips(['ui/Gone.tsx', 'd.jsx'], async () => undefined)).some(entry => entry.domain === 'react-ts'));
+    for (const file of ['ui/Gone.tsx', 'd.jsx']) {
+      assert.ok(!(await pathSkips([file], async () => undefined)).some(entry => entry.domain === 'react-ts'), file);
+    }
     for (const file of ['src/app.ts', 'lib/a.mts', 'b.cts']) {
       assert.equal(
         (await pathSkips([file], async name => contents[name])).find(entry => entry.domain === 'react-ts')?.reason,
