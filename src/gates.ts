@@ -17,17 +17,25 @@ export async function confirmInteractive(ctx: ExtensionContext, ws: Workspace, f
 
 /**
  * A confirmation gate. An interactive run asks the user. A headless run follows the policy for the gate: auto records an
- * autonomous event and proceeds; stop saves a pause with a reason naming the gate, then throws.
+ * autonomous event and proceeds; the event holds the dialog title, then the dialog body redacted and clipped to its first
+ * 2,000 characters (a clipped body ends with a line saying how many characters are not shown); stop saves a pause with a reason naming the gate, then throws.
  */
 export async function gate(ctx: ExtensionContext, ws: Workspace, feature: string, name: HeadlessGate, title: string, body: string) {
   if (readRun(ws, feature).mode !== 'headless') return confirm(ctx, title, body);
   if (ws.config.headless[name] === 'auto') {
-    await withRun(ws, feature, run => addEvent(run, 'autonomous', `gate ${name} (auto): ${title}`));
+    await withRun(ws, feature, run => addEvent(run, 'autonomous', `gate ${name} (auto): ${title}${autoBody(body)}`));
     return true;
   }
   const reason = `headless gate "${name}" is set to stop: ${title}`;
   await withRun(ws, feature, run => markPaused(run, reason));
   throw new Error(`The run is paused, ${reason}. /factory resume ${feature} continues it. Stop now.`);
+}
+
+/** The body part of a headless auto gate event; the not-shown marker line appears only when the redacted body is clipped. */
+function autoBody(body: string) {
+  const redacted = redact(body);
+  if (redacted === '') return '';
+  return redacted.length > 2_000 ? `\n${redacted.slice(0, 2_000)}\n[${redacted.length - 2_000} characters not shown]` : `\n${redacted}`;
 }
 
 /** One outside part for the dialog: the last 1,000 characters of the redacted text, preceded by a line saying how many characters are not shown. */
