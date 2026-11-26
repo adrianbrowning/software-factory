@@ -7,7 +7,7 @@ import { submitImplementerReport } from '../src/report.ts';
 import { readRun, reportPath, type Workspace } from '../src/run.ts';
 import { runChecks } from '../src/review.ts';
 import { nextSlice } from '../src/workflow.ts';
-import { commit, newRun, sh, slice, step, workspace } from './helpers.ts';
+import { commit, finding, newRun, sh, slice, step, workspace } from './helpers.ts';
 
 const KEYS = ['01-r1:thermo-naming', '01-r1:other-gap'];
 
@@ -28,6 +28,8 @@ describe('build-mode report with carried keys', () => {
   it('stores each accepted line form under Carried items, leaves the ledger alone, and shows them in the checks reply', async () => {
     using ws = workspace();
     const sha = await carrying(ws, [section(KEYS)]);
+    await step(ws, run => void run.slices[0]!.unplaced.push({ category: 'naming', finding: { ...finding('thermo', 'observation', 'naming'), id: 'thermo-naming' }, review: '01-r1' }));
+    assert.equal(readRun(ws, 'demo').slices[0]!.unplaced.length, 1);
     const before = JSON.stringify(readRun(ws, 'demo'));
     const lines = [`${KEYS[0]} fixed in ${sha}`, `\`${KEYS[0]}\` fixed in ${sha} renamed the helper`, `${KEYS[1]}: fixed in ${sha}`];
     await submit(ws, sha, lines);
