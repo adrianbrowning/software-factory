@@ -529,7 +529,7 @@ describe('autonomous decisions', { concurrency: 4 }, () => {
     const validate = (input: object) => step(ws, run => submitValidation(ws, run, { agentId: 'v', dropped: [], keep: [], reviewId, ...input }));
     await assert.rejects(validate({ dropped: [{ id: 'react-ts-cited', reason: 'x' }], keep: ['bug-dup'] }), /autonomous decision cannot be dropped or downgraded/);
     await assert.rejects(validate({ dropped: [{ id: 'react-ts-cited', reason: 'x', duplicateOf: 'bug-dup' }], keep: ['bug-dup'] }), /autonomous decision cannot be dropped or downgraded/);
-    // The downgrade is refused by the check that covers every decision, which runs before the autonomous one.
+    // The downgrade is refused by the check that covers every decision; the autonomous check covers only drops.
     await assert.rejects(validate({ downgrade: [{ id: 'react-ts-cited', reason: 'x' }], keep: ['bug-dup'] }), /breaks a recorded decision cannot be downgraded/);
     await validate({ keep: ['bug-dup', 'react-ts-cited'] });
   });
