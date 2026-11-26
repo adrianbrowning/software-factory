@@ -623,7 +623,7 @@ function checkCoverage(findings: Finding[], validation: Validation, decisionCoun
 /**
  * The validator only selects: every raw finding is kept, downgraded to an observation, escalated to high for a broken
  * decision or an unmet acceptance criterion, or dropped with a reason. It adds no finding and rewrites no text, except a fix warning:
- * the text it adds beside a kept finding (in keep, downgrade or escalate; `fixWarnings`) when the suggested fix narrows the cited decision or criterion, shown in the fix file. The same validator may replace its
+ * the text it adds beside a kept finding (in keep, downgrade or escalate; `fixWarnings`) when the suggested fix narrows the cited decision or criterion. The warning is stored in the validation file; the fix file of a red review shows it for a blocking finding. The same validator may replace its
  * validation once (to correct its verdict) until the review is recorded.
  */
 export function submitValidation(
