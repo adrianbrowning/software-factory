@@ -454,6 +454,13 @@ describe('/factory headless --base', () => {
     await assert.rejects(other.call('factory_plan', { baseRef: 'main', slices: [slice('One')] }), /fixed at start.*no baseRef/);
   });
 
+  it('refuses factory_plan with no slices in z.prettifyError form, not zod issue JSON', async () => {
+    using repo = tempRepo('factory-headless-base-', CHECKS_OK);
+    const { call, command } = session(repo.root);
+    await command('headless ticket.md');
+    await assert.rejects(call('factory_plan', { slices: [] }), (error: Error) => error.message.startsWith('✖') && !error.message.includes('"code"'));
+  });
+
   it('a run without --base has no baseBranch and plans on the configured base', async () => {
     using repo = tempRepo('factory-headless-base-', CHECKS_OK);
     const { call, command } = session(repo.root);
