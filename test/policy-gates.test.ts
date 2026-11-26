@@ -5,6 +5,7 @@ import { beforeEach, describe, it } from 'node:test';
 import { type Command, ctx, load } from './extension.ts';
 import { loadConfig, parseConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
+import { headlessRetroGateBody } from '../src/retro.ts';
 import { readRun, statePath, withRun, type Run, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, planSlices, resolveStall } from '../src/workflow.ts';
@@ -475,5 +476,47 @@ describe('headless stall reason', () => {
     assert.match(pause, /slice 01 "Feature" used up its 3 fix rounds; open: .*Empty input crashes/);
     assert.doesNotMatch(pause, /still red after/);
     assert.match(text, /paused/);
+  });
+});
+
+describe('headless gate events hold the dialog body', () => {
+  const TITLE = 'Record these decisions for reviewers?';
+  async function decideEvent(decisions: string[]) {
+    using repo = tempRepo('factory-gate-', CHECKS_OK);
+    const { call, ws } = await headlessRun(repo.root, 'active', {});
+    await call('factory_decide', { decisions });
+    return readRun(ws, 'demo').events.filter(event => event.kind === 'autonomous').map(event => event.detail);
+  }
+
+  it('factory_retro records the title line, a newline and the retro gate body', async () => {
+    using repo = tempRepo('factory-gate-', CHECKS_OK);
+    const { call, ws } = await headlessRun(repo.root, 'done', {});
+    const findings = ['Lint rule', 'Test rule'].map(title => ({ action: 'apply', category: 'automated-checks', detail: 'Add it', severity: 'high', target: 'repo', title }) as const);
+    await call('factory_retro', { findings });
+    const details = readRun(ws, 'demo').events.filter(event => event.kind === 'autonomous').map(event => event.detail);
+    assert.deepEqual(details, [`gate retro (auto): Record the retro and defer its findings?\n${headlessRetroGateBody(ws.config.deferred, { findings })}`]);
+    assert.match(details[0] ?? '', /\n- Lint rule\n- Test rule$/);
+  });
+
+  it('factory_decide records the whole title line and body', async () => {
+    assert.deepEqual(await decideEvent(['First.', 'Second.']), [`gate decide (auto): ${TITLE}\n- First.\n- Second.`]);
+  });
+
+  it('redacts a credential in the body', async () => {
+    const token = `ghp_${'a1B2'.repeat(9)}`;
+    const [detail] = await decideEvent([`Use ${token} here.`]);
+    assert.match(detail ?? '', /<REDACTED>/);
+    assert.doesNotMatch(detail ?? '', /ghp_/);
+  });
+
+  it('clips a body over 2,000 characters after redaction and counts the rest', async () => {
+    const text = 'x'.repeat(2_500);
+    const body = `- ${text}`;
+    assert.deepEqual(await decideEvent([text]), [`gate decide (auto): ${TITLE}\n${body.slice(0, 2_000)}\n[${body.length - 2_000} characters not shown]`]);
+  });
+
+  it('keeps a body of exactly 2,000 characters whole', async () => {
+    const body = `- ${'y'.repeat(1_998)}`;
+    assert.deepEqual(await decideEvent(['y'.repeat(1_998)]), [`gate decide (auto): ${TITLE}\n${body}`]);
   });
 });
