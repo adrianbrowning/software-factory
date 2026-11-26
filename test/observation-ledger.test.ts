@@ -798,6 +798,16 @@ describe('observation titles in confirm dialogs', () => {
     assert.ok((bodies[0] ?? '').includes(`: ${longTitle}\n`), 'the whole 304-character title shows');
   });
 
+  it('factory_defer clips an observation title and a note over 500 characters to their first 500 characters and an ellipsis', async () => {
+    using dir = repo();
+    const over = '0123456789'.repeat(60);
+    const { call } = await ledgerRun(dir.root, ['huge'], found => ({ ...found, title: over }));
+    const bodies: string[] = [];
+    await call('factory_defer', { note: over, observations: ['thermo-huge'] }, asking(bodies));
+    const clipped = `${'0123456789'.repeat(50)}…`;
+    assert.deepEqual((bodies[0] ?? '').split('\n').filter(line => line.startsWith('- ')), [`- Note: ${clipped}`, `- thermo-huge: ${clipped}`]);
+  });
+
   it('factory_defer shows the note line first, then one line per observation, with no feature/slice prefix', async () => {
     using dir = repo();
     const { call } = await ledgerRun(dir.root, ['one', 'two']);
