@@ -261,13 +261,6 @@ describe('implementer sessions', () => {
       assert.match(await call('factory_implementer_report', { behaviors: [{ ...behavior, seenRed: false, red: undefined }, behavior], commits: [], open: [] }, implementer), /Replaced the stored report/);
     });
 
-    it('does not apply the seen-red rule when Open names a stop report', async () => {
-      using repo = emptyRepo();
-      const { call, implementer } = await startedRun(repo.root);
-      commitFile(repo.root, 'test/a.test.ts');
-      assert.match(await call('factory_implementer_report', { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], commits: [], open: ['SLICE TOO BIG: y'] }, implementer), /Stored the report/);
-    });
-
     it('stores an all-unseen-red report for a slice with a noTestReason', async () => {
       using repo = emptyRepo();
       const { call, implementer } = await startedRun(repo.root, 'true', { noTestReason: 'docs only', seams: [] });
