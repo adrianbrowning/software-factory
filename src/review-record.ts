@@ -149,6 +149,6 @@ const SIBLING_COMMENT_NOTE =
 export function findingRecord(finding: Finding, group: string, decisions: Decision[], warning?: string): FixRecord & { title: string } {
   const title = `[${finding.severity}] ${findingTitle(finding.title)}`;
   const summary = `[${finding.severity}] ${findingLocation(finding)}: ${findingTitle(finding.title)}`;
-  const warned = warning === undefined ? '' : `\n- Validator warning on the suggested fix (meet the cited decision or acceptance criterion as written, not a narrower fix): ${evidenceLine(warning, 1_000)}`;
+  const warned = warning === undefined ? '' : `\n- Validator warning on the suggested fix (meet the recorded decisions and acceptance criteria as written, not a narrower fix): ${evidenceLine(warning, 1_000)}`;
   return { group, item: { id: finding.id, summary }, section: renderFinding(finding, decisions, '###') + warned + (finding.domain === 'comments' ? SIBLING_COMMENT_NOTE : ''), title };
 }

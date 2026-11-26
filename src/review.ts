@@ -623,7 +623,7 @@ function checkCoverage(findings: Finding[], validation: Validation, decisionCoun
 /**
  * The validator only selects: every raw finding is kept, downgraded to an observation, escalated to high for a broken
  * decision or an unmet acceptance criterion, or dropped with a reason. It adds no finding and rewrites no text, except a fix warning:
- * the text it adds beside a kept finding (in keep, downgrade or escalate; `fixWarnings`) when the suggested fix narrows the cited decision or criterion. The warning is stored in the validation file; the fix file of a red review shows it for a blocking finding. The same validator may replace its
+ * the text it adds beside a kept finding (in keep, downgrade or escalate; `fixWarnings`) when the suggested fix narrows the cited decision or criterion. The warning is stored in the validation file; the fix file of a red review shows it for a blocking finding, and an observation fix round's fix file shows it in the section of each observation sent to it (the entry on the slice's unplaced list keeps it). The same validator may replace its
  * validation once (to correct its verdict) until the review is recorded.
  */
 export function submitValidation(
@@ -703,7 +703,8 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
   const kept = keptFindings(findings, validation);
   const blocking = kept.filter(finding => finding.severity !== 'observation');
   const observations = kept.filter(finding => finding.severity === 'observation');
-  collectObservations(run, slice, review.id, review.sha, observations);
+  const warningOf = new Map(validation.fixWarnings.map(entry => [entry.id, entry.warning]));
+  collectObservations(run, slice, review.id, review.sha, observations, warningOf);
   const verdicts = review.fixVerdicts ?? [];
   const verdictOf = new Map(verdicts.map(entry => [entry.id, entry]));
   // An item without a closing verdict stays open, so no item passes unchecked; a blocking finding under its id already carries it.
@@ -729,7 +730,6 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
   slice.targeting = targetingAfter(review, [...blocking.map(finding => finding.domain), ...(open.length > 0 ? (['scope'] as const) : [])]);
   const blockingIds = [...blocking.map(finding => finding.id), ...open.map(item => `${item.id} (open fix item)`)];
   const blockingDetail = `${detail}; blocking ${blockingIds.join(', ')}`;
-  const warningOf = new Map(validation.fixWarnings.map(entry => [entry.id, entry.warning]));
   const pairs = blocking.map(finding => ({ finding, record: findingRecord(finding, `## Blocking review findings from ${review.id}`, run.decisions, warningOf.get(finding.id)) }));
   const records: FixRecord[] = [
     ...pairs.map(({ record }) => record),

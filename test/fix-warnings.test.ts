@@ -8,7 +8,7 @@ import { nextSlice } from '../src/workflow.ts';
 import { commit, finding, newRun, noFixItems, slice, step, workspace } from './helpers.ts';
 
 const WARNING = "The Fix prompt's [A-Za-z0-9] rejects a reason that starts with ( or #, which decision 1 allows.";
-const LINE = 'Validator warning on the suggested fix (meet the cited decision or acceptance criterion as written, not a narrower fix): ';
+const LINE = 'Validator warning on the suggested fix (meet the recorded decisions and acceptance criteria as written, not a narrower fix): ';
 
 describe('validator fix warnings', { concurrency: 4 }, () => {
   /** An open review with these findings submitted by their domains; resolves to the review id. */

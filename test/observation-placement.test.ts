@@ -209,6 +209,21 @@ describe('batched observation placement', () => {
     assert.doesNotMatch(fixFile, /green review 01-r1/);
   });
 
+  it('factory_place with a fix placement writes the validator warning of the observation in its fix-file section', async () => {
+    using dir = repo();
+    const { call, ws } = await interactive(dir.root);
+    const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+    const warning = 'The fix drops a case decision 1 names.';
+    await review(ws, reviewId, [observation('naming', 'correctness'), observation('plain', 'correctness')], undefined, undefined, { fixWarnings: [{ id: 'thermo-naming', warning }] });
+    await call('factory_review_record', {});
+    const text = (await call('factory_place', { placements: [{ id: 'thermo-naming', placement: 'fix' }, { id: 'thermo-plain', placement: 'fix' }] })).content[0]?.text ?? '';
+    const fix = readFileSync(/Fix file: (\S+)/.exec(text)?.[1] ?? 'missing', 'utf8');
+    const section = (id: string) => fix.split(/^### /m).find(part => part.includes(`] ${id}\n`)) ?? '';
+    const lines = (id: string) => section(id).split('\n').filter(row => row.startsWith('- Validator warning'));
+    assert.deepEqual(lines('thermo-naming'), [`- Validator warning on the suggested fix (meet the recorded decisions and acceptance criteria as written, not a narrower fix): ${warning}`]);
+    assert.deepEqual(lines('thermo-plain'), []);
+  });
+
   it('moves an observation of a red review, carried to a later slice by factory_place, on a later reslice after its own slice was split into differently titled children', async () => {
     using dir = repo();
     const { call, full, ws } = await interactive(dir.root);
