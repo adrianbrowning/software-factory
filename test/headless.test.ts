@@ -676,4 +676,15 @@ describe('/factory headless start message names the base', () => {
     assert.ok(message.includes(`Base: main at ${pinned.slice(0, 12)}`), message);
     assert.ok(!message.includes('is not the configured base'), message);
   });
+
+  it('with --base equal to the configured base but not the trunk holds no warning', async () => {
+    using repo = tempRepo('factory-headless-msg-', { ...CHECKS_OK, '.omp/factory.json': JSON.stringify({ baseRef: 'feat/base', checks: ['test -f ok'], trunk: 'main' }) });
+    sh(repo.root, 'branch', 'feat/base');
+    const { command, sent } = session(repo.root);
+    await command('headless ticket.md --base feat/base');
+    const message = sent[0] ?? '';
+    assert.ok(message.includes('Base: feat/base at '), message);
+    assert.ok(message.includes('PRs target main'), message);
+    assert.ok(!message.includes('is not the configured base'), message);
+  });
 });
