@@ -94,14 +94,7 @@ function recordFixedObservations(run: Run, slice: Slice, fixItems: string[], own
 
 const STOP_REPORT = /NEEDS SEAM|SLICE TOO BIG|MISSING DEPENDENCY/;
 
-/**
- * Build mode, a slice with seams and an Open list naming no stop report: refuses a report that lists no behavior. For a
- * slice without a noTestReason it also refuses a report whose slice commits change no test file (the review's
- * test-validity path rule) and one whose behaviors all have seenRed false (the gate cannot verify that a reported red
- * line is true). A seamed slice with a noTestReason (for example a behavior-preserving refactor that relies on existing
- * tests) is exempt from both of those rules but still needs one behavior, such as the existing test that pins the code.
- * Nothing is stored when it refuses.
- */
+/** Counts a test file by the shared TEST_PATH rule, which the review's test-validity path skip also uses. */
 async function refuseUntestedSeamedSlice(ws: Workspace, slice: Slice, report: ImplementerReport, fixMode: boolean) {
   if (fixMode || slice.seams.length === 0 || report.open.some(item => STOP_REPORT.test(item))) return;
   const prefix = `Nothing stored. Slice ${slice.id} has test seams (${slice.seams.join('; ')}) but`;
