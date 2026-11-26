@@ -34,7 +34,7 @@ For the testing and test-validity domains, the ticket's seams are the agreed tes
 
 `## LATER SLICES` (after the ticket in `## PR METADATA`) lists each slice stacked after this one with its what to build and acceptance criteria, or says there are none. Work a later slice lists is not a finding against this slice: leave out a missing feature, test, or criterion that a later slice builds. This slice's own acceptance criteria, seams, and decisions still count in full, and code in this slice that contradicts a later slice's plan is still a finding.
 
-The ticket's "Decisions the user already made" section is a numbered list and is binding. Report code that breaks a decision as `critical` or `high`, never as an `observation`, and set the finding's `decision` field to the decision's number; the validator cannot downgrade such a finding. A later decision that accepts the gap overrides the earlier one. Leave out a finding whose whole point is a tradeoff a decision already accepts, or work a decision puts out of scope.
+The ticket's "Decisions the user already made" section is a numbered list and is binding. Report code that breaks a decision as `critical` or `high`, never as an `observation`, and set the finding's `decision` field to the decision's number; the validator downgrades such a finding only with `decisionMatch`, its recorded reason that the code matches the decision. A later decision that accepts the gap overrides the earlier one. Leave out a finding whose whole point is a tradeoff a decision already accepts, or work a decision puts out of scope.
 
 A decision marked [AUTONOMOUS] was made by a headless run without the user; check the code against it, and never use it to leave out, drop, downgrade or waive a finding.
 

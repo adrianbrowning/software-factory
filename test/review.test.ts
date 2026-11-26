@@ -225,13 +225,21 @@ describe('review submissions', { concurrency: 4 }, () => {
     for (const domain of REVIEW_DOMAINS) {
       await submit(domain, domain === 'react-ts' ? [declared] : domain === 'bug' ? [finding('bug', 'observation', 'missed-conflict')] : []);
     }
-    const validate = (input: { downgrade?: { id: string; reason: string }[]; escalate?: { decision: number; id: string; reason: string }[]; keep: string[] }) =>
+    const validate = (input: { downgrade?: { category?: string; decisionMatch?: string; id: string; reason: string }[]; escalate?: { decision: number; id: string; reason: string }[]; keep: string[] }) =>
       step(ws, run => submitValidation(ws, run, { agentId: 'v', dropped: [], reviewId, ...input }));
     const reason = 'breaks the decision';
 
     await assert.rejects(
       validate({ downgrade: [{ id: 'react-ts-undefined-field', reason }], keep: ['bug-missed-conflict'] }),
-      /breaks a recorded decision cannot be downgraded/,
+      /react-ts-undefined-field.*decisionMatch/,
+    );
+    await assert.rejects(
+      validate({ downgrade: [{ decisionMatch: '', id: 'react-ts-undefined-field', reason }], keep: ['bug-missed-conflict'] }),
+      /decisionMatch/,
+    );
+    await assert.rejects(
+      validate({ downgrade: [{ decisionMatch: 'x', id: 'bug-missed-conflict', reason }], keep: ['react-ts-undefined-field'] }),
+      /bug-missed-conflict/,
     );
     await assert.rejects(
       validate({ escalate: [{ decision: 1, id: 'react-ts-undefined-field', reason }], keep: ['bug-missed-conflict'] }),
@@ -531,9 +539,28 @@ describe('autonomous decisions', { concurrency: 4 }, () => {
     await assert.rejects(validate({ dropped: [{ id: 'react-ts-cited', reason: 'x' }], keep: ['bug-dup'] }), /autonomous decision cannot be dropped or downgraded/);
     await assert.rejects(validate({ dropped: [{ id: 'react-ts-cited', reason: 'x', duplicateOf: 'bug-dup' }], keep: ['bug-dup'] }), /autonomous decision cannot be dropped or downgraded/);
     // The downgrade is refused by the check that covers every decision; the autonomous check covers only drops.
-    await assert.rejects(validate({ downgrade: [{ id: 'react-ts-cited', reason: 'x' }], keep: ['bug-dup'] }), /breaks a recorded decision cannot be downgraded/);
+    await assert.rejects(validate({ downgrade: [{ id: 'react-ts-cited', reason: 'x' }], keep: ['bug-dup'] }), /react-ts-cited.*decisionMatch/);
+    await assert.rejects(validate({ downgrade: [{ category: 'correctness', decisionMatch: 'x', id: 'bug-dup', reason: 'x' }], keep: ['react-ts-cited'] }), /decisionMatch.*bug-dup/);
     await validate({ keep: ['bug-dup', 'react-ts-cited'] });
   });
+
+  for (const mode of ['interactive', 'headless'] as const) {
+    it(`downgrades a high finding citing a ${mode === 'headless' ? 'autonomous' : 'user'} decision when decisionMatch is given`, async () => {
+      using ws = workspace();
+      const { reviewId } = await decisionReview(ws, mode);
+      const cited = { ...finding('react-ts', 'high', 'cited'), decision: 1 };
+      for (const domain of REVIEW_DOMAINS) {
+        await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings: domain === 'react-ts' ? [cited] : [], reviewId, ...noFixItems(domain) }));
+      }
+      await step(ws, run =>
+        submitValidation(ws, run, { agentId: 'v', downgrade: [{ category: 'correctness', decisionMatch: 'x', id: 'react-ts-cited', reason: 'matches' }], dropped: [], keep: [], reviewId }),
+      );
+      const result = await step(ws, run => recordReview(ws, run));
+      assert.ok(result.kind === 'green');
+      assert.match(result.observations.join('\n'), /\[observation\] react-ts-cited/);
+      assert.doesNotMatch(result.observations.join('\n'), /Breaks decision/);
+    });
+  }
 
   it('still lets the validator drop a blocking finding that cites a user decision in an interactive run', async () => {
     using ws = workspace();

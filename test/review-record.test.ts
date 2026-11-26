@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { renderFinding } from '../src/finding-text.ts';
 import { keptFindings, type Validation, validationSchema } from '../src/review-record.ts';
+import type { Finding } from '../src/run.ts';
 import { finding } from './helpers.ts';
 
 describe('validation escalate entry', () => {
@@ -42,6 +44,16 @@ describe('validation escalate entry', () => {
       { criterion: undefined, decision: 2, id: 'bug-a', severity: 'high' },
       { criterion: 'quoted', decision: undefined, id: 'bug-b', severity: 'high' },
     ]);
+  });
+});
+
+describe('keptFindings downgrade with decisionMatch', () => {
+  it('leaves the decision out of a finding downgraded with decisionMatch', () => {
+    const cited = { ...finding('bug', 'high', 'a'), category: 'correctness' as const, decision: 1 };
+    const [kept] = keptFindings([cited], validationSchema.parse({ downgrade: [{ decisionMatch: 'x', id: 'bug-a', reason: 'r' }], dropped: [], keep: [] }));
+    assert.equal(kept?.severity, 'observation');
+    assert.equal('decision' in (kept ?? {}), false);
+    assert.doesNotMatch(renderFinding(kept as Finding, [{ author: 'user', text: 'T' }]), /Breaks decision/);
   });
 });
 
