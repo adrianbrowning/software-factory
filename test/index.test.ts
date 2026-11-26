@@ -963,6 +963,22 @@ describe('used-up fix budget', () => {
     assert.doesNotMatch(same.content[0]?.text ?? '', /Switched the checkout|did not switch/);
   });
 
+  it('names the mismatch in the factory_start resume reply and leaves a dirty checkout alone', async () => {
+    using repo = budgetRepo();
+    const { call, ws } = await budgetRun(repo.root, ['Feature']);
+    const branch = readRun(ws, 'demo').slices[0]!.branch;
+    await withRun(ws, 'demo', current => pauseRun(current, 'test'));
+    execFileSync('git', ['switch', '-c', 'other'], { cwd: repo.root });
+    const tracked = join(repo.root, '.omp', 'factory.json');
+    const dirty = `${readFileSync(tracked, 'utf8')}\n`;
+    writeFileSync(tracked, dirty);
+    const reply = await call('factory_start', { resume: 'demo' }, { confirm: async () => true });
+    assert.match(reply.content[0]?.text ?? '', new RegExp(`Slice 01 works on ${branch}, but other is checked out and resume did not switch it`));
+    assert.equal(execFileSync('git', ['branch', '--show-current'], { cwd: repo.root, encoding: 'utf8' }).trim(), 'other');
+    assert.equal(execFileSync('git', ['status', '--porcelain=v1', '--untracked-files=no'], { cwd: repo.root, encoding: 'utf8' }), ' M .omp/factory.json\n');
+    assert.equal(readFileSync(tracked, 'utf8'), dirty);
+  });
+
   it('reports the switch when a failing post-checkout hook makes git switch exit nonzero', async () => {
     using repo = budgetRepo();
     const { call, ws } = await budgetRun(repo.root, ['Feature']);
