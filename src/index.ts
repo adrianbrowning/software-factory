@@ -11,6 +11,7 @@ import { gitArchWarning } from './git-arch.ts';
 import { followUpOverlap } from './follow-up-overlap.ts';
 import { carriedKeys } from './legacy-observations.ts';
 import { deferItems } from './deferred.ts';
+import { redact } from './evidence.ts';
 import { chooseChecks, ensureChecks, GATE_BODY_LIMIT, gate, loadSource } from './gates.ts';
 import {
   activeSlice,
@@ -541,7 +542,9 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
       const tail = `\n\nThe slice branches from ${planned.parentBranch}. The slices below it are not changed. The run needs a new retro before /factory submit.`;
       const overlapPart = overlap === '' ? '' : `\n\n${overlap}`;
       const room = Math.max(0, GATE_BODY_LIMIT - carried.length - overlapPart.length - tail.length - 1);
-      const shownHead = current.mode === 'headless' && head.length > room ? `${head.slice(0, room)}…` : head;
+      // Redact before clipping, as the gate does, so a credential cut at the clip leaves no prefix below the redactor's length threshold.
+      const safeHead = current.mode === 'headless' ? redact(head) : head;
+      const shownHead = current.mode === 'headless' && safeHead.length > room ? `${safeHead.slice(0, room)}…` : safeHead;
       const body = `${shownHead}${carried}${overlapPart}${tail}`;
       if (!(await gate(ctx, ws, feature, 'followUp', `Add follow-up slice "${params.title}"?`, body, Number.POSITIVE_INFINITY))) {
         return reply('The user did not add the follow-up slice. Ask how to handle the work.');

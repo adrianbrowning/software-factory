@@ -1461,6 +1461,21 @@ describe('used-up fix budget', () => {
       for (const key of keys) assert.ok(detail.includes(`- ${key} (ok):`));
     });
 
+    it('redacts the follow-up text before the headless event clip, so a credential cut at the clip leaves no prefix', async () => {
+      const eventDetail = async (whatToBuild: string) => {
+        using repo = budgetRepo();
+        const { call, ws } = await budgetRun(repo.root, ['Feature']);
+        await queued(ws, call, ['ok']);
+        await withRun(ws, 'demo', run => { run.mode = 'headless'; });
+        await call('factory_follow_up', { ...followUp, whatToBuild }, {});
+        return readRun(ws, 'demo').events.find(item => item.detail.includes('gate followUp (auto)'))?.detail ?? '';
+      };
+      const room = (await eventDetail('x'.repeat(5_000))).match(/x+/)?.[0].length ?? 0;
+      assert.ok(room > 100, `room ${room}`);
+      const detail = await eventDetail(`${'x'.repeat(room - 6)} ghp_${'a1B2'.repeat(9)}${'z'.repeat(5_000)}`);
+      assert.doesNotMatch(detail, /ghp_/);
+    });
+
     it('holds no overlap text when no waiting item overlaps', async () => {
       using repo = budgetRepo();
       const { call, ws } = await budgetRun(repo.root, ['Feature']);
