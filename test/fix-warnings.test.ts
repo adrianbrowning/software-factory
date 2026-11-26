@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, it } from 'node:test';
 import { type Finding, REVIEW_DOMAINS, type Workspace } from '../src/run.ts';
 import { recordDecisions, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
+import { validationFile } from '../src/review-record.ts';
 import { nextSlice } from '../src/workflow.ts';
 import { commit, finding, newRun, noFixItems, slice, step, workspace } from './helpers.ts';
 
@@ -42,8 +43,27 @@ describe('validator fix warnings', { concurrency: 4 }, () => {
     using ws = workspace();
     const reviewId = await submitted(ws, mixed());
     const escalate = [{ decision: 1, id: 'bug-esc', reason: 'breaks it' }];
+    const stored = async () => {
+      const file = await step(ws, run => validationFile(ws, run, reviewId));
+      return JSON.parse(readFileSync(file, 'utf8')) as { fixWarnings: unknown };
+    };
     await validate(ws, reviewId, { ...base, escalate });
+    assert.deepEqual((await stored()).fixWarnings, []);
     await validate(ws, reviewId, { ...base, escalate, fixWarnings: warn('bug-a', 'bug-esc') });
+    assert.deepEqual((await stored()).fixWarnings, warn('bug-a', 'bug-esc'));
+  });
+
+  it('writes the warning of an escalated observation in its fix-file section', async () => {
+    using ws = workspace();
+    const reviewId = await submitted(ws, mixed());
+    await validate(ws, reviewId, { ...base, escalate: [{ decision: 1, id: 'bug-esc', reason: 'breaks it' }], fixWarnings: warn('bug-esc') });
+    const result = await step(ws, run => recordReview(ws, run));
+    assert.ok(result.kind === 'fix');
+    const section = readFileSync(result.fixPath, 'utf8')
+      .split(/^### /m)
+      .find(part => part.includes('] bug-esc\n'));
+    assert.ok(section !== undefined);
+    assert.ok(section.split('\n').includes(`- ${LINE}${WARNING}`));
   });
 
   it('refuses a fixWarnings id that does not block, naming the id', async () => {
@@ -73,10 +93,15 @@ describe('validator fix warnings', { concurrency: 4 }, () => {
     assert.equal(lineOf(section('bug-a')), `- ${LINE}${WARNING}`);
     assert.equal(lineOf(section('bug-b')), '');
     const bug = section('bug-a');
-    assert.ok(bug.indexOf('- Breaks decision 1:') < bug.indexOf('- Validator warning'));
+    const bugDecisionAt = bug.indexOf('- Breaks decision 1:');
+    assert.ok(bugDecisionAt >= 0);
+    assert.ok(bugDecisionAt < bug.indexOf('- Validator warning'));
     const comments = section('comments-stale');
-    assert.ok(comments.indexOf('- Breaks decision 1:') < comments.indexOf('- Validator warning'));
-    assert.ok(comments.indexOf('- Validator warning') < comments.indexOf('- Sibling comments:'));
+    const decisionAt = comments.indexOf('- Breaks decision 1:');
+    const warningAt = comments.indexOf('- Validator warning');
+    const siblingAt = comments.indexOf('- Sibling comments:');
+    assert.ok(decisionAt >= 0 && warningAt >= 0 && siblingAt >= 0);
+    assert.ok(decisionAt < warningAt && warningAt < siblingAt);
   });
 
   it('renders a long multi-line warning on one line cut at 1,000 characters', async () => {
