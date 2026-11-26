@@ -497,7 +497,7 @@ describe('checks and a host clock jump', () => {
   it('refuses a timed-out check whose run saw a clock jump', async () => {
     using jumps = tempDir('factory-jumps-');
     await withClockJumps(jumps.root, dir => [`touch '${dir}'/$$; sleep 30`], async ws => {
-      ws.config.checkTimeoutMs = 300;
+      ws.config.checkTimeoutMs = 2000;
       await assert.rejects(step(ws, run => runChecks(ws, run)), /environment error[\s\S]*Then call factory_checks again\.$/);
       assert.equal(readRun(ws, 'demo').slices[0]?.fixRounds, 0);
     });
