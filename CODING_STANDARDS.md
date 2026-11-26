@@ -4,7 +4,7 @@ Reviewers check every change against these rules. `test/structure.test.ts` check
 
 ## omp event hooks
 
-The handlers for `before_subagent_spawn`, `turn_end` and `session_stop` run in every omp session, not only in a factory run.
+The handlers for `before_subagent_spawn`, `turn_end`, `tool_result` and `session_stop` run in every omp session, not only in a factory run.
 
 - Outside a factory run, a hook does nothing and never throws. Outside a factory run means the repo has no remembered run: a cwd outside any git repo, a missing or broken factory.json, or no factory_start or resume. A paused or done run is still a factory run. `turn_end` still records a child's actual model and thinking level on its first turn while the run is remembered (decision 14), and `before_subagent_spawn` still routes or blocks factory-role spawns from the run snapshot. Only `scout` (explorer) spawns go unrouted unless the run is in intake or running (decisions 5 and 12).
 - A hook finds the active run through the workspace the run remembers from factory_start or resume. It never reloads factory.json, so a mid-run edit cannot change a running run.

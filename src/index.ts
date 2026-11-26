@@ -29,6 +29,7 @@ import {
   withRun,
   type Workspace,
 } from './run.ts';
+import { missingTypecheckLine, observeTypecheck } from './typecheck.ts';
 import { implementerReportSchema, startImplementerSession, submitImplementerReport } from './report.ts';
 import { boundAt, cachedRoot, NO_ACTIVE_RUN, resetRoots, type RootEntry, toolRegistrar } from './tool-scope.ts';
 import { submitHeadless } from './headless-submit.ts';
@@ -489,7 +490,8 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
       const result = await withRun(ws, feature, run => submitImplementerReport(ws, run, params));
       const recorded = result.fixed.length === 0 ? '' : `\nRecorded as fixed in the ledger and added to this round's fix items for the next review's verdict: ${result.fixed.join(', ')}.`;
       const skipped = result.skippedForOpenReview ? '\n`fixed in <sha>` lines were not recorded as fixed because a review is open; report them again once it closes.' : '';
-      return reply(`${result.replaced ? 'Replaced the stored report' : 'Stored the report'}: ${result.path}${recorded}${skipped}`);
+      const observed = result.observed.lines.length === 0 ? '' : `\nFactory-observed typecheck:\n${result.observed.lines.map(line => `- ${line}`).join('\n')}${result.observed.missing.map(command => `\n${missingTypecheckLine(command)}`).join('')}`;
+      return reply(`${result.replaced ? 'Replaced the stored report' : 'Stored the report'}: ${result.path}${recorded}${skipped}${observed}`);
     },
   });
 
@@ -747,6 +749,26 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
       await auditChild(ctx, pi.getThinkingLevel(), found);
     } finally {
       await trackImplementer(ctx, found, false);
+    }
+  });
+  // Notes each unfiltered typecheck run of a factory-implementer session on the active slice, for the Factory-observed
+  // typecheck section of its report. Outside a factory run, with no active slice, or for any other session or tool, it
+  // does nothing and never throws.
+  pi.on('tool_result', async (event, ctx) => {
+    if (ctx.agent.kind !== 'sub' || ctx.agent.name !== IMPLEMENTER) return;
+    try {
+      const found = await runForCwd(ctx.cwd);
+      if (found === undefined) return;
+      const run = readRun(found.ws, found.feature);
+      if (activeSlice(run) === undefined) return;
+      const seen = observeTypecheck(event, run.checks);
+      if (seen === undefined) return;
+      await withRun(found.ws, found.feature, latest => {
+        const slice = activeSlice(latest);
+        if (slice !== undefined) slice.typecheckRuns = { ...slice.typecheckRuns, [seen.command]: seen.exit };
+      });
+    } catch {
+      return;
     }
   });
   pi.on('auto_compaction_start', async (_event, ctx) => trackImplementer(ctx, await runForCwd(ctx.cwd), true));
