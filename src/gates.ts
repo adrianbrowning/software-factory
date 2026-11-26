@@ -31,7 +31,7 @@ export async function gate(ctx: ExtensionContext, ws: Workspace, feature: string
   throw new Error(`The run is paused, ${reason}. /factory resume ${feature} continues it. Stop now.`);
 }
 
-/** The body part of a headless auto gate event: a newline and the redacted body clipped to 2,000 characters, then, only when the redacted body is longer than 2,000 characters, a newline and `[<M> characters not shown]`; empty for an empty body. */
+/** The body part of a headless auto gate event; the not-shown marker line appears only when the redacted body is clipped. */
 function autoBody(body: string) {
   const redacted = redact(body);
   if (redacted === '') return '';
