@@ -39,6 +39,8 @@ Run the typecheck even when the slice or fix round changes only prose (docs, REA
 
 A filtered or empty output is not a check result: if the output is empty or came through any filter (for example a grep that matched no line, or only some lines), run the command again as its own bash call with no filter, and read its exit code and the runner summary before you report or commit. node:test summary lines start with `ℹ` (for example `ℹ pass 21`, `ℹ fail 0`), so a filter for `pass` or `fail` at the start of a line matches nothing; read those `ℹ` lines.
 
+When a bash result shows no exit-code line, run the same command again as its own bash call with `; echo "exit $?"` appended, read the printed `exit N` line as the command's exit code, and name that code in the report instead of only the runner summary. This suffix is the one addition allowed to a command run exactly as written: it is not a filter, because it keeps all output and prints the command's own exit status. The bash call's own exit code is then echo's, so the printed `exit N` line is the result to read.
+
 Also run the test files that the repository's `AGENTS.md` or `CODING_STANDARDS.md` name for the kind of change you made, each as its own bash call like the others.
 
 A check that runs longer than the bash tool's foreground limit (about 60 s) moves to a background job: the bash call returns before the check has finished, and that return is not a result. Wait for the job's result (the follow-up message that names it, or the `wait` tool) and read its exit code before you report the check result or commit. Never commit while a check is still running and amend or add to the commit after the result arrives.
