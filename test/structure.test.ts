@@ -215,6 +215,26 @@ export function testScopeProblems(agents: string, tracked: Map<string, string>) 
   return [...missing, ...extra];
 }
 
+/**
+ * One message per file the AGENTS.md /factory submit wording list names that lacks its double-quoted key phrase, one per
+ * bullet with no key phrase, and one when the list is not found. `tracked` maps path to content.
+ */
+export function submitWordingProblems(agents: string, tracked: Map<string, string>) {
+  const lines = agents.split('\n');
+  const start = lines.findIndex(line => line.includes('/factory submit wording'));
+  const bullets: { path: string; phrase: string | undefined }[] = [];
+  for (const line of start === -1 ? [] : lines.slice(start + 1)) {
+    const path = /^- `([^`]+)`/.exec(line)?.[1];
+    if (path) bullets.push({ path, phrase: /"([^"]+)"/.exec(line)?.[1] });
+    else if (bullets.length || line.trim() !== '') break;
+  }
+  if (!bullets.length) return ['AGENTS.md: /factory submit wording list not found'];
+  return bullets.map(({ path, phrase }) => {
+    if (!phrase) return `${path}: AGENTS.md bullet gives no double-quoted key phrase`;
+    return tracked.get(path)?.includes(phrase) ? '' : `${path}: listed in AGENTS.md but does not hold "${phrase}"`;
+  }).filter(Boolean);
+}
+
 const STALE_SPAN = /`([^`\n]+)`/g;
 const CAMEL_NAME = /^([a-z][a-zA-Z0-9]*)(\(\))?$/;
 
@@ -539,6 +559,28 @@ describe('structure of the implementer test-scope wording', () => {
     const root = fileURLToPath(new URL('../', import.meta.url));
     const tracked = contentsOfFiles(root, execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' }).split('\0'));
     assert.deepEqual(testScopeProblems(tracked.get('AGENTS.md') ?? '', tracked), []);
+  });
+});
+
+describe('submitWordingProblems', () => {
+  const agents = ['The /factory submit wording sits in four places:', '- `a.ts`: the dialog, key phrase "alpha beta".', '- `b.ts`: the line, key phrase "gamma".', ''].join('\n');
+  it('names the file and phrase of a listed file that lacks its phrase, and nothing for one that holds it', () => {
+    const problems = submitWordingProblems(agents, new Map([['a.ts', 'x alpha beta y'], ['b.ts', 'nothing']]));
+    assert.deepEqual(problems, ['b.ts: listed in AGENTS.md but does not hold "gamma"']);
+  });
+  it('names the path of a bullet with no double-quoted key phrase', () => {
+    const problems = submitWordingProblems('The /factory submit wording list:\n- `a.ts`: the dialog.\n', new Map([['a.ts', 'x']]));
+    assert.deepEqual(problems, ['a.ts: AGENTS.md bullet gives no double-quoted key phrase']);
+  });
+  it('reports the list as not found without the heading line or without bullets', () => {
+    const notFound = ['AGENTS.md: /factory submit wording list not found'];
+    assert.deepEqual(submitWordingProblems('nothing here', new Map()), notFound);
+    assert.deepEqual(submitWordingProblems('The /factory submit wording sits here.\n\nText.', new Map()), notFound);
+  });
+  it('holds for the git-tracked files', () => {
+    const root = fileURLToPath(new URL('../', import.meta.url));
+    const tracked = contentsOfFiles(root, execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' }).split('\0'));
+    assert.deepEqual(submitWordingProblems(tracked.get('AGENTS.md') ?? '', tracked), []);
   });
 });
 

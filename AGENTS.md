@@ -7,10 +7,10 @@ orchestrator workflow, and `agents/` the implementer, reviewer, and validator de
 The plugin opens PRs through the user-invoked `/factory submit` command and, for a headless run, by itself as draft PRs when the run is done (or paused on red checks, for the done slices below the red one) and `headless.submission` allows it. It never merges: merging stays manual.
 
 The /factory submit wording sits in four places. When you change it, change all four together:
-- `src/index.ts`: the submit confirm dialog.
-- `src/submit.ts`: the progress line and the `submit` event.
-- `src/headless-submit.ts`: the gate event and the reply.
-- `skills/software-factory/SKILL.md`: section 6 (Hand over) and the headless Hand over line.
+- `src/index.ts`: the submit confirm dialog, key phrase "open or update one draft PR per slice".
+- `src/submit.ts`: the progress line and the `submit` event, key phrase "opening or updating draft PRs".
+- `src/headless-submit.ts`: the gate event and the reply, key phrase "opening or updating draft PRs".
+- `skills/software-factory/SKILL.md`: section 6 (Hand over) and the headless Hand over line, key phrase "opens or updates one draft PR per slice".
 
 The implementer test-scope wording (the implementer runs only the typecheck, the test files it touched, the test files that assert on output it changed, and the test files the repository names for its kind of change) sits in five places. When you change it, change all five together:
 - `agents/factory-implementer.md`: the Running checks section.
@@ -30,3 +30,5 @@ Tests run on node:test, not vitest; run one test file with `sh scripts/test.sh <
 When a change makes a `src/` file longer, adds a `src/` file, or moves code between `src/` modules, run `sh scripts/test.sh test/structure.test.ts` before committing. It enforces the 1000-line limit per `src/` file, no ticket decision citations in comments, no runtime import cycles, and no re-export shims between `src/` modules. It also checks that the backticked `src/` paths and camelCase names of CODING_STANDARDS.md still exist; paragraphs marked "past history" are exempt.
 
 `test/structure.test.ts` also checks the implementer test-scope wording places: each file listed above must hold "test files that assert on output", and no other git-tracked file outside `test/` and `AGENTS.md` may. When you add or remove a place, edit the list above; the test reads it.
+
+`test/structure.test.ts` also checks that each file in the submit list above holds the key phrase its bullet gives, so a wording change that drops a phrase in one place fails the test.
