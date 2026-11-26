@@ -492,6 +492,55 @@ describe('pause and resume', () => {
       assert.deepEqual([resumed.fixItems.length, resumed.fixFiles], [items, 1]);
     });
 
+    describe('moving a reported fix round to checks', () => {
+      const writeReport = (ws: Workspace, listed: string[], open = 'none') => {
+        const items = listed.map(sha => `- ${sha} c`).join('\n');
+        writeAtomic(reportPath(ws, 'demo', readRun(ws, 'demo').slices[0]!), `Implementer report:\nCommits:\n${items}\nBehaviors:\n- none\nOpen:\n- ${open}\n`);
+      };
+      const short = (ws: Workspace, rev: string) => sh(ws.root, 'rev-parse', '--short=12', rev);
+
+      it('moves a paused fix slice to checks, copies the pause cause once, and does so for a headless run', async () => {
+        for (const mode of ['interactive', 'headless'] as const) {
+          using ws = workspace();
+          const { path, before } = await pausedInFix(ws, 'cause');
+          if (mode === 'headless') await step(ws, run => { run.mode = 'headless'; });
+          commit(ws, 'round');
+          writeReport(ws, [short(ws, 'HEAD')]);
+          await step(ws, run => resumeRun(ws, run, 'session-2'));
+          const run = readRun(ws, 'demo');
+          assert.deepEqual([run.status, run.slices[0]?.phase], ['running', 'checks']);
+          assert.equal((readFileSync(path, 'utf8').match(/## Pause cause/g) ?? []).length, 1);
+          assert.equal(readFileSync(path, 'utf8').startsWith(before), true);
+        }
+      });
+
+      it('stays in fix when only some of several round commits are listed, or for any stop report', async () => {
+        for (const open of ['NEEDS SEAM: x', 'SLICE TOO BIG: x', 'MISSING DEPENDENCY: x', 'partial']) {
+          using ws = workspace();
+          await pausedInFix(ws, 'cause');
+          commit(ws, 'r1');
+          const first = short(ws, 'HEAD');
+          commit(ws, 'r2');
+          writeReport(ws, open === 'partial' ? [short(ws, 'HEAD')] : [first, short(ws, 'HEAD')], open === 'partial' ? 'none' : open);
+          await step(ws, run => resumeRun(ws, run, 'session-2'));
+          assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'fix');
+        }
+      });
+
+      it('judges the slice branch, not a different dirty checkout', async () => {
+        using ws = workspace();
+        await pausedInFix(ws, 'cause');
+        const start = readRun(ws, 'demo').slices[0]!.fixFromSha!;
+        commit(ws, 'round');
+        writeReport(ws, [short(ws, 'HEAD')]);
+        sh(ws.root, 'switch', '-c', 'other', start);
+        writeFileSync(join(ws.root, 'dirty.txt'), 'x');
+        await step(ws, run => resumeRun(ws, run, 'session-2'));
+        assert.equal(sh(ws.root, 'branch', '--show-current'), 'other');
+        assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'checks');
+      });
+    });
+
     it('leaves the fix file alone when the slice is not in fix', async () => {
       using ws = workspace();
       const { path, before } = await pausedInFix(ws, 'cause');
