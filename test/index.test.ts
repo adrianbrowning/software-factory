@@ -708,6 +708,56 @@ describe('implementer sessions', () => {
     });
   });
 
+  describe('stop gate pause after a provider error', () => {
+    const pauseAfter = async (messages: unknown[], headless = false) => {
+      using repo = emptyRepo();
+      const notices: [string, unknown][] = [];
+      const started = await startedRun(repo.root);
+      const main = { ...started.main, ui: { ...started.main.ui, notify: (message: string, level?: unknown) => notices.push([message, level]) } };
+      if (headless) await withRun({ config: loadConfig(repo.root), root: repo.root }, 'demo', run => { run.mode = 'headless'; });
+      const decisions: unknown[] = [];
+      for (let i = 0; i < MAX_IDLE_STOP_ATTEMPTS; i += 1) decisions.push(((await started.handlers.get('session_stop')?.({ session_id: 'session', messages, type: 'session_stop' }, main)) as { decision?: string } | undefined)?.decision);
+      const status = JSON.parse(await started.call('factory_status', {}, main)) as { content: { text: string }[] };
+      const detail = /(?:provider error|no progress) after \d+ stop attempts[^"]*/.exec(status.content[0]?.text ?? '')?.[0];
+      return { decisions, detail, notices };
+    };
+    const failed = (errorMessage?: string) => [{ role: 'assistant', content: [{ type: 'text', text: 'working' }], stopReason: 'error', ...(errorMessage === undefined ? {} : { errorMessage }) }];
+    const tail = 'latest tool: none; last assistant text: working';
+
+    it('names the provider error, keeps the stop timing, and notifies', async () => {
+      const { decisions, detail, notices } = await pauseAfter(failed('The AWS SSO token has expired'));
+      assert.equal(detail, `provider error after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts: The AWS SSO token has expired; ${tail}`);
+      assert.deepEqual(decisions, [...Array(MAX_IDLE_STOP_ATTEMPTS - 1).fill('block'), undefined]);
+      assert.deepEqual(notices, [['Software factory paused "demo": provider error: The AWS SSO token has expired. /factory resume demo continues.', 'warning']]);
+    });
+
+    it('behaves the same in a headless run', async () => {
+      assert.equal((await pauseAfter(failed('boom'), true)).detail, `provider error after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts: boom; ${tail}`);
+    });
+
+    it('redacts and clips the error text to one line', async () => {
+      assert.equal((await pauseAfter(failed('denied Bearer abc123'))).detail, `provider error after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts: denied Bearer <REDACTED>; ${tail}`);
+      const long = `line one\n\n${'y'.repeat(400)}`;
+      const expected = `line one ${'y'.repeat(400)}`.slice(0, 300);
+      assert.equal((await pauseAfter(failed(long))).detail, `provider error after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts: ${expected}…; ${tail}`);
+    });
+
+    it('says no error message when the message is absent or blank', async () => {
+      const want = `provider error after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts: no error message; ${tail}`;
+      assert.equal((await pauseAfter(failed())).detail, want);
+      assert.equal((await pauseAfter(failed('  \n '))).detail, want);
+    });
+
+    it('counts only the latest assistant message', async () => {
+      for (const stopReason of ['stop', 'aborted']) {
+        const messages = [{ role: 'assistant', content: [], stopReason: 'error', errorMessage: 'old' }, { role: 'assistant', content: [{ type: 'text', text: 'working' }], stopReason }];
+        const { detail, notices } = await pauseAfter(messages);
+        assert.equal(detail, `no progress after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts; ${tail}`);
+        assert.deepEqual(notices, [['Software factory paused "demo": no progress. /factory resume demo continues.', 'warning']]);
+      }
+    });
+  });
+
   describe('stop gate, guard for existing behavior', () => {
     it('keeps the owner idle count when another session stops in between', async () => {
       using repo = emptyRepo();
