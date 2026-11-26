@@ -4,10 +4,8 @@ import { ctx, load } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
 import { retroTitle } from '../src/retro.ts';
-import { withRun, type Workspace } from '../src/run.ts';
-import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
-import { approvePlan, nextSlice, planSlices } from '../src/workflow.ts';
-import { CHECKS_OK, commit, fakeGh, review, slice, tempRepo } from './helpers.ts';
+import type { Workspace } from '../src/run.ts';
+import { CHECKS_OK, completeFeatureSlice, fakeGh, tempRepo } from './helpers.ts';
 
 beforeEach(() => resetModuleState());
 
@@ -28,14 +26,7 @@ describe('factory_retro confirm dialog', () => {
     const call = (name: string, params: unknown) => tools.get(name)?.execute('id', params, undefined, undefined, caller) ?? Promise.reject(new Error('no tool'));
     await call('factory_start', { feature: 'demo', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } });
     const ws: Workspace = { config: loadConfig(repo.root), root: repo.root };
-    await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')])));
-    await withRun(ws, 'demo', run => nextSlice(ws, run));
-    commit(ws, 'ok');
-    await withRun(ws, 'demo', run => runChecks(ws, run));
-    const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
-    await review(ws, reviewId, []);
-    await withRun(ws, 'demo', run => recordReview(ws, run));
-    await withRun(ws, 'demo', run => completeSlice(ws, run));
+    await completeFeatureSlice(ws, []);
     const findings = [
       { action: 'apply', category: 'automated-checks', detail: 'Add a lint rule', severity: 'high', target: 'repo', title: TITLE },
       { action: 'file-issue', category: 'agents-md', detail: 'The skill is vague', severity: 'medium', target: 'factory', title: TITLE },
@@ -63,14 +54,7 @@ describe('factory_retro confirm dialog', () => {
     const call = (name: string, params: unknown) => tools.get(name)?.execute('id', params, undefined, undefined, caller) ?? Promise.reject(new Error('no tool'));
     await call('factory_start', { feature: 'demo', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } });
     const ws: Workspace = { config: loadConfig(repo.root), root: repo.root };
-    await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [slice('Feature')])));
-    await withRun(ws, 'demo', run => nextSlice(ws, run));
-    commit(ws, 'ok');
-    await withRun(ws, 'demo', run => runChecks(ws, run));
-    const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
-    await review(ws, reviewId, []);
-    await withRun(ws, 'demo', run => recordReview(ws, run));
-    await withRun(ws, 'demo', run => completeSlice(ws, run));
+    await completeFeatureSlice(ws, []);
     await call('factory_retro', { findings: [{ action: 'file-issue', category: 'agents-md', detail: 'The skill is vague', severity: 'medium', target: 'factory', title: 'y'.repeat(300) }] });
     assert.ok(gh.args().includes(`--title ${'y'.repeat(200)}… --body`), gh.args());
   });
