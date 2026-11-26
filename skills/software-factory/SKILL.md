@@ -44,6 +44,8 @@ Write every decision, interactive or headless, at the precision you want enforce
 
 When a decision or acceptance criterion defines what a check accepts as free-text input (for example an allow marker that must be followed by a reason), pin the parsing rule exactly, in interactive and headless runs alike: write the pattern the check uses (for example the regex), plus example inputs it accepts and example inputs it rejects. Issue 852 shows the cost of leaving it out: a decision that said only "followed by a reason" left "reason" undefined, so two reviews blocked opposite regexes in turn and one regex took two fix rounds.
 
+When a decision or acceptance criterion sets a rule that a test assertion or check must meet, state the goal the rule serves, in interactive and headless runs alike, and not only one mechanism that serves it. For example, write "no text can slip between the fixed parts of the pinned wording", not only "the regex starts with ^ and ends with $". If the criterion names only the mechanism, the first implementer can meet the mechanism and miss the goal. Run issue-849 shows the cost: the decision said a full-wording pin is enough when the regex starts with ^ and ends with $. The regex /^foo.*: failed$/ met that and still let text in. An observation-only fix round then added the no-wildcard clause.
+
 ## 3. Slice
 
 Break the work into **tracer bullets** (Matt Pocock's `to-tickets` rules):
