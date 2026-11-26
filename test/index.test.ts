@@ -416,8 +416,8 @@ describe('implementer sessions', () => {
       using repo = emptyRepo();
       const { call, implementer } = await startedRun(repo.root);
       commitFile(repo.root, 'test/work.test.ts');
-      for (const line of ['pnpm run typecheck', 'pnpm run typecheck → passed', '→ exit 0', 'pnpm run typecheck → exit', 'pnpm run typecheck → exit 0 (flaky)', 'pnpm run typecheck → exit 0\nx']) {
-        await assert.rejects(call('factory_implementer_report', { ...base, checks: [line] }, implementer), /<command> → exit <code>|one line per item/, line);
+      for (const line of ['pnpm run typecheck', 'pnpm run typecheck → passed', '→ exit 0', 'pnpm run typecheck → exit', 'pnpm run typecheck → exit 0 (flaky)', 'pnpm run typecheck → exit 0\nx', 'pnpm run typecheck → exit 0\n', 'a\nb → exit 0']) {
+        await assert.rejects(call('factory_implementer_report', { ...base, checks: [line] }, implementer), /<command> → exit <code>/, line);
         assert.equal(existsSync(reportFile(repo.root)), false, line);
       }
     });

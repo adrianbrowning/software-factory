@@ -13,7 +13,7 @@ import { activeSlice, addEvent, reportPath, reviewIsOpen, requireActive, type Ru
 // so it cannot add lines that read as factory output in the factory_checks reply. A reports/<slice>.md written directly is not checked.
 const reportItem = z.string().min(1).regex(/^[^\r\n\u2028\u2029\u0085]+$/, 'one line per item');
 
-const checkLine = reportItem.regex(/^.+ → exit \d+$/, 'expected `<command> → exit <code>`, for example `pnpm run typecheck → exit 0`');
+const checkLine = z.string().regex(/^[^\r\n\u2028\u2029\u0085]+ → exit \d+$/, 'expected `<command> → exit <code>`, for example `pnpm run typecheck → exit 0`');
 
 const behaviorSchema = z
   .object({
