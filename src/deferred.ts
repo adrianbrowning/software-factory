@@ -44,7 +44,7 @@ export function draftOf(run: Run, slice: Slice, reviewId: string, item: Pick<Def
   const { commit, detail, ...rest } = item;
   return {
     ...rest,
-    body: redact(`Run: ${run.feature}\nSlice: ${slice.id} "${slice.title}"\nReview: ${reviewId}${commit === undefined ? '' : `\nReviewed commit: ${commit}`}\n\n${detail}`),
+    body: redact(`Run: ${run.feature}\nSlice: ${slice.id} "${slice.title}"\nReview: ${reviewId}${commit === undefined ? '' : `\nReviewed commit: ${commit}\nIds, paths and line numbers below are as of the reviewed commit and may have moved since.`}\n\n${detail}`),
     review: reviewId,
     slice: slice.id,
     title: `${run.feature}/${slice.id}: ${evidenceLine(item.title, 200)}`,
