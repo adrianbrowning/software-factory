@@ -70,12 +70,13 @@ export const validationSchema = z.object({
           .enum(OBSERVATION_CATEGORIES)
           .optional()
           .describe('Required when the reviewer gave the finding no category: what the observation is about (correctness, missing-test, misleading-doc, naming, structure or style); it sets where the observation goes by default'),
+        decisionMatch: z.string().min(1).optional().describe('Required to downgrade a finding whose `decision` field is set (user or autonomous decision), and refused otherwise: why the code matches the cited decision'),
         id: z.string().min(1),
         reason: z.string().min(1),
       }),
     )
     .default([])
-    .describe('critical/high findings the diff supports but that fail the correctness-or-requirements bar; kept as observations'),
+    .describe('critical/high findings the diff supports but that fail the correctness-or-requirements bar; kept as observations. A finding whose `decision` field is set can be downgraded only with `decisionMatch`'),
   escalate: z
     .array(
       z.union(
@@ -123,7 +124,10 @@ export function keptFindings(findings: Finding[], validation: Validation) {
   return findings
     .filter(finding => validation.keep.includes(finding.id) || downgraded.has(finding.id) || escalated.has(finding.id))
     .map(finding => {
-      if (downgraded.has(finding.id)) return { ...finding, category: finding.category ?? downgraded.get(finding.id), severity: 'observation' as const };
+      if (downgraded.has(finding.id)) {
+        const { decision: _decision, ...rest } = finding;
+        return { ...rest, category: finding.category ?? downgraded.get(finding.id), severity: 'observation' as const };
+      }
       const entry = escalated.get(finding.id);
       if (entry !== undefined) return { ...finding, ...(entry.criterion === undefined ? { decision: escalatedDecision(finding, entry) } : { criterion: entry.criterion }), severity: 'high' as const };
       return finding;

@@ -538,7 +538,7 @@ export function readDomainFindings(ws: Workspace, run: Run, reviewId: string) {
  * else. Only a `critical` or `high` finding can be downgraded, and only to `observation`. Only an `observation` can be
  * escalated, to `high`, and only by naming one of the `decisionCount` recorded decisions or quoting an acceptance criterion. A duplicate may only be
  * dropped in favour of a kept, downgraded, or escalated finding of the same or higher severity (original severity,
- * except that an escalated finding counts as high). A blocking finding that cites an autonomous decision may be dropped only as a
+ * except that an escalated finding counts as high). A finding whose `decision` field is set can be downgraded only when its downgrade entry gives `decisionMatch`. A blocking finding that cites an autonomous decision may be dropped only as a
  * duplicate of a finding that stays blocking (kept at critical or high, or escalated) and cites the same decision.
  */
 function checkCoverage(findings: Finding[], validation: Validation, decisionCount: number, decisions: Decision[], fixLines?: Record<string, [number, number][]>) {
@@ -589,10 +589,12 @@ function checkCoverage(findings: Finding[], validation: Validation, decisionCoun
       `A blocking finding that breaks an autonomous decision cannot be dropped or downgraded; keep it, or drop it as a duplicate of a kept blocking finding that cites the same decision: ${usesAutonomous.map(entry => entry.id).join(', ')}`,
     );
   }
-  const breaksDecision = downgraded.filter(id => byId.get(id)?.decision !== undefined);
-  if (breaksDecision.length > 0) {
-    throw new Error(`A finding that breaks a recorded decision cannot be downgraded; keep it or drop it: ${breaksDecision.join(', ')}`);
+  const unmatched = validation.downgrade.filter(entry => byId.get(entry.id)?.decision !== undefined && entry.decisionMatch === undefined).map(entry => entry.id);
+  if (unmatched.length > 0) {
+    throw new Error(`Downgrade entry of ${unmatched.join(', ')}: a finding that breaks a recorded decision is downgraded only with \`decisionMatch\` (why the code matches the cited decision); set it, or keep or drop the finding.`);
   }
+  const noDecision = validation.downgrade.filter(entry => entry.decisionMatch !== undefined && byId.get(entry.id)?.decision === undefined).map(entry => entry.id);
+  if (noDecision.length > 0) throw new Error(`\`decisionMatch\` applies only to a finding whose \`decision\` field is set; remove it from the downgrade entry of: ${noDecision.join(', ')}`);
   const alreadyBlocking = escalated.filter(id => byId.get(id)?.severity !== 'observation');
   if (alreadyBlocking.length > 0) throw new Error(`Only observation findings can be escalated; keep these instead: ${alreadyBlocking.join(', ')}`);
   const warnedIds = validation.fixWarnings.map(entry => entry.id);
