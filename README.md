@@ -524,7 +524,8 @@ slice trips this too; delete it, or keep backups under a name the check ignores 
 
 In a fix round, checks also refuse when a commit made since the fix file is missing from the Commits section of the
 stored implementer report (or no report is stored). The refusal lists those commits, does not count a fix round, and
-asks you to message the implementer to resubmit its report with `factory_implementer_report`.
+asks you to message the implementer to resubmit its report with `factory_implementer_report`. The refusal also holds
+after a resume moved the fix round to checks, and after a passed fix round's checks were invalidated (HEAD moved, repository changed), for a commit made after that.
 
 ## Trust boundaries
 

@@ -12,7 +12,7 @@ import { MAX_IDLE_STOP_ATTEMPTS, ORCHESTRATION_TOOLS, resetModuleState, stopDeci
 import { readRun, reportPath, type Run, runDir, reviewPaths, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, pauseRun, planSlices, resolveStall } from '../src/workflow.ts';
-import { seedUnplacedObservation, settleObservations, commit, finding, green, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
+import { checkRuns, countedCheck, seedUnplacedObservation, settleObservations, commit, finding, green, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
 
 beforeEach(() => resetModuleState());
 
@@ -926,7 +926,7 @@ describe('used-up fix budget', () => {
   type Reply = { content: { text: string }[] };
 
   /** A temp repo whose checks pass once `ok` is committed and `bad` is not, with maxRounds 1; removed when `using` ends. */
-  const budgetRepo = () => tempRepo('factory-budget-', { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok', '! test -f bad'], maxRounds: 1 }) });
+  const budgetRepo = (checks = ['test -f ok', '! test -f bad']) => tempRepo('factory-budget-', { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks, maxRounds: 1 }) });
 
   /**
    * Starts a run in the budget repo at `root` through the loaded tools, its plan approved and slice 01 started.
@@ -1062,8 +1062,8 @@ describe('used-up fix budget', () => {
   });
 
   describe('resume of a committed, reported fix round', () => {
-    async function resumeFix(options: { report: 'none' | 'round' | 'old' | 'stop'; roundCommits?: boolean }) {
-      using repo = budgetRepo();
+    async function resumeFix(options: { report: 'none' | 'round' | 'old' | 'stop'; roundCommits?: boolean; checks?: string[]; then?: (call: (name: string, params: unknown) => Promise<unknown>, ws: Workspace) => Promise<void> }) {
+      using repo = budgetRepo(options.checks);
       const { call, ws } = await budgetRun(repo.root, ['Feature']);
       commit(ws, 'f.txt');
       const before = sh(ws.root, 'rev-parse', 'HEAD');
@@ -1082,6 +1082,7 @@ describe('used-up fix budget', () => {
       await withRun(ws, 'demo', current => pauseRun(current, 'test'));
       const reply = await call('factory_start', { resume: 'demo' }, { confirm: async () => true });
       const run = readRun(ws, 'demo');
+      await options.then?.(call, ws);
       return { events: run.events.map(event => event.detail), phase: run.slices[0]?.phase, round, text: reply.content[0]?.text ?? '' };
     }
 
@@ -1090,6 +1091,43 @@ describe('used-up fix budget', () => {
       assert.equal(result.phase, 'checks');
       assert.ok(result.events.includes(`slice 01 fix round already committed and reported ${result.round.slice(0, 7)}: moved to checks`));
       assert.match(result.text, /Next: Call factory_checks for slice 01 "Feature"\./);
+    });
+
+    const counted = [countedCheck('run')];
+    const runCount = (ws: Workspace) => (existsSync(join(ws.root, '.git', 'check-runs')) ? checkRuns(ws).length : 0);
+
+    it('factory_checks refuses a commit made after the resume move that the report does not list, and runs no check', async () => {
+      await resumeFix({
+        checks: counted,
+        report: 'round',
+        then: async (call, ws) => {
+          commit(ws, 'late.txt');
+          const oneline = sh(ws.root, 'log', '-1', '--oneline');
+          await assert.rejects(call('factory_checks', {}), (error: Error) => {
+            assert.match(error.message, /has 1 commits from this fix round that its implementer report does not list/);
+            assert.ok(error.message.includes(oneline));
+            return true;
+          });
+          assert.equal(runCount(ws), 0);
+        },
+      });
+    });
+
+    it('factory_checks runs the checks once after the resume move when no commit was added', async () => {
+      await resumeFix({ checks: counted, report: 'round', then: async (call, ws) => { await call('factory_checks', {}); assert.equal(runCount(ws), 1); } });
+    });
+
+    it('factory_checks does not refuse an unreported commit of a slice at checks without fixFromSha, and runs the checks', async () => {
+      await resumeFix({
+        checks: counted,
+        report: 'round',
+        then: async (call, ws) => {
+          await withRun(ws, 'demo', current => { current.slices[0]!.fixFromSha = undefined; });
+          commit(ws, 'late.txt');
+          await call('factory_checks', {});
+          assert.equal(runCount(ws), 1);
+        },
+      });
     });
 
     it('keeps fix without round commits, with a round commit unlisted, without a report, or with a stop report', async () => {
