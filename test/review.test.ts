@@ -131,7 +131,8 @@ describe('review submissions', { concurrency: 4 }, () => {
       assert.ok((await skipsFor([file])).includes('react-ts'), file);
     }
     for (const file of ['ui/Gone.tsx', 'd.jsx']) {
-      assert.ok(!(await pathSkips([file], async () => undefined)).some(entry => entry.domain === 'react-ts'), file);
+      const skips = await pathSkips([file], async () => undefined);
+      assert.ok(!skips.map(entry => entry.domain).includes('react-ts'), file);
     }
     for (const file of ['src/app.ts', 'lib/a.mts', 'b.cts']) {
       assert.equal(
