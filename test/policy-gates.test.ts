@@ -6,6 +6,7 @@ import { type Command, ctx, load } from './extension.ts';
 import { loadConfig, parseConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
 import { redact } from '../src/evidence.ts';
+import { gate } from '../src/gates.ts';
 import { headlessRetroGateBody } from '../src/retro.ts';
 import { readRun, statePath, withRun, type Run, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
@@ -488,6 +489,16 @@ describe('headless gate events hold the dialog body', () => {
     await call('factory_decide', { decisions });
     return readRun(ws, 'demo').events.filter(event => event.kind === 'autonomous').map(event => event.detail);
   }
+
+  it('gate() with an empty body records the title line alone, with no newline after it', async () => {
+    using repo = tempRepo('factory-gate-', CHECKS_OK);
+    const { ws } = await headlessRun(repo.root, 'active', { decide: 'auto' });
+    const autonomous = () => readRun(ws, 'demo').events.filter(event => event.kind === 'autonomous');
+    const before = autonomous().length;
+    assert.equal(await gate(ctx('main', 'main') as never, ws, 'demo', 'decide', TITLE, ''), true);
+    const added = autonomous().slice(before);
+    assert.deepEqual(added.map(event => event.detail), [`gate decide (auto): ${TITLE}`]);
+  });
 
   it('factory_retro records the title line, a newline and the retro gate body', async () => {
     using repo = tempRepo('factory-gate-', CHECKS_OK);
