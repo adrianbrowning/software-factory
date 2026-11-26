@@ -38,6 +38,36 @@ describe('fix items', { concurrency: 4 }, () => {
     });
   });
 
+  describe('documented-behavior note', () => {
+    const note = '- Documented behavior: if the fix changes behavior that prose states, search src/, README.md, agents/ and skills/ for key words of that behavior and fix in this round every doc comment and README, agent or skill statement the fix makes false, not only the code.';
+
+    it('ends the section of a blocking bug finding, and not the sections of comments or thermo findings', async () => {
+      using ws = workspace({ maxRounds: 2 });
+      await newRun(ws, [slice('Feature')]);
+      await step(ws, run => nextSlice(ws, run));
+      commit(ws, 'ok');
+      await step(ws, run => runChecks(ws, run));
+      const opened = await step(ws, run => startReview(ws, run));
+      await review(ws, opened.reviewId, [finding('comments', 'high', 'stale'), finding('bug', 'high', 'crash'), finding('thermo', 'high', 'naming')]);
+      const blocked = await step(ws, run => recordReview(ws, run));
+      assert.ok(blocked.kind === 'fix');
+      const fix = readFileSync(blocked.fixPath, 'utf8');
+      const section = (id: string) => new RegExp(`### \\[high\\] ${id}\\n[\\s\\S]*?(?=\\n### |\\n## |$)`).exec(fix)?.[0] ?? assert.fail(`no ${id} section`);
+      assert.ok(section('bug-crash').trimEnd().endsWith(`\n${note}`));
+      assert.ok(!section('comments-stale').includes('Documented behavior'));
+      assert.match(section('comments-stale'), /Sibling comments/);
+      assert.ok(!section('thermo-naming').includes('Documented behavior'));
+      assert.ok(!section('thermo-naming').includes('Sibling comments'));
+    });
+
+    it('is in the fix file section of a bug observation sent by factory_fix', async () => {
+      using ws = workspace({ maxRounds: 2 });
+      await greenWithObservation(ws, [finding('bug', 'observation', 'edge')]);
+      const fixed = await step(ws, run => fixAfterGreen(ws, run, { observations: ['bug-edge'] }, 'Fix now.'));
+      assert.ok(readFileSync(fixed.fixPath, 'utf8').includes(note));
+    });
+  });
+
   it('plans one ordered item list: the redacted bug first, then the observations', async () => {
     using ws = workspace({ maxRounds: 2 });
     await greenWithObservation(ws);
