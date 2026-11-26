@@ -308,7 +308,7 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
       // Refuses a project without a sink, empty input, unknown ids, and ids the run already placed, without a dialog.
       const planned = planDefer(ws, readRun(ws, feature), params);
       const sink = describeSink(requireSink(ws));
-      const items = planned.drafts.map(draft => `- ${draft.id ?? 'Note'}: ${findingTitle(planned.observations.find(finding => finding.id === draft.id)?.title ?? params.note ?? draft.title)}`);
+      const items = [...(planned.note === undefined ? [] : [`- Note: ${findingTitle(planned.note)}`]), ...planned.observations.map(finding => `- ${finding.id}: ${findingTitle(finding.title)}`)];
       if (!(await confirmInteractive(ctx, ws, feature, `Defer ${planned.drafts.length} items to ${sink.name}?`, `${items.join('\n')}\n\nSink: ${sink.line}.`))) {
         return reply(`The user did not defer the work. Ask how to handle the observations or the note.\nNext: ${nextAction(readRun(ws, feature))}`);
       }

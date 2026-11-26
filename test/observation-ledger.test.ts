@@ -797,4 +797,21 @@ describe('observation titles in confirm dialogs', () => {
     await call('factory_defer', { observations: ['thermo-long'] }, asking(bodies));
     assert.ok((bodies[0] ?? '').includes(`: ${longTitle}\n`), 'the whole 304-character title shows');
   });
+
+  it('factory_defer shows the note line first, then one line per observation, with no feature/slice prefix', async () => {
+    using dir = repo();
+    const { call } = await ledgerRun(dir.root, ['one', 'two']);
+    const bodies: string[] = [];
+    await call('factory_defer', { note: 'remember this', observations: ['thermo-one', 'thermo-two'] }, asking(bodies));
+    const lines = (bodies[0] ?? '').split('\n').filter(line => line.startsWith('- '));
+    assert.deepEqual(lines, ['- Note: remember this', '- thermo-one: one', '- thermo-two: two']);
+  });
+
+  it('factory_defer shows no Note line for a whitespace-only note sent with an observation id', async () => {
+    using dir = repo();
+    const { call } = await ledgerRun(dir.root, ['one']);
+    const bodies: string[] = [];
+    await call('factory_defer', { note: '   ', observations: ['thermo-one'] }, asking(bodies));
+    assert.deepEqual((bodies[0] ?? '').split('\n').filter(line => line.startsWith('- ')), ['- thermo-one: one']);
+  });
 });
