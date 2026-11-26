@@ -90,6 +90,14 @@ describe('factory-observed typecheck', () => {
     assert.ok(reply.split('\n').includes(MISSING(TC)), reply);
   });
 
+  it('does not count an echo suffix form result flagged isError even when its partial output has an exit line', async () => {
+    using s = await started();
+    await s.bash(s.implementer, `${TC}; echo "exit $?"`, { content: [{ text: 'exit 0\n\n[Command timed out after 300 seconds]', type: 'text' }], details: undefined, isError: true });
+    const reply = await s.submit();
+    assert.ok(s.stored().split('\n').includes(NONE(TC)));
+    assert.ok(reply.split('\n').includes(MISSING(TC)), reply);
+  });
+
   for (const command of [`${TC} > /dev/null`, `${TC} 2>&1 | tail -5`, `cd x && ${TC}`, `${TC}; true`]) {
     it(`does not count \`${command}\`, and still stores the report`, async () => {
       using s = await started();

@@ -11,6 +11,7 @@ const bashResult = z.object({
   content: z.array(z.object({ text: z.string().optional(), type: z.string() }).loose()).default([]),
   details: z.object({ async: z.object({ state: z.unknown().optional() }).optional(), exitCode: z.unknown().optional(), timedOut: z.unknown().optional() }).loose().nullish(),
   input: z.object({ command: z.string() }).loose(),
+  isError: z.boolean().optional(),
   toolName: z.literal('bash'),
 });
 
@@ -20,11 +21,13 @@ const bashResult = z.object({
  * `; echo "exit $?"`; a result that came back before the command finished (a background job) or timed out never counts.
  * The exact form's exit code is details.exitCode when it is a number, else 0 (omp's bash tool sets it only for a non-zero
  * exit); the suffix form's is the N of the last output line matching /^exit (\d+)$/, and without such a line the run does not count.
+ * A suffix-form result with isError true never counts: a completed suffix-form run exits 0 through the echo, so an error
+ * result is a cancelled, timed-out or unfinished run whose partial output may still hold an exit line.
  */
 export function observeTypecheck(event: unknown, checks: string[]) {
   const parsed = bashResult.safeParse(event);
   if (!parsed.success) return undefined;
-  const { content, details, input } = parsed.data;
+  const { content, details, input, isError } = parsed.data;
   if (details?.timedOut === true) return undefined;
   if (details?.async !== undefined && details.async.state !== 'completed') return undefined;
   const command = input.command.trim();
@@ -35,7 +38,7 @@ export function observeTypecheck(event: unknown, checks: string[]) {
     return { command: exact, exit: 0 };
   }
   const suffixed = commands.find(candidate => command === `${candidate}${EXIT_SUFFIX}`);
-  if (suffixed === undefined) return undefined;
+  if (suffixed === undefined || isError === true) return undefined;
   const text = content.map(block => (block.type === 'text' ? (block.text ?? '') : '')).join('\n');
   const last = text.split(/\r?\n/).map(line => /^exit (\d+)$/.exec(line)).filter(match => match !== null).at(-1);
   return last === undefined ? undefined : { command: suffixed, exit: Number(last[1]) };
