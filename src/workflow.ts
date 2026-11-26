@@ -12,6 +12,7 @@ import {
   runDir, type Run, reviewDomains, reviewIsOpen, reviewPaths, saveRun, type Slice, type SliceInput, resliceItemSchema,
   sliceInputSchema, standingChecks, type Source, sourceSchema, statePath, reviewDir, ticketPath, type Workspace,
   requireActive, requireNotStalled, reportFile, stallNotice, writeAtomic,
+  filed,
 } from './run.ts';
 import { moveCarried } from './legacy-observations.ts';
 import { copyPauseCause } from './pause-cause.ts';
@@ -191,7 +192,7 @@ export async function startRun(ws: Workspace, input: { annotate?: ((run: Run) =>
   input.annotate?.(run);
   writeAtomic(
     join(runDir(ws, run.feature), 'issue.md'),
-    `# ${source.title}\n\nSource: ${source.kind} ${source.ref}${source.url ? ` (${source.url})` : ''}\n${(source.related ?? []).map(item => `Source: ${source.kind} ${item.ref}${item.url ? ` (${item.url})` : ''}\n`).join('')}\n${UNTRUSTED_NOTE}\n\n<untrusted-issue>\n${source.body}\n</untrusted-issue>\n`,
+    `# ${source.title}\n\nSource: ${source.kind} ${source.ref}${source.url ? ` (${source.url})` : ''}${filed(source.createdAt)}\n${(source.related ?? []).map(item => `Source: ${source.kind} ${item.ref}${item.url ? ` (${item.url})` : ''}${filed(item.createdAt)}\n`).join('')}\n${UNTRUSTED_NOTE}\n\n<untrusted-issue>\n${source.body}\n</untrusted-issue>\n`,
   );
   saveRun(ws, run);
   return run;

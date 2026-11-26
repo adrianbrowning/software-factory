@@ -31,6 +31,7 @@ const ghIssueSchema = z.object({
   author: ghLogin,
   body: z.string(),
   comments: z.array(z.object({ author: ghLogin, authorAssociation: z.string(), body: z.string() })),
+  createdAt: z.string().optional(),
   title: z.string().min(1),
   url: z.string(),
 });
@@ -51,7 +52,7 @@ const TRUSTED_ASSOCIATIONS = new Set(['COLLABORATOR', 'MEMBER', 'OWNER']);
 /** Loads a GitHub issue with its comments, and the issue author's association with the repository. */
 export async function fetchGithubIssue(ws: Workspace, ref: string): Promise<GithubIssue> {
   if (ref.startsWith('-')) throw new Error(`"${ref}" is not an issue number or URL.`);
-  const issue = ghIssueSchema.parse(JSON.parse(await gh(ws.root, 'issue', 'view', ref, '--json', 'author,body,comments,title,url')));
+  const issue = ghIssueSchema.parse(JSON.parse(await gh(ws.root, 'issue', 'view', ref, '--json', 'author,body,comments,createdAt,title,url')));
   const match = /github\.com\/([^/]+\/[^/]+)\/(?:issues|pull)\/(\d+)/.exec(issue.url);
   if (match === null) throw new Error(`gh returned an issue URL the factory cannot read: ${issue.url}`);
   const authorAssociation = (await gh(ws.root, 'api', `repos/${match[1]}/issues/${match[2]}`, '--jq', '.author_association')).trim();
@@ -106,7 +107,8 @@ export async function githubSource(
   const sections = related.map(item => ({ item, section: relatedSection(item.ref, item.issue, use) }));
   const primary = comments.length === 0 ? body : `${body}\n\n## Comments\n\n${comments.join('\n\n')}`;
   const source: Source = { body: [primary, ...sections.map(entry => entry.section.body)].join('\n\n'), kind: 'github', ref, title, url: issue.url };
-  if (sections.length > 0) source.related = sections.map(entry => ({ ref: entry.item.ref, title: entry.section.title, url: entry.item.issue.url }));
+  if (issue.createdAt !== undefined) source.createdAt = issue.createdAt;
+  if (sections.length > 0) source.related = sections.map(entry => ({ ...(entry.item.issue.createdAt === undefined ? {} : { createdAt: entry.item.issue.createdAt }), ref: entry.item.ref, title: entry.section.title, url: entry.item.issue.url }));
   return source;
 }
 

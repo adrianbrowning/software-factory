@@ -110,11 +110,12 @@ export const fixVerdictSchema = z.discriminatedUnion('status', [
 ]);
 export type FixVerdict = z.infer<typeof fixVerdictSchema>;
 
-export const relatedSourceSchema = z.object({ ref: text, title: text, url: z.string().optional() });
+export const relatedSourceSchema = z.object({ createdAt: z.string().optional(), ref: text, title: text, url: z.string().optional() });
 export type RelatedSource = z.infer<typeof relatedSourceSchema>;
 
 export const sourceSchema = z.object({
   body: z.string().describe('Full issue text, including relevant comments'),
+  createdAt: z.string().optional().describe('When GitHub says the issue was filed; absent when gh gave none and for non-GitHub sources'),
   kind: z.enum(SOURCE_KINDS),
   ref: text.describe('Issue reference as the user gave it'),
   related: z.array(relatedSourceSchema).optional().describe('Further issues whose text is in the body, after the primary issue'),
@@ -122,6 +123,9 @@ export const sourceSchema = z.object({
   url: z.string().optional(),
 });
 export type Source = z.infer<typeof sourceSchema>;
+
+/** The `, filed <createdAt>` suffix of an issue's Source line; empty without a filing time. */
+export const filed = (createdAt: string | undefined) => (createdAt === undefined ? '' : `, filed ${createdAt}`);
 
 export const sliceInputSchema = z.object({
   acceptance: z.array(text).min(1).describe('Checkable acceptance criteria'),
