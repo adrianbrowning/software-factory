@@ -480,7 +480,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
   tool({
     caller: IMPLEMENTER,
     description:
-      'Submit your final report for the active slice: commits, fix file items (required in fix mode; in build mode only `<carried key> fixed in <sha>` lines, on a slice with carried keys), behaviors, and open items, one line per item. Call it before your final message, and again after every follow-up turn; each call replaces the stored report. The orchestrator reads the stored report file, which the factory_next and factory_checks replies name.',
+      'Submit your final report for the active slice: commits, checks (one `<command> → exit <code>` line per check command you ran), fix file items (required in fix mode; in build mode only `<carried key> fixed in <sha>` lines, on a slice with carried keys), behaviors, and open items, one line per item. Call it before your final message, and again after every follow-up turn; each call replaces the stored report. The orchestrator reads the stored report file, which the factory_next and factory_checks replies name.',
     label: 'Factory: implementer report',
     name: 'factory_implementer_report',
     schema: implementerReportSchema,

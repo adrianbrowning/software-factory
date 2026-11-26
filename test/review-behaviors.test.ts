@@ -21,7 +21,7 @@ describe('review data file: implementer behaviors', { concurrency: 4 }, () => {
           { behavior: 'does a', red: 'a threw', seenRed: true, test: 'a' },
           { behavior: 'does b', seenRed: false, test: 'b' },
         ],
-        commits: [`${first} 01: secret-commit-subject`],
+        checks: ['secret-check-command → exit 0'], commits: [`${first} 01: secret-commit-subject`],
         open: ['NEEDS SEAM: secret-open-item'],
       }),
     );
@@ -29,7 +29,7 @@ describe('review data file: implementer behaviors', { concurrency: 4 }, () => {
     const section = behaviorsSection((await step(ws, run => startReview(ws, run))).dataFile);
     assert.match(section, /untrusted/i);
     assert.match(section, /- a → does a \(seen red: yes — a threw\)\n- b → does b \(seen red: no\)/);
-    assert.doesNotMatch(section, /secret-commit-subject|secret-open-item|Commits:|Open:|Fix file items/);
+    assert.doesNotMatch(section, /secret-commit-subject|secret-open-item|secret-check-command|Checks:|Commits:|Open:|Fix file items/);
   });
 
   it('says no implementer report was stored when none was', async () => {
@@ -47,7 +47,7 @@ describe('review data file: implementer behaviors', { concurrency: 4 }, () => {
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
-    await step(ws, async run => submitImplementerReport(ws, run, { behaviors: [], commits: [], open: ['NEEDS SEAM: x'] }));
+    await step(ws, async run => submitImplementerReport(ws, run, { behaviors: [], checks: [], commits: [], open: ['NEEDS SEAM: x'] }));
     await step(ws, run => runChecks(ws, run));
     const section = behaviorsSection((await step(ws, run => startReview(ws, run))).dataFile);
     assert.match(section, /None\./);
@@ -74,7 +74,7 @@ describe('review data file after a fix round', () => {
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'work.test.ts');
     await step(ws, async run =>
-      submitImplementerReport(ws, run, { behaviors: [{ behavior: 'first', red: 'boom', seenRed: true, test: 'old-test' }], commits: [], open: [] }),
+      submitImplementerReport(ws, run, { behaviors: [{ behavior: 'first', red: 'boom', seenRed: true, test: 'old-test' }], checks: [], commits: [], open: [] }),
     );
     assert.equal((await step(ws, run => runChecks(ws, run))).passed, false);
     await step(ws, async run => startImplementerSession(ws, run));
@@ -83,7 +83,7 @@ describe('review data file after a fix round', () => {
     await step(ws, async run =>
       submitImplementerReport(ws, run, {
         behaviors: [{ behavior: 'second', seenRed: false, test: 'new-test' }],
-        commits: [`${sha.slice(0, 7)} 01: fix`],
+        checks: [], commits: [`${sha.slice(0, 7)} 01: fix`],
         fixItems: ['check-f1-1: fixed in secret-fix-item'],
         open: [],
       }),
@@ -101,7 +101,7 @@ describe('report test-file gate exemptions', () => {
     await newRun(ws, [slice('Docs', [], { noTestReason: 'docs only', seams: [] })]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'doc.md');
-    const stored = await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [], open: [] }));
+    const stored = await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], checks: [], commits: [], open: [] }));
     assert.equal(stored.replaced, false);
   });
 
@@ -110,13 +110,13 @@ describe('report test-file gate exemptions', () => {
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'work.test.ts');
-    await step(ws, async run => submitImplementerReport(ws, run, { behaviors: [{ behavior: 'a', seenRed: true, red: 'failed', test: 't' }], commits: [], open: [] }));
+    await step(ws, async run => submitImplementerReport(ws, run, { behaviors: [{ behavior: 'a', seenRed: true, red: 'failed', test: 't' }], checks: [], commits: [], open: [] }));
     assert.equal((await step(ws, run => runChecks(ws, run))).passed, false);
     await step(ws, async run => startImplementerSession(ws, run));
     commit(ws, 'ok');
     const sha = sh(ws.root, 'rev-parse', 'HEAD');
     const stored = await step(ws, run =>
-      submitImplementerReport(ws, run, { behaviors: [], commits: [`${sha.slice(0, 7)} 01: fix`], fixItems: ['check-f1-1: already fixed'], open: [] }),
+      submitImplementerReport(ws, run, { behaviors: [], checks: [], commits: [`${sha.slice(0, 7)} 01: fix`], fixItems: ['check-f1-1: already fixed'], open: [] }),
     );
     assert.match(readFileSync(stored.path, 'utf8'), /Behaviors:\n- none\n/);
   });

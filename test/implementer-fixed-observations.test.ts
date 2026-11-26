@@ -29,7 +29,7 @@ async function redWithObservation(ws: Workspace) {
 }
 
 const report = (ws: Workspace, sha: string, fixItems: string[]) =>
-  step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [`${sha.slice(0, 7)} fix`], fixItems, open: [] }));
+  step(ws, run => submitImplementerReport(ws, run, { behaviors: [], checks: [], commits: [`${sha.slice(0, 7)} fix`], fixItems, open: [] }));
 
 const state = (ws: Workspace) => {
   const run = readRun(ws, 'demo');
@@ -128,7 +128,7 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
     await withRun(ws, 'demo', run => startReview(ws, run));
 
     const implementer = { ...ctx('sub', 'factory-implementer'), cwd: dir.root };
-    const reported = await load().get('factory_implementer_report')?.execute('id', { behaviors: [], commits: [`${sha.slice(0, 7)} fix`], fixItems: [`${OBSERVATION}: fixed in ${sha.slice(0, 7)}`], open: [] }, undefined, undefined, implementer);
+    const reported = await load().get('factory_implementer_report')?.execute('id', { behaviors: [], checks: [], commits: [`${sha.slice(0, 7)} fix`], fixItems: [`${OBSERVATION}: fixed in ${sha.slice(0, 7)}`], open: [] }, undefined, undefined, implementer);
     const text = reported !== null && typeof reported === 'object' && 'content' in reported && Array.isArray(reported.content) ? JSON.stringify(reported.content) : '';
     assert.match(text, /not recorded as fixed because a review is open/);
     assert.deepEqual(readRun(ws, 'demo').observations, []);
@@ -207,7 +207,7 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
     commit(ws, 'foreign.txt');
     const foreign = sh(ws.root, 'rev-parse', 'HEAD');
     const before = JSON.stringify(state(ws));
-    const result = await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [], fixItems: [`${OBSERVATION}: fixed in ${foreign.slice(0, 7)}`], open: [] }));
+    const result = await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], checks: [], commits: [], fixItems: [`${OBSERVATION}: fixed in ${foreign.slice(0, 7)}`], open: [] }));
     assert.deepEqual(result.fixed, []);
     assert.equal(JSON.stringify(state(ws)), before);
     sh(ws.root, 'switch', '-q', branch);
@@ -271,7 +271,7 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
     const sha = sh(ws.root, 'rev-parse', 'HEAD');
 
     const implementer = { ...ctx('sub', 'factory-implementer'), cwd: dir.root };
-    const reported = await load().get('factory_implementer_report')?.execute('id', { behaviors: [], commits: [`${sha.slice(0, 7)} fix`], fixItems: [`scope-gap: fixed in ${sha.slice(0, 7)}`, `thermo-doc: fixed in ${sha.slice(0, 7)}`], open: [] }, undefined, undefined, implementer);
+    const reported = await load().get('factory_implementer_report')?.execute('id', { behaviors: [], checks: [], commits: [`${sha.slice(0, 7)} fix`], fixItems: [`scope-gap: fixed in ${sha.slice(0, 7)}`, `thermo-doc: fixed in ${sha.slice(0, 7)}`], open: [] }, undefined, undefined, implementer);
     assert.match((reported as { content: { text: string }[] }).content[0]?.text ?? '', /thermo-doc/);
     assert.deepEqual(readRun(ws, 'demo').slices[0]?.unplaced.map(entry => entry.finding.id), ['thermo-gap']);
 

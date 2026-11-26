@@ -13,6 +13,8 @@ import { activeSlice, addEvent, reportPath, reviewIsOpen, requireActive, type Ru
 // so it cannot add lines that read as factory output in the factory_checks reply. A reports/<slice>.md written directly is not checked.
 const reportItem = z.string().min(1).regex(/^[^\r\n\u2028\u2029\u0085]+$/, 'one line per item');
 
+const checkLine = reportItem.regex(/^.+ → exit \d+$/, 'expected `<command> → exit <code>`, for example `pnpm run typecheck → exit 0`');
+
 const behaviorSchema = z
   .object({
     test: reportItem.describe('The test name'),
@@ -29,6 +31,7 @@ const behaviorSchema = z
 export const implementerReportSchema = z.object({
   behaviors: z.array(behaviorSchema).describe('Each test, the behavior it proves, and whether you saw it fail first; an empty list is accepted in fix mode, for a slice without test seams, or when Open names a stop report (NEEDS SEAM, SLICE TOO BIG, MISSING DEPENDENCY); a build-mode report for a slice with seams is refused with an empty list'),
   commits: z.array(reportItem).describe('Each commit you made, as `<short sha> <subject>`; empty when you made none'),
+  checks: z.array(checkLine).describe('One `<command> → exit <code>` line per check command you ran (its last run, with the exit code you read), for example `pnpm run typecheck → exit 0`; empty when you ran none. The factory shows these lines and does not verify them'),
   fixItems: z
     .array(reportItem)
     .optional()
@@ -47,6 +50,7 @@ function renderReport(report: ImplementerReport, fixMode: boolean) {
     'Implementer report:',
     ...section('Commits', report.commits),
     ...(report.fixItems === undefined ? [] : section(fixMode ? 'Fix file items' : 'Carried items', report.fixItems)),
+    ...section('Checks', report.checks),
     ...section('Behaviors', report.behaviors.map(renderBehavior)),
     ...section('Open', report.open),
   ].join('\n');

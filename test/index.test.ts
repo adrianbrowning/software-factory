@@ -49,8 +49,8 @@ describe('tool registration', () => {
 
   it('advertises the implementer report fields, fix file items optional', () => {
     const report = load().get('factory_implementer_report');
-    assert.deepEqual(Object.keys(report?.parameters.properties ?? {}).toSorted(), ['behaviors', 'commits', 'fixItems', 'open']);
-    assert.deepEqual(report?.parameters.required?.toSorted(), ['behaviors', 'commits', 'open']);
+    assert.deepEqual(Object.keys(report?.parameters.properties ?? {}).toSorted(), ['behaviors', 'checks', 'commits', 'fixItems', 'open']);
+    assert.deepEqual(report?.parameters.required?.toSorted(), ['behaviors', 'checks', 'commits', 'open']);
     const items = (report?.parameters.properties?.behaviors as { items?: { properties?: object; required?: string[] } } | undefined)?.items;
     assert.deepEqual(Object.keys(items?.properties ?? {}).toSorted(), ['behavior', 'red', 'seenRed', 'test']);
     assert.deepEqual(items?.required?.toSorted(), ['behavior', 'seenRed', 'test']);
@@ -162,7 +162,7 @@ describe('implementer sessions', () => {
     const { call, handlers, implementer, main } = await startedRun(root);
     const spawn = (agent: string, spawner: unknown = main) =>
       handlers.get('before_subagent_spawn')?.({ agent, invocationKind: 'task', patterns: [], type: 'before_subagent_spawn' }, spawner);
-    const report = { behaviors: [], commits: [], open: ['NEEDS SEAM: x'] };
+    const report = { behaviors: [], checks: [], commits: [], open: ['NEEDS SEAM: x'] };
     await call('factory_implementer_report', report, implementer);
 
     await spawn('factory-reviewer');
@@ -181,13 +181,13 @@ describe('implementer sessions', () => {
     const { root } = repo;
     const { call, handlers, implementer, main } = await startedRun(root);
     commitFile(root, 'test/work.test.ts');
-    await call('factory_implementer_report', { behaviors: oneBehavior, commits: [], open: ['first round'] }, implementer);
+    await call('factory_implementer_report', { behaviors: oneBehavior, checks: [], commits: [], open: ['first round'] }, implementer);
 
     const checks = call('factory_checks', {}, main);
     const spawned = handlers.get('before_subagent_spawn')?.({ agent: 'factory-implementer', invocationKind: 'task', patterns: [], type: 'before_subagent_spawn' }, main);
     assert.match(await checks, /first round/);
     await spawned;
-    assert.match(await call('factory_implementer_report', { behaviors: oneBehavior, commits: [], open: [] }, implementer), /Stored the report/);
+    assert.match(await call('factory_implementer_report', { behaviors: oneBehavior, checks: [], commits: [], open: [] }, implementer), /Stored the report/);
   });
 
   it('refuses commits items that are not slice commits, lists the slice commits, and keeps the stored report', async () => {
@@ -197,7 +197,7 @@ describe('implementer sessions', () => {
     commitFile(root, 'test/work.test.ts', 'work done');
     const sha = git(root, 'rev-parse', 'HEAD').toString().trim();
     const otherSha = git(root, 'rev-parse', 'HEAD~1').toString().trim();
-    const report = (commits: string[], open: string[] = []) => ({ behaviors: oneBehavior, commits, open });
+    const report = (commits: string[], open: string[] = []) => ({ behaviors: oneBehavior, checks: [], commits, open });
     const file = join(root, '.scratch', 'demo', 'reports', '01.md');
     await assert.rejects(call('factory_implementer_report', report(['(see git log)'], ['second']), implementer), (error: Error) => {
       assert.match(error.message, /\(see git log\)/);
@@ -235,7 +235,7 @@ describe('implementer sessions', () => {
     it('refuses a report with no behavior and no stop report, naming the seams, and stores nothing', async () => {
       using repo = emptyRepo();
       const { call, implementer } = await startedRun(repo.root);
-      await assert.rejects(call('factory_implementer_report', { behaviors: [], commits: [], open: [] }, implementer), /seams \(cli\).*report lists no behavior.*NEEDS SEAM/);
+      await assert.rejects(call('factory_implementer_report', { behaviors: [], checks: [], commits: [], open: [] }, implementer), /seams \(cli\).*report lists no behavior.*NEEDS SEAM/);
       assert.equal(existsSync(file(repo.root)), false);
     });
 
@@ -243,38 +243,38 @@ describe('implementer sessions', () => {
       using repo = emptyRepo();
       const { call, implementer } = await startedRun(repo.root);
       commitFile(repo.root, 'test/a.test.ts');
-      await assert.rejects(call('factory_implementer_report', { behaviors: [], commits: [], open: [] }, implementer), /report lists no behavior.*NEEDS SEAM/);
+      await assert.rejects(call('factory_implementer_report', { behaviors: [], checks: [], commits: [], open: [] }, implementer), /report lists no behavior.*NEEDS SEAM/);
       assert.equal(existsSync(file(repo.root)), false);
     });
 
     it('refuses a report whose behaviors are all unseen red, keeps the earlier report, and says how to see red', async () => {
       using repo = emptyRepo();
       const { call, implementer } = await startedRun(repo.root);
-      await call('factory_implementer_report', { behaviors: [], commits: [], open: ['NEEDS SEAM: x'] }, implementer);
+      await call('factory_implementer_report', { behaviors: [], checks: [], commits: [], open: ['NEEDS SEAM: x'] }, implementer);
       const before = readFileSync(file(repo.root), 'utf8');
       commitFile(repo.root, 'test/a.test.ts');
       await assert.rejects(
-        call('factory_implementer_report', { behaviors: [{ ...behavior, seenRed: false, red: undefined }], commits: [], open: [] }, implementer),
+        call('factory_implementer_report', { behaviors: [{ ...behavior, seenRed: false, red: undefined }], checks: [], commits: [], open: [] }, implementer),
         /Slice 01.*no behavior was seen red.*revert the production change/,
       );
       assert.equal(readFileSync(file(repo.root), 'utf8'), before);
-      assert.match(await call('factory_implementer_report', { behaviors: [{ ...behavior, seenRed: false, red: undefined }, behavior], commits: [], open: [] }, implementer), /Replaced the stored report/);
+      assert.match(await call('factory_implementer_report', { behaviors: [{ ...behavior, seenRed: false, red: undefined }, behavior], checks: [], commits: [], open: [] }, implementer), /Replaced the stored report/);
     });
 
     it('stores an all-unseen-red report for a slice that has seams and a noTestReason', async () => {
       using repo = emptyRepo();
       const { call, implementer } = await startedRun(repo.root, 'true', { noTestReason: 'docs only' });
       commitFile(repo.root, 'test/a.test.ts');
-      assert.match(await call('factory_implementer_report', { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], commits: [], open: [] }, implementer), /Stored the report/);
+      assert.match(await call('factory_implementer_report', { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], checks: [], commits: [], open: [] }, implementer), /Stored the report/);
     });
 
     it('refuses a report whose commits change no test file, and keeps the earlier stored report', async () => {
       using repo = emptyRepo();
       const { call, implementer } = await startedRun(repo.root);
-      await call('factory_implementer_report', { behaviors: [], commits: [], open: ['NEEDS SEAM: x'] }, implementer);
+      await call('factory_implementer_report', { behaviors: [], checks: [], commits: [], open: ['NEEDS SEAM: x'] }, implementer);
       const before = readFileSync(file(repo.root), 'utf8');
       commitFile(repo.root, 'src/a.ts');
-      await assert.rejects(call('factory_implementer_report', { behaviors: [behavior], commits: [], open: [] }, implementer), /change no test file.*NEEDS SEAM/);
+      await assert.rejects(call('factory_implementer_report', { behaviors: [behavior], checks: [], commits: [], open: [] }, implementer), /change no test file.*NEEDS SEAM/);
       assert.equal(readFileSync(file(repo.root), 'utf8'), before);
     });
 
@@ -282,16 +282,16 @@ describe('implementer sessions', () => {
       using repo = emptyRepo();
       const { call, implementer } = await startedRun(repo.root, 'true', { noTestReason: 'refactor, behavior unchanged' });
       commitFile(repo.root, 'src/a.ts');
-      assert.match(await call('factory_implementer_report', { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], commits: [], open: [] }, implementer), /Stored the report/);
+      assert.match(await call('factory_implementer_report', { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], checks: [], commits: [], open: [] }, implementer), /Stored the report/);
     });
 
     it('refuses a report with no behavior for a slice that has seams and a noTestReason, and keeps the earlier stored report', async () => {
       using repo = emptyRepo();
       const { call, implementer } = await startedRun(repo.root, 'true', { noTestReason: 'refactor, behavior unchanged' });
-      await call('factory_implementer_report', { behaviors: [], commits: [], open: ['NEEDS SEAM: x'] }, implementer);
+      await call('factory_implementer_report', { behaviors: [], checks: [], commits: [], open: ['NEEDS SEAM: x'] }, implementer);
       const before = readFileSync(file(repo.root), 'utf8');
       commitFile(repo.root, 'src/a.ts');
-      await assert.rejects(call('factory_implementer_report', { behaviors: [], commits: [], open: [] }, implementer), (error: Error) => /lists no behavior/.test(error.message) && /pins the code.*seenRed false/.test(error.message) && !/red-first/.test(error.message));
+      await assert.rejects(call('factory_implementer_report', { behaviors: [], checks: [], commits: [], open: [] }, implementer), (error: Error) => /lists no behavior/.test(error.message) && /pins the code.*seenRed false/.test(error.message) && !/red-first/.test(error.message));
       assert.equal(readFileSync(file(repo.root), 'utf8'), before);
     });
 
@@ -300,15 +300,15 @@ describe('implementer sessions', () => {
       const { call, implementer } = await startedRun(repo.root);
       commitFile(repo.root, 'src/a.ts');
       await assert.rejects(
-        call('factory_implementer_report', { behaviors: [{ ...behavior, seenRed: false, red: undefined }], commits: [], open: [] }, implementer),
+        call('factory_implementer_report', { behaviors: [{ ...behavior, seenRed: false, red: undefined }], checks: [], commits: [], open: [] }, implementer),
         (error: Error) => /change no test file/.test(error.message) && !/no behavior was seen red/.test(error.message),
       );
       assert.equal(existsSync(file(repo.root)), false);
     });
 
     it('refuses with the exact full text of each of the four refusals', async () => {
-      const none = { behaviors: [], commits: [], open: [] };
-      const seen = { behaviors: [{ ...behavior, seenRed: false, red: undefined }], commits: [], open: [] };
+      const none = { behaviors: [], checks: [], commits: [], open: [] };
+      const seen = { behaviors: [{ ...behavior, seenRed: false, red: undefined }], checks: [], commits: [], open: [] };
       const redFirst = 'Commit a red-first test through one of these seams and report it in behaviors, or report NEEDS SEAM in Open.';
       const message = async (call: (name: string, args: unknown, who: never) => Promise<unknown>, args: unknown, who: unknown) => {
         try {
@@ -346,14 +346,14 @@ describe('implementer sessions', () => {
       using repo = emptyRepo();
       const { call, implementer } = await startedRun(repo.root);
       commitFile(repo.root, 'test/a.test.ts');
-      assert.match(await call('factory_implementer_report', { behaviors: [behavior], commits: [], open: [] }, implementer), /Stored the report/);
+      assert.match(await call('factory_implementer_report', { behaviors: [behavior], checks: [], commits: [], open: [] }, implementer), /Stored the report/);
     });
 
     it('stores a report with no behavior when Open names a stop report', async () => {
       using repo = emptyRepo();
       const { call, implementer } = await startedRun(repo.root);
       for (const stop of ['NEEDS SEAM: x', 'SLICE TOO BIG: y', 'MISSING DEPENDENCY: z']) {
-        assert.match(await call('factory_implementer_report', { behaviors: [], commits: [], open: [stop] }, implementer), /Stored the report|Replaced the stored report/);
+        assert.match(await call('factory_implementer_report', { behaviors: [], checks: [], commits: [], open: [stop] }, implementer), /Stored the report|Replaced the stored report/);
       }
     });
 
@@ -362,7 +362,7 @@ describe('implementer sessions', () => {
       const { call, implementer } = await startedRun(repo.root);
       commitFile(repo.root, 'test/a.test.ts');
       for (const stop of ['NEEDS SEAM: x', 'SLICE TOO BIG: y', 'MISSING DEPENDENCY: z']) {
-        assert.match(await call('factory_implementer_report', { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], commits: [], open: [stop] }, implementer), /Stored the report|Replaced the stored report/);
+        assert.match(await call('factory_implementer_report', { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], checks: [], commits: [], open: [stop] }, implementer), /Stored the report|Replaced the stored report/);
       }
     });
 
@@ -372,14 +372,69 @@ describe('implementer sessions', () => {
       commitFile(repo.root, 'test/a.test.ts');
       const sha = String(git(repo.root, 'rev-parse', 'HEAD')).trim();
       await withRun({ config: loadConfig(repo.root), root: repo.root }, 'demo', run => { run.slices[0]!.fixFromSha = sha; });
-      assert.match(await call('factory_implementer_report', { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], commits: [], fixItems: ['bug-f1: not a defect: x'], open: [] }, implementer), /Stored the report/);
+      assert.match(await call('factory_implementer_report', { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], checks: [], commits: [], fixItems: ['bug-f1: not a defect: x'], open: [] }, implementer), /Stored the report/);
+    });
+  });
+
+  describe('checks', () => {
+    const reportFile = (root: string) => join(root, '.scratch', 'demo', 'reports', '01.md');
+    const base = { behaviors: oneBehavior, commits: [], open: [] };
+
+    it('stores the checks lines in order, after Commits and before Behaviors', async () => {
+      using repo = emptyRepo();
+      const { call, implementer } = await startedRun(repo.root);
+      commitFile(repo.root, 'test/work.test.ts');
+      const checks = ['pnpm run typecheck → exit 0', 'sh scripts/test.sh test/report.test.ts → exit 1'];
+      await call('factory_implementer_report', { ...base, checks }, implementer);
+      const lines = readFileSync(reportFile(repo.root), 'utf8').split('\n');
+      const at = (title: string) => lines.indexOf(`${title}:`);
+      assert.deepEqual(lines.slice(at('Checks'), at('Behaviors')), ['Checks:', `- ${checks[0]}`, `- ${checks[1]}`]);
+      assert.ok(at('Commits') < at('Checks'));
+    });
+
+    it('stores - none for an empty checks list', async () => {
+      using repo = emptyRepo();
+      const { call, implementer } = await startedRun(repo.root);
+      commitFile(repo.root, 'test/work.test.ts');
+      await call('factory_implementer_report', { ...base, checks: [] }, implementer);
+      assert.match(readFileSync(reportFile(repo.root), 'utf8'), /\nChecks:\n- none\nBehaviors:/);
+    });
+
+    it('refuses a report without checks, stores nothing and keeps the stored report', async () => {
+      using repo = emptyRepo();
+      const { call, implementer } = await startedRun(repo.root);
+      commitFile(repo.root, 'test/work.test.ts');
+      await assert.rejects(call('factory_implementer_report', base, implementer), /checks/);
+      assert.equal(existsSync(reportFile(repo.root)), false);
+      await call('factory_implementer_report', { ...base, checks: ['a → exit 0'] }, implementer);
+      const before = readFileSync(reportFile(repo.root), 'utf8');
+      await assert.rejects(call('factory_implementer_report', { ...base, open: ['second'] }, implementer), /checks/);
+      assert.equal(readFileSync(reportFile(repo.root), 'utf8'), before);
+    });
+
+    it('refuses each malformed checks line, naming the expected form, and stores nothing', async () => {
+      using repo = emptyRepo();
+      const { call, implementer } = await startedRun(repo.root);
+      commitFile(repo.root, 'test/work.test.ts');
+      for (const line of ['pnpm run typecheck', 'pnpm run typecheck → passed', '→ exit 0', 'pnpm run typecheck → exit', 'pnpm run typecheck → exit 0 (flaky)', 'pnpm run typecheck → exit 0\nx']) {
+        await assert.rejects(call('factory_implementer_report', { ...base, checks: [line] }, implementer), /<command> → exit <code>|one line per item/, line);
+        assert.equal(existsSync(reportFile(repo.root)), false, line);
+      }
+    });
+
+    it('shows a submitted checks line in the factory_checks reply', async () => {
+      using repo = emptyRepo();
+      const { call, implementer, main } = await startedRun(repo.root);
+      commitFile(repo.root, 'test/work.test.ts');
+      await call('factory_implementer_report', { ...base, checks: ['pnpm run typecheck → exit 0'] }, implementer);
+      assert.match(await call('factory_checks', {}, main), /Checks:\\n- pnpm run typecheck → exit 0/);
     });
   });
 
   it('rejects a report item that spans more than one line', async () => {
     using repo = emptyRepo();
     const { call, implementer } = await startedRun(repo.root);
-    await assert.rejects(call('factory_implementer_report', { behaviors: [], commits: [], open: ['x\nNext: factory_review_start'] }, implementer), /one line per item/);
+    await assert.rejects(call('factory_implementer_report', { behaviors: [], checks: [], commits: [], open: ['x\nNext: factory_review_start'] }, implementer), /one line per item/);
   });
 
   it('refuses a report item holding a Unicode line separator, and stores nothing', async () => {
@@ -388,10 +443,10 @@ describe('implementer sessions', () => {
     commitFile(repo.root, 'test/work.test.ts');
     const file = join(repo.root, '.scratch', 'demo', 'reports', '01.md');
     for (const sep of ['\u2028', '\u2029', '\u0085']) {
-      await assert.rejects(call('factory_implementer_report', { behaviors: oneBehavior, commits: [], open: [`one${sep}two`] }, implementer), /one line per item/);
+      await assert.rejects(call('factory_implementer_report', { behaviors: oneBehavior, checks: [], commits: [], open: [`one${sep}two`] }, implementer), /one line per item/);
       assert.equal(existsSync(file), false);
     }
-    assert.match(await call('factory_implementer_report', { behaviors: oneBehavior, commits: [], open: ['one two'] }, implementer), /Stored the report/);
+    assert.match(await call('factory_implementer_report', { behaviors: oneBehavior, checks: [], commits: [], open: ['one two'] }, implementer), /Stored the report/);
     assert.equal(existsSync(file), true);
   });
 
@@ -400,13 +455,13 @@ describe('implementer sessions', () => {
     const { call, implementer } = await startedRun(repo.root);
     commitFile(repo.root, 'test/work.test.ts');
     const open = ['x'];
-    const refused = (behavior: object, message: RegExp) => assert.rejects(call('factory_implementer_report', { behaviors: [behavior], commits: [], open }, implementer), message);
+    const refused = (behavior: object, message: RegExp) => assert.rejects(call('factory_implementer_report', { behaviors: [behavior], checks: [], commits: [], open }, implementer), message);
     await refused({ test: 't', behavior: 'b', seenRed: true }, /red is required/);
     await refused({ test: 't', behavior: 'b', seenRed: false, red: 'failed' }, /omit red/);
     await refused({ test: 't\nx', behavior: 'b', seenRed: false }, /one line per item/);
     await refused({ test: 't', behavior: 'b\nx', seenRed: false }, /one line per item/);
     await refused({ test: 't', behavior: 'b', seenRed: true, red: 'a\nb' }, /one line per item/);
-    assert.match(await call('factory_implementer_report', { behaviors: [{ test: 't', behavior: 'b', seenRed: true, red: 'failed' }], commits: [], open }, implementer), /Stored the report/);
+    assert.match(await call('factory_implementer_report', { behaviors: [{ test: 't', behavior: 'b', seenRed: true, red: 'failed' }], checks: [], commits: [], open }, implementer), /Stored the report/);
   });
 
   it('stores each behavior on one line with its seen-red evidence', async () => {
@@ -417,7 +472,7 @@ describe('implementer sessions', () => {
       { test: 'a', behavior: 'does a', seenRed: true, red: 'a threw' },
       { test: 'b', behavior: 'does b', seenRed: false },
     ];
-    await call('factory_implementer_report', { behaviors, commits: [], open: [] }, implementer);
+    await call('factory_implementer_report', { behaviors, checks: [], commits: [], open: [] }, implementer);
     const stored = readFileSync(join(repo.root, '.scratch', 'demo', 'reports', '01.md'), 'utf8');
     assert.match(stored, /Behaviors:\n- a → does a \(seen red: yes — a threw\)\n- b → does b \(seen red: no\)\nOpen:/);
   });
@@ -472,7 +527,7 @@ describe('implementer sessions', () => {
     const { root } = repo;
     const { call, implementer, main } = await startedRun(root);
     commitFile(root, 'test/work.test.ts');
-    await call('factory_implementer_report', { behaviors: oneBehavior, commits: [], open: [] }, implementer);
+    await call('factory_implementer_report', { behaviors: oneBehavior, checks: [], commits: [], open: [] }, implementer);
     await call('factory_checks', {}, main);
     const reply = await call('factory_review_start', { skip: [] }, main);
     assert.match(reply, /in one eval step/);
