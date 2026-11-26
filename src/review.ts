@@ -293,14 +293,14 @@ async function passChecks(ws: Workspace, run: Run, slice: Slice, sha: string, re
  */
 const PATH_SKIPS: { contentMatches?: { content: RegExp; paths: RegExp }; domain: Domain; matches: RegExp; reason: string }[] = [
   {
-    // react-ts also reviews TypeScript; plain JavaScript needs it only when the file uses React.
+    // react-ts is kept for .jsx/.tsx paths and for TypeScript or JavaScript files that import React.
     contentMatches: {
       content: /(\bfrom\s*|\b(?:require|import)\s*\(\s*|\bimport\s*)['"]react(?:-dom)?(?:\/[^'"]*)?['"]/,
-      paths: /\.[cm]?js$/,
+      paths: /\.[cm]?[jt]s$/,
     },
     domain: 'react-ts',
-    matches: /\.([cm]?ts|[jt]sx)$/,
-    reason: 'no TypeScript, JSX, or React file changed',
+    matches: /\.[jt]sx$/,
+    reason: 'no JSX or React file changed',
   },
   {
     domain: 'test-validity',
