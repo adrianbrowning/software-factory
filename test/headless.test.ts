@@ -668,7 +668,8 @@ describe('/factory headless start message names the base', () => {
   });
 
   it('with --base equal to the trunk names the sha and holds no warning', async () => {
-    using repo = tempRepo('factory-headless-msg-', CHECKS_OK);
+    using repo = tempRepo('factory-headless-msg-', { ...CHECKS_OK, '.omp/factory.json': JSON.stringify({ baseRef: 'feat/base', checks: ['test -f ok'], trunk: 'main' }) });
+    sh(repo.root, 'branch', 'feat/base');
     const pinned = sh(repo.root, 'rev-parse', 'main');
     const { command, sent } = session(repo.root);
     await command('headless ticket.md --base main');
