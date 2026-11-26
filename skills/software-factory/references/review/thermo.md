@@ -17,6 +17,7 @@ Your task gives you the review id and the data file (PR metadata, full diff, cha
    Apply the shared KNOWN OBSERVATIONS and TARGETED REVIEW rules in `<reference dir>/../known-observations.md` (the reference dir's parent).
 2. Apply all 8 lenses below line by line across the diff.
 3. For non-trivial logic, read the full source file to understand context beyond the diff.
+   Also apply the prose-claims check in `<reference dir>/../prose-claims.md` (the reference dir's parent) to every diff, docs-only included.
 4. Ask the core questions for every changed file.
 5. **Always** call `factory_review_submit` once, even if you find nothing (an empty `findings` list).
 

@@ -11,7 +11,7 @@ Your task gives you the review id and the data file (PR metadata, full diff, cha
 
 2. For any file with non-trivial logic changes, read the full file to understand context.
 
-3. Find real runtime bugs only — skip style, test coverage gaps (that's the testing domain), and security (that's the security domain). The one exception is a prose rule a diff adds or changes in a skill or agent prompt: the prose-rule checks in `<reference dir>/../prose-rules.md` are in scope.
+3. Find real runtime bugs only — skip style, test coverage gaps (that's the testing domain), and security (that's the security domain). Two exceptions are in scope: a prose rule a diff adds or changes in a skill or agent prompt (the prose-rule checks in `<reference dir>/../prose-rules.md`), and a prose claim about how named code behaves that a diff adds or changes in a tracked Markdown file (the check in `<reference dir>/../prose-claims.md`).
 
 4. Only report findings you're >= 60% confident about.
 
@@ -69,10 +69,13 @@ Your task gives you the review id and the data file (PR metadata, full diff, cha
 **Prose rules (a diff that adds or changes a rule in a skill or agent prompt; in scope despite the runtime focus)**
 Apply the checks in `<reference dir>/../prose-rules.md` (the reference dir's parent).
 
+**Prose claims about named code (a diff that adds or changes such a claim in a tracked Markdown file)**
+Apply the check in `<reference dir>/../prose-claims.md` (the reference dir's parent).
+
 ## DO NOT flag
 
 - Style issues (linter catches those)
-- Missing tests (the testing domain handles that); this does not apply to the prose-rule checks in `<reference dir>/../prose-rules.md`
+- Missing tests (the testing domain handles that); this does not apply to the prose-rule checks in `<reference dir>/../prose-rules.md` or the prose-claims check in `<reference dir>/../prose-claims.md`
 - Security/auth issues (the security domain handles that)
 - Things you're less than 60% confident about
 
