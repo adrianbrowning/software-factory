@@ -134,9 +134,12 @@ export function selfHostWarning(repoRoot: string, loaded: LoadedPlugin = loadedP
 /** Records the self-host warning for `repoRoot` as a 'warning' run event and returns the reply line for it, or '' when there is none or the run already has a 'warning' event starting with the same warning text. The recorded text appends a sentence naming each active or pending slice, which runs with the loaded gates; the sentence is not part of the de-duplication. */
 export function recordSelfHostWarning(run: Run, repoRoot: string) {
   const warning = selfHostWarning(repoRoot, undefined, run.baseSha ?? run.baseRef);
-  if (warning === undefined || run.events.some(event => event.kind === 'warning' && event.detail.startsWith(warning))) return '';
+  if (warning === undefined) return '';
   const notDone = run.slices.filter(slice => slice.status !== 'done').map(slice => `${slice.id} "${slice.title}"`);
-  const detail = notDone.length === 0 ? warning : `${warning} Slices not done yet, which run with these loaded gates: ${notDone.join(', ')}.`;
+  const earlier = run.events.filter(event => event.kind === 'warning' && event.detail.startsWith(warning));
+  const SLICES = ' Slices not done yet, which run with these loaded gates:';
+  if (earlier.some(event => event.detail.includes(SLICES)) || (earlier.length > 0 && notDone.length === 0)) return '';
+  const detail = notDone.length === 0 ? warning : `${warning}${SLICES} ${notDone.join(', ')}.`;
   addEvent(run, 'warning', detail);
   return `\nWarning: ${detail}`;
 }

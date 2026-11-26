@@ -473,5 +473,20 @@ describe('self-host warning', () => {
       assert.doesNotMatch(await call('factory_start', { resume: 'demo' }), /Warning:/);
       assert.equal(warningsOf(repo.root, 'demo').length, 1);
     });
+
+    it('records one slice-bearing warning after a pre-plan warning held no slice sentence', async () => {
+      using repo = tempRepo('factory-selfhost-', { ...FACTORY, 'package.json': PLUGIN, 'src/index.ts': 'one' });
+      setLoadedPlugin({ hashes: pluginHashes(repo.root), root: repo.root });
+      writeFileSync(join(repo.root, 'src/new.ts'), 'x');
+      const { call } = session(repo.root, false);
+      const ws: Workspace = { config: loadConfig(repo.root), root: repo.root };
+      await call('factory_start', { feature: 'demo', source: SOURCE });
+      assert.equal(warningsOf(repo.root, 'demo').length, 1);
+      await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, [slice('Alpha')])));
+      assert.match(await call('factory_start', { resume: 'demo' }), /\nWarning: .*Slices not done yet, which run with these loaded gates: 01 "Alpha"\.$/m);
+      assert.equal(warningsOf(repo.root, 'demo').length, 2);
+      assert.doesNotMatch(await call('factory_start', { resume: 'demo' }), /Warning:/);
+      assert.equal(warningsOf(repo.root, 'demo').length, 2);
+    });
   });
 });
