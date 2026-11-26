@@ -25,6 +25,7 @@ describe('slice loop gates: carried observations', { concurrency: 4 }, () => {
     const ticket = readFileSync(ticketPath(ws, 'demo', second), 'utf8');
     assert.match(ticket, /## Carried-in work\n[\s\S]*### From green review 01-r1 of slice 01 "Feature"\n\nAlso log the parse time\.\n\nCarried keys: \(none\)\n\n### From green review 01-r1 of slice 01 "Feature"\n\n#### \[observation\] thermo-naming\n\n- Location: ok:1/);
     assert.doesNotMatch(ticket, /comments-stale/);
+    assert.match(ticket, /## Carried-in work[\s\S]*fixItems of factory_implementer_report as `<key> fixed in <sha>`/);
     assert.ok(ticket.indexOf('## Carried-in work') < ticket.indexOf('## Decisions the user already made'));
     assert.ok(ticket.indexOf('## Decisions the user already made') < ticket.indexOf('## For the advisor'));
     assert.equal(ticket.split('## For the advisor').length, 2);

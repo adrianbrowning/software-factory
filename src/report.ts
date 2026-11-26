@@ -6,6 +6,7 @@ import { ownCommits } from './repo.ts';
 import { TEST_PATH } from './test-paths.ts';
 import { changedPaths } from './targeted.ts';
 import { findingRecord } from './review-record.ts';
+import { carriedKeys } from './legacy-observations.ts';
 import { activeSlice, addEvent, reportPath, reviewIsOpen, requireActive, type Run, type Slice, type Workspace, writeAtomic } from './run.ts';
 
 // Guards only items sent through the factory_implementer_report tool: each item is one line (no \r, \n, U+2028, U+2029 or U+0085),
@@ -31,7 +32,7 @@ export const implementerReportSchema = z.object({
   fixItems: z
     .array(reportItem)
     .optional()
-    .describe('Fix mode only, and required there with at least one item; leave it out otherwise: each id from the fix file\'s "## Fix items", exactly as listed, with `fixed in <sha>`, `already fixed`, or `not a defect: <why>`. A line may also name an observation of the slice that is still unplaced (its id, or `<review>:<id>` when two reviews kept the same id, at the start of the line) with `fixed in <sha>` for a commit of the slice: the factory then records that observation as fixed, adds it to this round\'s fix items, and the next review\'s scope reviewer gives it a verdict'),
+    .describe('Required in fix mode with at least one item: each id from the fix file\'s "## Fix items", exactly as listed, with `fixed in <sha>`, `already fixed`, or `not a defect: <why>`. A line may also name an observation of the slice that is still unplaced (its id, or `<review>:<id>` when two reviews kept the same id, at the start of the line) with `fixed in <sha>` for a commit of the slice: the factory then records that observation as fixed, adds it to this round\'s fix items, and the next review\'s scope reviewer gives it a verdict. In build mode, optional and accepted only on a slice with carried keys, each line `<carried key> fixed in <sha>` for a commit of the slice; otherwise leave it out'),
   open: z.array(reportItem).describe('Anything unfinished, any stop report (NEEDS SEAM, SLICE TOO BIG, MISSING DEPENDENCY), and any question about a change to a shared helper outside the ticket (code that callers outside the ticket use) that you left out of the commit; empty when nothing is open'),
 });
 export type ImplementerReport = z.infer<typeof implementerReportSchema>;
@@ -40,12 +41,12 @@ function renderBehavior({ test, behavior, red }: z.infer<typeof behaviorSchema>)
   return `${test} → ${behavior} (seen red: ${red === undefined ? 'no' : `yes — ${red}`})`;
 }
 
-function renderReport(report: ImplementerReport) {
+function renderReport(report: ImplementerReport, fixMode: boolean) {
   const section = (title: string, items: string[]) => [`${title}:`, ...(items.length === 0 ? ['- none'] : items.map(item => `- ${item}`))];
   return [
     'Implementer report:',
     ...section('Commits', report.commits),
-    ...(report.fixItems === undefined ? [] : section('Fix file items', report.fixItems)),
+    ...(report.fixItems === undefined ? [] : section(fixMode ? 'Fix file items' : 'Carried items', report.fixItems)),
     ...section('Behaviors', report.behaviors.map(renderBehavior)),
     ...section('Open', report.open),
   ].join('\n');
@@ -123,10 +124,23 @@ export async function submitImplementerReport(ws: Workspace, run: Run, report: I
       `Slice ${slice.id} is in fix mode: list every fix file item in fixItems, each with \`fixed in <sha>\`, \`already fixed\`, or \`not a defect: <why>\`.`,
     );
   }
-  if (!fixMode && report.fixItems !== undefined) {
-    throw new Error(`Slice ${slice.id} is not in fix mode: leave fixItems out of the report.`);
-  }
   const own = await ownCommits(ws, slice);
+  if (!fixMode && report.fixItems !== undefined) {
+    const keys = slice.carried.flatMap(section => carriedKeys(section) ?? []);
+    if (keys.length === 0) throw new Error(`Slice ${slice.id} is not in fix mode: leave fixItems out of the report.`);
+    const bad = report.fixItems.filter(line => {
+      const match = FIXED_LINE.exec(line);
+      if (match === null || !keys.includes(match[2]!)) return true;
+      const sha = match[3]!.toLowerCase();
+      return !own.some(commit => commit.sha.startsWith(sha));
+    });
+    if (bad.length > 0) {
+      throw new Error(
+        `Nothing stored. In build mode fixItems takes only \`<carried key> fixed in <sha>\` lines, with a key the slice carries and the sha of a commit on slice ${slice.id} past ${slice.parentBranch}. These lines do not:\n${bad.join('\n')}\nThe slice's carried keys:\n${keys.join('\n')}`,
+      );
+    }
+  }
+
   const rejected = report.commits.filter(item => {
     const prefix = commitPrefix(item);
     return prefix === undefined || !own.some(commit => commit.sha.startsWith(prefix));
@@ -139,11 +153,12 @@ export async function submitImplementerReport(ws: Workspace, run: Run, report: I
   await refuseUntestedSeamedSlice(ws, slice, report, fixMode);
   const path = reportPath(ws, run.feature, slice);
   const replaced = existsSync(path);
-  writeAtomic(path, `${renderReport(report)}\n`);
+  writeAtomic(path, `${renderReport(report, fixMode)}\n`);
   // An open review's data file already lists the fix items its scope reviewer must judge; adding more would leave it unable to give them.
   const reviewOpen = reviewIsOpen(slice);
-  const fixed = report.fixItems !== undefined && !reviewOpen ? recordFixedObservations(run, slice, report.fixItems, own) : [];
-  const skippedForOpenReview = reviewOpen && report.fixItems?.some(line => FIXED_LINE.test(line)) === true;
+  const fixed = fixMode && report.fixItems !== undefined && !reviewOpen ? recordFixedObservations(run, slice, report.fixItems, own) : [];
+  const skippedForOpenReview = fixMode && reviewOpen && report.fixItems?.some(line => FIXED_LINE.test(line)) === true;
+
   return { fixed, path, replaced, skippedForOpenReview };
 }
 
@@ -241,7 +256,7 @@ export function remapReportShas(ws: Workspace, run: Run, slice: Slice, pairs: { 
       }
       return `- ${next}${line.slice(2 + hex.length)}`;
     }
-    if (section === 'Fix file items:') return line.replace(/(\bfixed in )([0-9a-f]{7,40})\b/i, (all, lead: string, hex: string) => `${lead}${swap(hex) ?? hex}`);
+    if (section === 'Fix file items:' || section === 'Carried items:') return line.replace(/(\bfixed in )([0-9a-f]{7,40})\b/i, (all, lead: string, hex: string) => `${lead}${swap(hex) ?? hex}`);
     return line;
   });
   if (failed) {
