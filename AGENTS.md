@@ -27,6 +27,8 @@ A change to a `factory_*` tool reply or to documented behavior also updates `ski
 
 Tests run on node:test, not vitest; run one test file with `sh scripts/test.sh <file>` or `pnpm run test <file>`.
 
+A `src/` function is often tested in more than one test file. Its unit tests sit in its own file, for example test/workflow.test.ts for a `src/workflow.ts` function. Tool tests of the `factory_*` tool that calls it sit in test/index.test.ts and in other test/*.test.ts files. When you change a `src/` function, also run the test files of the factory tools that call it. Find them: search test/ for the quoted tool name, for example `'factory_start'`.
+
 Lint with `pnpm run lint`, which runs shellcheck on `scripts/*.sh`; no ESLint config exists, so do not run eslint directly.
 
 When a change makes a `src/` file longer, adds a `src/` file, or moves code between `src/` modules, run `sh scripts/test.sh test/structure.test.ts` before committing. It enforces the 1000-line limit per `src/` file, no ticket decision citations in comments, no runtime import cycles, and no re-export shims between `src/` modules. It also checks that the backticked `src/` paths and camelCase names of CODING_STANDARDS.md still exist; paragraphs marked "past history" are exempt.
