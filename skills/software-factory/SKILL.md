@@ -40,7 +40,7 @@ Before you record a decision with `factory_decide`, or write an acceptance crite
 
 When the issue (for example a retro finding) reports that an agent broke a rule its prompt already states, first search the agent file, the skill and the ticket text for that rule. When the rule is already there, the prompt line has failed once. Plan a check that does not depend on the same agent obeying it, for example a gate in a `factory_*` tool or a check by a second agent (for example the review validator). Do not plan only another prompt line.
 
-Write each decision recorded in this section, interactive or headless, at the precision you want enforced. Reviewers and the validator read a decision literally and report code that misses its literal wording as high, so an absolute phrase such as "no other git-tracked file holds the phrase" makes them escalate edge cases you did not mean (for example binary files). Write the scope you actually mean ("no other tracked text file"). State what the decision covers and what it does not, and avoid absolute wording ("never", "always", "no X") that the code does not hold in every case.
+Write every decision, interactive or headless, at the precision you want enforced. Reviewers and the validator read a decision literally and report code that misses its literal wording as high, so an absolute phrase such as "no other git-tracked file holds the phrase" makes them escalate edge cases you did not mean (for example binary files). Write the scope you actually mean ("no other tracked text file"). State what the decision covers and what it does not, and avoid absolute wording ("never", "always", "no X") that the code does not hold in every case.
 
 ## 3. Slice
 
