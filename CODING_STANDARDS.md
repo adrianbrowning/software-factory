@@ -135,6 +135,16 @@ The `factory_checks` handler in `src/index.ts` is the pattern to copy: `unchange
 
 Example (issue-377 retro, past history): the flagged-files text was appended onto `unchanged`, so a const named for "no new commits" held flagged-file text too. It is now the separate `flagged` const. This is a reviewer judgement rule; no test enforces it.
 
+## Relative paths in agent text
+
+A relative path shown in text that agents read (tool replies such as Next lines, tickets, fix files, review data files) uses forward slashes on every platform. Build it with `posix.join` from node:path, or write it with a literal '/'. Never build it with the native `join`. An absolute path used for file I/O (built from the workspace root or the run dir) keeps the native `join`.
+
+The repository states no supported-platform list. A reviewer or validator does not drop a finding about a native-separator relative path in agent text on the grounds that a platform such as Windows is not supported.
+
+Copy `reportFile` in `src/run.ts`: it builds the relative report path with `posix.join`, and `reportPath` joins it to the run dir with the native `join` for file I/O.
+
+Example (issue-788 slice 01, past history): a fix round found `reportFile` built with the native `join`, so the Next line would say `reports\01.md` on Windows. This is a reviewer judgement rule; no test enforces it.
+
 ## Plugin text cites no plugin-only paths
 
 Text in files under `skills/` and `agents/` must not cite a file or directory that exists only in this plugin's repository (for example `test/helpers.ts`, `src/index.ts`, `scripts/test.sh`) as if it were in the working repository. That text runs as prompt text in every repository the factory works on, where such a path does not exist or names a different file, so the agent looks for the wrong thing or trusts the wrong file.
