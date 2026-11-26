@@ -3,6 +3,7 @@ import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
 import { type Finding, findingSchema, readRun, REVIEW_DOMAINS, ticketPath, type Workspace } from '../src/run.ts';
+import { domainFile, sha256 } from '../src/review-record.ts';
 import { pathSkips, recordDecisions, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
 import { nextSlice } from '../src/workflow.ts';
 import { bindRun } from '../src/active-run.ts';
@@ -547,12 +548,23 @@ describe('autonomous decisions', { concurrency: 4 }, () => {
 
   describe('merging duplicates that cite the same autonomous decision', () => {
     const refusal = /autonomous decision cannot be dropped or downgraded/;
-    async function submitted(ws: Workspace, findings: Partial<Record<Finding['domain'], Finding[]>>) {
+    async function submitted(ws: Workspace, findings: Partial<Record<Finding['domain'], Finding[]>>, observationDecisions: Record<string, number> = {}) {
       const { reviewId } = await decisionReview(ws, 'headless', ['Narrow reading: no export.', 'Second decision.']);
       for (const domain of REVIEW_DOMAINS) {
         await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings: findings[domain] ?? [], reviewId, ...noFixItems(domain) }));
       }
+      for (const [id, decision] of Object.entries(observationDecisions)) await citeDecision(ws, reviewId, id.split('-')[0] as Finding['domain'], id, decision);
       return (input: object) => step(ws, run => submitValidation(ws, run, { agentId: 'v', dropped: [], keep: [], reviewId, ...input }));
+    }
+    /** submitDomain refuses an observation with a decision, so the case seeds one into a submitted file and its recorded hash. */
+    async function citeDecision(ws: Workspace, reviewId: string, domain: Finding['domain'], id: string, decision: number) {
+      await step(ws, run => {
+        const review = run.slices.find(slice => slice.review?.id === reviewId)!.review!;
+        const path = domainFile(ws, run, reviewId, domain);
+        const content = `${JSON.stringify((JSON.parse(readFileSync(path, 'utf8')) as Finding[]).map(entry => (entry.id === id ? { ...entry, decision } : entry)), null, 2)}\n`;
+        writeFileSync(path, content);
+        review.submissions[domain]!.hash = sha256(content);
+      });
     }
     const cites = (domain: Finding['domain'], severity: Finding['severity'], name: string, decision?: number): Finding => ({
       ...finding(domain, severity, name),
@@ -577,12 +589,28 @@ describe('autonomous decisions', { concurrency: 4 }, () => {
       assert.equal(result.dropped, 1);
     });
 
+    it('counts an observation escalated with another decision as citing the escalate entry decision, in the check and the fix file', async () => {
+      using ws = workspace();
+      const validate = await submitted(ws, {
+        bug: [{ ...cites('bug', 'observation', 'o'), category: 'structure' }],
+        'react-ts': [cites('react-ts', 'high', 'one', 1), cites('react-ts', 'high', 'two', 2)],
+      }, { 'bug-o': 1 });
+      const escalate = [{ decision: 2, id: 'bug-o', reason: 'breaks it' }];
+      await assert.rejects(validate({ dropped: [{ duplicateOf: 'bug-o', id: 'react-ts-one', reason: 'x' }], escalate, keep: ['react-ts-two'] }), refusal);
+      await validate({ dropped: [{ duplicateOf: 'bug-o', id: 'react-ts-two', reason: 'same problem' }], escalate, keep: ['react-ts-one'] });
+      const result = await step(ws, run => recordReview(ws, run));
+      assert.ok(result.kind === 'fix');
+      const fix = readFileSync(result.fixPath, 'utf8');
+      assert.match(fix, /### \[high\] bug-o[\s\S]*?- Breaks decision 2: Second decision\./);
+      assert.doesNotMatch(fix, /bug-o[\s\S]*?Breaks decision 1[\s\S]*?react-ts-one/);
+    });
+
     it('still refuses every other drop of such a finding, and names the remedy', async () => {
       using ws = workspace();
       const validate = await submitted(ws, {
         bug: [cites('bug', 'high', 'a', 1), cites('bug', 'high', 'plain'), cites('bug', 'high', 'other', 2), cites('bug', 'high', 'down', 1), { ...cites('bug', 'observation', 'obs'), category: 'structure' }],
         'react-ts': [cites('react-ts', 'high', 'b', 1)],
-      });
+      }, { 'bug-obs': 1 });
       const rest = ['bug-a', 'bug-plain', 'bug-other', 'bug-down', 'bug-obs'];
       const drop = (duplicateOf?: string) => [{ ...(duplicateOf === undefined ? {} : { duplicateOf }), id: 'react-ts-b', reason: 'x' }];
       await assert.rejects(validate({ dropped: drop(), keep: rest }), refusal);

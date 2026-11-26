@@ -105,6 +105,9 @@ export const validationSchema = z.object({
 
 export type Validation = z.infer<typeof validationSchema>;
 
+/** The decision an escalated finding cites: its escalate entry's `decision` when the entry gives one, else the finding's own. */
+export const escalatedDecision = (finding: Finding, entry: { decision?: number | undefined }) => entry.decision ?? finding.decision;
+
 /**
  * Kept findings at the severity the gate uses: downgraded findings count as observations (with the category the
  * validator gave one that had none), escalated ones as high and, when the validator cited a decision or an unmet criterion, carry it.
@@ -117,7 +120,7 @@ export function keptFindings(findings: Finding[], validation: Validation) {
     .map(finding => {
       if (downgraded.has(finding.id)) return { ...finding, category: finding.category ?? downgraded.get(finding.id), severity: 'observation' as const };
       const entry = escalated.get(finding.id);
-      if (entry !== undefined) return { ...finding, ...(entry.criterion === undefined ? { decision: entry.decision } : { criterion: entry.criterion }), severity: 'high' as const };
+      if (entry !== undefined) return { ...finding, ...(entry.criterion === undefined ? { decision: escalatedDecision(finding, entry) } : { criterion: entry.criterion }), severity: 'high' as const };
       return finding;
     });
 }
