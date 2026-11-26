@@ -28,8 +28,9 @@ function reviewObservations(ws: Workspace, run: Run, slice: Slice, purpose: stri
   const raw = readRecorded(validationFile(ws, run, review.id), review.validation);
   if (raw === undefined) throw new Error(`Review ${review.id} has no validation.`);
   const { findings } = recordedFindings(ws, run, review);
-  const observations = keptFindings(findings, validationSchema.parse(raw)).filter(finding => finding.severity === 'observation');
-  return { observations, review, slice };
+  const validation = validationSchema.parse(raw);
+  const observations = keptFindings(findings, validation).filter(finding => finding.severity === 'observation');
+  return { observations, review, slice, warnings: new Map(validation.fixWarnings.map(entry => [entry.id, entry.warning])) };
 }
 
 function unknownObservations(review: Review, observations: Finding[], unknown: string[]) {
@@ -43,10 +44,10 @@ function unknownObservations(review: Review, observations: Finding[], unknown: s
  * the run.
  */
 function greenObservations(ws: Workspace, run: Run, chosen: Set<string>, purpose: string) {
-  const { observations, review, slice } = reviewObservations(ws, run, requireActive(run), purpose);
+  const { observations, review, slice, warnings } = reviewObservations(ws, run, requireActive(run), purpose);
   const unknown = [...chosen].filter(id => !observations.some(finding => finding.id === id));
   if (unknown.length > 0) throw unknownObservations(review, observations, unknown);
-  return { observations: observations.filter(finding => chosen.has(finding.id)), review, slice };
+  return { observations: observations.filter(finding => chosen.has(finding.id)), review, slice, warnings };
 }
 
 /** Throws when `chosen` has ids and the active slice's last green review was targeted: ids are placed after its full review, by factory_place or these tools. */
@@ -152,7 +153,7 @@ export function planDefer(ws: Workspace, run: Run, request: DeferRequest) {
 
 /**
  * The bug the user found and the observations the user chose to fix, with `groups` (each chosen observation under the review that kept it, red reviews included) and `review`, the slice's last review (the one the fix follows). The ids
- * may be unplaced observations of any of the active slice's reviews. Throws for a request with neither bug nor ids, for a slice without a green review, and for an id no
+ * may be unplaced observations of any of the active slice's reviews; each group also holds the validator fix warnings of its own review, by finding id. Throws for a request with neither bug nor ids, for a slice without a green review, and for an id no
  * review lists. Does not change the run.
  */
 export function planFix(ws: Workspace, run: Run, request: FixRequest) {
@@ -164,7 +165,7 @@ export function planFix(ws: Workspace, run: Run, request: FixRequest) {
     ...(shownBug === undefined ? [] : [{ kind: 'bug' as const, label: 'bug', line: `- Bug: ${shownBug}` }]),
     ...found.observations.map(finding => ({ kind: 'observation' as const, label: finding.id, line: `- ${finding.id}: ${findingTitle(finding.title)}` })),
   ];
-  return { bug, items, shownBug, ...found, groups: found.groups ?? [{ observations: found.observations, review: found.review }] };
+  return { bug, items, shownBug, ...found, groups: found.groups ?? [{ observations: found.observations, review: found.review, warnings: found.warnings }] };
 }
 
 /**
@@ -181,7 +182,10 @@ function unplacedObservations(run: Run, chosen: Set<string>) {
   const ambiguous = [...chosen].filter((_, index) => (entries[index]?.length ?? 0) > 1);
   if (ambiguous.length > 0) throw new Error(`Observation ids unplaced under more than one review of slice ${slice.id}: ${ambiguous.join(', ')}.`);
   const picked = entries.flat();
-  const groups = [...new Set(picked.map(entry => entry.review))].map(id => ({ observations: picked.filter(entry => entry.review === id).map(entry => entry.finding), review: { id } }));
+  const groups = [...new Set(picked.map(entry => entry.review))].map(id => {
+    const own = picked.filter(entry => entry.review === id);
+    return { observations: own.map(entry => entry.finding), review: { id }, warnings: new Map(own.flatMap(entry => (entry.fixWarning === undefined ? [] : [[entry.finding.id, entry.fixWarning] as const]))) };
+  });
   return { groups, observations: picked.map(entry => entry.finding), review, slice };
 }
 
@@ -203,7 +207,7 @@ export function fixAfterGreen(ws: Workspace, run: Run, request: FixRequest, reas
           },
         ]),
     ...groups.flatMap(group =>
-      group.observations.map(finding => findingRecord(finding, `## Observations from ${group.review.id === review.id ? 'green review' : 'review'} ${group.review.id} the user chose to fix\n\n${why}`, run.decisions)),
+      group.observations.map(finding => findingRecord(finding, `## Observations from ${group.review.id === review.id ? 'green review' : 'review'} ${group.review.id} the user chose to fix\n\n${why}`, run.decisions, group.warnings.get(finding.id))),
     ),
   ];
   // The fix file is written before the run changes, so a failed write leaves the run as it was.

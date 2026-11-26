@@ -163,6 +163,8 @@ const sha = z.string().regex(/^[0-9a-f]{40}([0-9a-f]{24})?$/);
 const unplacedSchema = z.object({
   category: z.enum(OBSERVATION_CATEGORIES),
   finding: findingSchema,
+  /** The validator's warning on the observation's suggested fix, from the validation of the review that kept it; a fix round shows it in the observation's section. */
+  fixWarning: text.optional(),
   review: text,
   /** The commit the review that kept the observation was made on; a deferred item names it. Absent in state from before it was stored. */
   sha: sha.optional(),
