@@ -223,10 +223,10 @@ describe('review submissions', { concurrency: 4 }, () => {
     await assert.rejects(submit('react-ts', [{ ...declared, severity: 'observation' }]), /breaks a recorded decision, so it must be critical or high/);
     await assert.rejects(submit('react-ts', [{ ...declared, decision: 2 }]), /names decision 2, but the review data lists 1 decisions/);
     for (const domain of REVIEW_DOMAINS) {
-      await submit(domain, domain === 'react-ts' ? [declared] : domain === 'bug' ? [finding('bug', 'observation', 'missed-conflict')] : []);
+      await submit(domain, domain === 'react-ts' ? [declared] : domain === 'bug' ? [finding('bug', 'observation', 'missed-conflict')] : domain === 'testing' ? [finding('testing', 'high', 'plain-gap')] : []);
     }
     const validate = (input: { downgrade?: { category?: string; decisionMatch?: string; id: string; reason: string }[]; escalate?: { decision: number; id: string; reason: string }[]; keep: string[] }) =>
-      step(ws, run => submitValidation(ws, run, { agentId: 'v', dropped: [], reviewId, ...input }));
+      step(ws, run => submitValidation(ws, run, { agentId: 'v', dropped: [], reviewId, ...input, keep: input.downgrade?.some(d => d.id === 'testing-plain-gap') ? input.keep : [...input.keep, 'testing-plain-gap'] }));
     const reason = 'breaks the decision';
 
     await assert.rejects(
@@ -238,8 +238,8 @@ describe('review submissions', { concurrency: 4 }, () => {
       /decisionMatch/,
     );
     await assert.rejects(
-      validate({ downgrade: [{ decisionMatch: 'x', id: 'bug-missed-conflict', reason }], keep: ['react-ts-undefined-field'] }),
-      /bug-missed-conflict/,
+      validate({ downgrade: [{ category: 'correctness', decisionMatch: 'x', id: 'testing-plain-gap', reason }], keep: ['react-ts-undefined-field', 'bug-missed-conflict'] }),
+      /decisionMatch.*applies only to a finding whose/,
     );
     await assert.rejects(
       validate({ escalate: [{ decision: 1, id: 'react-ts-undefined-field', reason }], keep: ['bug-missed-conflict'] }),
@@ -253,7 +253,7 @@ describe('review submissions', { concurrency: 4 }, () => {
 
     const result = await step(ws, run => recordReview(ws, run));
     assert.ok(result.kind === 'fix');
-    assert.equal(result.blocking, 2);
+    assert.equal(result.blocking, 3);
     const fix = readFileSync(result.fixPath, 'utf8');
     assert.match(fix, /\[high\] bug-missed-conflict[\s\S]*- Breaks decision 1: The shared field is a non-optional record\./);
     assert.match(fix, /\[high\] react-ts-undefined-field[\s\S]*- Breaks decision 1:/);
