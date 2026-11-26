@@ -1,3 +1,4 @@
+import './git-env-guard.ts';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { requireFeatureName } from '../src/feature-name.ts';
