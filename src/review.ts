@@ -177,6 +177,9 @@ function firstFailureNames({ lastStream, stderr, stdout }: CommandResult) {
   const rest = names.size - MAX_NAMED_TESTS;
   return `; failing tests: ${listed}${rest > 0 ? ` and ${rest} more` : ''}`;
 }
+/** A check run whose wall clock and monotonic clock disagree by more than this saw a host sleep or clock change. */
+const CLOCK_JUMP_MS = 30_000;
+
 export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   const slice = requireActive(run);
   const sha = await requireOnBranchClean(ws.root, slice, 'Checks run on committed work only');
@@ -244,6 +247,14 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
     entry.result = await runShell(entry.command, ws.root, ws.config.checkTimeoutMs, signal, env);
   }
   signal?.throwIfAborted();
+  // A host sleep or clock change during the run that decides a failed check makes that failure unreliable, and a code fix cannot change it.
+  const jumped = results.filter(({ result }) => (result.exitCode !== 0 || result.timedOut) && result.clockJumpMs > CLOCK_JUMP_MS);
+  if (jumped.length > 0) {
+    const listed = jumped.map(({ command, result }) => `- ${command}: clockJumpMs ${result.clockJumpMs}`).join('\n');
+    throw new Error(
+      `Checks ended failed while the host clock jumped:\n${listed}\nThis is an environment error from a host sleep or a clock change during the check, not a code fault. Then call factory_checks again.`,
+    );
+  }
   const dirty = (await porcelain(ws.root)).trim();
   const failed = results.filter(({ result }) => result.exitCode !== 0 || result.timedOut);
   const describe = ({ command, first, result }: { command: string; first?: CommandResult; result: CommandResult }) => {
