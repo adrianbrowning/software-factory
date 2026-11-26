@@ -64,11 +64,33 @@ describe('factory-observed typecheck', () => {
     assert.ok(s.stored().split('\n').includes(OBSERVED(TC, 0)));
   });
 
-  it('gives exit 0 to an exact run with no details.exitCode even when the result is flagged isError', async () => {
+  it('does not count an exact run flagged isError with no numeric details.exitCode', async () => {
+    for (const details of [undefined, {}, { exitCode: 'x' }]) {
+      using s = await started();
+      await s.bash(s.implementer, TC, { details, isError: true });
+      const reply = await s.submit();
+      assert.ok(s.stored().split('\n').includes(NONE(TC)), s.stored());
+      assert.ok(reply.split('\n').includes(MISSING(TC)), reply);
+    }
+  });
+
+  it('keeps an earlier counted run when a later exact result is an isError result with no numeric details.exitCode', async () => {
     using s = await started();
-    await s.bash(s.implementer, TC, { isError: true });
+    await s.bash(s.implementer, TC, { details: { exitCode: 2 } });
+    await s.bash(s.implementer, TC, { details: undefined, isError: true });
     await s.submit();
-    assert.ok(s.stored().split('\n').includes(OBSERVED(TC, 0)));
+    assert.ok(s.stored().split('\n').includes(OBSERVED(TC, 2)), s.stored());
+  });
+
+  it('keeps the numeric details.exitCode of an exact run flagged isError, and gives exit 0 to an unflagged one without it', async () => {
+    using s = await started();
+    await s.bash(s.implementer, TC, { details: { exitCode: 2 }, isError: true });
+    await s.submit();
+    assert.ok(s.stored().split('\n').includes(OBSERVED(TC, 2)), s.stored());
+    await s.spawn();
+    await s.bash(s.implementer, TC, { isError: undefined });
+    await s.submit();
+    assert.ok(s.stored().split('\n').includes(OBSERVED(TC, 0)), s.stored());
   });
 
   it('counts a command with surrounding whitespace like the exact one', async () => {
@@ -80,7 +102,7 @@ describe('factory-observed typecheck', () => {
 
   it('reads the exit code of the echo suffix form, and does not count it without an exit line', async () => {
     using s = await started();
-    await s.bash(s.implementer, `${TC}; echo "exit $?"`, { content: [{ text: 'ok\nexit 1', type: 'text' }] });
+    await s.bash(s.implementer, `${TC}; echo "exit $?"`, { content: [{ text: 'exit 5\nok\nexit 1', type: 'text' }] });
     await s.submit();
     assert.ok(s.stored().split('\n').includes(OBSERVED(TC, 1)));
     await s.spawn();
@@ -138,6 +160,14 @@ describe('factory-observed typecheck', () => {
     assert.ok(s.stored().split('\n').includes(OBSERVED(TC, 0)));
     const again = await s.submit();
     assert.ok(again.split('\n').includes(OBSERVED(TC, 0)), again);
+  });
+
+  it('puts the missing line in the reply only for the typecheck command with no counted run', async () => {
+    using s = await started([TC, 'pnpm run typecheck:web']);
+    await s.bash(s.implementer, TC);
+    const reply = await s.submit();
+    assert.ok(reply.split('\n').includes(MISSING('pnpm run typecheck:web')), reply);
+    assert.deepEqual(reply.split('\n').filter(line => line === MISSING(TC)), []);
   });
 
   it('has one line per typecheck command in check order, and no section when no check is a typecheck', async () => {

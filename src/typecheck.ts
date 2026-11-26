@@ -19,8 +19,10 @@ const bashResult = z.object({
  * The typecheck command and exit code of an unfiltered run in a bash tool_result event, or undefined when it does not count.
  * It counts when the trimmed input.command is exactly a typecheck command of `checks`, or exactly one followed by
  * `; echo "exit $?"`; a result that came back before the command finished (a background job) or timed out never counts.
- * The exact form's exit code is details.exitCode when it is a number, else 0 (omp's bash tool sets it only for a non-zero
- * exit); the suffix form's is the N of the last output line matching /^exit (\d+)$/, and without such a line the run does not count.
+ * The exact form's exit code is details.exitCode when it is a number (whatever isError is), else 0 when isError is not true
+ * (omp's bash tool sets it only for a non-zero exit); an isError true result with no numeric details.exitCode (omp throws an
+ * aborted run or a missing exit status as an error with no details) does not count.
+ * The suffix form's exit code is the N of the last output line matching /^exit (\d+)$/, and without such a line the run does not count.
  * A suffix-form result with isError true never counts: a completed suffix-form run exits 0 through the echo, so an error
  * result is a cancelled, timed-out or unfinished run whose partial output may still hold an exit line.
  */
@@ -35,7 +37,7 @@ export function observeTypecheck(event: unknown, checks: string[]) {
   const exact = commands.find(candidate => candidate === command);
   if (exact !== undefined) {
     if (typeof details?.exitCode === 'number') return { command: exact, exit: details.exitCode };
-    return { command: exact, exit: 0 };
+    return isError === true ? undefined : { command: exact, exit: 0 };
   }
   const suffixed = commands.find(candidate => command === `${candidate}${EXIT_SUFFIX}`);
   if (suffixed === undefined || isError === true) return undefined;
