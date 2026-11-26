@@ -372,6 +372,7 @@ confirm:
 - The new slice comes last and branches from the slice below it. The other slices and their PRs are not changed.
 - It goes through implement, checks, and review like any other slice, and gets its own PR.
 - It takes every item waiting on the run from `factory_carry` with `to: "end"`, and the queue empties.
+- The dialog and reply list each waiting item whose file its own slice changed, as a warning that a later `factory_reopen` of that slice can conflict when the follow-up slice restacks onto it.
 - A done run runs again, and it needs a new retro before `/factory submit`.
 
 ## Configure

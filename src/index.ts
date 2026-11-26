@@ -8,6 +8,7 @@ import { CONFIG_PATH, describeModels, loadConfig, requireAvailableModels, requir
 import { flaggedFilesSection } from './flagged-files.ts';
 import { newChecksSection } from './new-checks.ts';
 import { gitArchWarning } from './git-arch.ts';
+import { followUpOverlap } from './follow-up-overlap.ts';
 import { carriedKeys } from './legacy-observations.ts';
 import { deferItems } from './deferred.ts';
 import { chooseChecks, ensureChecks, gate, loadSource } from './gates.ts';
@@ -534,14 +535,15 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
       const current = readRun(ws, feature);
       const planned = planFollowUp(ws, current, params);
       const carried = current.waiting.length === 0 ? '' : `\n\nThe slice also takes the carried items waiting on the run (${current.waiting.length}).`;
-      const body = `${params.whatToBuild}\n\nAcceptance:\n${params.acceptance.map(item => `- ${item}`).join('\n')}${carried}\n\nThe slice branches from ${planned.parentBranch}. The slices below it are not changed. The run needs a new retro before /factory submit.`;
+      const overlap = await followUpOverlap(ws.root, current);
+      const body = `${params.whatToBuild}\n\nAcceptance:\n${params.acceptance.map(item => `- ${item}`).join('\n')}${carried}${overlap === '' ? '' : `\n\n${overlap}`}\n\nThe slice branches from ${planned.parentBranch}. The slices below it are not changed. The run needs a new retro before /factory submit.`;
       if (!(await gate(ctx, ws, feature, 'followUp', `Add follow-up slice "${params.title}"?`, body))) {
         return reply('The user did not add the follow-up slice. Ask how to handle the work.');
       }
       return withRun(ws, feature, run => {
         const slice = addFollowUp(ws, run, params);
         const taken = slice.carried.length === 0 ? '' : `, with the waiting carried items (${slice.carried.length})`;
-        return reply(`Slice ${slice.id} "${slice.title}" is added on ${slice.branch}${taken}.\nNext: ${nextAction(run)}`);
+        return reply(`Slice ${slice.id} "${slice.title}" is added on ${slice.branch}${taken}.${overlap === '' ? '' : `\n${overlap}`}\nNext: ${nextAction(run)}`);
       });
     },
   });

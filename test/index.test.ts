@@ -1377,10 +1377,72 @@ describe('used-up fix budget', () => {
     const followUp = { acceptance: ['logged'], estimateTokens: 500, seams: ['cli'], title: 'Polish', whatToBuild: 'Polish' };
     const added = await call('factory_follow_up', followUp, yes);
     assert.match(asked[1] ?? '', /The slice also takes the carried items waiting on the run \(2\)\./);
-    assert.match(added.content[0]?.text ?? '', /^Slice 02 "Polish" is added on .*, with the waiting carried items \(2\)\.\nNext: Call factory_next/);
+    assert.match(added.content[0]?.text ?? '', /^Slice 02 "Polish" is added on .*, with the waiting carried items \(2\)\.\nOverlap with done slices \(file-level\):\n- \S+ \(ok\): slice 01 "Feature" changed this file[\s\S]*\nNext: Call factory_next/);
     const state = readRun(ws, 'demo');
     assert.deepEqual(state.waiting, []);
     assert.match(readFileSync(ticketPath(ws, 'demo', state.slices[1] ?? assert.fail('no slice')), 'utf8'), /## Carried-in work[\s\S]*Log the parse time\./);
+  });
+
+  describe('factory_follow_up overlap report', () => {
+    const followUp = { acceptance: ['logged'], estimateTokens: 500, seams: ['cli'], title: 'Polish', whatToBuild: 'Polish' };
+
+    async function queued(ws: Workspace, call: Awaited<ReturnType<typeof budgetRun>>['call'], paths: string[], note?: string) {
+      commit(ws, 'work.txt');
+      await withRun(ws, 'demo', run => runChecks(ws, run));
+      commit(ws, 'ok');
+      await withRun(ws, 'demo', run => runChecks(ws, run));
+      const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+      await review(ws, reviewId, paths.map(path => ({ ...finding('thermo', 'observation', path), path: 'ok' })));
+      await withRun(ws, 'demo', run => recordReview(ws, run));
+      await call('factory_carry', { ...(note === undefined ? {} : { note }), observations: paths.map(path => `thermo-${path}`), to: 'end' }, { confirm: async () => true });
+      // A review only accepts findings in its diff, so point the not-overlapping entries at a file the slice did not change.
+      await withRun(ws, 'demo', run => {
+        for (const entry of run.observations) if (entry.id === 'thermo-untouched') entry.location = 'untouched:1';
+      });
+      await withRun(ws, 'demo', current => completeSlice(ws, current));
+    }
+
+    it('lists the waiting item whose file its own slice changed, not the other, in the reply and the dialog, and still adds the slice', async () => {
+      using repo = budgetRepo();
+      const { call, ws } = await budgetRun(repo.root, ['Feature']);
+      await queued(ws, call, ['ok', 'untouched']);
+      const asked: string[] = [];
+      const added = await call('factory_follow_up', followUp, { confirm: async (_title: string, body: string) => (asked.push(body), true) });
+      const line = (key: string, path: string) => `- ${key} (${path}): slice 01 "Feature" changed this file; a factory_reopen of slice 01 that changes the same lines conflicts when this slice restacks onto it.`;
+      const changedKey = `${readRun(ws, 'demo').observations.find(entry => entry.id === 'thermo-ok')?.key}`;
+      const otherKey = `${readRun(ws, 'demo').observations.find(entry => entry.id === 'thermo-untouched')?.key}`;
+      for (const text of [asked[0] ?? '', added.content[0]?.text ?? '']) {
+        assert.match(text, /Overlap with done slices \(file-level\):\n/);
+        assert.ok(text.includes(line(changedKey, 'ok')));
+        assert.ok(!text.includes(otherKey));
+      }
+      assert.match(asked[0] ?? '', /takes the carried items waiting on the run \(2\)\.\n\nOverlap with done slices/);
+      assert.match(added.content[0]?.text ?? '', /with the waiting carried items \(2\)\.\nOverlap[\s\S]*\nNext: /);
+      const state = readRun(ws, 'demo');
+      assert.deepEqual(state.waiting, []);
+      assert.equal(state.slices[1]?.carried.length, 2);
+    });
+
+    it('records the overlap block in the followUp gate event of a headless run', async () => {
+      using repo = budgetRepo();
+      const { call, ws } = await budgetRun(repo.root, ['Feature']);
+      await queued(ws, call, ['ok']);
+      await withRun(ws, 'demo', run => { run.mode = 'headless'; });
+      await call('factory_follow_up', followUp, {});
+      const event = readRun(ws, 'demo').events.find(item => item.detail.includes('gate followUp (auto)'));
+      assert.match(event?.detail ?? '', /Overlap with done slices \(file-level\):\n- \S+ \(ok\): slice 01/);
+    });
+
+    it('holds no overlap text when no waiting item overlaps', async () => {
+      using repo = budgetRepo();
+      const { call, ws } = await budgetRun(repo.root, ['Feature']);
+      await queued(ws, call, ['untouched'], 'Log it.');
+      const asked: string[] = [];
+      const added = await call('factory_follow_up', followUp, { confirm: async (_title: string, body: string) => (asked.push(body), true) });
+      assert.doesNotMatch(asked[0] ?? '', /Overlap with done slices/);
+      assert.doesNotMatch(added.content[0]?.text ?? '', /Overlap with done slices/);
+      assert.match(added.content[0]?.text ?? '', /^Slice 02 "Polish" is added on .*, with the waiting carried items \(2\)\.\nNext: /);
+    });
   });
 
   it('does not send a paused stall to the retro while carried items wait', async () => {
