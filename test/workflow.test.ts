@@ -4,8 +4,8 @@ import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
-import { startImplementerSession, submitImplementerReport } from '../src/report.ts';
-import { forgetRun, greenCommit, readRun, REVIEW_DOMAINS, REVIEW_REFERENCE_DIR, reviewDir, reviewPaths, type Run, ticketPath, type Workspace } from '../src/run.ts';
+import { startImplementerSession, storedReport, submitImplementerReport } from '../src/report.ts';
+import { forgetRun, greenCommit, readRun, REVIEW_DOMAINS, REVIEW_REFERENCE_DIR, reviewDir, reportPath, reviewPaths, type Run, ticketPath, type Workspace, writeAtomic } from '../src/run.ts';
 import { completeSlice, recordDecisions, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
 import {
   addFollowUp,
@@ -25,7 +25,7 @@ import {
 } from '../src/workflow.ts';
 import { parseRetro, recordRetro } from '../src/retro.ts';
 import { fileSource, githubSource } from '../src/source.ts';
-import { checkRuns, commit, countedCheck, finding, fixItems, green, newRun, review, sh, slice, start, step, workspace } from './helpers.ts';
+import { checkRuns, commit, countedCheck, dataSection, finding, fixItems, green, newRun, review, sh, slice, start, step, workspace } from './helpers.ts';
 
 describe('base resolution', () => {
   it('starts a run without the default base, and plans on a base the user chooses', async () => {
@@ -1180,8 +1180,8 @@ describe('reopen', () => {
     assert.equal((await step(ws, current => startReview(ws, current))).reviewId, '02-r2');
   });
 
-  it('does not show the old implementer report of a restacked slice in its checks result', async () => {
-    using ws = workspace({ maxRounds: 2 });
+  /** Slices 01 and 02 done, 02 with a stored report; `second` is what 02 commits ([file, content]) and `report` renders the report text from its short sha. */
+  async function twoDone(ws: Workspace, second: [string, string] = ['second.test.ts', 'x\n'], report?: (sha: string) => string) {
     await newRun(ws, [slice('First'), slice('Second', ['First'])]);
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
@@ -1189,23 +1189,97 @@ describe('reopen', () => {
     await green(ws);
     await step(ws, run => completeSlice(ws, run));
     await step(ws, run => nextSlice(ws, run));
-    commit(ws, 'second.test.ts');
-    const second = sh(ws.root, 'log', '--format=%h %s', '-1');
-    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [{ behavior: 'b', seenRed: true, red: 'failed', test: 't' }], commits: [second], open: [] }));
+    commit(ws, second[0], second[1]);
+    sh(ws.root, 'commit', '--amend', '-qm', `02: ${second[0]}`);
+    const sha = sh(ws.root, 'rev-parse', '--short=12', 'HEAD');
+    const line = `${sha} ${sh(ws.root, 'log', '--format=%s', '-1')}`;
+    if (report === undefined) await step(ws, run => submitImplementerReport(ws, run, { behaviors: [{ behavior: 'b', seenRed: true, red: 'failed', test: 't' }], commits: [line], open: [] }));
+    else writeAtomic(reportPath(ws, 'demo', readRun(ws, 'demo').slices[1] ?? assert.fail('no slice')), report(sha));
     await green(ws);
     await step(ws, run => completeSlice(ws, run));
+    return sha;
+  }
 
+  async function reopenFixAndComplete(ws: Workspace, file = 'first.txt') {
     await step(ws, run => reopenSlice(ws, run, '01', 'first.txt must say fixed'));
-    commit(ws, 'first.txt', 'fixed\n');
+    commit(ws, file, 'fixed\n');
     await step(ws, run => runChecks(ws, run));
     const reviewed = await step(ws, run => startReview(ws, run));
     await review(ws, reviewed.reviewId, []);
     await step(ws, run => recordReview(ws, run));
     await step(ws, run => completeSlice(ws, run));
-
     await step(ws, run => nextSlice(ws, run));
+  }
+
+  it('keeps the implementer report of the active slice a reopen sends back to pending', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    await newRun(ws, [slice('First'), slice('Second', ['First'])]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'second.test.ts');
+    const second = sh(ws.root, 'log', '--format=%h %s', '-1');
+    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [{ behavior: 'b', seenRed: true, red: 'failed', test: 't' }], commits: [second], open: [] }));
+    const before = readFileSync(reportPath(ws, 'demo', readRun(ws, 'demo').slices[1] ?? assert.fail('no slice')), 'utf8');
+
+    await step(ws, run => reopenSlice(ws, run, '01', 'bug'));
+    const run = readRun(ws, 'demo');
+    const stored = storedReport(ws, run, run.slices[1] ?? assert.fail('no slice'));
+    assert.ok(stored.startsWith(before.trimEnd()));
+    assert.ok(stored.includes(second));
+    assert.doesNotMatch(stored, /No implementer report was submitted/);
+  });
+
+  it('rewrites the implementer report of a restacked slice to the rebased shas in its checks result and review data', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    const old = await twoDone(ws);
+    await reopenFixAndComplete(ws);
+    const now = sh(ws.root, 'rev-parse', '--short=12', 'HEAD');
+    assert.notEqual(now, old);
     const checked = await step(ws, run => runChecks(ws, run));
-    assert.match(checked.report, /^No implementer report was submitted for slice 02 \(factory_implementer_report\)\./);
+    assert.match(checked.report, new RegExp(`^Implementer report:\\nCommits:\\n- ${now} 02: second.test.ts\\n`));
+    assert.doesNotMatch(checked.report, new RegExp(old.slice(0, 7)));
+    const section = dataSection((await step(ws, run => startReview(ws, run))).dataFile, 'IMPLEMENTER BEHAVIORS');
+    assert.match(section, /- t → b \(seen red: yes — failed\)/);
+    assert.doesNotMatch(section, /No implementer report was stored/);
+  });
+
+  it('rewrites a fixed in sha of the restacked report with the same length and leaves every other line as it was', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    const text = (sha: string) =>
+      `Implementer report:\nCommits:\n- ${sha.slice(0, 9)} 02: second.test.ts\nFix file items:\n- f1-a: fixed in ${sha}\n- f1-b: already fixed (${sha} untouched here)\nBehaviors:\n- t → b (seen red: no)\nOpen:\n- mentions ${sha}`;
+    const old = await twoDone(ws, ['second.test.ts', 'x\n'], text);
+    await reopenFixAndComplete(ws);
+    const now = sh(ws.root, 'rev-parse', '--short=12', 'HEAD');
+    const stored = readFileSync(reportPath(ws, 'demo', readRun(ws, 'demo').slices[1] ?? assert.fail('no slice')), 'utf8');
+    assert.equal(stored, `Implementer report:\nCommits:\n- ${now.slice(0, 9)} 02: second.test.ts\nFix file items:\n- f1-a: fixed in ${now}\n- f1-b: already fixed (${old} untouched here)\nBehaviors:\n- t → b (seen red: no)\nOpen:\n- mentions ${old}`);
+  });
+
+  it('removes the implementer report of a restacked slice whose commit the rebase dropped', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    await twoDone(ws, ['first.test.ts', 'fixed\n']);
+    await reopenFixAndComplete(ws, 'first.test.ts');
+    await assert.rejects(
+      step(ws, run => runChecks(ws, run)),
+      /No implementer report was submitted for slice 02 \(factory_implementer_report\)\./,
+    );
+  });
+
+  it('removes the stored report of a slice restartSlice sends back to implement', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    await newRun(ws, [slice('First'), slice('Second', ['First'])]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => nextSlice(ws, run));
+    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [], open: ['NEEDS SEAM: x'] }));
+    const path = reportPath(ws, 'demo', readRun(ws, 'demo').slices[1] ?? assert.fail('no slice'));
+    assert.ok(existsSync(path));
+    await step(ws, run => reopenSlice(ws, run, '01', 'bug'));
+    assert.ok(!existsSync(path));
   });
 
   it('restores every later branch and pauses the run when a restack conflicts', async () => {
