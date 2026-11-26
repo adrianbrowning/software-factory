@@ -131,7 +131,7 @@ export function selfHostWarning(repoRoot: string, loaded: LoadedPlugin = loadedP
   return `This run's repository ${repoRoot} is the loaded software-factory plugin, and these src/ or agents/ files are stale: ${clauses.join('; ')}.${unresolved} An interactive run can start a new omp session to load them; a headless run goes on with the loaded gates and needs no action.`;
 }
 
-/** Records the self-host warning for `repoRoot` as a 'warning' run event and returns the reply line for it, or '' when there is none or the run already has a 'warning' event starting with the same warning text. The recorded text appends a sentence naming each active or pending slice, which runs with the loaded gates; the sentence is not part of the de-duplication. */
+/** Records the self-host warning for `repoRoot` as a 'warning' run event and returns the reply line for it, or '' when there is none. The recorded text appends a sentence naming each slice not done yet, which runs with the loaded gates. De-duplication is on the warning text: a later call records nothing when an earlier 'warning' event starting with the same text already holds the slice sentence, or when no slice is left to name. An earlier matching event without a slice sentence (recorded before the plan) does not suppress one new event that holds it. */
 export function recordSelfHostWarning(run: Run, repoRoot: string) {
   const warning = selfHostWarning(repoRoot, undefined, run.baseSha ?? run.baseRef);
   if (warning === undefined) return '';
