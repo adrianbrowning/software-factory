@@ -93,7 +93,10 @@ describe('deferred item from a finding names symbol, location at filing time and
     const { call, ws } = await sinkRun(repo.root, { kind: 'file' });
     await call('factory_defer', { observations: ['thermo-naming'] });
     const run = readRun(ws, 'demo');
-    symbolic(run.deferred[0]?.body ?? '', run.slices[0]?.review?.sha ?? assert.fail('no review'));
+    const sha = run.slices[0]?.review?.sha ?? assert.fail('no review');
+    const body = run.deferred[0]?.body ?? '';
+    symbolic(body, sha);
+    assert.ok(body.startsWith(`Run: demo\nSlice: 01 "Feature"\nReview: ${run.deferred[0]?.review}\nReviewed commit: ${sha}\n${NOTE}\n\n`));
   });
 
   it('factory_place defer files the same lines, with the commit of the review that kept the observation', async () => {
