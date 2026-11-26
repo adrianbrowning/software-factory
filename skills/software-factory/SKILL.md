@@ -46,6 +46,8 @@ When a decision or acceptance criterion defines what a check accepts as free-tex
 
 When a decision or acceptance criterion sets a rule that a test assertion or check must meet, state the goal the rule serves, in interactive and headless runs alike, and not only one mechanism that serves it. For example, write "no text can slip between the fixed parts of the pinned wording", not only "the regex starts with ^ and ends with $". If the criterion names only the mechanism, the first implementer can meet the mechanism and miss the goal. Run issue-849 shows the cost: the decision said a full-wording pin is enough when the regex starts with ^ and ends with $. The regex /^foo.*: failed$/ met that and still let text in. An observation-only fix round then added the no-wildcard clause.
 
+When a decision or acceptance criterion adds or changes a rule that lets the review validator lower a finding's severity, or make it non-blocking, because its input is unlikely (for example a "contrived input" likelihood rule), state in the decision or criterion text, from the start and in interactive and headless runs alike, that input an untrusted or external party can supply on purpose (for example a crafted security payload) is not contrived, and that such a finding keeps its severity. The goal: an attacker-crafted payload is never downgraded as unlikely. Run issue-763 review 01-r2 is the evidence: a likelihood rule without this carve-out let a crafted payload be treated as contrived.
+
 ## 3. Slice
 
 Break the work into **tracer bullets** (Matt Pocock's `to-tickets` rules):
