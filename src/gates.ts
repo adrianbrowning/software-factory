@@ -15,15 +15,20 @@ export async function confirmInteractive(ctx: ExtensionContext, ws: Workspace, f
   return readRun(ws, feature).mode === 'headless' || confirm(ctx, title, body);
 }
 
+/** The most characters of a headless gate dialog body a run event holds, unless the gate is given a larger limit. */
+export const GATE_BODY_LIMIT = 2_000;
+
 /**
  * A confirmation gate. An interactive run asks the user. A headless run follows the policy for the gate: auto records an
  * autonomous event and proceeds; the event holds the dialog title, then the dialog body redacted and clipped to its first
- * 2,000 characters (a clipped body ends with a line saying how many characters are not shown); stop saves a pause with a reason naming the gate, then throws.
+ * `limit` characters (GATE_BODY_LIMIT unless the caller gives another; a clipped body ends with a line saying how many
+ * characters are not shown); stop saves a pause with a reason naming the gate, then throws. The limit does not apply to
+ * the dialog an interactive run shows.
  */
-export async function gate(ctx: ExtensionContext, ws: Workspace, feature: string, name: HeadlessGate, title: string, body: string) {
+export async function gate(ctx: ExtensionContext, ws: Workspace, feature: string, name: HeadlessGate, title: string, body: string, limit = GATE_BODY_LIMIT) {
   if (readRun(ws, feature).mode !== 'headless') return confirm(ctx, title, body);
   if (ws.config.headless[name] === 'auto') {
-    await withRun(ws, feature, run => addEvent(run, 'autonomous', `gate ${name} (auto): ${title}${autoBody(body)}`));
+    await withRun(ws, feature, run => addEvent(run, 'autonomous', `gate ${name} (auto): ${title}${autoBody(body, limit)}`));
     return true;
   }
   const reason = `headless gate "${name}" is set to stop: ${title}`;
@@ -32,10 +37,10 @@ export async function gate(ctx: ExtensionContext, ws: Workspace, feature: string
 }
 
 /** The body part of a headless auto gate event; the not-shown marker line appears only when the redacted body is clipped. */
-function autoBody(body: string) {
+function autoBody(body: string, limit: number) {
   const redacted = redact(body);
   if (redacted === '') return '';
-  return redacted.length > 2_000 ? `\n${redacted.slice(0, 2_000)}\n[${redacted.length - 2_000} characters not shown]` : `\n${redacted}`;
+  return redacted.length > limit ? `\n${redacted.slice(0, limit)}\n[${redacted.length - limit} characters not shown]` : `\n${redacted}`;
 }
 
 /** One outside part for the dialog: the last 1,000 characters of the redacted text, preceded by a line saying how many characters are not shown. */
