@@ -647,7 +647,7 @@ describe('/factory headless start message names the base', () => {
     const message = sent[0] ?? '';
     assert.ok(message.includes(`Base: ${baseOf(repo.root).baseRef} (the configured base)`), message);
     assert.ok(message.includes('PRs target main'), message);
-    assert.ok(message.includes('slice 01 branches from it when the plan is approved'), message);
+    assert.ok(message.includes(`slice 01 branches from ${baseOf(repo.root).baseRef} when the plan is approved`), message);
     assert.ok(!message.includes('is not the configured base'), message);
   });
 

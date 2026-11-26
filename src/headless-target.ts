@@ -73,7 +73,7 @@ function headlessPrimary(ref: string): { feature: string; source: SourceInput } 
  */
 export function headlessStartMessage(run: { baseBranch?: string | undefined; baseRef: string; baseSha?: string | undefined; trunk: string }, configured: string): string {
   const branch = run.baseBranch;
-  if (branch === undefined) return `Base: ${run.baseRef} (the configured base); PRs target ${run.trunk}; slice 01 branches from it when the plan is approved.`;
+  if (branch === undefined) return `Base: ${run.baseRef} (the configured base); PRs target ${run.trunk}; slice 01 branches from ${run.baseRef} when the plan is approved.`;
   const named = `Base: ${branch} at ${(run.baseSha ?? '').slice(0, 12)}; PRs target ${run.trunk}.`;
   if (branch === configured || branch === run.trunk) return named;
   return `${named} Warning: "${branch}" is not the configured base (${configured}) or the PR target (${run.trunk}); the stack carries the commits of ${branch} until it merges.`;
