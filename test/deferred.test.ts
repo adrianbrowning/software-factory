@@ -49,6 +49,8 @@ async function sinkRun(root: string, deferred: unknown, stage: 'active' | 'green
 
 const text = (reply: Reply) => reply.content[0]?.text ?? '';
 
+const NOTE = 'Ids, paths and line numbers below are as of the reviewed commit and may have moved since.';
+
 describe('deferred config', () => {
   it('parses a file sink with a default path, a file sink with a path, and a github sink', () => {
     assert.deepEqual(parseConfig({ deferred: { kind: 'file' } }).deferred, { kind: 'file', path: 'docs/factory-deferred.md' });
@@ -67,7 +69,7 @@ describe('deferred config', () => {
 describe('deferred item from a finding names symbol, location at filing time and commit', () => {
   const symbolic = (body: string, sha: string) => {
     assert.match(body, /- Symbol: the factory_carry handler\n- Location at filing time: ok:1\n/);
-    assert.ok(body.includes(`Reviewed commit: ${sha}`));
+    assert.ok(body.includes(`Reviewed commit: ${sha}\n${NOTE}\n\n`));
     assert.doesNotMatch(body, /- Location: /);
   };
 
@@ -83,7 +85,7 @@ describe('deferred item from a finding names symbol, location at filing time and
     assert.ok(gh.args().includes('Location at filing time: ok:1'));
     assert.match(style?.body ?? '', /- Location at filing time: ok:1\n/);
     assert.doesNotMatch(style?.body ?? '', /Symbol:/);
-    assert.doesNotMatch(note?.body ?? '', /Reviewed commit|Location|Symbol/);
+    assert.doesNotMatch(note?.body ?? '', /Reviewed commit|Location|Symbol|as of the reviewed commit/);
   });
 
   it('file: factory_defer queues an item with the same symbol, location and commit lines', async () => {
@@ -404,9 +406,9 @@ describe('accepted unresolved findings go to the sink', () => {
     const filed = (id: string) => run.deferred.find(item => item.id === id)?.body ?? assert.fail(`${id} not filed`);
     const finding = filed('thermo-a');
     assert.match(finding, /- Symbol: the factory_carry handler\n- Location at filing time: ok:1\n/);
-    assert.ok(finding.includes(`Reviewed commit: ${sha}`));
+    assert.ok(finding.includes(`Reviewed commit: ${sha}\n${NOTE}\n\n`));
     const open = filed('bug-b');
-    assert.ok(open.includes(`Reviewed commit: ${sha}`));
+    assert.ok(open.includes(`Reviewed commit: ${sha}\n${NOTE}\n\n`));
     assert.match(open, /Scope reviewer: still broken/);
     assert.doesNotMatch(open, /Location at filing time|Symbol:/);
     assert.doesNotMatch(run.deferred.find(item => item.id === 'thermo-a')?.title ?? '', /ok:1|the factory_carry handler/);
@@ -434,7 +436,7 @@ describe('accepted unresolved findings go to the sink', () => {
     ]);
     const sha = run.slices[0]?.review?.sha ?? assert.fail('no review');
     const askedIn = realpathSync(join(ws.root, '.scratch', 'demo', 'fixes', '01-f3.md'));
-    const head = `Run: demo\nSlice: 01 "Feature"\nReview: 01-r4\nReviewed commit: ${sha}\n\n`;
+    const head = `Run: demo\nSlice: 01 "Feature"\nReview: 01-r4\nReviewed commit: ${sha}\n${NOTE}\n\n`;
     assert.equal(run.deferred[0]?.body, `${head}### [high] thermo-a\n\n- Symbol: the factory_carry handler\n- Location at filing time: ok:1\n- Title: a\n- Problem: wrong\n- Fix: fix it\n- Fix prompt: fix it`);
     assert.equal(run.deferred[1]?.body, `${head}### [high] bug-c\n\n- Location at filing time: ok:1\n- Title: c\n- Problem: wrong\n- Fix: fix it\n- Fix prompt: fix it`);
     assert.equal(run.deferred[2]?.body, `${head}### \`bug-b\`\n\n- Asked in: ${askedIn} (round 3)\n- Item: [high] ok:1: leaky title\n- Scope reviewer: still broken`);
