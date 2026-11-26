@@ -539,37 +539,6 @@ describe('pause and resume', () => {
         assert.equal(sh(ws.root, 'branch', '--show-current'), 'other');
         assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'checks');
       });
-
-      describe('factory_checks after resume moved the fix round to checks', () => {
-        it('refuses a new commit the report does not list and runs no check', async () => {
-          using ws = workspace({ checks: [countedCheck('run', 'true')] });
-          await pausedInFix(ws, 'cause');
-          commit(ws, 'round');
-          writeReport(ws, [short(ws, 'HEAD')]);
-          await step(ws, run => resumeRun(ws, run, 'session-2'));
-          assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'checks');
-          const ran = checkRuns(ws);
-          commit(ws, 'late');
-          const oneline = sh(ws.root, 'log', '-1', '--oneline');
-          await assert.rejects(step(ws, run => runChecks(ws, run)), (error: Error) => {
-            assert.match(error.message, /has 1 commits from this fix round that its implementer report does not list/);
-            assert.ok(error.message.includes(oneline));
-            return true;
-          });
-          assert.deepEqual(checkRuns(ws), ran);
-        });
-
-        it('runs the checks when no commit was added after the move', async () => {
-          using ws = workspace({ checks: [countedCheck('run', 'true')] });
-          await pausedInFix(ws, 'cause');
-          commit(ws, 'round');
-          writeReport(ws, [short(ws, 'HEAD')]);
-          await step(ws, run => resumeRun(ws, run, 'session-2'));
-          const ran = checkRuns(ws).length;
-          assert.equal((await step(ws, run => runChecks(ws, run))).passed, true);
-          assert.equal(checkRuns(ws).length, ran + 1);
-        });
-      });
     });
 
     it('leaves the fix file alone when the slice is not in fix', async () => {

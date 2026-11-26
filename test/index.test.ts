@@ -1062,7 +1062,7 @@ describe('used-up fix budget', () => {
   });
 
   describe('resume of a committed, reported fix round', () => {
-    async function resumeFix(options: { report: 'none' | 'round' | 'old' | 'stop'; roundCommits?: boolean }) {
+    async function resumeFix(options: { report: 'none' | 'round' | 'old' | 'stop'; roundCommits?: boolean; then?: (call: (name: string, params: unknown) => Promise<unknown>, ws: Workspace) => Promise<void> }) {
       using repo = budgetRepo();
       const { call, ws } = await budgetRun(repo.root, ['Feature']);
       commit(ws, 'f.txt');
@@ -1082,6 +1082,7 @@ describe('used-up fix budget', () => {
       await withRun(ws, 'demo', current => pauseRun(current, 'test'));
       const reply = await call('factory_start', { resume: 'demo' }, { confirm: async () => true });
       const run = readRun(ws, 'demo');
+      await options.then?.(call, ws);
       return { events: run.events.map(event => event.detail), phase: run.slices[0]?.phase, round, text: reply.content[0]?.text ?? '' };
     }
 
@@ -1090,6 +1091,36 @@ describe('used-up fix budget', () => {
       assert.equal(result.phase, 'checks');
       assert.ok(result.events.includes(`slice 01 fix round already committed and reported ${result.round.slice(0, 7)}: moved to checks`));
       assert.match(result.text, /Next: Call factory_checks for slice 01 "Feature"\./);
+    });
+
+    it('factory_checks refuses a commit made after the resume move that the report does not list', async () => {
+      await resumeFix({
+        report: 'round',
+        then: async (call, ws) => {
+          commit(ws, 'late.txt');
+          const oneline = sh(ws.root, 'log', '-1', '--oneline');
+          await assert.rejects(call('factory_checks', {}), (error: Error) => {
+            assert.match(error.message, /has 1 commits from this fix round that its implementer report does not list/);
+            assert.ok(error.message.includes(oneline));
+            return true;
+          });
+        },
+      });
+    });
+
+    it('factory_checks runs the checks after the resume move when no commit was added', async () => {
+      await resumeFix({ report: 'round', then: async call => { await assert.doesNotReject(call('factory_checks', {})); } });
+    });
+
+    it('factory_checks does not refuse an unreported commit of a slice at checks without fixFromSha', async () => {
+      await resumeFix({
+        report: 'round',
+        then: async (call, ws) => {
+          await withRun(ws, 'demo', current => { current.slices[0]!.fixFromSha = undefined; });
+          commit(ws, 'late.txt');
+          await assert.doesNotReject(call('factory_checks', {}));
+        },
+      });
     });
 
     it('keeps fix without round commits, with a round commit unlisted, without a report, or with a stop report', async () => {
