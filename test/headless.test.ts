@@ -7,7 +7,7 @@ import { type Command, ctx, load } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
 import { forgetRun, readRun, runDir, saveRun, statePath } from '../src/run.ts';
 import { loadSource } from '../src/gates.ts';
-import { fetchGithubIssue } from '../src/source.ts';
+import { fetchGithubIssue, githubSource, sourceInputSchema } from '../src/source.ts';
 import { resetModuleState } from '../src/index.ts';
 import { headlessTarget } from '../src/headless-target.ts';
 import { issueGh, prependPath, sh, slice, tempDir, tempRepo } from './helpers.ts';
@@ -266,6 +266,27 @@ describe('factory_start filing time', () => {
     const { issueMd, run } = await start({ '242': issue('242') }, { kind: 'github', ref: '242' });
     assert.match(issueMd, /^Source: github 242 \(https:\/\/github.com\/o\/r\/issues\/242\)$/m);
     assert.equal('createdAt' in run.source, false);
+  });
+
+  it('githubSource stores createdAt on the primary and each related item, and omits it when absent', async () => {
+    const approve = async () => true;
+    const withTime = await githubSource('242', { ...issue('242'), authorAssociation: 'OWNER', createdAt: 'A' } as never, approve, [{ issue: { ...issue('126'), authorAssociation: 'OWNER', createdAt: 'B' } as never, ref: '126' }], 'o/r');
+    assert.equal(withTime.createdAt, 'A');
+    assert.equal(withTime.related?.[0]?.createdAt, 'B');
+    const without = await githubSource('242', { ...issue('242'), authorAssociation: 'OWNER' } as never, approve, [{ issue: { ...issue('126'), authorAssociation: 'OWNER' } as never, ref: '126' }], 'o/r');
+    assert.equal('createdAt' in without, false);
+    assert.equal('createdAt' in (without.related?.[0] ?? {}), false);
+  });
+
+  it('a file source has no filed suffix, and jira and text inputs drop a supplied createdAt', async () => {
+    using repo = tempRepo('factory-file-filed-', { ...CHECKS_OK, 'issue.md': '# F\n\nDo.\n' });
+    const tools = load({ commands: new Map(), sent: [], sentOptions: [] });
+    const main = { ...ctx('main', 'main'), cwd: repo.root, hasUI: true, sessionManager: { getSessionId: () => 'session' }, ui: { confirm: async () => true, notify() {} } };
+    await tools.get('factory_start')?.execute('id', { feature: 'demo', source: { kind: 'file', ref: 'issue.md' } }, undefined, undefined, main);
+    const ws = { config: loadConfig(repo.root), root: repo.root };
+    assert.doesNotMatch(readFileSync(join(runDir(ws, 'demo'), 'issue.md'), 'utf8'), /filed/);
+    assert.equal('createdAt' in sourceInputSchema.parse({ body: 'b', createdAt: 'X', kind: 'jira', ref: 'J-1', title: 't' }), false);
+    assert.equal('createdAt' in sourceInputSchema.parse({ body: 'b', createdAt: 'X', kind: 'text', ref: 'r', title: 't' }), false);
   });
 
   it('asks gh for createdAt next to the other fields', async () => {

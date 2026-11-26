@@ -19,7 +19,7 @@ export const sourceInputSchema = z.discriminatedUnion('kind', [
     ref: z.string().min(1).describe('Path of the issue file: absolute, or relative to the repository root; the tool reads it'),
     related: z.never({ error: '`related` is only for github sources' }).optional(),
   }),
-  sourceSchema.omit({ related: true }).extend({ kind: z.enum(['jira', 'text']), related: z.never({ error: '`related` is only for github sources' }).optional() }),
+  sourceSchema.omit({ createdAt: true, related: true }).extend({ kind: z.enum(['jira', 'text']), related: z.never({ error: '`related` is only for github sources' }).optional() }),
 ]);
 export type SourceInput = z.infer<typeof sourceInputSchema>;
 
