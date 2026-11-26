@@ -66,11 +66,23 @@ describe('validator fix warnings', { concurrency: 4 }, () => {
     assert.ok(section.split('\n').includes(`- ${LINE}${WARNING}`));
   });
 
-  it('refuses a fixWarnings id that does not block, naming the id', async () => {
+  it('stores fixWarnings for a kept observation, a downgraded and an escalated finding', async () => {
     using ws = workspace();
     const reviewId = await submitted(ws, mixed());
-    for (const id of ['bug-obs', 'bug-down', 'bug-gone', 'bug-invented']) {
-      await assert.rejects(validate(ws, reviewId, { ...base, escalate: [{ decision: 1, id: 'bug-esc', reason: 'x' }], fixWarnings: warn(id) }), new RegExp(`fixWarnings id must name a finding that blocks.*: ${id}$`));
+    await validate(ws, reviewId, { ...base, escalate: [{ decision: 1, id: 'bug-esc', reason: 'x' }], fixWarnings: warn('bug-obs', 'bug-down', 'bug-esc') });
+    const file = await step(ws, run => validationFile(ws, run, reviewId));
+    const stored: { fixWarnings: unknown } = JSON.parse(readFileSync(file, 'utf8'));
+    assert.deepEqual(stored.fixWarnings, warn('bug-obs', 'bug-down', 'bug-esc'));
+  });
+
+  it('refuses a fixWarnings id the validation does not keep, naming the id', async () => {
+    using ws = workspace();
+    const reviewId = await submitted(ws, mixed());
+    for (const id of ['bug-gone', 'bug-invented']) {
+      await assert.rejects(
+        validate(ws, reviewId, { ...base, escalate: [{ decision: 1, id: 'bug-esc', reason: 'x' }], fixWarnings: warn(id) }),
+        new RegExp(`^Error: A fixWarnings id must name a finding the validation keeps \\(in keep, downgrade or escalate\\): ${id}$`),
+      );
     }
   });
 
