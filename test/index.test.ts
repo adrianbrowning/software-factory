@@ -1061,6 +1061,44 @@ describe('used-up fix budget', () => {
     });
   });
 
+  describe('resume of a committed, reported fix round', () => {
+    async function resumeFix(options: { report: 'none' | 'round' | 'old' | 'stop'; roundCommits?: boolean }) {
+      using repo = budgetRepo();
+      const { call, ws } = await budgetRun(repo.root, ['Feature']);
+      commit(ws, 'f.txt');
+      const before = sh(ws.root, 'rev-parse', 'HEAD');
+      if (options.roundCommits !== false) commit(ws, 'g.txt');
+      const round = sh(ws.root, 'rev-parse', '--short=12', 'HEAD');
+      await withRun(ws, 'demo', current => {
+        current.slices[0]!.phase = 'fix';
+        current.slices[0]!.fixFromSha = before;
+      });
+      const path = reportPath(ws, 'demo', readRun(ws, 'demo').slices[0]!);
+      if (options.report !== 'none') {
+        mkdirSync(dirname(path), { recursive: true });
+        const listed = options.report === 'old' ? before.slice(0, 12) : round;
+        writeFileSync(path, `Implementer report:\nCommits:\n- ${listed} c\nBehaviors:\n- none\nOpen:\n- ${options.report === 'stop' ? 'NEEDS SEAM: x' : 'none'}\n`);
+      }
+      await withRun(ws, 'demo', current => pauseRun(current, 'test'));
+      const reply = await call('factory_start', { resume: 'demo' }, { confirm: async () => true });
+      const run = readRun(ws, 'demo');
+      return { events: run.events.map(event => event.detail), phase: run.slices[0]?.phase, round, text: reply.content[0]?.text ?? '' };
+    }
+
+    it('moves to checks, records the event and says to call factory_checks', async () => {
+      const result = await resumeFix({ report: 'round' });
+      assert.equal(result.phase, 'checks');
+      assert.ok(result.events.includes(`slice 01 fix round already committed and reported ${result.round.slice(0, 7)}: moved to checks`));
+      assert.match(result.text, /Next: Call factory_checks for slice 01 "Feature"\./);
+    });
+
+    it('keeps fix without round commits, with a round commit unlisted, without a report, or with a stop report', async () => {
+      for (const options of [{ report: 'round', roundCommits: false }, { report: 'old' }, { report: 'none' }, { report: 'stop' }] as const) {
+        assert.equal((await resumeFix(options)).phase, 'fix');
+      }
+    });
+  });
+
   it('names the report file and the stop-report step before factory_checks in the factory_next reply for phase fix', async () => {
     using repo = budgetRepo();
     const { call, ws } = await budgetRun(repo.root, ['Feature']);
