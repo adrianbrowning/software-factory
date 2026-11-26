@@ -214,7 +214,7 @@ function describeStop(messages: readonly unknown[] | undefined) {
   return `latest tool: ${latestToolCallName(messages) ?? 'none'}; last assistant text: ${text ?? 'none'}`;
 }
 
-/** The provider error of the latest assistant message as `{ errorMessage }` (errorMessage is undefined when the message carries no text), or undefined when that message did not end with stopReason 'error'. */
+/** The provider error of the latest assistant message as `{ errorMessage }` (errorMessage is undefined when the message's `errorMessage` is not a string), or undefined when that message did not end with stopReason 'error'. */
 function providerError(messages: readonly unknown[] | undefined) {
   const latest = (messages ?? []).findLast(message => (message as { role?: string }).role === 'assistant') as { errorMessage?: unknown; stopReason?: string } | undefined;
   if (latest?.stopReason !== 'error') return undefined;
