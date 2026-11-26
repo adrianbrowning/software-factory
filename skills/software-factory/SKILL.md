@@ -156,6 +156,8 @@ Never commit on a done slice's branch: no check or review sees that commit, and 
 
 Read `skill://retro` and apply it to this run. Primary sources: this session, `history://<id>` for the factory subagents, `factory_status` (fix rounds, check failures, findings by domain, peak implementer context, compactions, re-slices, and the actual model and thinking level of each spawned agent in each slice's `agents` and in `agentsOutsideSlices`: compare them with the run's snapshot `models` to spot a fallback or a mismatch), and the run directory (`fixes/`, `reviews/`).
 
+A 'warning' run event about stale `src/` or `agents/` files names the slices not done when it was recorded; those slices ran with the loaded gates, so the retro counts a gate that their loaded code lacked as not exercised on them. This holds for interactive and headless retros alike.
+
 Give each candidate a `target`:
 
 - `repo`: the repository you worked on (navigation pointers, checks, `CODING_STANDARDS.md`, `AGENTS.md`). These become a final slice through the same loop.

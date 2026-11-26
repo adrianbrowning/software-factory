@@ -6,7 +6,7 @@ import { type Command, ctx, load } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
 import { readRun, withRun, type Workspace } from '../src/run.ts';
-import { pluginHashes, selfHostWarning, setLoadedPlugin } from '../src/self-host.ts';
+import { pluginHashes, recordSelfHostWarning, selfHostWarning, setLoadedPlugin } from '../src/self-host.ts';
 import { approvePlan, nextSlice, planSlices } from '../src/workflow.ts';
 import { commit, sh, slice, tempRepo } from './helpers.ts';
 
@@ -402,5 +402,76 @@ describe('self-host warning', () => {
     await call('factory_checks', {});
     const reply = await call('factory_review_start', { skip: [] });
     assert.ok(reply.includes(`loaded copy differs from the run base ${baseSha.slice(0, 7)}: src/index.ts`), reply);
+  });
+
+  describe('slices not done yet', () => {
+    const SENTENCE = ' Slices not done yet, which run with these loaded gates:';
+
+    async function planned(root: string, titles: string[]) {
+      const { call } = session(root, false);
+      await call('factory_start', { feature: 'demo', source: SOURCE });
+      const ws: Workspace = { config: loadConfig(root), root };
+      await withRun(ws, 'demo', run => approvePlan(ws, run, planSlices(ws, run, titles.map(title => slice(title)))));
+      return { call, ws };
+    }
+
+    it('factory_start resume names the pending slices and not the done one, in the reply and the event', async () => {
+      using repo = tempRepo('factory-selfhost-', { ...FACTORY, 'package.json': PLUGIN, 'src/index.ts': 'one' });
+      setLoadedPlugin({ hashes: pluginHashes(repo.root), root: repo.root });
+      const { call, ws } = await planned(repo.root, ['Alpha', 'Beta', 'Gamma']);
+      await withRun(ws, 'demo', run => { run.slices[0]!.status = 'done'; });
+      writeFileSync(join(repo.root, 'src/new.ts'), 'x');
+      const reply = await call('factory_start', { resume: 'demo' });
+      const line = reply.split('\n').find(l => l.startsWith('Warning:')) ?? assert.fail(reply);
+      const ending = `${SENTENCE} 02 "Beta", 03 "Gamma".`;
+      assert.ok(line.endsWith(ending), line);
+      assert.doesNotMatch(line, /01 "Alpha"/);
+      assert.equal(warningsOf(repo.root, 'demo').at(-1)?.detail, line.slice('Warning: '.length));
+    });
+
+    it('names the active slice at factory_review_start', async () => {
+      using repo = tempRepo('factory-selfhost-', { ...FACTORY, 'package.json': PLUGIN, '.gitignore': 'src/fresh.ts\n', 'src/index.ts': 'one' });
+      writeFileSync(join(repo.root, 'src/fresh.ts'), 'one');
+      setLoadedPlugin({ hashes: pluginHashes(repo.root), root: repo.root });
+      const { call, ws } = await planned(repo.root, ['Alpha']);
+      await withRun(ws, 'demo', run => nextSlice(ws, run));
+      commit(ws, 'ok');
+      await call('factory_checks', {});
+      writeFileSync(join(repo.root, 'src/fresh.ts'), 'edited');
+      const reply = await call('factory_review_start', { skip: [] });
+      assert.match(reply, /\nWarning: .*src\/fresh\.ts.* Slices not done yet, which run with these loaded gates: 01 "Alpha"\.$/m);
+    });
+
+    it('appends no sentence when no slice is active or pending', async () => {
+      using repo = tempRepo('factory-selfhost-', { ...FACTORY, 'package.json': PLUGIN, 'src/index.ts': 'one' });
+      setLoadedPlugin({ hashes: pluginHashes(repo.root), root: repo.root });
+      writeFileSync(join(repo.root, 'src/new.ts'), 'x');
+      const reply = await session(repo.root, false).call('factory_start', { feature: 'demo', source: SOURCE });
+      const line = reply.split('\n').find(l => l.startsWith('Warning:')) ?? assert.fail(reply);
+      assert.doesNotMatch(line, /Slices not done yet/);
+      assert.ok(line.endsWith('headless run goes on with the loaded gates and needs no action.'), line);
+    });
+
+    it('follows the other-checkout form of the warning', async () => {
+      using repo = tempRepo('factory-selfhost-', { ...FACTORY, 'package.json': PLUGIN });
+      const { ws } = await planned(repo.root, ['Alpha']);
+      const detail = warningsOf(repo.root, 'demo').at(-1)?.detail ?? assert.fail('no warning');
+      assert.match(detail, /omp loaded the plugin from/);
+      assert.ok(detail.endsWith(`${SENTENCE} 01 "Alpha".`) === false, 'recorded before the plan');
+      const run = readRun(ws, 'demo');
+      run.events = [];
+      assert.ok(recordSelfHostWarning(run, repo.root).endsWith(`${SENTENCE} 01 "Alpha".`));
+    });
+
+    it('de-duplicates on the warning text alone, whatever slices the earlier event named', async () => {
+      using repo = tempRepo('factory-selfhost-', { ...FACTORY, 'package.json': PLUGIN, 'src/index.ts': 'one' });
+      setLoadedPlugin({ hashes: pluginHashes(repo.root), root: repo.root });
+      const { call, ws } = await planned(repo.root, ['Alpha', 'Beta']);
+      writeFileSync(join(repo.root, 'src/new.ts'), 'x');
+      assert.match(await call('factory_start', { resume: 'demo' }), /01 "Alpha", 02 "Beta"\./);
+      await withRun(ws, 'demo', run => { run.slices[0]!.status = 'done'; });
+      assert.doesNotMatch(await call('factory_start', { resume: 'demo' }), /Warning:/);
+      assert.equal(warningsOf(repo.root, 'demo').length, 1);
+    });
   });
 });
