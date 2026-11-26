@@ -25,7 +25,7 @@ Prove hook or child-session behavior with a real omp run, see docs/smoke-testing
 
 A change to a `factory_*` tool reply or to documented behavior also updates `skills/software-factory/SKILL.md`, and the README section when the README describes that command or behavior, in the same slice.
 
-Tests run on node:test, not vitest; run one test file with `sh scripts/test.sh <file>` or `pnpm run test <file>`.
+Tests run on node:test, not vitest; run one test file with `sh scripts/test.sh <file>` or `pnpm run test <file>`; a raw `node --test` run of a test file fails at once unless `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1` are already set, because the test files check those two variables, which the git-env preload sets.
 
 A `src/` function is often tested in more than one test file. Its unit tests sit in its own file, for example test/workflow.test.ts for a `src/workflow.ts` function. Tool tests of the `factory_*` tool that calls it sit in test/index.test.ts and in other test/*.test.ts files. When you change a `src/` function, also run the test files of the factory tools that call it. Find them: search test/ for the quoted tool name, for example `'factory_start'`.
 

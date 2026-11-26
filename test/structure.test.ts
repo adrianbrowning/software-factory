@@ -498,7 +498,31 @@ describe('module mocking ban: the helpers', () => {
   });
 });
 
+/** One message per *.test.ts file whose runtime imports hold neither helpers.ts nor git-env-guard.ts, so a raw `node --test` run would skip the git-env preload check. */
+export function guardImportProblems(files: { name: string; source: string }[]) {
+  return files.flatMap(file => {
+    if (!file.name.endsWith('.test.ts')) return [];
+    const imports = importsOf(file.source, { runtimeOnly: true });
+    return imports.includes('helpers.ts') || imports.includes('git-env-guard.ts') ? [] : [`test/${file.name}: does not load git-env-guard.ts (import ./helpers.ts or ./git-env-guard.ts)`];
+  });
+}
+
 const testFiles = tsFilesIn(TESTS);
+
+describe('guardImportProblems', () => {
+  it('flags a type-only helpers import and a file with no import, and passes helpers, the guard and non-test files', () => {
+    assert.deepEqual(guardImportProblems([
+      { name: 'a.test.ts', source: "import type { sh } from './helpers.ts';\n" },
+      { name: 'b.test.ts', source: "import assert from 'node:assert';\n" },
+      { name: 'c.test.ts', source: "import { sh } from './helpers.ts';\n" },
+      { name: 'd.test.ts', source: "import './git-env-guard.ts';\n" },
+      { name: 'helpers.ts', source: "import assert from 'node:assert';\n" },
+    ]), [
+      'test/a.test.ts: does not load git-env-guard.ts (import ./helpers.ts or ./git-env-guard.ts)',
+      'test/b.test.ts: does not load git-env-guard.ts (import ./helpers.ts or ./git-env-guard.ts)',
+    ]);
+  });
+});
 
 describe('reading every listed file for the test-scope check, binary files included', () => {
   it('reads text and binary files of any extension and skips missing ones', () => {
@@ -513,6 +537,10 @@ describe('reading every listed file for the test-scope check, binary files inclu
 });
 
 describe('structure of test/', () => {
+  it('has every *.test.ts file load git-env-guard.ts, directly or through helpers.ts', () => {
+    assert.deepEqual(guardImportProblems(testFiles), []);
+  });
+
   it('has no assert.throws or assert.rejects without a message matcher', () => {
     assert.deepEqual(testFiles.flatMap(file => unmatchedAsserts(`test/${file.name}`, file.source)), []);
   });
