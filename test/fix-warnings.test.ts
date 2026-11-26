@@ -1,0 +1,92 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { describe, it } from 'node:test';
+import { type Finding, REVIEW_DOMAINS, type Workspace } from '../src/run.ts';
+import { recordDecisions, recordReview, runChecks, startReview, submitDomain, submitValidation } from '../src/review.ts';
+import { nextSlice } from '../src/workflow.ts';
+import { commit, finding, newRun, noFixItems, slice, step, workspace } from './helpers.ts';
+
+const WARNING = "The Fix prompt's [A-Za-z0-9] rejects a reason that starts with ( or #, which decision 1 allows.";
+const LINE = 'Validator warning on the suggested fix (meet the cited decision or acceptance criterion as written, not a narrower fix): ';
+
+describe('validator fix warnings', { concurrency: 4 }, () => {
+  /** An open review with these findings submitted by their domains; resolves to the review id. */
+  async function submitted(ws: Workspace, findings: Finding[]) {
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => recordDecisions(ws, run, ['Accept any reason.']));
+    await step(ws, run => runChecks(ws, run));
+    const { reviewId } = await step(ws, run => startReview(ws, run, [], ['react-ts', 'test-validity', 'devops']));
+    for (const domain of REVIEW_DOMAINS) {
+      await step(ws, run => submitDomain(ws, run, { agentId: `r-${domain}`, domain, findings: findings.filter(item => item.domain === domain), reviewId, ...noFixItems(domain) }));
+    }
+    return reviewId;
+  }
+
+  const validate = (ws: Workspace, reviewId: string, input: { downgrade?: unknown; dropped?: unknown; escalate?: unknown; fixWarnings?: unknown; keep: string[] }) =>
+    step(ws, run => submitValidation(ws, run, { agentId: 'v', dropped: [], ...input, reviewId }));
+  const warn = (...ids: string[]) => ids.map(id => ({ id, warning: WARNING }));
+
+  const mixed = () => [
+    { ...finding('bug', 'high', 'a'), decision: 1 },
+    finding('bug', 'critical', 'b'),
+    finding('bug', 'observation', 'obs'),
+    finding('bug', 'high', 'down'),
+    finding('bug', 'high', 'gone'),
+    finding('bug', 'observation', 'esc'),
+  ];
+  const base = { downgrade: [{ id: 'bug-down', reason: 'minor', category: 'naming' }], dropped: [{ id: 'bug-gone', reason: 'not in diff' }], keep: ['bug-a', 'bug-b', 'bug-obs'] };
+
+  it('accepts fixWarnings for a kept blocking and an escalated finding, and without fixWarnings', async () => {
+    using ws = workspace();
+    const reviewId = await submitted(ws, mixed());
+    const escalate = [{ decision: 1, id: 'bug-esc', reason: 'breaks it' }];
+    await validate(ws, reviewId, { ...base, escalate });
+    await validate(ws, reviewId, { ...base, escalate, fixWarnings: warn('bug-a', 'bug-esc') });
+  });
+
+  it('refuses a fixWarnings id that does not block, naming the id', async () => {
+    using ws = workspace();
+    const reviewId = await submitted(ws, mixed());
+    for (const id of ['bug-obs', 'bug-down', 'bug-gone', 'bug-invented']) {
+      await assert.rejects(validate(ws, reviewId, { ...base, escalate: [{ decision: 1, id: 'bug-esc', reason: 'x' }], fixWarnings: warn(id) }), new RegExp(`fixWarnings id must name a finding that blocks.*: ${id}$`));
+    }
+  });
+
+  it('refuses a fixWarnings list that names one id twice, naming the id', async () => {
+    using ws = workspace();
+    const reviewId = await submitted(ws, mixed());
+    await assert.rejects(validate(ws, reviewId, { ...base, escalate: [{ decision: 1, id: 'bug-esc', reason: 'x' }], fixWarnings: warn('bug-a', 'bug-a') }), /^Error: A fixWarnings id appears twice: bug-a$/);
+  });
+
+  it('writes the warning only in the warned finding section, after the decision line and before the sibling note', async () => {
+    using ws = workspace();
+    const findings = [...mixed().slice(0, 2), { ...finding('comments', 'high', 'stale'), decision: 1 }];
+    const reviewId = await submitted(ws, findings);
+    await validate(ws, reviewId, { keep: ['bug-a', 'bug-b', 'comments-stale'], fixWarnings: warn('bug-a', 'comments-stale') });
+    const result = await step(ws, run => recordReview(ws, run));
+    assert.ok(result.kind === 'fix');
+    const fix = readFileSync(result.fixPath, 'utf8');
+    const section = (id: string) => fix.split(/^### /m).find(part => part.includes(`] ${id}\n`)) ?? '';
+    const lineOf = (text: string) => text.split('\n').find(row => row.startsWith('- Validator warning')) ?? '';
+    assert.equal(lineOf(section('bug-a')), `- ${LINE}${WARNING}`);
+    assert.equal(lineOf(section('bug-b')), '');
+    const bug = section('bug-a');
+    assert.ok(bug.indexOf('- Breaks decision 1:') < bug.indexOf('- Validator warning'));
+    const comments = section('comments-stale');
+    assert.ok(comments.indexOf('- Breaks decision 1:') < comments.indexOf('- Validator warning'));
+    assert.ok(comments.indexOf('- Validator warning') < comments.indexOf('- Sibling comments:'));
+  });
+
+  it('renders a long multi-line warning on one line cut at 1,000 characters', async () => {
+    using ws = workspace();
+    const reviewId = await submitted(ws, mixed().slice(0, 1));
+    const warning = `first line\n${'x'.repeat(1_500)}`;
+    await validate(ws, reviewId, { keep: ['bug-a'], fixWarnings: [{ id: 'bug-a', warning }] });
+    const result = await step(ws, run => recordReview(ws, run));
+    assert.ok(result.kind === 'fix');
+    const row = readFileSync(result.fixPath, 'utf8').split('\n').find(line => line.startsWith('- Validator warning')) ?? '';
+    assert.equal(row, `- ${LINE}first line ${'x'.repeat(1_000 - 'first line '.length)}…`);
+  });
+});

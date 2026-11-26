@@ -595,6 +595,11 @@ function checkCoverage(findings: Finding[], validation: Validation, decisionCoun
   }
   const alreadyBlocking = escalated.filter(id => byId.get(id)?.severity !== 'observation');
   if (alreadyBlocking.length > 0) throw new Error(`Only observation findings can be escalated; keep these instead: ${alreadyBlocking.join(', ')}`);
+  const warnedIds = validation.fixWarnings.map(entry => entry.id);
+  const repeated = warnedIds.filter((id, index) => warnedIds.indexOf(id) !== index);
+  if (repeated.length > 0) throw new Error(`A fixWarnings id appears twice: ${[...new Set(repeated)].join(', ')}`);
+  const warnedNotBlocking = warnedIds.filter(id => !escalated.includes(id) && !(validation.keep.includes(id) && byId.get(id)?.severity !== 'observation'));
+  if (warnedNotBlocking.length > 0) throw new Error(`A fixWarnings id must name a finding that blocks after validation (kept at critical or high, or escalated): ${warnedNotBlocking.join(', ')}`);
   for (const entry of validation.escalate) {
     if (entry.decision !== undefined && entry.decision > decisionCount) {
       throw new Error(`"${entry.id}" names decision ${entry.decision}, but the review data lists ${decisionCount} decisions.`);
@@ -615,13 +620,14 @@ function checkCoverage(findings: Finding[], validation: Validation, decisionCoun
 
 /**
  * The validator only selects: every raw finding is kept, downgraded to an observation, escalated to high for a broken
- * decision or an unmet acceptance criterion, or dropped with a reason. It adds no finding and rewrites no text. The same validator may replace its
+ * decision or an unmet acceptance criterion, or dropped with a reason. It adds no finding and rewrites no text, except a fix warning:
+ * the text it adds beside a blocking finding (`fixWarnings`) when the suggested fix narrows the cited decision or criterion, shown in the fix file. The same validator may replace its
  * validation once (to correct its verdict) until the review is recorded.
  */
 export function submitValidation(
   ws: Workspace,
   run: Run,
-  input: { agentId: string; downgrade?: unknown; dropped: unknown; escalate?: unknown; keep: unknown; reviewId: string },
+  input: { agentId: string; downgrade?: unknown; dropped: unknown; escalate?: unknown; fixWarnings?: unknown; keep: unknown; reviewId: string },
 ) {
   const review = requireReview(run, input.reviewId);
   const previous = review.validation;
@@ -629,7 +635,7 @@ export function submitValidation(
   if (previous?.amended === true) throw new Error(`The validation for ${review.id} was already corrected once.`);
   const { findings, missing } = readDomainFindings(ws, run, input.reviewId);
   if (missing.length > 0) throw new Error(`Domains not submitted yet: ${missing.join(', ')}`);
-  const validation = validationSchema.parse({ downgrade: input.downgrade, dropped: input.dropped, escalate: input.escalate, keep: input.keep });
+  const validation = validationSchema.parse({ downgrade: input.downgrade, dropped: input.dropped, escalate: input.escalate, fixWarnings: input.fixWarnings, keep: input.keep });
   checkCoverage(findings, validation, review.decisions, run.decisions, review.targeted?.lines);
   const content = `${JSON.stringify(validation, null, 2)}\n`;
   writeAtomic(validationFile(ws, run, input.reviewId), content);
@@ -721,7 +727,8 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
   slice.targeting = targetingAfter(review, [...blocking.map(finding => finding.domain), ...(open.length > 0 ? (['scope'] as const) : [])]);
   const blockingIds = [...blocking.map(finding => finding.id), ...open.map(item => `${item.id} (open fix item)`)];
   const blockingDetail = `${detail}; blocking ${blockingIds.join(', ')}`;
-  const pairs = blocking.map(finding => ({ finding, record: findingRecord(finding, `## Blocking review findings from ${review.id}`, run.decisions) }));
+  const warningOf = new Map(validation.fixWarnings.map(entry => [entry.id, entry.warning]));
+  const pairs = blocking.map(finding => ({ finding, record: findingRecord(finding, `## Blocking review findings from ${review.id}`, run.decisions, warningOf.get(finding.id)) }));
   const records: FixRecord[] = [
     ...pairs.map(({ record }) => record),
     ...open.map(item => ({ group: `## Open fix items from ${review.id}`, item: { id: item.id, summary: item.summary }, section: renderOpenItem(item, verdictOf.get(item.id)) })),
