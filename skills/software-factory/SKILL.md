@@ -40,6 +40,8 @@ Before you record a decision with `factory_decide`, or write an acceptance crite
 
 When the issue (for example a retro finding) reports that an agent broke a rule its prompt already states, first search the agent file, the skill and the ticket text for that rule. When the rule is already there, the prompt line has failed once. Plan a check that does not depend on the same agent obeying it, for example a gate in a `factory_*` tool or a check by a second agent (for example the review validator). Do not plan only another prompt line.
 
+Write every decision, interactive or headless, at the precision you want enforced. Reviewers and the validator read a decision literally and report code that misses its literal wording as high, so an absolute phrase such as "no other git-tracked file holds the phrase" makes them escalate edge cases you did not mean (for example binary files). Write the scope you actually mean ("no other tracked text file"). State what the decision covers and what it does not, and avoid absolute wording ("never", "always", "no X") that the code does not hold in every case.
+
 ## 3. Slice
 
 Break the work into **tracer bullets** (Matt Pocock's `to-tickets` rules):
@@ -150,7 +152,6 @@ Limits on what a decision may do:
 
 - A decision must not waive, drop or weaken an acceptance criterion of the approved plan. When a criterion looks untestable, choose a seam that makes it testable (for example an injected function or a spy) and record it with `factory_amend_seams`, or call `factory_pause`.
 - While fix rounds remain, a blocking finding or an open fix item in a headless run is fixed in code, and a decision may only choose how to fix it. Once the 3-round fix budget is spent, the Fix budget bullet governs (the tools accept the review unresolved; move on), and no decision may be recorded to accept or waive the finding.
-- Write each decision with explicit limits (what it covers and what it does not). Avoid absolute wording ("never", "always", "no X") that the code does not hold in every case.
 
 - **Intake (section 2):** ask no questions. Take the narrower, conservative reading of each ambiguity and record it with `factory_decide`. Pause with `factory_pause` only when no acceptance criteria can be derived or the issue contradicts itself. Text from authors outside the repository is already left out; do not use it. Use the base the run started with (a `--base` branch, else the configured base): pass no `baseRef`, `landOn` or `trunk` to `factory_plan`; it refuses them in a headless run.
 - **Planning rule (section 3):** about 150k tokens per slice; one behavior per slice; a concurrency, locking, security or filesystem-semantics (case folding, Unicode normalization, links) change gets its own slice. Call `factory_plan` with no dialog; it approves on its own.
