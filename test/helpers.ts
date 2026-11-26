@@ -209,22 +209,24 @@ export async function green(ws: Workspace) {
   return step(ws, run => recordReview(ws, run));
 }
 
+/** The files `fakeGh` writes under its temp dir `root`, which both its gh script and its returned API use. */
+const fakeGhFiles = (root: string) => ({ log: join(root, 'calls.log'), args: join(root, 'args.log'), fail: join(root, 'fail'), garble: join(root, 'garble') });
+
 /** A fake `gh` first on PATH that logs each call, prints an issue URL numbered by the call, and fails the call whose number is in `fail`. */
 export function fakeGh() {
   const dir = tempDir('factory-gh-', root => {
+    const { log, args, fail, garble } = fakeGhFiles(root);
     writeFileSync(
       join(root, 'gh'),
-      `#!/bin/sh\nif [ "$1 $2" != 'issue create' ]; then exit 0; fi\necho "$1 $2 $3 $4" >> '${join(root, 'calls.log')}'\necho "$@" >> '${join(root, 'args.log')}'\nn=$(wc -l < '${join(root, 'calls.log')}' | tr -d ' ')\nif [ -f '${join(root, 'fail')}' ] && [ "$n" = "$(cat '${join(root, 'fail')}')" ]; then echo 'HTTP 502' >&2; exit 1; fi\nif [ -f '${join(root, 'garble')}' ]; then echo 'created'; exit 0; fi\necho "https://github.com/o/r/issues/$n"\n`,
+      `#!/bin/sh\nif [ "$1 $2" != 'issue create' ]; then exit 0; fi\necho "$1 $2 $3 $4" >> '${log}'\necho "$@" >> '${args}'\nn=$(wc -l < '${log}' | tr -d ' ')\nif [ -f '${fail}' ] && [ "$n" = "$(cat '${fail}')" ]; then echo 'HTTP 502' >&2; exit 1; fi\nif [ -f '${garble}' ]; then echo 'created'; exit 0; fi\necho "https://github.com/o/r/issues/$n"\n`,
     );
     chmodSync(join(root, 'gh'), 0o755);
   });
-  const log = join(dir.root, 'calls.log');
-  const fail = join(dir.root, 'fail');
-  const garble = join(dir.root, 'garble');
+  const { log, args, fail, garble } = fakeGhFiles(dir.root);
   const path = process.env.PATH;
   process.env.PATH = `${dir.root}:${path}`;
   return {
-    args: () => (existsSync(join(dir.root, 'args.log')) ? readFileSync(join(dir.root, 'args.log'), 'utf8') : ''),
+    args: () => (existsSync(args) ? readFileSync(args, 'utf8') : ''),
     calls: () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : []),
     failOn: (n: number) => writeFileSync(fail, String(n)),
     healed: () => writeFileSync(fail, '0'),
@@ -277,6 +279,9 @@ export const withPrs = (branches: string[]) => branches.map((name, index) => ({ 
 export const prCalls = (count: number) =>
   Array.from({ length: count }, (_, index) => `api -X PATCH repos/{owner}/{repo}/pulls/${101 + index} -f title=demo: 0${index + 1} S${index + 1} -f body=…`);
 
+/** The files `submitFakeGh` writes under its temp dir `dir`, which both its gh script and its returned API use. */
+const submitGhFiles = (dir: string) => ({ log: join(dir, 'calls'), atSubmit: join(dir, 'at-submit.json') });
+
 /**
  * Puts a fake `gh` first on PATH until the `using` scope that holds it ends, then removes it; it records each call.
  * With a stack, `stack checkout <branch>` switches to that branch, as gh-stack does; `stack init` switches to its last
@@ -284,7 +289,7 @@ export const prCalls = (count: number) =>
  */
 export function submitFakeGh({ stack, checkoutFailure = NO_STACK, unstacked = [], fail = '', onFail = ':', onSubmit = ':', submitted }: FakeGh) {
   const temp = tempDir('factory-gh-', dir => {
-    const log = join(dir, 'calls');
+    const { log } = submitGhFiles(dir);
     const view = join(dir, 'view.json');
     if (typeof stack === 'string') writeFileSync(view, stack);
     else if (stack !== undefined) {
@@ -293,7 +298,7 @@ export function submitFakeGh({ stack, checkoutFailure = NO_STACK, unstacked = []
     }
     const loose = join(dir, 'unstacked');
     writeFileSync(loose, unstacked.map(name => `${name}\n`).join(''));
-    const atSubmit = join(dir, 'at-submit.json');
+    const { atSubmit } = submitGhFiles(dir);
     // `stack add <branch>` appends the branch to the served stack, as gh-stack does, and the stack top moves to it.
     const append = `const f=require('fs');try{const v=JSON.parse(f.readFileSync('${view}','utf8'));v.branches.push({name:process.argv[1]});f.writeFileSync('${view}',JSON.stringify(v));f.writeFileSync('${join(dir, 'top')}',process.argv[1])}catch{}`;
     const after = join(dir, 'submitted.json');
@@ -322,8 +327,7 @@ export function submitFakeGh({ stack, checkoutFailure = NO_STACK, unstacked = []
     chmodSync(join(dir, 'gh'), 0o755);
   });
   const dir = temp.root;
-  const log = join(dir, 'calls');
-  const atSubmit = join(dir, 'at-submit.json');
+  const { log, atSubmit } = submitGhFiles(dir);
   process.env.PATH = `${dir}:${process.env.PATH}`;
   const raw = () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').map(call => call.replaceAll('\x1e', '\n')) : []);
   return {
@@ -355,13 +359,16 @@ export interface IssueGh {
   repoView?: string;
 }
 
+/** The file `issueGh` writes under its temp dir `root`. */
+const issueGhFiles = (root: string) => ({ log: join(root, 'viewed') });
+
 /**
  * Puts a fake `gh` first on PATH until the `using` scope that holds it ends: it serves `issue view`, the issue author association
  * (`api`) and `repo view`. `viewed()` lists the ref of each `issue view` call.
  */
 export function issueGh({ issues, owners = ['*'], repoView = 'echo o/r' }: IssueGh) {
   const temp = tempDir('factory-fake-gh-', root => {
-    const log = join(root, 'viewed');
+    const { log } = issueGhFiles(root);
     const cases = Object.entries(issues).map(([number, issue]) => `  ${number}) echo '${JSON.stringify(issue)}';;`).join('\n');
     const association = owners.length === 0 ? 'echo NONE' : `case "$2" in ${owners.join('|')}) echo OWNER;; *) echo NONE;; esac`;
     writeFileSync(
@@ -370,7 +377,7 @@ export function issueGh({ issues, owners = ['*'], repoView = 'echo o/r' }: Issue
     );
     chmodSync(join(root, 'gh'), 0o755);
   });
-  const log = join(temp.root, 'viewed');
+  const { log } = issueGhFiles(temp.root);
   const path = prependPath(temp.root);
   return {
     viewed: () => (existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n') : []),
