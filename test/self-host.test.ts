@@ -52,10 +52,10 @@ describe('self-host warning', () => {
     commit(ws, 'ok');
     await call('factory_checks', {});
     const resumed = await call('factory_start', { resume: 'demo' });
-    assert.doesNotMatch(resumed, /Warning:/);
+    assert.match(resumed, /Warning: .*Slices not done yet, which run with these loaded gates: 01 "Feature"\./);
     const review = await call('factory_review_start', { skip: [] });
     assert.doesNotMatch(review, /Warning:/);
-    assert.equal(readRun(ws, 'demo').events.filter(event => event.kind === 'warning').length, 1);
+    assert.equal(readRun(ws, 'demo').events.filter(event => event.kind === 'warning').length, 2);
   });
 
   it('gives no warning for another package name or no package.json', async () => {
@@ -324,11 +324,11 @@ describe('self-host warning', () => {
     commit(ws, 'ok');
     await call('factory_checks', {});
     const resumed = await call('factory_start', { resume: 'ticket' });
-    assert.doesNotMatch(resumed, /Warning:/);
+    assert.match(resumed, /Warning: .*Slices not done yet, which run with these loaded gates: 01 "Feature"\./);
     const review = await call('factory_review_start', { skip: [] });
     assert.doesNotMatch(review, /Warning:/);
     assert.equal(readRun(ws, 'ticket').status, 'running');
-    assert.equal(warningsOf(repo.root, 'ticket').length, 1);
+    assert.equal(warningsOf(repo.root, 'ticket').length, 2);
   });
 
   it('factory_start and factory_review_start in the loaded plugin checkout warn that the gates are stale once src/ changed, and record it', async () => {
@@ -346,14 +346,14 @@ describe('self-host warning', () => {
     await withRun(ws, 'demo', run => nextSlice(ws, run));
     commit(ws, 'ok');
     await call('factory_checks', {});
-    assert.doesNotMatch(await call('factory_review_start', { skip: [] }), /Warning:/);
-    assert.equal(warningsOf(repo.root, 'demo').length, 1);
+    assert.match(await call('factory_review_start', { skip: [] }), /Warning: .*Slices not done yet, which run with these loaded gates: 01 "Feature"\./);
+    assert.equal(warningsOf(repo.root, 'demo').length, 2);
     writeFileSync(join(repo.root, 'src/new.ts'), 'x');
     setLoadedPlugin({ hashes: { ...pluginHashes(repo.root), 'src/new.ts': 'old' }, root: repo.root });
     assert.match(await call('factory_start', { resume: 'demo' }), /\nWarning: .*loaded copy differs from the file on disk: src\/new\.ts/);
-    assert.equal(warningsOf(repo.root, 'demo').length, 2);
+    assert.equal(warningsOf(repo.root, 'demo').length, 3);
     assert.doesNotMatch(await call('factory_start', { resume: 'demo' }), /Warning:/);
-    assert.equal(warningsOf(repo.root, 'demo').length, 2);
+    assert.equal(warningsOf(repo.root, 'demo').length, 3);
     assert.equal(readRun(ws, 'demo').status, 'running');
   });
 
