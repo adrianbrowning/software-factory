@@ -11,7 +11,6 @@ const bashResult = z.object({
   content: z.array(z.object({ text: z.string().optional(), type: z.string() }).loose()).default([]),
   details: z.object({ async: z.object({ state: z.unknown().optional() }).optional(), exitCode: z.unknown().optional(), timedOut: z.unknown().optional() }).loose().nullish(),
   input: z.object({ command: z.string() }).loose(),
-  isError: z.boolean().optional(),
   toolName: z.literal('bash'),
 });
 
@@ -25,7 +24,7 @@ const bashResult = z.object({
 export function observeTypecheck(event: unknown, checks: string[]) {
   const parsed = bashResult.safeParse(event);
   if (!parsed.success) return undefined;
-  const { content, details, input, isError } = parsed.data;
+  const { content, details, input } = parsed.data;
   if (details?.timedOut === true) return undefined;
   if (details?.async !== undefined && details.async.state !== 'completed') return undefined;
   const command = input.command.trim();
@@ -33,7 +32,7 @@ export function observeTypecheck(event: unknown, checks: string[]) {
   const exact = commands.find(candidate => candidate === command);
   if (exact !== undefined) {
     if (typeof details?.exitCode === 'number') return { command: exact, exit: details.exitCode };
-    return isError === true ? undefined : { command: exact, exit: 0 };
+    return { command: exact, exit: 0 };
   }
   const suffixed = commands.find(candidate => command === `${candidate}${EXIT_SUFFIX}`);
   if (suffixed === undefined) return undefined;

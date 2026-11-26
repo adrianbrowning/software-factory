@@ -64,6 +64,13 @@ describe('factory-observed typecheck', () => {
     assert.ok(s.stored().split('\n').includes(OBSERVED(TC, 0)));
   });
 
+  it('gives exit 0 to an exact run with no details.exitCode even when the result is flagged isError', async () => {
+    using s = await started();
+    await s.bash(s.implementer, TC, { isError: true });
+    await s.submit();
+    assert.ok(s.stored().split('\n').includes(OBSERVED(TC, 0)));
+  });
+
   it('counts a command with surrounding whitespace like the exact one', async () => {
     using s = await started();
     await s.bash(s.implementer, `  ${TC}\n`);
