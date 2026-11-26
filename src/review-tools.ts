@@ -10,7 +10,7 @@ import { carryObservations, fixAfterGreen, leaveObservations, planCarry, planDef
 import { renderFinding, storedNote } from './finding-text.ts';
 import { completeSlice, recordReview, startReview, submitDomain, submitValidation } from './review.ts';
 import { escalateDescription, escalateInputSchema, validationSchema } from './review-record.ts';
-import { activeSlice, addEvent, findingSchema, fixVerdictSchema, readRun, REQUIRED_REVIEW_DOMAINS, REVIEW_DOMAINS, runDir, skippedDomainsSchema, ticketPath, withRun, type Workspace, writeAtomic } from './run.ts';
+import { activeSlice, sliceIdSchema, addEvent, findingSchema, fixVerdictSchema, readRun, REQUIRED_REVIEW_DOMAINS, REVIEW_DOMAINS, runDir, skippedDomainsSchema, ticketPath, withRun, type Workspace, writeAtomic } from './run.ts';
 import { submitHeadless } from './headless-submit.ts';
 import type { RunTool } from './tool-scope.ts';
 import { nextAction } from './workflow.ts';
@@ -69,7 +69,7 @@ const carrySchema = z.object({
     .optional()
     .describe('Ids of observations from the active slice\'s green review, that the user chose to carry, for example "thermo-naming". Refused until the slice\'s last green review is a full one; a note alone is not'),
   to: z
-    .union([z.string().regex(/^\d{2}$/), z.literal('end')])
+    .union([sliceIdSchema, z.literal('end')])
     .describe('Id of the pending slice whose ticket takes the work, for example "03"; or "end": the work waits on the run for the next factory_follow_up slice'),
 });
 const placeSchema = z.object({

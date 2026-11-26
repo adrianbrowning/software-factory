@@ -37,6 +37,7 @@ import {
   type Run,
   SEVERITIES,
   skippedDomainsSchema,
+  sliceIdSchema,
   type Slice,
   requireActive,
   standingChecks,
@@ -67,7 +68,7 @@ import {
 export const decisionInputSchema = z.union([
   z.string().min(1),
   z.object({
-    slice: z.string().regex(/^\d{2}$/).describe('Id of the pending or active slice that builds this decision, for example "03"'),
+    slice: sliceIdSchema.describe('Id of the pending or active slice that builds this decision, for example "03"'),
     text: z.string().min(1),
   }),
 ]);
