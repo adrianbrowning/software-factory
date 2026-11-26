@@ -538,7 +538,8 @@ export function readDomainFindings(ws: Workspace, run: Run, reviewId: string) {
  * else. Only a `critical` or `high` finding can be downgraded, and only to `observation`. Only an `observation` can be
  * escalated, to `high`, and only by naming one of the `decisionCount` recorded decisions or quoting an acceptance criterion. A duplicate may only be
  * dropped in favour of a kept, downgraded, or escalated finding of the same or higher severity (original severity,
- * except that an escalated finding counts as high).
+ * except that an escalated finding counts as high). A blocking finding that cites an autonomous decision may be dropped only as a
+ * duplicate of a finding that stays blocking (kept at critical or high, or escalated) and cites the same decision.
  */
 function checkCoverage(findings: Finding[], validation: Validation, decisionCount: number, decisions: Decision[], fixLines?: Record<string, [number, number][]>) {
   const downgraded = validation.downgrade.map(entry => entry.id);
@@ -569,15 +570,28 @@ function checkCoverage(findings: Finding[], validation: Validation, decisionCoun
   }
   const notBlocking = downgraded.filter(id => byId.get(id)?.severity === 'observation');
   if (notBlocking.length > 0) throw new Error(`Only critical or high findings can be downgraded: ${notBlocking.join(', ')}`);
+  const rank = (finding: Finding) => SEVERITIES.indexOf(escalated.includes(finding.id) ? 'high' : finding.severity);
+  // The decision a kept blocking finding cites: its own field, or for an escalated finding without one, its escalate entry's.
+  const keptBlockingDecision = (id: string) => {
+    const finding = byId.get(id);
+    if (finding === undefined) return undefined;
+    const entry = validation.escalate.find(candidate => candidate.id === id);
+    if (entry !== undefined) return finding.decision ?? entry.decision;
+    return validation.keep.includes(id) && finding.severity !== 'observation' ? finding.decision : undefined;
+  };
+  const usesAutonomous = validation.dropped.filter(entry => {
+    const dropped = byId.get(entry.id);
+    if (dropped === undefined || dropped.severity === 'observation' || !isAutonomous(decisions, dropped.decision)) return false;
+    return entry.duplicateOf === undefined || keptBlockingDecision(entry.duplicateOf) !== dropped.decision;
+  });
+  if (usesAutonomous.length > 0) {
+    throw new Error(
+      `A blocking finding that breaks an autonomous decision cannot be dropped or downgraded; keep it, or drop it as a duplicate of a kept blocking finding that cites the same decision: ${usesAutonomous.map(entry => entry.id).join(', ')}`,
+    );
+  }
   const breaksDecision = downgraded.filter(id => byId.get(id)?.decision !== undefined);
   if (breaksDecision.length > 0) {
     throw new Error(`A finding that breaks a recorded decision cannot be downgraded; keep it or drop it: ${breaksDecision.join(', ')}`);
-  }
-  const usesAutonomous = [...downgraded, ...validation.dropped.map(entry => entry.id)].filter(
-    id => byId.get(id)?.severity !== 'observation' && isAutonomous(decisions, byId.get(id)?.decision),
-  );
-  if (usesAutonomous.length > 0) {
-    throw new Error(`A blocking finding that breaks an autonomous decision cannot be dropped or downgraded; keep it: ${usesAutonomous.join(', ')}`);
   }
   const alreadyBlocking = escalated.filter(id => byId.get(id)?.severity !== 'observation');
   if (alreadyBlocking.length > 0) throw new Error(`Only observation findings can be escalated; keep these instead: ${alreadyBlocking.join(', ')}`);
@@ -586,7 +600,6 @@ function checkCoverage(findings: Finding[], validation: Validation, decisionCoun
       throw new Error(`"${entry.id}" names decision ${entry.decision}, but the review data lists ${decisionCount} decisions.`);
     }
   }
-  const rank = (finding: Finding) => SEVERITIES.indexOf(escalated.includes(finding.id) ? 'high' : finding.severity);
   for (const entry of validation.dropped) {
     if (entry.duplicateOf === undefined) continue;
     const kept = byId.get(entry.duplicateOf);
