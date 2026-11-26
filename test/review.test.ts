@@ -362,7 +362,7 @@ describe('review submissions', { concurrency: 4 }, () => {
     }
     await assert.rejects(
       call('factory_review_validate', { dropped: [], keep: [], reviewId: 'unknown' }, 'factory-review-validator'),
-      (error: Error) => !error.message.startsWith('✖'),
+      (error: Error) => error.message === 'Review unknown is not the active review.',
     );
     await validate({ criterion: 'No runtime guard' });
     const result = await step(ws, run => recordReview(ws, run));
