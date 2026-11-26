@@ -74,7 +74,13 @@ export function toolRegistrar(pi: ExtensionAPI) {
         if (caller !== definition.caller) throw new Error(`Only the ${definition.caller} agent may call this tool (caller: ${caller}).`);
         const parsed = definition.schema.safeParse(raw);
         if (!parsed.success) throw new Error(z.prettifyError(parsed.error));
-        return run(parsed.data, scopeOf(await cachedRoot(ctx.cwd)), ctx, signal);
+        const scope = scopeOf(await cachedRoot(ctx.cwd));
+        try {
+          return await run(parsed.data, scope, ctx, signal);
+        } catch (error) {
+          if (error instanceof z.ZodError) throw new Error(z.prettifyError(error));
+          throw error;
+        }
       },
     });
   }

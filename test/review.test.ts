@@ -356,8 +356,14 @@ describe('review submissions', { concurrency: 4 }, () => {
     }
     const validate = (entry: object) => call('factory_review_validate', { dropped: [], escalate: [{ id: 'bug-kept-guard', reason: 'r', ...entry }], keep: [], reviewId }, 'factory-review-validator');
 
-    await assert.rejects(validate({}), /bug-kept-guard.*decision.*criterion/);
-    await assert.rejects(validate({ criterion: 'c', decision: 1 }), /bug-kept-guard.*decision.*criterion/);
+    const refusal = /^✖ "bug-kept-guard": an escalate entry gives exactly one of/;
+    for (const entry of [{}, { criterion: 'c', decision: 1 }]) {
+      await assert.rejects(validate(entry), (error: Error) => refusal.test(error.message) && !/invalid_union|expected never|"code"/.test(error.message));
+    }
+    await assert.rejects(
+      call('factory_review_validate', { dropped: [], keep: [], reviewId: 'unknown' }, 'factory-review-validator'),
+      (error: Error) => error.message === 'Review unknown is not the active review.',
+    );
     await validate({ criterion: 'No runtime guard' });
     const result = await step(ws, run => recordReview(ws, run));
     assert.ok(result.kind === 'fix');
