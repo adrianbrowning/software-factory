@@ -1,6 +1,6 @@
 # Coding Standards
 
-Reviewers check every change against these rules.
+Reviewers check every change against these rules. `test/structure.test.ts` checks that the backticked `src/` paths and camelCase names in this file still exist; a paragraph marked "past history" is exempt.
 
 ## omp event hooks
 
@@ -20,7 +20,7 @@ Tests never call `mock.module` (or `t.mock.module`), and `scripts/test.sh` never
 
 ## Refusal messages
 
-A refusal or error message that names a next step must name a step that works in the state that produced the refusal, and a test runs that step once after the refusal. Example: the ambiguity refusal in `resolveObservations` told the orchestrator to carry the items as a free-text note, but a note-only `factory_carry` needs an active slice with a green review, and the refusal happened with no active slice.
+A refusal or error message that names a next step must name a step that works in the state that produced the refusal, and a test runs that step once after the refusal. Example (past history): the ambiguity refusal in `resolveObservations` told the orchestrator to carry the items as a free-text note, but a note-only `factory_carry` needs an active slice with a green review, and the refusal happened with no active slice.
 
 ## Review data sections in tests
 

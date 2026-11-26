@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -213,6 +213,46 @@ export function testScopeProblems(agents: string, tracked: Map<string, string>) 
     .filter(([path, content]) => !listed.includes(path) && path !== 'AGENTS.md' && !path.startsWith('test/') && content.includes(TEST_SCOPE_PHRASE))
     .map(([path]) => `${path}: holds "${TEST_SCOPE_PHRASE}" but is not in the AGENTS.md test-scope list`);
   return [...missing, ...extra];
+}
+
+const STALE_SPAN = /`([^`\n]+)`/g;
+const CAMEL_NAME = /^([a-z][a-zA-Z0-9]*)(\(\))?$/;
+
+/**
+ * One message per inline code span of the CODING_STANDARDS.md text that is stale: a `src/` path absent from `paths`
+ * (files and directories), or a camelCase identifier (optional trailing `()`) that no `sources` text holds as a whole word.
+ * Spans inside fenced code blocks and in a paragraph holding "past history" are skipped. The line is 1-based.
+ */
+export function standardsReferenceProblems(standards: string, paths: Set<string>, sources: string[]) {
+  const problems: string[] = [];
+  const lines = standards.split('\n');
+  let fenced = false;
+  let start = 0;
+  while (start < lines.length) {
+    let end = start;
+    const paragraph: number[] = [];
+    while (end < lines.length && lines[end]!.trim() !== '') {
+      if (lines[end]!.trimStart().startsWith('```')) fenced = !fenced;
+      else if (!fenced) paragraph.push(end);
+      end++;
+    }
+    if (!paragraph.some(i => lines[i]!.includes('past history'))) {
+      for (const i of paragraph) {
+        for (const match of lines[i]!.matchAll(STALE_SPAN)) {
+          const span = match[1]!;
+          const name = CAMEL_NAME.exec(span)?.[1];
+          if (span.startsWith('src/')) {
+            if (!paths.has(span.replace(/\/$/, ''))) problems.push(`CODING_STANDARDS.md:${i + 1}: \`${span}\` names no existing path`);
+          } else if (name && /[A-Z]/.test(name)) {
+            const word = new RegExp(`(?<![A-Za-z0-9_$])${name}(?![A-Za-z0-9_$])`);
+            if (!sources.some(source => word.test(source))) problems.push(`CODING_STANDARDS.md:${i + 1}: \`${span}\` is in no src/ or test/ .ts file`);
+          }
+        }
+      }
+    }
+    start = end + 1;
+  }
+  return problems;
 }
 
 const lineCount = (source: string) => source.split('\n').length - (source.endsWith('\n') ? 1 : 0);
@@ -498,5 +538,50 @@ describe('structure of the implementer test-scope wording', () => {
     const root = fileURLToPath(new URL('../', import.meta.url));
     const tracked = textFilesOf(root, execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' }).split('\0'));
     assert.deepEqual(testScopeProblems(tracked.get('AGENTS.md') ?? '', tracked), []);
+  });
+});
+
+function tsSourceTexts(root: string): string[] {
+  return ['src', 'test']
+    .flatMap(dir => readdirSync(join(root, dir), { recursive: true }).map(name => `${dir}/${String(name)}`))
+    .filter(path => path.endsWith('.ts') && path !== 'test/structure.test.ts')
+    .map(path => readFileSync(join(root, path), 'utf8'));
+}
+
+describe('structure of the CODING_STANDARDS.md references', () => {
+  const paths = new Set(['src/a.ts', 'src']);
+  const sources = ['export function evidenceHeadline() {}'];
+
+  it('reports a src/ path outside the path set and accepts a file or directory in it', () => {
+    assert.deepEqual(standardsReferenceProblems('x `src/a.ts` `src/` `src/gone.ts`\n', paths, sources), ['CODING_STANDARDS.md:1: `src/gone.ts` names no existing path']);
+  });
+
+  it('reports a camelCase name held by no source as a whole word, with or without ()', () => {
+    assert.deepEqual(standardsReferenceProblems('`evidenceHeadline` `evidenceHead()` `evidenceHeadline()`\n', paths, sources), ['CODING_STANDARDS.md:1: `evidenceHead()` is in no src/ or test/ .ts file']);
+  });
+
+  it('reports the 1-based line, skips fenced blocks, other span kinds and past-history paragraphs', () => {
+    const text = ['ok', '', '```', '`goneName` `src/no.ts`', '```', '', '`factory_carry` `Map` `OMP` `assert.ok` `test/helpers.ts`', '', 'Example (past history): `goneName`', 'and `src/no.ts`', '', '`goneName`', ''].join('\n');
+    assert.deepEqual(standardsReferenceProblems(text, paths, sources), ['CODING_STANDARDS.md:12: `goneName` is in no src/ or test/ .ts file']);
+  });
+
+  it('finds no stale reference in the real CODING_STANDARDS.md', () => {
+    const root = fileURLToPath(new URL('../', import.meta.url));
+    const tracked = execFileSync('git', ['ls-files', '-z'], { cwd: root, encoding: 'utf8' }).split('\0').filter(Boolean);
+    const paths = new Set(tracked.flatMap(path => path.split('/').map((_, i, parts) => parts.slice(0, i + 1).join('/'))));
+    const texts = tsSourceTexts(root);
+    assert.deepEqual(standardsReferenceProblems(readFileSync(join(root, 'CODING_STANDARDS.md'), 'utf8'), paths, texts), []);
+  });
+
+  it('reads nested src/ and test/ .ts files and excludes only the root structure test', () => {
+    const root = mkdtempSync(join(tmpdir(), 'standards-'));
+    for (const dir of ['src/sub', 'test/sub']) mkdirSync(join(root, dir), { recursive: true });
+    writeFileSync(join(root, 'src/sub/a.ts'), 'srcNestedName');
+    writeFileSync(join(root, 'test/sub/b.ts'), 'testNestedName');
+    writeFileSync(join(root, 'test/sub/structure.test.ts'), 'nestedSameName');
+    writeFileSync(join(root, 'test/structure.test.ts'), 'rootExcludedName');
+    const texts = tsSourceTexts(root);
+    const text = '`srcNestedName` `testNestedName` `nestedSameName` `rootExcludedName`';
+    assert.deepEqual(standardsReferenceProblems(text, new Set(), texts), ['CODING_STANDARDS.md:1: `rootExcludedName` is in no src/ or test/ .ts file']);
   });
 });
