@@ -1421,6 +1421,8 @@ describe('used-up fix budget', () => {
       const state = readRun(ws, 'demo');
       assert.deepEqual(state.waiting, []);
       assert.equal(state.slices[1]?.carried.length, 2);
+      const ticket = readFileSync(ticketPath(ws, 'demo', state.slices[1] ?? assert.fail('no slice')), 'utf8');
+      assert.ok(ticket.includes(changedKey) && ticket.includes(otherKey));
     });
 
     it('records the overlap block in the followUp gate event of a headless run', async () => {
@@ -1429,6 +1431,16 @@ describe('used-up fix budget', () => {
       await queued(ws, call, ['ok']);
       await withRun(ws, 'demo', run => { run.mode = 'headless'; });
       await call('factory_follow_up', followUp, {});
+      const event = readRun(ws, 'demo').events.find(item => item.detail.includes('gate followUp (auto)'));
+      assert.match(event?.detail ?? '', /Overlap with done slices \(file-level\):\n- \S+ \(ok\): slice 01/);
+    });
+
+    it('keeps the overlap block in the headless gate event when the follow-up text is long', async () => {
+      using repo = budgetRepo();
+      const { call, ws } = await budgetRun(repo.root, ['Feature']);
+      await queued(ws, call, ['ok']);
+      await withRun(ws, 'demo', run => { run.mode = 'headless'; });
+      await call('factory_follow_up', { ...followUp, whatToBuild: 'Long. '.repeat(1_000) }, {});
       const event = readRun(ws, 'demo').events.find(item => item.detail.includes('gate followUp (auto)'));
       assert.match(event?.detail ?? '', /Overlap with done slices \(file-level\):\n- \S+ \(ok\): slice 01/);
     });

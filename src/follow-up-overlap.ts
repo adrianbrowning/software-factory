@@ -7,11 +7,19 @@ import { git } from './exec.ts';
 import { carriedKeys } from './legacy-observations.ts';
 import type { Run } from './run.ts';
 
-/** Whether a ledger location (`<path>:<line>`, `<path>`, or `<symbol> (<that place>)`) points at `path`. Line numbers are not compared. */
+/** Whether `place` is `path`, or `path:<line>`. Line numbers are not compared. */
+function isPlace(place: string, path: string) {
+  return place === path || (place.startsWith(`${path}:`) && /^\d+$/.test(place.slice(path.length + 1)));
+}
+
+/** Whether a ledger location (`<place>`, or `<symbol> (<place>)`) points at `path`. */
 function pointsAt(location: string, path: string) {
-  const place = location.endsWith(')') ? location.slice(0, -1) : location;
-  const base = place.replace(/:\d+$/, '');
-  return base === path || base.endsWith(` (${path}`);
+  if (isPlace(location, path)) return true;
+  if (!location.endsWith(')')) return false;
+  for (let at = location.indexOf(' ('); at !== -1; at = location.indexOf(' (', at + 1)) {
+    if (isPlace(location.slice(at + 2, -1), path)) return true;
+  }
+  return false;
 }
 
 /**
@@ -28,8 +36,8 @@ export async function followUpOverlap(root: string, run: Run) {
       const slice = run.slices.find(candidate => candidate.id === entry?.slice && candidate.status === 'done');
       if (entry === undefined || slice === undefined) continue;
       if (!changed.has(slice.id)) {
-        const out = await git(root, 'diff', '--name-only', `${slice.parentBranch}..${slice.branch}`).catch(() => '');
-        changed.set(slice.id, out.split('\n').filter(Boolean));
+        const out = await git(root, 'diff', '--name-only', '-z', `${slice.parentBranch}..${slice.branch}`);
+        changed.set(slice.id, out.split('\0').filter(Boolean));
       }
       const path = changed.get(slice.id)?.find(candidate => pointsAt(entry.location, candidate));
       if (path !== undefined) {
