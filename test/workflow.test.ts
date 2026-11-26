@@ -1287,6 +1287,17 @@ describe('reopen', () => {
     assert.equal(stored, `Implementer report:\nCommits:\n- ${now.slice(0, 9)} 02: second.test.ts\nFix file items:\n- f1-a: fixed in ${now}\n- f1-b: already fixed (${old} untouched here)\nBehaviors:\n- t → b (seen red: no)\nOpen:\n- mentions ${old}`);
   });
 
+  it('rewrites a fixed in sha of a Carried items line of the restacked report', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    const text = (sha: string) =>
+      `Implementer report:\nCommits:\n- ${sha.slice(0, 9)} 02: second.test.ts\nCarried items:\n- 01-r1:a fixed in ${sha}\nBehaviors:\n- t → b (seen red: no)\nOpen:\n- none`;
+    await twoDone(ws, ['second.test.ts', 'x\n'], text);
+    await reopenFixAndComplete(ws);
+    const now = sh(ws.root, 'rev-parse', '--short=12', 'HEAD');
+    const stored = readFileSync(reportPath(ws, 'demo', readRun(ws, 'demo').slices[1] ?? assert.fail('no slice')), 'utf8');
+    assert.match(stored, new RegExp(`Carried items:\\n- 01-r1:a fixed in ${now}\\n`));
+  });
+
   it('removes the implementer report of a restacked slice whose commit the rebase dropped', async () => {
     using ws = workspace({ maxRounds: 2 });
     await twoDone(ws, ['first.test.ts', 'fixed\n'], undefined, 'extra.test.ts');
