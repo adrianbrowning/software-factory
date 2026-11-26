@@ -470,7 +470,7 @@ describe('checks and a host clock jump', () => {
 
   it('refuses a failed check whose deciding run saw a clock jump as an environment error, not a fix round', async () => {
     using jumps = tempDir('factory-jumps-');
-    const check = (dir: string) => `touch '${dir}'/$$; exit 1`;
+    const check = (dir: string) => `if [ "$(ls '${dir}' | wc -l)" -ge 2 ]; then exit 0; fi; touch '${dir}'/$$; exit 1`;
     await withClockJumps(jumps.root, dir => [check(dir)], async ws => {
       const before = readRun(ws, 'demo');
       await assert.rejects(
@@ -489,6 +489,8 @@ describe('checks and a host clock jump', () => {
       assert.equal(after.slices[0]?.fixPath, undefined);
       assert.equal(existsSync(join(ws.root, '.scratch', 'demo', 'fixes')), false);
       assert.deepEqual(after.events.filter(e => e.kind === 'checks-fail'), before.events.filter(e => e.kind === 'checks-fail'));
+      // The next step the error names: the clock is stable now, so the same call passes.
+      assert.ok((await step(ws, run => runChecks(ws, run))).passed);
     });
   });
 
