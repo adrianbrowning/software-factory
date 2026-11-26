@@ -1235,6 +1235,33 @@ describe('reopen', () => {
     assert.doesNotMatch(stored, /No implementer report was submitted/);
   });
 
+  /** Slice 02 active with one commit and a hand-written report; reopening 01 restarts 02 at checks, and `commits` renders the report's Commits items from that commit's short sha. */
+  async function reopenWithReport(ws: Workspace, commits: (sha: string) => string[]) {
+    await newRun(ws, [slice('First'), slice('Second', ['First'])]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'second.test.ts');
+    const path = reportPath(ws, 'demo', readRun(ws, 'demo').slices[1] ?? assert.fail('no slice'));
+    writeAtomic(path, `Implementer report:\nCommits:\n${commits(sh(ws.root, 'rev-parse', '--short=12', 'HEAD')).map(item => `- ${item}`).join('\n')}\nBehaviors:\n- none\nOpen:\n- none\n`);
+    assert.ok(existsSync(path));
+    await step(ws, run => reopenSlice(ws, run, '01', 'bug'));
+    assert.equal(readRun(ws, 'demo').slices[1]?.phase, 'checks');
+    return path;
+  }
+
+  it('removes the report with no Commits items of a slice that restarts at checks', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    assert.ok(!existsSync(await reopenWithReport(ws, () => ['none'])));
+  });
+
+  it('removes the report of a slice that restarts at checks when one Commits item names no current own commit', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    assert.ok(!existsSync(await reopenWithReport(ws, sha => [`${sha} 02: second.test.ts`, 'deadbeef1234 02: stale'])));
+  });
+
   it('rewrites the implementer report of a restacked slice to the rebased shas in its checks result and review data', async () => {
     using ws = workspace({ maxRounds: 2 });
     const old = await twoDone(ws);
