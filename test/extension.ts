@@ -13,10 +13,15 @@ export type Handler = (event: unknown, ctx: unknown) => Promise<unknown>;
 
 export type Command = { handler: (args: string, ctx: unknown) => Promise<void> };
 
-type LoadOptions = { activated?: string[]; commands?: Map<string, Command>; handlers?: Map<string, Handler>; initialActive?: string[] | undefined; probe?: { activeTools?: () => string[] }; sent?: string[]; sentOptions?: unknown[]; thinking?: () => string | undefined; checkGit?: () => string | undefined; submit?: typeof submitHeadless | undefined };
+type LoadOptions = { activated?: string[]; commands?: Map<string, Command>; handlers?: Map<string, Handler>; initialActive?: string[] | undefined; sent?: string[]; sentOptions?: unknown[]; thinking?: () => string | undefined; checkGit?: () => string | undefined; submit?: typeof submitHeadless | undefined };
 
 /** Registers the extension against a recording `pi` and returns its tools by name; `activated` collects what setActiveTools gets, `initialActive` replaces the default active-tool list (the registered tools without defaultInactive) before any setActiveTools, `handlers` records its event hooks, `commands` its slash commands, `sent` the messages passed to pi.sendUserMessage, `thinking` gives pi.getThinkingLevel, `submit` replaces the headless submission. */
-export function load({ activated = [], commands = new Map(), handlers = new Map(), initialActive, probe, sent = [], sentOptions = [], thinking = () => 'off', checkGit, submit }: LoadOptions = {}) {
+export function load(options: LoadOptions = {}) {
+  return loadWithActiveTools(options).tools;
+}
+
+/** Like load(), and also returns `activeTools`, the fake's current active tool names (initialActive, else the registered tools without defaultInactive, then each setActiveTools list). */
+export function loadWithActiveTools({ activated = [], commands = new Map(), handlers = new Map(), initialActive, sent = [], sentOptions = [], thinking = () => 'off', checkGit, submit }: LoadOptions = {}) {
   const tools = new Map<string, Registered>();
   let active = initialActive;
   const pi = {
@@ -41,9 +46,8 @@ export function load({ activated = [], commands = new Map(), handlers = new Map(
     },
     setLabel() {},
   };
-  if (probe) probe.activeTools = pi.getActiveTools;
   softwareFactory(pi as unknown as ExtensionAPI, checkGit, submit);
-  return tools;
+  return { tools, activeTools: pi.getActiveTools };
 }
 
 export type TestContext = { agent: { depth: number; id: string; kind: 'main' | 'sub'; name: string }; cwd: string; hasUI: boolean };
