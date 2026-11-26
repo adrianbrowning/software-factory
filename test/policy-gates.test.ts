@@ -5,6 +5,7 @@ import { beforeEach, describe, it } from 'node:test';
 import { type Command, ctx, load } from './extension.ts';
 import { loadConfig, parseConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
+import { redact } from '../src/evidence.ts';
 import { headlessRetroGateBody } from '../src/retro.ts';
 import { readRun, statePath, withRun, type Run, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
@@ -513,6 +514,15 @@ describe('headless gate events hold the dialog body', () => {
     const text = 'x'.repeat(2_500);
     const body = `- ${text}`;
     assert.deepEqual(await decideEvent([text]), [`gate decide (auto): ${TITLE}\n${body.slice(0, 2_000)}\n[${body.length - 2_000} characters not shown]`]);
+  });
+
+  it('redacts before clipping, so a credential crossing character 2,000 never leaks', async () => {
+    const text = `${'x'.repeat(1_989)} ghp_${'a1B2'.repeat(9)}${'z'.repeat(100)}`;
+    const redacted = redact(`- ${text}`);
+    assert.ok(redacted.length > 2_000);
+    const [detail] = await decideEvent([text]);
+    assert.deepEqual([detail], [`gate decide (auto): ${TITLE}\n${redacted.slice(0, 2_000)}\n[${redacted.length - 2_000} characters not shown]`]);
+    assert.doesNotMatch(detail ?? '', /ghp_/);
   });
 
   it('keeps a body of exactly 2,000 characters whole', async () => {
