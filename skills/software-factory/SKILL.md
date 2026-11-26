@@ -42,6 +42,8 @@ When the issue (for example a retro finding) reports that an agent broke a rule 
 
 Write every decision, interactive or headless, at the precision you want enforced. Reviewers and the validator read a decision literally and report code that misses its literal wording as high, so an absolute phrase such as "no other git-tracked file holds the phrase" makes them escalate edge cases you did not mean (for example binary files). Write the scope you actually mean ("no other tracked text file"). State what the decision covers and what it does not, and avoid absolute wording ("never", "always", "no X") that the code does not hold in every case.
 
+When a decision or acceptance criterion defines what a check accepts as free-text input (for example an allow marker that must be followed by a reason), pin the parsing rule exactly, in interactive and headless runs alike: write the pattern the check uses (for example the regex), plus example inputs it accepts and example inputs it rejects. Issue 852 shows the cost of leaving it out: a decision that said only "followed by a reason" left "reason" undefined, so two reviews blocked opposite regexes in turn and one regex took two fix rounds.
+
 ## 3. Slice
 
 Break the work into **tracer bullets** (Matt Pocock's `to-tickets` rules):
