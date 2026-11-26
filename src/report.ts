@@ -201,3 +201,44 @@ export function startImplementerSession(ws: Workspace, run: Run) {
 export function clearReport(ws: Workspace, feature: string, slice: Pick<Slice, 'id'>) {
   rmSync(reportPath(ws, feature, slice), { force: true });
 }
+
+/**
+ * Rewrites the shas of the slice's stored report after a rebase: each Commits item's leading hex prefix and each Fix file
+ * items line's `fixed in <sha>` that names an old commit becomes the prefix of its paired new commit, of the same length;
+ * every other byte stays. Removes the report and returns false when a Commits item names no old commit. True when the
+ * report was rewritten or none is stored.
+ */
+export function remapReportShas(ws: Workspace, run: Run, slice: Slice, pairs: { old: string; new: string }[]) {
+  const path = reportPath(ws, run.feature, slice);
+  if (!existsSync(path)) return true;
+  const swap = (hex: string) => {
+    const old = hex.toLowerCase();
+    const pair = pairs.find(candidate => candidate.old.startsWith(old));
+    return pair?.new.slice(0, hex.length);
+  };
+  let section = '';
+  let failed = false;
+  const lines = readFileSync(path, 'utf8').split('\n').map(line => {
+    if (!line.startsWith('- ')) {
+      section = line;
+      return line;
+    }
+    if (section === 'Commits:' && line !== '- none') {
+      const hex = commitPrefix(line.slice(2));
+      const next = hex === undefined ? undefined : swap(hex);
+      if (hex === undefined || next === undefined) {
+        failed = true;
+        return line;
+      }
+      return `- ${next}${line.slice(2 + hex.length)}`;
+    }
+    if (section === 'Fix file items:') return line.replace(/(\bfixed in )([0-9a-f]{7,40})\b/i, (all, lead: string, hex: string) => `${lead}${swap(hex) ?? hex}`);
+    return line;
+  });
+  if (failed) {
+    clearReport(ws, run.feature, slice);
+    return false;
+  }
+  writeAtomic(path, lines.join('\n'));
+  return true;
+}

@@ -668,7 +668,9 @@ export function startFix(run: Run, slice: Slice, sha: string, written: ReturnTyp
 
 /**
  * Sends a slice back to pending and clears its checks and review. A slice with commits past its parent restarts at
- * checks on its existing branch (see nextSlice); one without starts again at implement.
+ * checks on its existing branch (see nextSlice) and keeps its stored implementer report: its commits did not change here,
+ * and a restack rewrites the report to the rebased shas first, or removes it when the rebased commits cannot be paired (see restack). One without starts again at implement and
+ * its report is removed.
  */
 export async function restartSlice(ws: Workspace, run: Run, slice: Slice) {
   const own = (await git(ws.root, 'rev-list', '--count', `${slice.parentBranch}..refs/heads/${slice.branch}`)).trim();
@@ -677,7 +679,7 @@ export async function restartSlice(ws: Workspace, run: Run, slice: Slice) {
   slice.targeting = undefined;
   slice.fixPath = undefined;
   slice.fixFromSha = undefined;
-  clearReport(ws, run.feature, slice);
+  if (own === '0') clearReport(ws, run.feature, slice);
   writeTicket(ws, run, slice);
 }
 

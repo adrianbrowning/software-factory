@@ -50,7 +50,7 @@ import { fixAfterGreen } from './observations.ts';
 import { collectObservations, placeDefaults } from './place.ts';
 import { TEST_PATH } from './test-paths.ts';
 import { changedLines, changedPaths, targetedReview } from './targeted.ts';
-import { reportListsCommit, storedBehaviors, storedReport } from './report.ts';
+import { clearReport, remapReportShas, reportListsCommit, storedBehaviors, storedReport } from './report.ts';
 import { head, ownCommits, porcelain, requireOnBranchClean, snapshot } from './repo.ts';
 import {
   needsFullReview,
@@ -752,12 +752,25 @@ function renderOpenItem(item: FixItem, verdict: FixVerdict | undefined) {
   return `### \`${item.id}\`\n\n- Asked in: ${item.path} (round ${item.round})\n- Item: ${redact(item.summary)}\n- Scope reviewer: ${verdict === undefined ? 'no verdict' : evidence(verdict.reason, 2_000)}`;
 }
 
+/** The slice's old own commits paired by position with its rebased ones, or undefined when the counts or a subject differ. */
+async function pairCommits(ws: Workspace, entry: { old: string; tip: string; parentOld: string; parentNew: string }) {
+  const list = async (range: string) => (await git(ws.root, 'log', '--reverse', '--format=%H %s', range)).split('\n').filter(line => line !== '');
+  const before = await list(`${entry.parentOld}..${entry.old}`);
+  const after = await list(`${entry.parentNew}..${entry.tip}`);
+  if (before.length !== after.length) return undefined;
+  const pairs = before.map((line, index) => ({ old: line.slice(0, 40), new: (after[index] ?? '').slice(0, 40) }));
+  const subject = (line: string | undefined) => line?.slice(41);
+  return before.every((line, index) => subject(line) === subject(after[index])) ? pairs : undefined;
+}
+
 /**
  * Moves every later slice branch onto the reopened slice's fixed tip, bottom up: each child goes from its parent's old
  * tip onto the parent's new tip, so it keeps only its own commits. Every old tip is snapshotted into a backup ref
  * before the first rebase. A child already on its parent's new tip (rebased by hand) stays as it is. A failed rebase
  * puts every branch back at its old tip, pauses the run, and throws. Each later slice that moved, or was not done,
- * goes back to pending.
+ * goes back to pending. A moved slice keeps its implementer report, rewritten to the rebased shas: its old own commits
+ * pair with the new ones by position, when the counts match and each pair has the same subject. When they do not pair
+ * (for example the rebase dropped an empty commit), the report is removed.
  */
 async function restack(ws: Workspace, run: Run, reopened: Slice, doneSha: string) {
   const later: { old: string; slice: Slice }[] = [];
@@ -769,7 +782,7 @@ async function restack(ws: Workspace, run: Run, reopened: Slice, doneSha: string
   }
   const backup = (slice: Slice) => `refs/factory/${run.feature}/backup/${slice.id}`;
   for (const { old, slice } of later) await git(ws.root, 'update-ref', backup(slice), old);
-  const moved: { old: string; slice: Slice; tip: string }[] = [];
+  const moved: { old: string; slice: Slice; tip: string; parentOld: string; parentNew: string }[] = [];
   let parentOld = doneSha;
   let parentNew = await head(ws.root);
   for (const child of later) {
@@ -804,13 +817,17 @@ async function restack(ws: Workspace, run: Run, reopened: Slice, doneSha: string
           `Restacking ${child.slice.branch} onto the fixed ${child.slice.parentBranch} failed:\n${evidence(error instanceof Error ? error.message : String(error), 2_000)}\n${state}, and the run is paused. The user must resolve the conflict: rebase each later slice branch onto the one below it by hand, bottom up (git rebase --onto <parent> <old parent tip> <branch>), then /factory resume ${run.feature}. Completing slice ${reopened.id} again keeps the branches that are already on their parent.`,
         );
       }
-      moved.push({ ...child, tip: (await git(ws.root, 'rev-parse', `refs/heads/${child.slice.branch}`)).trim() });
+      moved.push({ ...child, parentOld, parentNew, tip: (await git(ws.root, 'rev-parse', `refs/heads/${child.slice.branch}`)).trim() });
     }
     parentOld = child.old;
     parentNew = (await git(ws.root, 'rev-parse', `refs/heads/${child.slice.branch}`)).trim();
   }
   await git(ws.root, 'switch', reopened.branch);
   for (const { slice } of later) await git(ws.root, 'update-ref', '-d', backup(slice));
+  for (const entry of moved) {
+    const pairs = await pairCommits(ws, entry);
+    if (pairs === undefined || !remapReportShas(ws, run, entry.slice, pairs)) clearReport(ws, run.feature, entry.slice);
+  }
   for (const { slice } of later) {
     const tip = (await git(ws.root, 'rev-parse', `refs/heads/${slice.branch}`)).trim();
     if (slice.status !== 'done' || tip !== greenCommit(slice)) await restartSlice(ws, run, slice);
