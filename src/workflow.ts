@@ -596,7 +596,7 @@ export async function nextSlice(ws: Workspace, run: Run) {
 
 /**
  * What a fix round asks the implementer to fix: a review finding by its id, or a factory item by its kind, which
- * requestFix gives an id carrying the round (`check-f<N>-<k>`, `tree-f<N>`, `bug-f<N>`, `bug-f<N>-<n>`, `reopen-f<N>`).
+ * requestFix gives an id carrying the round (`check-f<N>-<k>`, `tree-f<N>`, `bug-f<N>`, `reopen-f<N>`).
  */
 export type FixItemInput = { id: string; summary: string } | { kind: 'bug' | 'check' | 'reopen' | 'tree'; summary: string };
 
