@@ -37,7 +37,7 @@ export const implementerReportSchema = z.object({
   fixItems: z
     .array(reportItem)
     .optional()
-    .describe('Required in fix mode with at least one item: each id from the fix file\'s "## Fix items", exactly as listed, with `fixed in <sha>`, `already fixed`, or `not a defect: <why>`. A line may also name an observation of the slice that is still unplaced (its id, or `<review>:<id>` when two reviews kept the same id, at the start of the line) with `fixed in <sha>` for a commit of the slice: the factory then records that observation as fixed, adds it to this round\'s fix items, and the next review\'s scope reviewer gives it a verdict. In build mode, optional and accepted only on a slice with carried keys, each line `<carried key> fixed in <sha>` for a commit of the slice; otherwise leave it out'),
+    .describe('Required in fix mode with at least one item: each id from the fix file\'s "## Fix items", exactly as listed, with `fixed in <sha>`, `already fixed`, or `not a defect: <why>`. A line may also name an observation of the slice that is still unplaced (its id, or `<review>:<id>` when two reviews kept the same id, at the start of the line) with `fixed in <sha>` for a commit of the slice: the factory then records that observation as fixed, adds it to this round\'s fix items, and the next review\'s scope reviewer gives it a verdict; after a green review it is recorded as fixed but added to no fix item, since no review follows. In build mode, optional and accepted only on a slice with carried keys, each line `<carried key> fixed in <sha>` for a commit of the slice; otherwise leave it out'),
   open: z.array(reportItem).describe('Anything unfinished, any stop report (NEEDS SEAM, SLICE TOO BIG, MISSING DEPENDENCY), and any question about a change to a shared helper outside the ticket (code that callers outside the ticket use) that you left out of the commit; empty when nothing is open'),
 });
 export type ImplementerReport = z.infer<typeof implementerReportSchema>;
@@ -83,6 +83,7 @@ function recordableFixedClaim(unplaced: Slice['unplaced'], line: string, own: { 
 /**
  * Records each observation unplaced on the slice that a fixItems line names with `fixed in <sha>` (a commit of the slice) as
  * placed `fixed`, and adds it as a fix item of the current round so the next review's scope reviewer gives it a verdict.
+ * After a green review (slice phase 'ready') it is recorded as fixed but added to no fix item, since no review follows.
  * Other lines, unknown or ambiguous ids and other shas change nothing. Returns the ids recorded.
  */
 function recordFixedObservations(run: Run, slice: Slice, fixItems: string[], own: { sha: string }[]) {
@@ -99,7 +100,7 @@ function recordFixedObservations(run: Run, slice: Slice, fixItems: string[], own
     placed.add(key);
     placeObservations(run, { id: entry.review }, slice, [entry.finding], 'fixed');
     addEvent(run, 'fixed-by-implementer', `${entry.review}: ${entry.finding.id} fixed in ${claim.sha}`, slice);
-    if (slice.fixPath !== undefined) {
+    if (slice.fixPath !== undefined && slice.phase !== 'ready') {
       const { item } = findingRecord(entry.finding, '', run.decisions);
       // Two reviews can keep the same id: the later one is listed as `<review>:<id>`, so each gets its own verdict.
       const id = slice.fixItems.some(existing => existing.id === entry.finding.id) ? key : entry.finding.id;
@@ -182,7 +183,7 @@ export async function submitImplementerReport(ws: Workspace, run: Run, report: I
   const fixed = fixMode && report.fixItems !== undefined && !reviewOpen ? recordFixedObservations(run, slice, report.fixItems, own) : [];
   const skippedForOpenReview = fixMode && reviewOpen && report.fixItems?.some(line => recordableFixedClaim(slice.unplaced, line, own) !== undefined) === true;
 
-  return { fixed, observed, path, replaced, skippedForOpenReview };
+  return { fixed, observed, path, replaced, skippedForOpenReview, afterGreen: slice.phase === 'ready' };
 }
 
 /** The slice's latest stored implementer report, or a line saying none was submitted; both name the report file. */

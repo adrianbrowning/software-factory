@@ -129,7 +129,41 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
     const result = await report(ws, sha, [`${OBSERVATION}: fixed in ${sha.slice(0, 7)}`]);
     assert.deepEqual(result.fixed, ['01-r1:thermo-naming']);
     assert.equal(result.skippedForOpenReview, false);
+    const { ledger, slice: after } = state(ws);
+    assert.deepEqual(ledger.map(entry => [entry.key, entry.placement]), [['01-r1:thermo-naming', 'fixed']]);
+    assert.deepEqual(after.unplaced, []);
+    assert.deepEqual(after.fixItems, []);
   });
+
+  for (const green of [false, true]) {
+    it(`tool reply ${green ? 'after green says no fix item was added' : 'in phase fix says the item was added'}`, async () => {
+      using dir = tempRepo('factory-fixed-obs-tool-', HEADLESS_FILES);
+      const { ws } = await headlessSubmitRun(dir.root, ['Feature'], {}, {}, async () => '');
+      await withRun(ws, 'demo', run => runChecks(ws, run));
+      const first = await withRun(ws, 'demo', run => startReview(ws, run));
+      await review(ws, first.reviewId, [finding('scope', 'high', 'gap'), finding('thermo', 'observation', 'naming')]);
+      assert.equal((await withRun(ws, 'demo', run => recordReview(ws, run))).kind, 'fix');
+      commit(ws, 'fixed.txt');
+      const sha = sh(ws.root, 'rev-parse', 'HEAD');
+      if (green) {
+        await withRun(ws, 'demo', run => runChecks(ws, run));
+        const opened = await withRun(ws, 'demo', run => startReview(ws, run));
+        const listed = [...fixItems(opened.dataFile).matchAll(/^- `([^`]+)`/gm)].map(match => match[1]!);
+        await review(ws, opened.reviewId, [], [], listed.map(id => ({ id, reason: 'the diff fixes it', status: 'fixed' as const })));
+        assert.equal((await withRun(ws, 'demo', run => recordReview(ws, run))).kind, 'green');
+      }
+      const implementer = { ...ctx('sub', 'factory-implementer'), cwd: dir.root };
+      const reported = await load().get('factory_implementer_report')?.execute('id', { behaviors: [], checks: [], commits: [`${sha.slice(0, 7)} fix`], fixItems: [`${OBSERVATION}: fixed in ${sha.slice(0, 7)}`], open: [] }, undefined, undefined, implementer);
+      const text = reported !== null && typeof reported === 'object' && 'content' in reported && Array.isArray(reported.content) ? JSON.stringify(reported.content) : '';
+      assert.match(text, /thermo-naming/);
+      if (green) {
+        assert.match(text, /No fix item was added because the slice's review is green/);
+        assert.doesNotMatch(text, /added to this round's fix items/);
+      } else {
+        assert.match(text, /added to this round's fix items for the next review's verdict/);
+      }
+    });
+  }
 
   it('flags a `fixed in <sha>` line sent during an open review as not recorded, and the tool reply says so', async () => {
     using dir = tempRepo('factory-fixed-obs-open-', HEADLESS_FILES);
