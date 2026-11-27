@@ -1131,7 +1131,7 @@ describe('used-up fix budget', () => {
     });
 
     describe('fix file ids the report does not account for', () => {
-      const LINE = /Fix file items the implementer report does not account for: ([^\n]*)\nMessage the implementer \(agent:\/\/<id>\) to resubmit its report with factory_implementer_report, with a line for each of these ids, before factory_review_start\. This is not a fix round; do not call factory_checks again for it\./;
+      const LINE = /Fix file items the implementer report does not account for: ([^\n]*)\nMessage the implementer \(agent:\/\/<id>\) to resubmit its report with factory_implementer_report, with a line that starts with each of these ids exactly as listed, before factory_review_start\. This is not a fix round; do not call factory_checks again for it\./;
       const seedItems = (ws: Workspace, ids: string[], olderId?: string) =>
         withRun(ws, 'demo', current => {
           const target = current.slices[0]!;
@@ -1184,6 +1184,21 @@ describe('used-up fix budget', () => {
             await seedItems(ws, ['check-f2-1']);
             reportWith(ws, ['check-f2-10 fixed in abc1234']);
             assert.equal(LINE.exec(await text(call))?.[1], 'check-f2-1');
+          },
+        });
+      });
+
+      it('lists an id stored as <review>:<id> until the report line starts with it exactly', async () => {
+        await resumeFix({
+          checks: ['test -f g.txt'],
+          report: 'round',
+          then: async (call, ws) => {
+            await seedItems(ws, ['01-r1:foo']);
+            reportWith(ws, ['foo fixed in abc1234']);
+            assert.equal(LINE.exec(await text(call))?.[1], '01-r1:foo');
+            const path = reportPath(ws, 'demo', readRun(ws, 'demo').slices[0]!);
+            writeFileSync(path, readFileSync(path, 'utf8').replace('- foo fixed in abc1234', '- 01-r1:foo fixed in abc1234'));
+            assert.doesNotMatch(await text(call), /does not account for/);
           },
         });
       });
