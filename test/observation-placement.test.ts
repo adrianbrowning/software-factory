@@ -209,6 +209,19 @@ describe('batched observation placement', () => {
     assert.doesNotMatch(fixFile, /green review 01-r1/);
   });
 
+  it('factory_fix keeps one fix item per observation even when two reviews kept the same id', async () => {
+    using dir = repo();
+    const { call, full, ws } = await interactive(dir.root);
+    await full([observation('naming', 'correctness')]);
+    await withRun(ws, 'demo', run => {
+      const kept = run.slices[0]!.unplaced[0]!;
+      run.slices[0]!.unplaced.push({ ...kept, review: 'r0', finding: { ...kept.finding, problem: 'an earlier problem', path: 'elsewhere.txt' } });
+    });
+    const fixed = (await call('factory_fix', { observations: ['r0:thermo-naming', '01-r1:thermo-naming'], reason: 'now' })).content[0]?.text ?? '';
+    assert.match(fixed, /back in fix/);
+    assert.deepEqual(readRun(ws, 'demo').slices[0]?.fixItems.map(item => item.id), ['thermo-naming', 'thermo-naming']);
+  });
+
   it('factory_place with a fix placement writes the validator warning of the observation in its fix-file section', async () => {
     using dir = repo();
     const { call, ws } = await interactive(dir.root);

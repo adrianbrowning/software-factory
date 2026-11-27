@@ -199,7 +199,7 @@ function unplacedObservations(run: Run, chosen: Set<string>) {
 export function fixAfterGreen(ws: Workspace, run: Run, request: FixRequest, reason: string, accepted?: { findings: Finding[]; review: string; warnings: ReadonlyMap<string, string> }) {
   const { bug, groups, items, observations, review, shownBug, slice } = planFix(ws, run, request);
   const why = evidence(reason, 4_000);
-  const records: FixRecord[] = [
+  const own: FixRecord[] = [
     ...(shownBug === undefined
       ? []
       : [
@@ -211,13 +211,13 @@ export function fixAfterGreen(ws: Workspace, run: Run, request: FixRequest, reas
     ...groups.flatMap(group =>
       group.observations.map(finding => findingRecord(finding, `## Observations from ${group.review.id === review.id ? 'green review' : 'review'} ${group.review.id} the user chose to fix\n\n${why}`, run.decisions, group.warnings.get(finding.id))),
     ),
-    ...(accepted?.findings ?? []).map(finding => findingRecord(finding, `## Accepted-unresolved findings of review ${accepted?.review}`, run.decisions, accepted?.warnings.get(finding.id))),
-  ].map((record, index, all): FixRecord => {
-    // Finding ids are unique per review only: a repeated id is listed once, both sections stay.
-    const { item } = record;
-    const repeated = 'id' in item && all.slice(0, index).some(earlier => 'id' in earlier.item && earlier.item.id === item.id);
-    return repeated ? { ...record, unlisted: true } : record;
+  ];
+  // Finding ids are unique per review only: a joined accepted finding repeating an earlier id is listed once, both sections stay.
+  const joined = (accepted?.findings ?? []).map((finding): FixRecord => {
+    const record = findingRecord(finding, `## Accepted-unresolved findings of review ${accepted?.review}`, run.decisions, accepted?.warnings.get(finding.id));
+    return own.some(earlier => 'id' in earlier.item && earlier.item.id === finding.id) ? { ...record, unlisted: true } : record;
   });
+  const records = [...own, ...joined];
   // The fix file is written before the run changes, so a failed write leaves the run as it was.
   const written = writeFixFile(ws, run, slice, records);
   addEvent(run, 'fix-after-green', `${groups.map(group => group.review.id).join(', ')}: ${[...items.map(item => item.label), ...(accepted?.findings ?? []).map(finding => finding.id)].join(', ')}`, slice);
