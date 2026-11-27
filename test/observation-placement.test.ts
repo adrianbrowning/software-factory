@@ -209,6 +209,19 @@ describe('batched observation placement', () => {
     assert.doesNotMatch(fixFile, /green review 01-r1/);
   });
 
+  it('factory_fix keeps one fix item per observation even when two reviews kept the same id', async () => {
+    using dir = repo();
+    const { call, full, ws } = await interactive(dir.root);
+    await full([observation('naming', 'correctness')]);
+    await withRun(ws, 'demo', run => {
+      const kept = run.slices[0]!.unplaced[0]!;
+      run.slices[0]!.unplaced.push({ ...kept, review: 'r0', finding: { ...kept.finding, problem: 'an earlier problem', path: 'elsewhere.txt' } });
+    });
+    const fixed = (await call('factory_fix', { observations: ['r0:thermo-naming', '01-r1:thermo-naming'], reason: 'now' })).content[0]?.text ?? '';
+    assert.match(fixed, /back in fix/);
+    assert.deepEqual(readRun(ws, 'demo').slices[0]?.fixItems.map(item => item.id), ['thermo-naming', 'thermo-naming']);
+  });
+
   it('factory_place with a fix placement writes the validator warning of the observation in its fix-file section', async () => {
     using dir = repo();
     const { call, ws } = await interactive(dir.root);
@@ -339,7 +352,7 @@ describe('batched observation placement', () => {
   });
 
   /** A headless run whose slice has used its fix budget, then a full review that is accepted unresolved: blocking findings of three categories, an open fix item and `observations`. */
-  async function acceptedUnresolvedWith(root: string, observations: Finding[]) {
+  async function acceptedUnresolvedWith(root: string, observations: Finding[], extra: Finding[] = [], fixWarnings: { id: string; warning: string }[] = []) {
     const { call, ws } = await headlessSubmitRun(root, ['Feature'], {}, { deferred: { kind: 'file' } });
     await withRun(ws, 'demo', run => runChecks(ws, run));
     await withRun(ws, 'demo', run => {
@@ -351,7 +364,7 @@ describe('batched observation placement', () => {
     const doc = { ...observation('stale', 'misleading-doc', 'comments'), severity: 'high' as const };
     const wrong = { ...observation('wrong', 'correctness'), severity: 'high' as const };
     const bare = { ...observation('bare', 'naming'), category: undefined, severity: 'high' as const };
-    await review(ws, reviewId, [doc, wrong, bare, ...observations], undefined, [{ id: 'bug-f1', reason: 'still wrong', status: 'open' }]);
+    await review(ws, reviewId, [doc, wrong, bare, ...extra, ...observations], undefined, [{ id: 'bug-f1', reason: 'still wrong', status: 'open' }], { fixWarnings });
     assert.equal((await withRun(ws, 'demo', run => recordReview(ws, run))).kind, 'accepted-unresolved');
     return { call, ws };
   }
@@ -380,6 +393,34 @@ describe('batched observation placement', () => {
     assert.deepEqual([...(active?.targeting?.domains ?? [])].sort(), ['comments', 'thermo']);
     assert.deepEqual(run.observations.map(entry => entry.id), ['thermo-note']);
     assert.deepEqual(run.deferred, before.deferred);
+  });
+
+  it('a joined accepted-unresolved finding holds the validator warning of its own validation, and one without a warning has no warning line', async () => {
+    using dir = repo();
+    const other = { ...observation('other', 'misleading-doc', 'comments'), severity: 'high' as const };
+    const { call, ws } = await acceptedUnresolvedWith(dir.root, [observation('note', 'misleading-doc')], [other], [{ id: 'comments-stale', warning: 'too narrow a fix' }]);
+    await call('factory_complete_slice', {});
+    const file = readFileSync(readRun(ws, 'demo').slices[0]?.fixPath ?? 'missing', 'utf8');
+    const section = (id: string) => file.split('\n### ').find(part => part.includes(`] ${id}`)) ?? 'missing';
+    assert.match(section('comments-stale'), /Validator warning on the suggested fix[^\n]*too narrow a fix/);
+    assert.doesNotMatch(section('comments-other'), /Validator warning on the suggested fix/);
+  });
+
+  it('a joined accepted-unresolved finding with the id of an unplaced observation of an earlier review is one fix item with both sections', async () => {
+    using dir = repo();
+    const { call, ws } = await acceptedUnresolvedWith(dir.root, []);
+    await withRun(ws, 'demo', run => {
+      const earlier = { ...observation('stale', 'misleading-doc', 'comments'), problem: 'an earlier problem elsewhere', path: 'elsewhere.txt' };
+      run.slices[0]!.unplaced.push({ category: 'misleading-doc', finding: earlier, review: 'r0', sha: 'a'.repeat(40) });
+    });
+    await call('factory_complete_slice', {});
+    const active = readRun(ws, 'demo').slices[0];
+    const file = readFileSync(active?.fixPath ?? 'missing', 'utf8');
+    const listed = file.slice(file.indexOf('## Fix items'), file.indexOf('\n## ', file.indexOf('## Fix items') + 1));
+    assert.equal(listed.split('`comments-stale`').length - 1, 1);
+    assert.deepEqual(active?.fixItems.map(item => item.id), ['comments-stale']);
+    assert.match(file, /### \[observation\] comments-stale/);
+    assert.match(file, /### \[high\] comments-stale/);
   });
 
   it('a headless completion of an accepted-unresolved slice whose observations default to no fix completes as before', async () => {
