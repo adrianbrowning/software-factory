@@ -1457,7 +1457,7 @@ describe('reopen', () => {
     assert.equal(sh(ws.root, 'for-each-ref', 'refs/factory'), '');
     const run = readRun(ws, 'demo');
     assert.deepEqual([run.slices[2]?.status, run.slices[2]?.phase], ['pending', 'checks']);
-    assert.ok(run.events.some(event => event.kind === 'restack' && event.detail.includes(third)));
+    assert.match(run.events.findLast(event => event.kind === 'restack')?.detail ?? '', new RegExp(third));
   });
 
   it('leaves a later branch that already holds the completed head and adds no restack event', async () => {
