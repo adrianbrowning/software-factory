@@ -43,10 +43,15 @@ It builds the throwaway repo (`scripts/smoke-worker-submissions-setup.ts` starts
 
 ## Known observations and headless placement
 
-These scripts take a `<provider/model id>`, build a throwaway repo with a setup `.ts` file, run real omp, and assert on `validation.json` and `state.json` with `jq`, so they need omp and jq on PATH. They are not part of `pnpm run test` and spend up to `--max-cost 5`.
+The first two scripts take a `<provider/model id>`, build a throwaway repo with a setup `.ts` file, run real omp, and assert on `validation.json` and, where the script needs it, `state.json` with `jq`, so they need omp and jq on PATH. They are not part of `pnpm run test` and spend up to `--max-cost 5`.
 
 Prefix the script command with the provider environment, for example `AWS_PROFILE=<profile> scripts/smoke-known-observations.sh <provider/model id>`; the script's omp call inherits it.
 
 - `scripts/smoke-known-observations.sh`: a real validator drops a repeat observation (same location and problem, new id) as `same as <key>`, the review data has a `KNOWN OBSERVATIONS` section, and the session stops after `factory_review_record` (no `retro.md`) (setup: `scripts/smoke-known-observations-setup.ts`).
 - `scripts/smoke-headless-placement.sh`: a real reviewer gives an observation a category, and headless `factory_complete_slice` places it by default, to the file sink the setup configures (setup: `scripts/smoke-headless-placement-setup.ts`).
+
+## Mislocated finding
+
+`scripts/smoke-mislocated-finding.sh` takes a `<provider/model id>` and needs omp and jq on PATH. It is not part of `pnpm run test`, spends up to `--max-cost 5`, and takes the same provider-environment prefix as the scripts above. It asserts only on `validation.json`.
+
 - `scripts/smoke-mislocated-finding.sh`: a real validator keeps an observation whose `line` is a different function's changed line while the code it describes (an unchanged doc comment inside the same hunk, now false) is in the diff; it fails unless `validation.json` keeps the finding id (setup: `scripts/smoke-mislocated-finding-setup.ts`).
