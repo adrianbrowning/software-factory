@@ -484,7 +484,8 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
       if (result.passed) {
         const byPath = result.pathSkipped.length === 0 ? '' : `\nPath rules skip: ${result.pathSkipped.map(entry => `${entry.domain} (${entry.reason})`).join('; ')}. Pass a domain in factory_review_start keep when a changed file holds its subject after all.`;
         const passed = result.reused ? `All checks already passed on ${result.sha}; reusing their results, no check ran.` : 'All checks passed.';
-        return reply(`${passed}\n${summary}\n${work}${unchanged}${flagged}${newChecks}\nChanged files:\n${result.changed}${byPath}\nNext: ${nextAction(run)}`);
+        const flaky = result.firstAttemptLogs.length === 0 ? '' : `\nFirst attempt output of flaky checks:\n${result.firstAttemptLogs.map(log => `- ${log}`).join('\n')}`;
+        return reply(`${passed}\n${summary}${flaky}\n${work}${unchanged}${flagged}${newChecks}\nChanged files:\n${result.changed}${byPath}\nNext: ${nextAction(run)}`);
       }
       const stall = result.stalled ? await decideStall(ctx, ws, feature, 'checks') : '';
       return reply(`Checks failed.\n${summary}\n${work}${unchanged}${flagged}${newChecks}\nFix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
