@@ -255,7 +255,8 @@ export function addBugToRedFix(run: Run, request: FixRequest, reason: string, he
   const text = readFileSync(fixPath, 'utf8');
   // writeFixFile puts the untrusted note right before the real heading; a slice title cannot reach past it.
   const anchor = `${UNTRUSTED_NOTE}\n\n## Fix items\n\n`;
-  const found = text.indexOf(anchor);
+  const header = `# Fix slice ${slice.id}: ${slice.title}\n\n`;
+  const found = text.startsWith(header) ? text.indexOf(anchor, header.length) : -1;
   if (found < 0) throw new Error(`The fix file ${fixPath} has no \`## Fix items\` list after its untrusted note, so the bug cannot join it.`);
   let end = found + anchor.length;
   const listedIds = new Set<string>();
