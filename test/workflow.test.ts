@@ -1437,6 +1437,56 @@ describe('reopen', () => {
     assert.equal(run.slices[0]?.status, 'active');
   });
 
+  /** 01 done after a reopen restack, 02 active with its own commit and 03 stacked on it; `change` runs on 02 before its review. Returns the branches and the old tips. */
+  async function secondOfThreeWithChange(ws: Workspace, change?: () => void) {
+    const [first, second, third] = await stackOfThree(ws);
+    await reopenFixAndComplete(ws, 'other.txt');
+    assert.equal(sh(ws.root, 'branch', '--show-current'), second);
+    change?.();
+    return { first, second, third, oldThird: tip(ws, third), own: subjects(ws, `${second}..${third}`) };
+  }
+
+  it('restacks later branches onto a slice that was never reopened when a fix round moved its head', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    const { second, third, own } = await secondOfThreeWithChange(ws, () => commit(ws, 'extra.txt'));
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+
+    execFileSync('git', ['merge-base', '--is-ancestor', tip(ws, second), third], { cwd: ws.root });
+    assert.deepEqual(subjects(ws, `${second}..${third}`), own);
+    assert.equal(sh(ws.root, 'for-each-ref', 'refs/factory'), '');
+    const run = readRun(ws, 'demo');
+    assert.deepEqual([run.slices[2]?.status, run.slices[2]?.phase], ['pending', 'checks']);
+    assert.ok(run.events.some(event => event.kind === 'restack' && event.detail.includes(third)));
+  });
+
+  it('leaves a later branch that already holds the completed head and adds no restack event', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    const { second, third, oldThird } = await secondOfThreeWithChange(ws);
+    const before = readRun(ws, 'demo').events.filter(event => event.kind === 'restack').length;
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+
+    execFileSync('git', ['merge-base', '--is-ancestor', tip(ws, second), third], { cwd: ws.root });
+    assert.equal(tip(ws, third), oldThird);
+    assert.equal(readRun(ws, 'demo').events.filter(event => event.kind === 'restack').length, before);
+  });
+
+  it('restores every later branch and pauses the run when the restack after a never-reopened slice conflicts', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    const { second, third, oldThird } = await secondOfThreeWithChange(ws, () => commit(ws, 'third.txt', 'conflict\n'));
+    const oldSecond = tip(ws, second);
+    await green(ws);
+    await assert.rejects(step(ws, run => completeSlice(ws, run)), new RegExp(`${third}[\\s\\S]*user must resolve`));
+
+    assert.equal(tip(ws, third), oldThird);
+    assert.equal(tip(ws, second), oldSecond);
+    assert.equal(sh(ws.root, 'for-each-ref', 'refs/factory'), '');
+    const run = readRun(ws, 'demo');
+    assert.equal(run.status, 'paused');
+    assert.equal(run.slices[1]?.status, 'active');
+  });
+
   it('runs a done run again and asks for a new retro', async () => {
     using ws = workspace();
     await newRun(ws, [slice('Feature')]);

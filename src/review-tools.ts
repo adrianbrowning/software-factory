@@ -215,19 +215,20 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
 
   tool({
     caller: 'main',
-    description: 'Mark the green slice done. Refuses while the slice has unplaced observations (factory_place); a headless run places them by default first, and when a default is a fix (misleading-doc, or correctness on a follow-up slice built from end-queue items) it starts the observation-only fix round, leaves the slice active in fix and names the fix file. HEAD must be the reviewed commit. A reopened slice rebases every later slice branch onto its fix.',
+    description: 'Mark the green slice done. Refuses while the slice has unplaced observations (factory_place); a headless run places them by default first, and when a default is a fix (misleading-doc, or correctness on a follow-up slice built from end-queue items) it starts the observation-only fix round, leaves the slice active in fix and names the fix file. HEAD must be the reviewed commit. Completing a slice rebases every existing later slice branch whose parent moved since it was cut onto it (the fix of a reopened slice, or the fix-round commits of a slice that was never reopened).',
     label: 'Factory: complete slice',
     name: 'factory_complete_slice',
     schema: emptySchema,
     async run(_params, { feature, ws }) {
       const { finished, message: done } = await withRun(ws, feature, async run => {
-        const reopened = activeSlice(run)?.doneSha !== undefined;
+        const restacks = () => run.events.filter(event => event.kind === 'restack').length;
+        const before = restacks();
         const slice = await completeSlice(ws, run);
         if (slice.status !== 'done') {
           if (slice.fixPath === undefined) throw new Error(`Slice ${slice.id} is back in fix without a fix file.`);
           return { finished: false, message: `Slice ${slice.id} is back in fix: its default placement fixes observations in this slice. Fix file: ${slice.fixPath}` };
         }
-        const restacked = reopened ? ' Every later slice branch is rebased onto it and earns its checks and review again.' : '';
+        const restacked = restacks() > before ? ' Every later slice branch is rebased onto it and earns its checks and review again.' : '';
         return { finished: true, message: `Slice ${slice.id} is done on ${slice.branch}.${restacked}` };
       });
       const submitted = finished ? await submit(ws, feature) : '';
