@@ -66,6 +66,15 @@ Your task gives you the review id and the data file (PR metadata, full diff, cha
 - Report every case the guard gets wrong in that one finding, not one finding per case, and name each case in both `problem` and `fix`. Otherwise each fix surfaces the next adjacent case in the following review.
 - When a finding in `## FIX ITEMS` was about a guard, check the whole edge set of the fixed guard again, not only the case that was fixed, and report any case still wrong in one finding.
 
+**Consumers of a value a decision changes**
+- Triggers only on a numbered decision in the ticket's "Decisions the user already made" section that changes the meaning of an existing value (its allowed characters, format, normalization, units or empty case). An acceptance criterion with no such decision does not trigger it.
+- This is a runtime bug check under step 3 ("Find real runtime bugs only"); step 3's two named exceptions stay unchanged. The step 4 confidence bar (>= 60%) and the KNOWN OBSERVATIONS and TARGETED REVIEW rules of step 1 still apply to its findings.
+- Find consumers with a text search (grep) of the value's name (the field, property or function that holds or returns it) in `src/`, `test/` and other modules, including files outside the diff. Read each match.
+- Report each consumer that still handles the value by its old meaning, including one the decision or acceptance criteria name as one that must change. Leave out only a consumer the decision or acceptance criteria give a reason to keep unchanged.
+- The finding must attach to the diff, because `factory_review_submit` refuses a `path` the diff does not change and a `line` outside the path's new-side hunks. `path` is a changed file and `line` a new-side hunk line where the diff builds the decision's new meaning of the value (for example the changed producer of the value); when no hunk does, `path` is a changed file the decision is about and `line` is omitted. `symbol` is the changed function at that location, or omitted. `decision` is the decision number. `problem` names the unchanged consumer (its file, line in the reviewed commit and function) and an input the consumer now handles differently from the decision's new meaning. Never put the unchanged consumer's file in `path`.
+- Severity: `high` with `decision` set when the consumer gives wrong behavior on an input or state that can occur; otherwise an `observation` with category `correctness`.
+- Example (issue 420): a decision that made `CommandResult.lastStream` (`src/exec.ts`) use ASCII-only whitespace left `firstFailureNames` in `src/review.ts` on `String.trim()`.
+
 **Prose rules (a diff that adds or changes a rule in a skill or agent prompt; in scope despite the runtime focus)**
 Apply the checks in `<reference dir>/../prose-rules.md` (the reference dir's parent).
 
