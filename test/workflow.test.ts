@@ -1449,6 +1449,7 @@ describe('reopen', () => {
   it('restacks later branches onto a slice that was never reopened when a fix round moved its head', async () => {
     using ws = workspace({ maxRounds: 2 });
     const { second, third, own } = await secondOfThreeWithChange(ws, () => commit(ws, 'extra.txt'));
+    const before = readRun(ws, 'demo').events.filter(event => event.kind === 'restack').length;
     await green(ws);
     await step(ws, run => completeSlice(ws, run));
 
@@ -1457,7 +1458,9 @@ describe('reopen', () => {
     assert.equal(sh(ws.root, 'for-each-ref', 'refs/factory'), '');
     const run = readRun(ws, 'demo');
     assert.deepEqual([run.slices[2]?.status, run.slices[2]?.phase], ['pending', 'checks']);
-    assert.match(run.events.findLast(event => event.kind === 'restack')?.detail ?? '', new RegExp(third));
+    const added = run.events.filter(event => event.kind === 'restack').slice(before);
+    assert.equal(added.length, 1);
+    assert.match(added[0]?.detail ?? '', new RegExp(`^${third} onto ${second}$`));
   });
 
   it('leaves a later branch that already holds the completed head and adds no restack event', async () => {
