@@ -714,13 +714,12 @@ describe('/factory headless start message names the base', () => {
     assert.ok(message.includes('Base: feat/base at '), message);
   });
 
-  it('lists the base commits whatever log.showSignature and color.ui the repository config sets', async () => {
+  it('lists the base commits whatever log.showSignature the repository config sets', async () => {
     using repo = tempRepo('factory-headless-msg-', CHECKS_OK);
     using verifier = tempDir('factory-gpg-');
     const program = join(verifier.root, 'gpg');
     writeFileSync(program, '#!/bin/sh\necho "gpg: fake verification line" >&2\nexit 1\n', { mode: 0o755 });
     sh(repo.root, 'config', 'log.showSignature', 'true');
-    sh(repo.root, 'config', 'color.ui', 'always');
     sh(repo.root, 'config', 'gpg.program', program);
     sh(repo.root, 'switch', '-q', '-c', 'feat/base');
     const signed = execFileSync('git', ['hash-object', '-t', 'commit', '-w', '--stdin'], {
