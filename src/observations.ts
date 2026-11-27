@@ -196,7 +196,7 @@ function unplacedObservations(run: Run, chosen: Set<string>) {
  * does not, and never stalls. `accepted` are the accepted-unresolved findings of an earlier review that join the round: each is listed
  * under `## Fix items` with its own section and becomes a slice fix item, but is not placed in the ledger. The slice earns checks and a new review before it completes.
  */
-export function fixAfterGreen(ws: Workspace, run: Run, request: FixRequest, reason: string, accepted?: { findings: Finding[]; review: string }) {
+export function fixAfterGreen(ws: Workspace, run: Run, request: FixRequest, reason: string, accepted?: { findings: Finding[]; review: string; warnings: ReadonlyMap<string, string> }) {
   const { bug, groups, items, observations, review, shownBug, slice } = planFix(ws, run, request);
   const why = evidence(reason, 4_000);
   const records: FixRecord[] = [
@@ -211,7 +211,7 @@ export function fixAfterGreen(ws: Workspace, run: Run, request: FixRequest, reas
     ...groups.flatMap(group =>
       group.observations.map(finding => findingRecord(finding, `## Observations from ${group.review.id === review.id ? 'green review' : 'review'} ${group.review.id} the user chose to fix\n\n${why}`, run.decisions, group.warnings.get(finding.id))),
     ),
-    ...(accepted?.findings ?? []).map(finding => findingRecord(finding, `## Accepted-unresolved findings of review ${accepted?.review}`, run.decisions)),
+    ...(accepted?.findings ?? []).map(finding => findingRecord(finding, `## Accepted-unresolved findings of review ${accepted?.review}`, run.decisions, accepted?.warnings.get(finding.id))),
   ];
   // The fix file is written before the run changes, so a failed write leaves the run as it was.
   const written = writeFixFile(ws, run, slice, records);

@@ -915,7 +915,9 @@ function acceptedDocFindings(ws: Workspace, run: Run, slice: Slice) {
   const file = join(reviewDir(ws, run.feature, review.id), 'review.json');
   const recorded = JSON.parse(readFileSync(file, 'utf8')) as { findings?: unknown };
   const findings = findingListSchema.parse(recorded.findings ?? []).filter(finding => finding.severity !== 'observation' && finding.category === 'misleading-doc');
-  return findings.length === 0 ? undefined : { findings, review: review.id };
+  if (findings.length === 0) return undefined;
+  const validation = validationSchema.parse(readRecorded(validationFile(ws, run, review.id), review.validation));
+  return { findings, review: review.id, warnings: new Map(validation.fixWarnings.map(entry => [entry.id, entry.warning])) };
 }
 
 export async function completeSlice(ws: Workspace, run: Run) {
