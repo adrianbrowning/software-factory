@@ -1169,6 +1169,8 @@ describe('used-up fix budget', () => {
           then: async (call, ws) => {
             await seedItems(ws, ['check-f2-1', 'check-f2-2', 'check-f2-3', 'check-f2-4', 'check-f2-5', 'check-f2-6']);
             reportWith(ws, ['check-f2-1 fixed in abc1234', '`check-f2-2` already fixed', 'check-f2-3: not a defect: flaky host', 'check-f2-10 fixed in abc1234', 'fixed check-f2-4 in abc1234', 'see check-f2-5']);
+            const path = reportPath(ws, 'demo', readRun(ws, 'demo').slices[0]!);
+            writeFileSync(path, readFileSync(path, 'utf8').replace('Fix file items:', '- check-f2-4 fixed in abc1234\nFix file items:').replace(/Open:\n- none/, 'Open:\n- check-f2-6 fixed in abc1234'));
             const reply = await text(call);
             assert.equal(LINE.exec(reply)?.[1], 'check-f2-4, check-f2-5, check-f2-6');
           },
