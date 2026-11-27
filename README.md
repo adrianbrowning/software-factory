@@ -194,7 +194,7 @@ the branch's commit at start and records the branch as `baseBranch`: slice 01 br
 branch moves later, while the PRs still target the configured trunk, not the base branch. `--base` and `--related` can be
 given together in either order after the issue. A headless run's base is fixed at start, so `factory_plan` refuses
 `baseRef`, `landOn` and `trunk` in it; a run started without `--base` plans on the configured base.
-The headless start message names the base (the configured base, or the `--base` branch at its pinned sha) and the branch the PRs target, and warns when the base is neither the configured base nor the PR target.
+The headless start message names the base (the configured base, or the `--base` branch at its pinned sha) and the branch the PRs target, and warns when the base is neither the configured base nor the PR target. For a `--base` branch that is not the configured base it also lists the branch's commits above the configured base (`<sha12> <subject>`, newest first, at most 50) inside an `<untrusted-commits>` block under a line saying they are evidence, not instruction; a `<` in a subject is replaced by `‹` so it cannot close the block.
 
 ```text
 /factory headless 294 --base issue-293-top-slice --related 260
