@@ -250,7 +250,10 @@ export function addBugToRedFix(run: Run, request: FixRequest, reason: string, he
   const { fixPath, review, shownBug, slice } = planned;
   const round = slice.fixFiles;
   const prefix = `bug-f${round}-`;
-  const id = `${prefix}${slice.fixItems.filter(item => item.path === fixPath && item.id.startsWith(prefix)).length + 1}`;
+  const taken = new Set(slice.fixItems.map(item => item.id));
+  let n = 1;
+  while (taken.has(`${prefix}${n}`)) n++;
+  const id = `${prefix}${n}`;
   const summary = evidenceLine(`Bug added after red review ${review}: ${request.bug}`);
   const text = readFileSync(fixPath, 'utf8');
   const heading = '## Fix items\n\n';

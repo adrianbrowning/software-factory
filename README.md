@@ -263,7 +263,7 @@ Then push your branch. You can delete the slice branches.
 
 ### Fix observations or a bug before a slice is done
 
-After a red review the next review is targeted: the factory runs only the domains that blocked, plus bug, scope and (with seams) testing, and reviewers report observations only on the lines the fix changed. A green targeted review is followed by a full review of the same commit, and `factory_complete_slice` refuses until the last green review is a full one (an observation-only `factory_fix` round after a full green needs only its own targeted review). A bug fix round always needs a full review.
+After a red review the next review is targeted (unless a bug was added to that red review's fix file with `factory_fix`, below, which makes it a full review): the factory runs only the domains that blocked, plus bug, scope and (with seams) testing, and reviewers report observations only on the lines the fix changed. A green targeted review is followed by a full review of the same commit, and `factory_complete_slice` refuses until the last green review is a full one (an observation-only `factory_fix` round after a full green needs only its own targeted review). A bug fix round always needs a full review.
 
 A green review can list non-blocking observations. When you want some of them fixed in the active slice, the
 orchestrator asks you which. When you find a bug in the active slice after its green review, tell the orchestrator.

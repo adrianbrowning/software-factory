@@ -18,7 +18,7 @@ type Ui = { confirm?: (title: string, body: string) => Promise<boolean> };
 const repo = (maxRounds = 1) => tempRepo('factory-red-bug-', { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], maxRounds }) });
 
 /** An interactive run whose slice 01 has a red review (one blocking bug finding): its fix file is written and the implementer has not committed. */
-async function redRun(root: string, maxRounds = 1) {
+async function redRun(root: string, maxRounds = 1, blocking = [finding('bug', 'high', 'crash')]) {
   const tools = load();
   const dialogs: string[] = [];
   const call = async (name: string, params: unknown, ui: Ui = { confirm: async title => (dialogs.push(title), true) }, agent: 'main' | 'factory-reviewer' = 'main') => {
@@ -34,7 +34,7 @@ async function redRun(root: string, maxRounds = 1) {
   commit(ws, 'ok');
   await withRun(ws, 'demo', run => runChecks(ws, run));
   const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
-  await review(ws, reviewId, [finding('bug', 'high', 'crash')]);
+  await review(ws, reviewId, blocking);
   const recorded = await call('factory_review_record', {});
   const fixPath = readRun(ws, 'demo').slices[0]?.fixPath ?? assert.fail('no fix file');
   return { call, dialogs, fixPath, recorded: recorded.content[0]?.text ?? '', reviewId, ws, maxRounds };
@@ -65,6 +65,16 @@ describe('factory_fix with a bug on a red review', () => {
     assert.deepEqual(
       slice01(ws).fixItems.map(item => item.id),
       ['bug-crash', 'bug-f1-1', 'bug-f1-2'],
+    );
+  });
+
+  it('picks a free id when a blocking finding already has the id bug-f1-1', async () => {
+    using dir = repo();
+    const { call, ws } = await redRun(dir.root, 1, [finding('bug', 'high', 'f1-1')]);
+    await call('factory_fix', { bug: 'Crash.', reason: 'Found.' });
+    assert.deepEqual(
+      slice01(ws).fixItems.map(item => item.id),
+      ['bug-f1-1', 'bug-f1-2'],
     );
   });
 
