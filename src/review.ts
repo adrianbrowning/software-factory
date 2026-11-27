@@ -803,7 +803,7 @@ async function pairCommits(ws: Workspace, entry: { old: string; tip: string; par
  * Moves every existing later slice branch onto the completed slice's tip, bottom up, when its parent moved since it was
  * cut: a reopened slice (doneSha is its old tip) or a slice that was never reopened (no doneSha: the merge-base of the next
  * later branch and the tip is the rebase boundary; it is the tip the branch was cut from when fix rounds only added commits,
- * and lies lower, so the rebase may conflict, when they rewrote commits the branch holds; nothing happens when that branch already holds the tip). Each child goes from its parent's old
+ * and lies lower, so the rebase may conflict, when they rewrote commits the branch holds; when that branch already holds the tip nothing is rebased and no restack event is added, but the restart below still applies). Each child goes from its parent's old
  * tip onto the parent's new tip, so it keeps only its own commits. Every old tip is snapshotted into a backup ref
  * before the first rebase. A child already on its parent's new tip (rebased by hand) stays as it is. A failed rebase
  * puts every branch back at its old tip, pauses the run, and throws. Each later slice that moved, or was not done,
@@ -827,12 +827,12 @@ async function restack(ws: Workspace, run: Run, reopened: Slice, doneSha: string
     // A slice that was never reopened has no doneSha: use the merge-base of the later branch and the new tip as the rebase boundary. It is the tip the branch was cut from when fix rounds only added commits; if they rewrote commits the branch holds, it lies lower and the rebase may conflict (restack-conflict path).
     const [first] = later;
     if (first === undefined) return;
+    // A later branch that already holds the new tip (rebased by hand) needs no rebase, but deeper children and the restart below still apply; its own parentOld is unused because it is on its parent.
     const current = await git(ws.root, 'merge-base', '--is-ancestor', parentNew, first.old).then(
       () => true,
       () => false,
     );
-    if (current) return;
-    parentOld = (await git(ws.root, 'merge-base', first.old, parentNew)).trim();
+    parentOld = current ? first.old : (await git(ws.root, 'merge-base', first.old, parentNew)).trim();
   }
   const backup = (slice: Slice) => `refs/factory/${run.feature}/backup/${slice.id}`;
   for (const { old, slice } of later) await git(ws.root, 'update-ref', backup(slice), old);

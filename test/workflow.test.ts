@@ -1490,6 +1490,24 @@ describe('reopen', () => {
     assert.equal(run.slices[1]?.status, 'active');
   });
 
+  it('restarts a later slice the user rebased by hand after a never-reopened restack conflict, and removes its stale report', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    const { second, third, oldThird } = await secondOfThreeWithChange(ws, () => commit(ws, 'third.txt', 'conflict\n'));
+    const thirdSlice = readRun(ws, 'demo').slices[2] ?? assert.fail('no slice');
+    writeAtomic(reportPath(ws, 'demo', thirdSlice), `Implementer report:\nCommits:\n- ${oldThird.slice(0, 12)} 03: third\nOpen:\n- none\n`);
+    await green(ws);
+    await assert.rejects(step(ws, run => completeSlice(ws, run)), /user must resolve/);
+
+    sh(ws.root, 'rebase', '-q', '-X', 'theirs', '--onto', second, sh(ws.root, 'merge-base', second, third), third);
+    sh(ws.root, 'switch', '-q', second);
+    assert.notEqual(tip(ws, third), oldThird);
+    await step(ws, run => completeSlice(ws, run));
+
+    const run = readRun(ws, 'demo');
+    assert.deepEqual([run.slices[1]?.status, run.slices[2]?.status, run.slices[2]?.phase], ['done', 'pending', 'checks']);
+    assert.match(storedReport(ws, run, run.slices[2] ?? assert.fail('no slice')), /^No implementer report was submitted for slice 03/);
+  });
+
   it('runs a done run again and asks for a new retro', async () => {
     using ws = workspace();
     await newRun(ws, [slice('Feature')]);
