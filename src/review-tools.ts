@@ -215,7 +215,7 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
 
   tool({
     caller: 'main',
-    description: 'Mark the green slice done. Refuses while the slice has unplaced observations (factory_place); a headless run places them by default first, and when a default is a fix (misleading-doc, or correctness on a follow-up slice built from end-queue items) it starts the observation-only fix round, leaves the slice active in fix and names the fix file. HEAD must be the reviewed commit. Completing a slice rebases every existing later slice branch whose parent moved since it was cut onto it (the fix of a reopened slice, or the fix-round commits of a slice that was never reopened).',
+    description: 'Mark the green slice done. Refuses while the slice has unplaced observations (factory_place); a headless run places them by default first, and when a default is a fix (misleading-doc, or correctness on a follow-up slice built from end-queue items) it starts the observation-only fix round, leaves the slice active in fix and names the fix file; accepted-unresolved findings of category misleading-doc join that observation-only round and its fix file, and do not start it on their own. HEAD must be the reviewed commit. Completing a slice rebases every existing later slice branch whose parent moved since it was cut onto it (the fix of a reopened slice, or the fix-round commits of a slice that was never reopened).',
     label: 'Factory: complete slice',
     name: 'factory_complete_slice',
     schema: emptySchema,

@@ -193,9 +193,10 @@ function unplacedObservations(run: Run, chosen: Set<string>) {
 /**
  * Sends the active slice from its green review back to the fix loop for the bug the user found and the observations
  * the user chose to fix in this slice. A round with a bug counts against the round limit; an observation-only round
- * does not, and never stalls. The slice earns checks and a new review before it completes.
+ * does not, and never stalls. `accepted` are the accepted-unresolved findings of an earlier review that join the round: each is listed
+ * under `## Fix items` with its own section and becomes a slice fix item, but is not placed in the ledger. The slice earns checks and a new review before it completes.
  */
-export function fixAfterGreen(ws: Workspace, run: Run, request: FixRequest, reason: string) {
+export function fixAfterGreen(ws: Workspace, run: Run, request: FixRequest, reason: string, accepted?: { findings: Finding[]; review: string }) {
   const { bug, groups, items, observations, review, shownBug, slice } = planFix(ws, run, request);
   const why = evidence(reason, 4_000);
   const records: FixRecord[] = [
@@ -210,13 +211,14 @@ export function fixAfterGreen(ws: Workspace, run: Run, request: FixRequest, reas
     ...groups.flatMap(group =>
       group.observations.map(finding => findingRecord(finding, `## Observations from ${group.review.id === review.id ? 'green review' : 'review'} ${group.review.id} the user chose to fix\n\n${why}`, run.decisions, group.warnings.get(finding.id))),
     ),
+    ...(accepted?.findings ?? []).map(finding => findingRecord(finding, `## Accepted-unresolved findings of review ${accepted?.review}`, run.decisions)),
   ];
   // The fix file is written before the run changes, so a failed write leaves the run as it was.
   const written = writeFixFile(ws, run, slice, records);
-  addEvent(run, 'fix-after-green', `${groups.map(group => group.review.id).join(', ')}: ${items.map(item => item.label).join(', ')}`, slice);
+  addEvent(run, 'fix-after-green', `${groups.map(group => group.review.id).join(', ')}: ${[...items.map(item => item.label), ...(accepted?.findings ?? []).map(finding => finding.id)].join(', ')}`, slice);
   for (const group of groups) placeObservations(run, group.review, slice, group.observations, 'fixed');
   // A bug round needs a full review; an observation-only round is reviewed only where it changed things (a targeted review).
-  slice.targeting = bug === undefined ? targetingAfter(review, observations.map(finding => finding.domain)) : undefined;
+  slice.targeting = bug === undefined ? targetingAfter(review, [...observations, ...(accepted?.findings ?? [])].map(finding => finding.domain)) : undefined;
   return startFix(run, slice, review.sha, written, bug !== undefined);
 }
 

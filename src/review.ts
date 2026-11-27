@@ -2,7 +2,7 @@
  * The review lifecycle of the active slice: checks, the multi-domain review and its validation, the green review, and
  * completing the slice.
  */
-import { rmSync } from 'node:fs';
+import { readFileSync, rmSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { z } from 'zod';
 import { evidence, evidenceLine, redact } from './evidence.ts';
@@ -905,6 +905,19 @@ async function restack(ws: Workspace, run: Run, reopened: Slice, doneSha: string
   if (moved.length > 0) addEvent(run, 'restack', `${moved.map(({ slice }) => slice.branch).join(', ')} onto ${reopened.branch}`, reopened);
 }
 
+/**
+ * The blocking findings of category misleading-doc of the review the slice was accepted unresolved with, read from that
+ * review's review.json; none when the slice was not accepted unresolved. A missing or unreadable file throws.
+ */
+function acceptedDocFindings(ws: Workspace, run: Run, slice: Slice) {
+  const review = slice.review;
+  if (slice.unresolved === undefined || review === undefined) return undefined;
+  const file = join(reviewDir(ws, run.feature, review.id), 'review.json');
+  const recorded = JSON.parse(readFileSync(file, 'utf8')) as { findings?: unknown };
+  const findings = findingListSchema.parse(recorded.findings ?? []).filter(finding => finding.severity !== 'observation' && finding.category === 'misleading-doc');
+  return findings.length === 0 ? undefined : { findings, review: review.id };
+}
+
 export async function completeSlice(ws: Workspace, run: Run) {
   const slice = requireActive(run);
   const green = greenCommit(slice);
@@ -930,7 +943,7 @@ export async function completeSlice(ws: Workspace, run: Run) {
   const { fixes, placed: placedHere } = await placeDefaults(ws, run);
   if (fixes.length > 0) {
     try {
-      fixAfterGreen(ws, run, { observations: fixes }, 'Default placement of the observations after the slice\'s final review.');
+      fixAfterGreen(ws, run, { observations: fixes }, 'Default placement of the observations after the slice\'s final review.', acceptedDocFindings(ws, run, slice));
     } catch (error) {
       if (!placedHere || error instanceof Invalidated) throw error;
       // The failed round changed nothing; what the defaults already placed stays (an issue may be filed), and a retry starts the round.
