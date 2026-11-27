@@ -10,8 +10,8 @@ import { draftOf, isRecordSlice, itemKey, requireSink } from './deferred.ts';
 import { findingTitle, findUnplaced, placeObservations, requireUnplaced } from './ledger.ts';
 import { carriedSections, renderFinding } from './finding-text.ts';
 import { findingRecord, keptFindings, readRecorded, recordedFindings, type Review, targetingAfter, validationFile, validationSchema } from './review-record.ts';
-import { addEvent, greenCommit, requireActive, requireNotStalled, writeAtomic, type Finding, type Run, type Slice, type Workspace } from './run.ts';
-import { type FixRecord, needsFullReview, startFix, UNTRUSTED_NOTE, writeFixFile, writeTicket } from './workflow.ts';
+import { addEvent, needsFullReview, greenCommit, requireActive, requireNotStalled, writeAtomic, type Finding, type Run, type Slice, type Workspace } from './run.ts';
+import { type FixRecord, startFix, UNTRUSTED_NOTE, writeFixFile, writeTicket } from './workflow.ts';
 
 function noGreenReview(sliceId: string, purpose: string): Error {
   return new Error(`Slice ${sliceId} has no green review to ${purpose} from.`);

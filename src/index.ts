@@ -497,7 +497,9 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
     schema: implementerReportSchema,
     async run(params, { feature, ws }) {
       const result = await withRun(ws, feature, run => submitImplementerReport(ws, run, params));
-      const recorded = result.fixed.length === 0 ? '' : `\nRecorded as fixed in the ledger and added to this round's fix items for the next review's verdict: ${result.fixed.join(', ')}.`;
+      const recorded = result.fixed.length === 0 ? '' : result.afterGreen
+        ? `\nRecorded as fixed in the ledger: ${result.fixed.join(', ')}. No fix item was added because the slice's review is green.`
+        : `\nRecorded as fixed in the ledger and added to this round's fix items for the next review's verdict: ${result.fixed.join(', ')}.`;
       const skipped = result.skippedForOpenReview ? '\n`fixed in <sha>` lines were not recorded as fixed because a review is open; report them again once it closes.' : '';
       const observed = result.observed.lines.length === 0 ? '' : `\nFactory-observed typecheck:\n${result.observed.lines.map(line => `- ${line}`).join('\n')}${result.observed.missing.map(command => `\n${missingTypecheckLine(command)}`).join('')}`;
       return reply(`${result.replaced ? 'Replaced the stored report' : 'Stored the report'}: ${result.path}${recorded}${skipped}${observed}`);

@@ -9,7 +9,7 @@ import { changedPaths } from './targeted.ts';
 import { findingRecord } from './review-record.ts';
 import { carriedKeys } from './legacy-observations.ts';
 import { observedTypecheck } from './typecheck.ts';
-import { activeSlice, addEvent, reportPath, reviewIsOpen, requireActive, type Run, type Slice, type Workspace, writeAtomic } from './run.ts';
+import { activeSlice, needsFullReview, addEvent, reportPath, reviewIsOpen, requireActive, type Run, type Slice, type Workspace, writeAtomic } from './run.ts';
 
 // Guards only items sent through the factory_implementer_report tool: each item is one line (no \r, \n, U+2028, U+2029 or U+0085),
 // so it cannot add lines that read as factory output in the factory_checks reply. A reports/<slice>.md written directly is not checked.
@@ -37,7 +37,7 @@ export const implementerReportSchema = z.object({
   fixItems: z
     .array(reportItem)
     .optional()
-    .describe('Required in fix mode with at least one item: each id from the fix file\'s "## Fix items", exactly as listed, with `fixed in <sha>`, `already fixed`, or `not a defect: <why>`. A line may also name an observation of the slice that is still unplaced (its id, or `<review>:<id>` when two reviews kept the same id, at the start of the line) with `fixed in <sha>` for a commit of the slice: the factory then records that observation as fixed, adds it to this round\'s fix items, and the next review\'s scope reviewer gives it a verdict. In build mode, optional and accepted only on a slice with carried keys, each line `<carried key> fixed in <sha>` for a commit of the slice; otherwise leave it out'),
+    .describe('Required in fix mode with at least one item: each id from the fix file\'s "## Fix items", exactly as listed, with `fixed in <sha>`, `already fixed`, or `not a defect: <why>`. A line may also name an observation of the slice that is still unplaced (its id, or `<review>:<id>` when two reviews kept the same id, at the start of the line) with `fixed in <sha>` for a commit of the slice: the factory then records that observation as fixed, adds it to this round\'s fix items, and the next review\'s scope reviewer gives it a verdict; after a green review that no review follows (not after a targeted green that still needs a full review) it is recorded as fixed but added to no fix item. In build mode, optional and accepted only on a slice with carried keys, each line `<carried key> fixed in <sha>` for a commit of the slice; otherwise leave it out'),
   open: z.array(reportItem).describe('Anything unfinished, any stop report (NEEDS SEAM, SLICE TOO BIG, MISSING DEPENDENCY), and any question about a change to a shared helper outside the ticket (code that callers outside the ticket use) that you left out of the commit; empty when nothing is open'),
 });
 export type ImplementerReport = z.infer<typeof implementerReportSchema>;
@@ -80,9 +80,15 @@ function recordableFixedClaim(unplaced: Slice['unplaced'], line: string, own: { 
   return entry === undefined ? undefined : { entry, sha: match[3] };
 }
 
+/** True when the slice is green and no review follows: phase 'ready' and its last green was full. */
+function noReviewFollows(slice: Slice) {
+  return slice.phase === 'ready' && !needsFullReview(slice);
+}
+
 /**
  * Records each observation unplaced on the slice that a fixItems line names with `fixed in <sha>` (a commit of the slice) as
  * placed `fixed`, and adds it as a fix item of the current round so the next review's scope reviewer gives it a verdict.
+ * After a green review that no review follows (slice phase 'ready' and no full review needed) it is recorded as fixed but added to no fix item, since no review follows.
  * Other lines, unknown or ambiguous ids and other shas change nothing. Returns the ids recorded.
  */
 function recordFixedObservations(run: Run, slice: Slice, fixItems: string[], own: { sha: string }[]) {
@@ -99,7 +105,7 @@ function recordFixedObservations(run: Run, slice: Slice, fixItems: string[], own
     placed.add(key);
     placeObservations(run, { id: entry.review }, slice, [entry.finding], 'fixed');
     addEvent(run, 'fixed-by-implementer', `${entry.review}: ${entry.finding.id} fixed in ${claim.sha}`, slice);
-    if (slice.fixPath !== undefined) {
+    if (slice.fixPath !== undefined && !noReviewFollows(slice)) {
       const { item } = findingRecord(entry.finding, '', run.decisions);
       // Two reviews can keep the same id: the later one is listed as `<review>:<id>`, so each gets its own verdict.
       const id = slice.fixItems.some(existing => existing.id === entry.finding.id) ? key : entry.finding.id;
@@ -182,7 +188,7 @@ export async function submitImplementerReport(ws: Workspace, run: Run, report: I
   const fixed = fixMode && report.fixItems !== undefined && !reviewOpen ? recordFixedObservations(run, slice, report.fixItems, own) : [];
   const skippedForOpenReview = fixMode && reviewOpen && report.fixItems?.some(line => recordableFixedClaim(slice.unplaced, line, own) !== undefined) === true;
 
-  return { fixed, observed, path, replaced, skippedForOpenReview };
+  return { fixed, observed, path, replaced, skippedForOpenReview, afterGreen: noReviewFollows(slice) };
 }
 
 /** The slice's latest stored implementer report, or a line saying none was submitted; both name the report file. */
