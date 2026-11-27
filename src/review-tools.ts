@@ -223,12 +223,14 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
       const { finished, message: done } = await withRun(ws, feature, async run => {
         const restacks = () => run.events.filter(event => event.kind === 'restack').length;
         const before = restacks();
+        const reopened = activeSlice(run)?.doneSha !== undefined;
         const slice = await completeSlice(ws, run);
         if (slice.status !== 'done') {
           if (slice.fixPath === undefined) throw new Error(`Slice ${slice.id} is back in fix without a fix file.`);
           return { finished: false, message: `Slice ${slice.id} is back in fix: its default placement fixes observations in this slice. Fix file: ${slice.fixPath}` };
         }
-        const restacked = restacks() > before ? ' Every later slice branch is rebased onto it and earns its checks and review again.' : '';
+        const rebased = restacks() > before ? ' Every later slice branch is rebased onto it.' : '';
+        const restacked = rebased === '' && !reopened ? '' : `${rebased} The later slices earn their checks and review again.`;
         return { finished: true, message: `Slice ${slice.id} is done on ${slice.branch}.${restacked}` };
       });
       const submitted = finished ? await submit(ws, feature) : '';

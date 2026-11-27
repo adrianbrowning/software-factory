@@ -1429,7 +1429,8 @@ describe('reopen', () => {
     await step(ws, run => reopenSlice(ws, run, '01', 'first.txt must say fixed'));
     commit(ws, 'first.txt', 'fixed\n');
     await green(ws);
-    await assert.rejects(step(ws, run => completeSlice(ws, run)), new RegExp(`${third}[\\s\\S]*user must resolve`));
+    const doneSha = readRun(ws, 'demo').slices[0]?.doneSha ?? assert.fail('no doneSha');
+    await assert.rejects(step(ws, run => completeSlice(ws, run)), new RegExp(`${third}[\\s\\S]*user must resolve[\\s\\S]*is ${doneSha.slice(0, 12)}`));
 
     assert.deepEqual([tip(ws, second), tip(ws, third)], old);
     assert.equal(sh(ws.root, 'for-each-ref', 'refs/factory'), '');
@@ -1496,12 +1497,75 @@ describe('reopen', () => {
     assert.equal(readRun(ws, 'demo').slices[2]?.cutSha, tip(ws, second));
   });
 
+  it('rebases a deeper child onto a later branch that already holds the completed head of a never-reopened slice', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    await newRun(ws, [slice('First'), slice('Second', ['First']), slice('Third', ['Second']), slice('Fourth', ['Third'])]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'second.txt');
+    const [, second, third, fourth] = readRun(ws, 'demo').slices.map(item => item.branch) as [string, string, string, string];
+    const oldSecond = tip(ws, second);
+    sh(ws.root, 'switch', '-q', '-c', third);
+    commit(ws, 'third.txt');
+    sh(ws.root, 'switch', '-q', '-c', fourth);
+    commit(ws, 'fourth.txt');
+    const own = subjects(ws, `${third}..${fourth}`);
+    sh(ws.root, 'switch', '-q', second);
+    commit(ws, 'extra.txt');
+    sh(ws.root, 'rebase', '-q', '--onto', second, oldSecond, third);
+    sh(ws.root, 'switch', '-q', second);
+    const oldThird = tip(ws, third);
+    const before = readRun(ws, 'demo').events.filter(event => event.kind === 'restack').length;
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+
+    assert.equal(tip(ws, third), oldThird);
+    execFileSync('git', ['merge-base', '--is-ancestor', oldThird, fourth], { cwd: ws.root });
+    assert.deepEqual(subjects(ws, `${third}..${fourth}`), own);
+    const added = readRun(ws, 'demo').events.filter(event => event.kind === 'restack').slice(before);
+    assert.equal(added.length, 1);
+    assert.match(added[0]?.detail ?? '', new RegExp(`^${fourth} onto ${second}$`));
+  });
+
+  it('names the old parent tip of the conflicting deeper child when the first later branch was already current', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    await newRun(ws, [slice('First'), slice('Second', ['First']), slice('Third', ['Second']), slice('Fourth', ['Third'])]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'second.txt');
+    const [, second, third, fourth] = readRun(ws, 'demo').slices.map(item => item.branch) as [string, string, string, string];
+    const oldSecond = tip(ws, second);
+    sh(ws.root, 'switch', '-q', '-c', third);
+    commit(ws, 'third.txt');
+    sh(ws.root, 'switch', '-q', '-c', fourth);
+    commit(ws, 'fourth.txt', 'one\n');
+    sh(ws.root, 'switch', '-q', third);
+    commit(ws, 'fourth.txt', 'two\n');
+    sh(ws.root, 'switch', '-q', second);
+    commit(ws, 'extra.txt');
+    sh(ws.root, 'rebase', '-q', '--onto', second, oldSecond, third);
+    sh(ws.root, 'switch', '-q', second);
+    const thirdTip = tip(ws, third);
+    await green(ws);
+    await assert.rejects(
+      step(ws, run => completeSlice(ws, run)),
+      new RegExp(`The old parent tip of ${fourth} is ${thirdTip.slice(0, 12)}`),
+    );
+  });
+
   it('restores every later branch and pauses the run when the restack after a never-reopened slice conflicts', async () => {
     using ws = workspace({ maxRounds: 2 });
     const { second, third, oldThird } = await secondOfThreeWithChange(ws, () => commit(ws, 'third.txt', 'conflict\n'));
     const oldSecond = tip(ws, second);
+    const base = sh(ws.root, 'merge-base', third, 'HEAD');
     await green(ws);
-    await assert.rejects(step(ws, run => completeSlice(ws, run)), new RegExp(`${third}[\\s\\S]*user must resolve`));
+    await assert.rejects(step(ws, run => completeSlice(ws, run)), new RegExp(`${third}[\\s\\S]*user must resolve[\\s\\S]*is ${base.slice(0, 12)}`));
 
     assert.equal(tip(ws, third), oldThird);
     assert.equal(tip(ws, second), oldSecond);
