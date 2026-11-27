@@ -101,6 +101,22 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
     assert.equal((await report(ws, sha, [`${OBSERVATION}: already fixed in an earlier commit`])).skippedForOpenReview, false);
   });
 
+  it('does not flag a `scope-gap: fixed in <own sha>` line sent during an open review, as it is no unplaced observation', async () => {
+    using ws = workspace({ maxRounds: 3 });
+    const sha = await redWithObservation(ws);
+    await step(ws, run => runChecks(ws, run));
+    await step(ws, run => startReview(ws, run));
+    assert.equal((await report(ws, sha, [`scope-gap: fixed in ${sha.slice(0, 7)}`])).skippedForOpenReview, false);
+  });
+
+  it('does not flag a `fixed in <sha>` line sent during an open review when the sha is no commit of the slice', async () => {
+    using ws = workspace({ maxRounds: 3 });
+    const sha = await redWithObservation(ws);
+    await step(ws, run => runChecks(ws, run));
+    await step(ws, run => startReview(ws, run));
+    assert.equal((await report(ws, sha, [`${OBSERVATION}: fixed in ${'a'.repeat(40)}`])).skippedForOpenReview, false);
+  });
+
   it('records a `fixed in <sha>` observation reported after the review returned green, as no review is open then', async () => {
     using ws = workspace({ maxRounds: 3 });
     const sha = await redWithObservation(ws);
