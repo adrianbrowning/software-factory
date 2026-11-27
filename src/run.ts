@@ -215,7 +215,7 @@ const sliceSchema = sliceInputSchema.extend({
    * from an older state file may hold no results (see legacySlice); a legacy pass is trusted to match the run's
    * checks, which a run never changes once kept.
    */
-  checked: z.object({ results: z.array(text), sha }).optional(),
+  checked: z.object({ firstAttemptLogs: z.array(text).optional(), results: z.array(text), sha }).optional(),
   compactions: z.number().int().nonnegative(),
   /** The parent branch tip this slice's branch was cut from; nextSlice sets it and restack moves it to the parent's new tip. A completing slice that was never reopened restacks its first later branch from here. */
   cutSha: sha.optional(),
@@ -633,12 +633,12 @@ export function hasPass(slice: Slice) {
 }
 
 /**
- * The slice's passing check results when they still stand on `sha`, so the checks need not run again: the slice holds
+ * The slice's passing checks (results and first-attempt log paths) when they still stand on `sha`, so the checks need not run again: the slice holds
  * a pass (`hasPass`) on that commit. Otherwise undefined.
  */
 export function standingChecks(slice: Slice, sha: string) {
   const checked = slice.checked;
-  return checked?.sha === sha && hasPass(slice) ? checked.results : undefined;
+  return checked?.sha === sha && hasPass(slice) ? checked : undefined;
 }
 
 /** Drops the slice's green review: its green mark, its review, and any unresolved items it was accepted with. */

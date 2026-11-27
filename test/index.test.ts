@@ -534,6 +534,31 @@ describe('implementer sessions', () => {
     assert.match(reply, /wait for every reviewer, then spawn one factory-review-validator/);
   });
 
+  describe('first attempt output of flaky checks in the factory_checks reply', () => {
+    const flakyCheck = (dir: string) => `if [ -f '${dir}/seen' ]; then exit 0; fi; touch '${dir}/seen'; echo first-out; exit 1`;
+
+    it('names the first attempt log of a flaky check on a passing reply', async () => {
+      using repo = emptyRepo();
+      using counter = tempDir('factory-flaky-reply-');
+      const { call, main } = await startedRun(repo.root, flakyCheck(counter.root));
+      commitFile(repo.root, 'work.txt');
+      const reply = await call('factory_checks', {}, main);
+      assert.match(reply, /All checks passed/);
+      const log = join(runDir({ config: loadConfig(repo.root), root: repo.root }, 'demo'), 'checks', '01-f0-check1-attempt1.log');
+      assert.ok(existsSync(log));
+      assert.ok(reply.includes(`First attempt output of flaky checks:\\n- ${log}`), reply);
+    });
+
+    it('has no such line when no check was flaky', async () => {
+      using repo = emptyRepo();
+      const { call, main } = await startedRun(repo.root);
+      commitFile(repo.root, 'work.txt');
+      const reply = await call('factory_checks', {}, main);
+      assert.match(reply, /All checks passed/);
+      assert.doesNotMatch(reply, /First attempt output of flaky checks/);
+    });
+  });
+
   describe('flagged files in the factory_checks reply', () => {
     /** Commits `names` as tracked files, then flags each with `flag` (a `git update-index` option). */
     const trackFlagged = (root: string, names: string[], flag: string) => {

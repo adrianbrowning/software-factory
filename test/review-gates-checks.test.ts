@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { chmodSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it, mock } from 'node:test';
-import { readRun } from '../src/run.ts';
+import { forgetRun, readRun, runDir } from '../src/run.ts';
 import { recordReview, runChecks, startReview } from '../src/review.ts';
 import { nextAction, nextSlice, pauseRun, planFollowUp, resolveStall, repoChecks, resumeRun, saveChecks, startRun } from '../src/workflow.ts';
 import { checkRuns, commit, countedCheck, finding, fixItems, green, newRun, review, sh, slice, start, step, tempDir, workspace } from './helpers.ts';
@@ -172,6 +172,94 @@ describe('slice loop gates: checks and the fix budget', { concurrency: 4 }, () =
     const hardLine = failed.summary.find(l => l.startsWith(hard));
     assert.ok(hardLine);
     assert.match(hardLine.slice(hard.length), /^: failed \(exit 1\) in \d+ms on rerun \(first failed \(exit 1\) in \d+ms\)$/);
+  });
+
+  describe('first attempt log of a flaky check', () => {
+    /** A check that fails once with `out` on stdout and `err` on stderr, then passes. */
+    const failOnce = (dir: string, out: string, err: string) => `if [ -f '${dir}/seen' ]; then exit 0; fi; touch '${dir}/seen'; echo '${out}'; echo '${err}' >&2; exit 3`;
+    const logDir = (ws: Parameters<typeof runDir>[0]) => join(runDir(ws, 'demo'), 'checks');
+
+    it('writes the redacted first attempt output under the slice, fix count and check position, and lists it in the review data file', async () => {
+      using counter = tempDir('factory-attempt1-');
+      using ws = workspace({ checks: ['true', failOnce(counter.root, 'out-line {"password": "hunter2"}', 'err-line')] });
+      await newRun(ws, [slice('Feature')]);
+      await step(ws, run => nextSlice(ws, run));
+      commit(ws, 'work.txt');
+      const result = await step(ws, run => runChecks(ws, run));
+      assert.ok(result.passed);
+      const file = join(logDir(ws), '01-f0-check2-attempt1.log');
+      assert.deepEqual(readdirSync(logDir(ws)), ['01-f0-check2-attempt1.log']);
+      const text = readFileSync(file, 'utf8');
+      assert.match(text, /Exit code: 3/);
+      assert.match(text, /Duration: \d+ms/);
+      assert.match(text, /Command: if \[ -f/);
+      assert.match(text, /## stdout\n\nout-line [^\n]*\n+## stderr\n\nerr-line\n/);
+      assert.doesNotMatch(text, /hunter2/);
+      assert.deepEqual(result.firstAttemptLogs, [file]);
+      assert.deepEqual(readRun(ws, 'demo').slices[0]?.checked?.firstAttemptLogs, [join('checks', '01-f0-check2-attempt1.log')]);
+
+      const again = await step(ws, run => runChecks(ws, run));
+      assert.ok(again.passed && again.reused);
+      assert.deepEqual(readRun(ws, 'demo').slices[0]?.checked?.firstAttemptLogs, [join('checks', '01-f0-check2-attempt1.log')]);
+
+      const { dataFile } = await step(ws, run => startReview(ws, run));
+      const checks = readFileSync(dataFile, 'utf8').split('## CHECKS')[1]?.split('## KNOWN')[0] ?? '';
+      assert.match(checks, /First attempt output of flaky checks[^\n]*\n\n- /);
+      assert.ok(checks.includes(`\n- ${file}\n`));
+    });
+
+    it('writes no file for a check that passes at once or fails on its rerun too, and the data file has no such line', async () => {
+      using ws = workspace({ checks: ['test -f ok'] });
+      await newRun(ws, [slice('Feature')]);
+      await step(ws, run => nextSlice(ws, run));
+      commit(ws, 'ok');
+      assert.ok((await step(ws, run => runChecks(ws, run))).passed);
+      assert.equal(existsSync(logDir(ws)), false);
+      const { dataFile } = await step(ws, run => startReview(ws, run));
+      assert.doesNotMatch(readFileSync(dataFile, 'utf8'), /First attempt output of flaky checks/);
+
+      using ws2 = workspace({ checks: ['exit 1'] });
+      await newRun(ws2, [slice('Feature')]);
+      await step(ws2, run => nextSlice(ws2, run));
+      commit(ws2, 'work.txt');
+      assert.equal((await step(ws2, run => runChecks(ws2, run))).passed, false);
+      assert.equal(existsSync(logDir(ws2)), false);
+    });
+
+    it('counts the slice fix files in the name, and a state without the field still loads', async () => {
+      using counter = tempDir('factory-attempt1-fix-');
+      using ws = workspace({ checks: ['test -f ok', failOnce(counter.root, 'o', 'e')] });
+      await newRun(ws, [slice('Feature')]);
+      await step(ws, run => nextSlice(ws, run));
+      commit(ws, 'work.txt');
+      writeFileSync(join(counter.root, 'seen'), '');
+      assert.equal((await step(ws, run => runChecks(ws, run))).passed, false);
+      assert.equal(readRun(ws, 'demo').slices[0]?.fixFiles, 1);
+      rmSync(join(counter.root, 'seen'));
+      commit(ws, 'ok');
+      assert.ok((await step(ws, run => runChecks(ws, run))).passed);
+      assert.deepEqual(readdirSync(logDir(ws)), ['01-f1-check2-attempt1.log']);
+      const path = join(runDir(ws, 'demo'), 'state.json');
+      const state = JSON.parse(readFileSync(path, 'utf8'));
+      delete state.slices[0].checked.firstAttemptLogs;
+      writeFileSync(path, JSON.stringify(state));
+      forgetRun(ws, 'demo');
+      assert.equal(readRun(ws, 'demo').slices[0]?.checked?.firstAttemptLogs, undefined);
+    });
+
+    it('is not a working tree change when the scratch dir is not git-ignored', async () => {
+      using counter = tempDir('factory-attempt1-tree-');
+      using ws = workspace({ checks: [failOnce(counter.root, 'o', 'e')] });
+      await newRun(ws, [slice('Feature')]);
+      // startRun ignores the whole scratch dir; ignore only the run's own files, so a log under checks/ would show in porcelain.
+      const exclude = join(ws.root, '.git', 'info', 'exclude');
+      const kept = readFileSync(exclude, 'utf8').split('\n').filter(line => !line.includes('.scratch'));
+      writeFileSync(exclude, `${kept.join('\n')}\n/.scratch/*/*\n!/.scratch/*/checks/\n`);
+      await step(ws, run => nextSlice(ws, run));
+      commit(ws, 'work.txt');
+      assert.ok((await step(ws, run => runChecks(ws, run))).passed);
+      assert.match(sh(ws.root, 'status', '--porcelain', '-uall'), /checks\/01-f0-check1-attempt1\.log/);
+    });
   });
 
   async function flakyRun(output: string, redirect = '', emit?: (out: string) => string) {

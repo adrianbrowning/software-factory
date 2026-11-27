@@ -5,6 +5,7 @@
 import { readFileSync, rmSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { z } from 'zod';
+import { type CheckRun, writeFirstAttemptLogs } from './check-log.ts';
 import { evidence, evidenceLine, redact } from './evidence.ts';
 import { deferItems, draftOf, isRecordSlice, itemKey } from './deferred.ts';
 import { CARRIED_HERE, renderKnownObservations } from './ledger.ts';
@@ -32,6 +33,7 @@ import {
   REQUIRED_REVIEW_DOMAINS,
   REVIEW_DOMAINS,
   reviewDir,
+  runDir,
   reviewDomains,
   reviewPaths,
   type Run,
@@ -216,8 +218,8 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   // pending) clears it, so every check runs; a review reopened for newer decisions (reopenReview) or a resume on the
   // same commit keeps its checks.
   const stored = standingChecks(slice, sha);
-  if (stored !== undefined) return { commits, report, unaccounted, unchanged, ...(await passChecks(ws, run, slice, sha, stored, true)) };
-  const results: { command: string; first?: CommandResult; result: CommandResult }[] = [];
+  if (stored !== undefined) return { commits, report, unaccounted, unchanged, ...(await passChecks(ws, run, slice, sha, stored.results, true, stored.firstAttemptLogs)) };
+  const results: CheckRun[] = [];
   const checkPath = [...ws.config.checkPath, process.env.PATH ?? ''].join(delimiter);
   const env = { ...process.env, PATH: checkPath };
   for (const command of run.checks) {
@@ -259,13 +261,15 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   }
   const dirty = (await porcelain(ws.root)).trim();
   const failed = results.filter(({ result }) => result.exitCode !== 0 || result.timedOut);
-  const describe = ({ command, first, result }: { command: string; first?: CommandResult; result: CommandResult }) => {
+  const describe = ({ command, first, result }: CheckRun) => {
     if (first === undefined) return describeCheck(command, result);
     if (result.exitCode === 0 && !result.timedOut) return `${command}: passed on rerun, flaky (first failed (exit ${first.exitCode}) in ${first.durationMs}ms${firstFailureNames(first)})`;
     return `${describeCheck(command, result)} on rerun (first failed (exit ${first.exitCode}) in ${first.durationMs}ms)`;
   };
   const summary = results.map(describe);
-  if (failed.length === 0 && dirty === '') return { commits, report, unaccounted, unchanged, ...(await passChecks(ws, run, slice, sha, summary, false)) };
+  // Written after the porcelain read above, so the log files never count as a change the checks made to the working tree.
+  const logs = writeFirstAttemptLogs(ws, run, slice, results);
+  if (failed.length === 0 && dirty === '') return { commits, report, unaccounted, unchanged, ...(await passChecks(ws, run, slice, sha, summary, false, logs)) };
 
   const records: FixRecord[] = failed.map(entry => {
     const { result } = entry;
@@ -289,15 +293,15 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
 }
 
 /** Moves the slice to review with check `results` passed on `sha`. `reused` marks stored results that stand, when no check ran. */
-async function passChecks(ws: Workspace, run: Run, slice: Slice, sha: string, results: string[], reused: boolean) {
+async function passChecks(ws: Workspace, run: Run, slice: Slice, sha: string, results: string[], reused: boolean, logs: string[] = []) {
   dropPass(slice, 'review');
-  slice.checked = { results, sha };
+  slice.checked = { ...(logs.length === 0 ? {} : { firstAttemptLogs: logs }), results, sha };
   addEvent(run, 'checks-pass', `${reused ? `reused from ${sha}: ` : ''}${results.join('; ')}`, slice);
   // The orchestrator picks the review domains from these changed files and the path skips startReview applies.
   const range = `${slice.parentBranch}...HEAD`;
   const changed = (await git(ws.root, 'diff', '--stat', range)).trimEnd();
   const pathSkipped = await pathSkips(await changedPaths(ws.root, range), committedContent(ws.root, range, sha));
-  return { changed, passed: true as const, pathSkipped, reused, sha, summary: results };
+  return { changed, firstAttemptLogs: logs.map(log => join(runDir(ws, run.feature), log)), passed: true as const, pathSkipped, reused, sha, summary: results };
 }
 
 /**
@@ -414,10 +418,12 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   const id = `${slice.id}-r${slice.reviews}`;
   rmSync(reviewDir(ws, run.feature, id), { force: true, recursive: true });
   const dataFile = join(reviewDir(ws, run.feature, id), 'data.md');
+  const logs = checked.firstAttemptLogs ?? [];
+  const firstAttemptSection = logs.length === 0 ? '' : `\n\nFirst attempt output of flaky checks: each file holds the output of the failed first run of a check that passed on its rerun.\n\n${logs.map(log => `- ${join(runDir(ws, run.feature), log)}`).join('\n')}`;
   const lines = changedLines(diff, files);
   writeAtomic(
     dataFile,
-    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n${renderLaterSlices(run, slice)}\n\n## CHECKS\n\nThe factory ran every configured check on \`${checked.sha}\` and all passed. Do not run them again.\n\n${checked.results.map(result => `- ${result}`).join('\n')}\n\n## KNOWN OBSERVATIONS\n\nObservations this run has already placed (carried, deferred, fixed or left), and observations of this slice's earlier reviews that are not placed yet, marked \`(unplaced)\`. A finding that matches an entry by location and problem, under any id, is not new: the validator drops it with the reason \`same as <key>\`. An entry marked \`${CARRIED_HERE}\` is work this slice builds: a finding that it is unbuilt or wrong in this slice is not a repeat. ${UNTRUSTED_NOTE}\n\n${renderKnownObservations(run, slice)}\n\n${targetedSection}## FIX ITEMS\n\n${listed}\n\n${renderBehaviors(ws, run, slice)}\n\n## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${renderChangedLines(lines).join('\n')}\n`,
+    `## PR METADATA\n\nLocal stacked review, no PR. Branch \`${slice.branch}\` onto \`${slice.parentBranch}\`.\n\n${renderTicket(run, slice, ws.config.sliceTokenBudget)}\n${renderLaterSlices(run, slice)}\n\n## CHECKS\n\nThe factory ran every configured check on \`${checked.sha}\` and all passed. Do not run them again.\n\n${checked.results.map(result => `- ${result}`).join('\n')}${firstAttemptSection}\n\n## KNOWN OBSERVATIONS\n\nObservations this run has already placed (carried, deferred, fixed or left), and observations of this slice's earlier reviews that are not placed yet, marked \`(unplaced)\`. A finding that matches an entry by location and problem, under any id, is not new: the validator drops it with the reason \`same as <key>\`. An entry marked \`${CARRIED_HERE}\` is work this slice builds: a finding that it is unbuilt or wrong in this slice is not a repeat. ${UNTRUSTED_NOTE}\n\n${renderKnownObservations(run, slice)}\n\n${targetedSection}## FIX ITEMS\n\n${listed}\n\n${renderBehaviors(ws, run, slice)}\n\n## DIFF\n\n${UNTRUSTED_NOTE}\n\n${diff}\n## CHANGED FILES\n\n${renderChangedLines(lines).join('\n')}\n`,
   );
   slice.review = { decisions: run.decisions.length, id, lines, sha: checked.sha, skipped, snapshot: await snapshot(ws.root), submissions: {}, targeted };
   const skippedDetail = skipped.map(entry => `${entry.domain} (${entry.reason})`).join('; ');
