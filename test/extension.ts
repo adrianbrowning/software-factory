@@ -5,6 +5,7 @@ import softwareFactory from '../src/index.ts';
 type Registered = {
   execute: (...args: unknown[]) => Promise<unknown>;
   defaultInactive?: boolean;
+  description?: string;
   name: string;
   parameters: { properties?: Record<string, unknown>; required?: string[] };
 };

@@ -222,6 +222,8 @@ const sliceSchema = sliceInputSchema.extend({
   fixPath: text.optional(),
   /** Commit the current fix file describes; checks on the same commit mean the fix round changed nothing. */
   fixFromSha: sha.optional(),
+  /** Id of the red review whose fix file is the slice's current one (`fixPath`); set by a red review, cleared by every other fix file and by restartSlice. factory_fix adds a bug to that fix file only while this is set. */
+  redReview: text.optional(),
   /** Fix items from every fix round since the slice's last recorded review; recording a review clears them, and its fix file asks again for the blocking findings and open items. */
   fixItems: z.array(fixItemSchema).default([]),
   /** Fix files written for the slice, counted or not; the next fix file is `<id>-f<fixFiles + 1>`. `fixRounds` is only the fix budget count. A slice saved without it starts from the higher of `fixRounds` and the N in its retained `fixPath` (`<id>-f<N>.md`); see legacySlice. */

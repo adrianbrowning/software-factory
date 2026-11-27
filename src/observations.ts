@@ -3,13 +3,14 @@
  * them to the sink, fix them in the active slice, or leave them. Each resolves the observations from the review that
  * lists them, refuses one the run's ledger already holds, and adds a ledger entry for each it places.
  */
+import { readFileSync } from 'node:fs';
 import { z } from 'zod';
 import { evidence, evidenceLine, redact } from './evidence.ts';
 import { draftOf, isRecordSlice, itemKey, requireSink } from './deferred.ts';
 import { findingTitle, findUnplaced, placeObservations, requireUnplaced } from './ledger.ts';
 import { carriedSections, renderFinding } from './finding-text.ts';
 import { findingRecord, keptFindings, readRecorded, recordedFindings, type Review, targetingAfter, validationFile, validationSchema } from './review-record.ts';
-import { addEvent, greenCommit, requireActive, type Finding, type Run, type Slice, type Workspace } from './run.ts';
+import { addEvent, greenCommit, requireActive, writeAtomic, type Finding, type Run, type Slice, type Workspace } from './run.ts';
 import { type FixRecord, needsFullReview, startFix, writeFixFile, writeTicket } from './workflow.ts';
 
 function noGreenReview(sliceId: string, purpose: string): Error {
@@ -217,6 +218,54 @@ export function fixAfterGreen(ws: Workspace, run: Run, request: FixRequest, reas
   // A bug round needs a full review; an observation-only round is reviewed only where it changed things (a targeted review).
   slice.targeting = bug === undefined ? targetingAfter(review, observations.map(finding => finding.domain)) : undefined;
   return startFix(run, slice, review.sha, written, bug !== undefined);
+}
+
+/**
+ * The bug a factory_fix call adds to the fix file a red review wrote, when the active slice is in `fix` after such a review.
+ * Undefined when it is not, so the call is the after-green case. Throws, changing nothing, for observation ids, for a call
+ * with no bug, and when `headSha` is not the commit the fix file describes (the implementer has committed).
+ */
+export function planRedFix(run: Run, request: FixRequest, headSha: string) {
+  const slice = run.slices.find(candidate => candidate.status === 'active');
+  if (slice === undefined || slice.phase !== 'fix' || slice.redReview === undefined || slice.fixPath === undefined || slice.fixFromSha === undefined) return undefined;
+  const { text: bug, chosen } = normalizeRequest(request.bug, request.observations, 'factory_fix needs a bug.');
+  if (chosen.size > 0) {
+    throw new Error(`Slice ${slice.id} is in fix after a red review, so factory_fix there takes only a bug, not observation ids. Place the observations after the slice's next green review.`);
+  }
+  if (headSha !== slice.fixFromSha) {
+    throw new Error(`Slice ${slice.id}'s fix file describes ${slice.fixFromSha}, but HEAD is ${headSha}: the implementer has committed, so the bug cannot join it. Call factory_fix with the bug after the review of this round is recorded.`);
+  }
+  const shownBug = redact(bug ?? '');
+  return { fixPath: slice.fixPath, review: slice.redReview, shownBug, slice };
+}
+
+/**
+ * Adds a bug to the fix file of the active slice's red review as one more item under `## Fix items` (`bug-f<round>-<n>`)
+ * with its own section, and to the slice's fix items, so the next review's scope reviewer gives it a verdict. Writes no
+ * new fix file, counts no round and never stalls; the next review is a full review.
+ */
+export function addBugToRedFix(run: Run, request: FixRequest, reason: string, headSha: string) {
+  const planned = planRedFix(run, request, headSha);
+  if (planned === undefined) throw new Error('The active slice is not in fix after a red review.');
+  const { fixPath, review, shownBug, slice } = planned;
+  const round = slice.fixFiles;
+  const prefix = `bug-f${round}-`;
+  const id = `${prefix}${slice.fixItems.filter(item => item.path === fixPath && item.id.startsWith(prefix)).length + 1}`;
+  const summary = evidenceLine(`Bug added after red review ${review}: ${request.bug}`);
+  const text = readFileSync(fixPath, 'utf8');
+  const heading = '## Fix items\n\n';
+  let end = text.indexOf(heading) + heading.length;
+  for (const line of text.slice(end).split('\n')) {
+    if (!line.startsWith('- `')) break;
+    end += line.length + 1;
+  }
+  const listed = `${text.slice(0, end)}- \`${id}\`: ${summary}\n${text.slice(end)}`;
+  // The fix file is written before the run changes, so a failed write leaves the run as it was.
+  writeAtomic(fixPath, `${listed.trimEnd()}\n\n## Bug added after red review ${review}\n\n${evidence(reason, 4_000)}\n\n${shownBug}\n`);
+  slice.fixItems.push({ id, path: fixPath, round, summary });
+  slice.targeting = undefined;
+  addEvent(run, 'fix-bug-added', `${review}: ${id}`, slice);
+  return { fixPath, id };
 }
 
 /** What factory_leave takes: observation ids from a green review (as for factory_carry). */

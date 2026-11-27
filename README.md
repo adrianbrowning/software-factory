@@ -281,6 +281,14 @@ names that file with its line and character counts. After you confirm:
   too (the slice's unplaced list). A slice cannot complete with an unplaced observation, so a done slice has none to
   fix; a bug in a slice that is already done goes through `factory_reopen`.
 
+After a red review, before the fix-mode implementer commits, `factory_fix` with only `bug` and `reason` (a bug no
+reviewer submitted, for example one an advisor found) adds the bug to the fix file the red review wrote: one more item
+`bug-f<round>-<n>` under `## Fix items` (`<n>` counts from 1) plus its own section with the reason and the redacted
+bug. No new fix file is written, no fix round is counted, and the slice never stalls from it. The next review is a
+full review, and its scope reviewer gives the item a verdict like any fix item; an open verdict blocks. In that state
+`factory_fix` refuses observation ids (with or without a bug), and refuses a bug once HEAD is past the commit the fix
+file describes (the implementer has committed); each refusal comes before any dialog and names its reason.
+
 ### Carry observations into a later slice
 
 When a green review lists observations that belong in a later slice, or you want extra work built there, the
