@@ -2,16 +2,20 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { z } from 'zod';
 import { itemKey } from './deferred.ts';
 import { findUnplaced, placeObservations } from './ledger.ts';
-import { ownCommits } from './repo.ts';
+import { git } from './exec.ts';
+import { ownCommits, sliceBranchExists } from './repo.ts';
 import { TEST_PATH } from './test-paths.ts';
 import { changedPaths } from './targeted.ts';
 import { findingRecord } from './review-record.ts';
 import { carriedKeys } from './legacy-observations.ts';
+import { observedTypecheck } from './typecheck.ts';
 import { activeSlice, addEvent, reportPath, reviewIsOpen, requireActive, type Run, type Slice, type Workspace, writeAtomic } from './run.ts';
 
 // Guards only items sent through the factory_implementer_report tool: each item is one line (no \r, \n, U+2028, U+2029 or U+0085),
 // so it cannot add lines that read as factory output in the factory_checks reply. A reports/<slice>.md written directly is not checked.
 const reportItem = z.string().min(1).regex(/^[^\r\n\u2028\u2029\u0085]+$/, 'one line per item');
+
+const checkLine = z.string().regex(/^[^\r\n\u2028\u2029\u0085]+ → exit \d+$/, 'expected `<command> → exit <code>`, for example `pnpm run typecheck → exit 0`');
 
 const behaviorSchema = z
   .object({
@@ -29,6 +33,7 @@ const behaviorSchema = z
 export const implementerReportSchema = z.object({
   behaviors: z.array(behaviorSchema).describe('Each test, the behavior it proves, and whether you saw it fail first; an empty list is accepted in fix mode, for a slice without test seams, or when Open names a stop report (NEEDS SEAM, SLICE TOO BIG, MISSING DEPENDENCY); a build-mode report for a slice with seams is refused with an empty list'),
   commits: z.array(reportItem).describe('Each commit you made, as `<short sha> <subject>`; empty when you made none'),
+  checks: z.array(checkLine).describe('One `<command> → exit <code>` line per check command you ran (its last run, with the exit code you read), for example `pnpm run typecheck → exit 0`; empty when you ran none. The factory shows these lines and does not verify them'),
   fixItems: z
     .array(reportItem)
     .optional()
@@ -41,12 +46,14 @@ function renderBehavior({ test, behavior, red }: z.infer<typeof behaviorSchema>)
   return `${test} → ${behavior} (seen red: ${red === undefined ? 'no' : `yes — ${red}`})`;
 }
 
-function renderReport(report: ImplementerReport, fixMode: boolean) {
+function renderReport(report: ImplementerReport, fixMode: boolean, observed: string[]) {
   const section = (title: string, items: string[]) => [`${title}:`, ...(items.length === 0 ? ['- none'] : items.map(item => `- ${item}`))];
   return [
     'Implementer report:',
     ...section('Commits', report.commits),
     ...(report.fixItems === undefined ? [] : section(fixMode ? 'Fix file items' : 'Carried items', report.fixItems)),
+    ...section('Checks', report.checks),
+    ...(observed.length === 0 ? [] : section('Factory-observed typecheck', observed)),
     ...section('Behaviors', report.behaviors.map(renderBehavior)),
     ...section('Open', report.open),
   ].join('\n');
@@ -115,7 +122,12 @@ async function refuseUntestedSeamedSlice(ws: Workspace, slice: Slice, report: Im
   }
 }
 
-/** Stores the implementer's report for the active slice in the run dir; a later call replaces it. */
+/**
+ * Stores the implementer's report for the active slice in the run dir; a later call replaces it. The stored report gets a
+ * factory-written `Factory-observed typecheck:` section after Checks (one line per typecheck command of the run's checks,
+ * from the runs the factory saw in this implementer session, see ./typecheck.ts); no section when no check is a typecheck
+ * command. A missing run never refuses the report. The result's `observed` holds the section lines and the commands with no run.
+ */
 export async function submitImplementerReport(ws: Workspace, run: Run, report: ImplementerReport) {
   const slice = requireActive(run);
   const fixMode = slice.fixFromSha !== undefined;
@@ -153,13 +165,14 @@ export async function submitImplementerReport(ws: Workspace, run: Run, report: I
   await refuseUntestedSeamedSlice(ws, slice, report, fixMode);
   const path = reportPath(ws, run.feature, slice);
   const replaced = existsSync(path);
-  writeAtomic(path, `${renderReport(report, fixMode)}\n`);
+  const observed = observedTypecheck(run.checks, slice.typecheckRuns);
+  writeAtomic(path, `${renderReport(report, fixMode, observed.lines)}\n`);
   // An open review's data file already lists the fix items its scope reviewer must judge; adding more would leave it unable to give them.
   const reviewOpen = reviewIsOpen(slice);
   const fixed = fixMode && report.fixItems !== undefined && !reviewOpen ? recordFixedObservations(run, slice, report.fixItems, own) : [];
   const skippedForOpenReview = fixMode && reviewOpen && report.fixItems?.some(line => FIXED_LINE.test(line)) === true;
 
-  return { fixed, path, replaced, skippedForOpenReview };
+  return { fixed, observed, path, replaced, skippedForOpenReview };
 }
 
 /** The slice's latest stored implementer report, or a line saying none was submitted; both name the report file. */
@@ -213,12 +226,29 @@ export function reportCoversCommits(ws: Workspace, run: Run, slice: Slice, shas:
 }
 
 /**
+ * Moves a slice at `implement`, or in `fix` with `fixFromSha` set, to `checks` and records a resume event when its
+ * branch has commits (all own commits at `implement`; the own commits of `fixFromSha..HEAD` in `fix`) that the stored
+ * report lists in full with no stop report in Open. Commits from before a fix round need not be listed.
+ */
+export async function moveReportedToChecks(ws: Workspace, run: Run, slice: Slice) {
+  const fix = slice.phase === 'fix' && slice.fixFromSha !== undefined;
+  if ((slice.phase !== 'implement' && !fix) || !(await sliceBranchExists(ws, slice))) return;
+  const roundShas = fix ? new Set((await git(ws.root, 'rev-list', `${slice.fixFromSha}..refs/heads/${slice.branch}`)).split('\n').filter(Boolean)) : undefined;
+  const commits = (await ownCommits(ws, slice)).filter(commit => roundShas?.has(commit.sha) ?? true);
+  if (!reportCoversCommits(ws, run, slice, commits.map(commit => commit.sha))) return;
+  slice.phase = 'checks';
+  addEvent(run, 'resume', `slice ${slice.id} ${fix ? 'fix round ' : ''}already committed and reported ${commits.map(commit => commit.sha.slice(0, 7)).join(', ')}: moved to checks`, slice);
+}
+
+/**
  * A report belongs to one implementer session: a newly spawned implementer (a fix round, or a respawn after a stop
- * report) starts without the stored report of the one before. A follow-up turn of the same session keeps it.
+ * report) starts without the stored report of the one before, and without the typecheck runs the factory saw before. A follow-up turn of the same session keeps it.
  */
 export function startImplementerSession(ws: Workspace, run: Run) {
   const slice = activeSlice(run);
-  if (slice !== undefined) clearReport(ws, run.feature, slice);
+  if (slice === undefined) return;
+  clearReport(ws, run.feature, slice);
+  slice.typecheckRuns = undefined;
 }
 
 /** Removes the stored implementer report of a slice, so no later checks reply shows it. */

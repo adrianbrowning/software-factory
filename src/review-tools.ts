@@ -128,7 +128,7 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
   tool({
     caller: VALIDATOR,
     description:
-      'Submit the validation: keep the substantiated finding ids, downgrade or escalate with reasons, drop the rest with reasons. An escalate entry names exactly one of `decision` (the recorded decision number the code breaks) or `criterion` (the quoted acceptance criterion the code does not meet). The optional `fixWarnings` field (`{ id, warning }` entries) is for a blocking finding whose suggested fix narrows behavior beyond the cited decision or criterion. One more call replaces it once (to correct the verdict), until the review is recorded.',
+      'Submit the validation: keep the substantiated finding ids, downgrade or escalate with reasons (a finding whose `decision` field is set is downgraded only with `decisionMatch` on its downgrade entry: why the code matches the cited decision), drop the rest with reasons. An escalate entry names exactly one of `decision` (the recorded decision number the code breaks) or `criterion` (the quoted acceptance criterion the code does not meet). The optional `fixWarnings` field (`{ id, warning }` entries) is for a kept finding (in keep, downgrade or escalate) whose suggested fix narrows behavior beyond the cited decision or criterion, or is a prose fix that leaves out a case, mode or input that any numbered decision or acceptance criterion gives for the rule (cited or not). One more call replaces it once (to correct the verdict), until the review is recorded.',
     label: 'Factory: submit validation',
     name: 'factory_review_validate',
     schema: validateSchema,

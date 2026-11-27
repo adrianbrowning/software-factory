@@ -22,7 +22,7 @@ async function carrying(ws: Workspace, sections: string[]) {
 
 const section = (keys: string[]) => `### From green review 01-r1 of slice 01 "Feature"\n\nbody\n\n${carriedKeysLine(keys)}`;
 const submit = (ws: Workspace, sha: string, fixItems?: string[]) =>
-  step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [`${sha} ok`], ...(fixItems === undefined ? {} : { fixItems }), open: ['SLICE TOO BIG: rest'] }));
+  step(ws, run => submitImplementerReport(ws, run, { behaviors: [], checks: [], commits: [`${sha} ok`], ...(fixItems === undefined ? {} : { fixItems }), open: ['SLICE TOO BIG: rest'] }));
 
 describe('build-mode report with carried keys', () => {
   it('stores each accepted line form under Carried items, leaves the ledger alone, and shows them in the checks reply', async () => {
@@ -35,7 +35,7 @@ describe('build-mode report with carried keys', () => {
     await submit(ws, sha, lines);
     assert.equal(JSON.stringify(readRun(ws, 'demo')), before);
     const { report } = await step(ws, run => runChecks(ws, run));
-    assert.match(report, new RegExp(`Commits:\\n- ${sha} ok\\nCarried items:\\n${lines.map(line => `- ${line.replace(/[`.]/g, '\\$&')}`).join('\\n')}\\nBehaviors:`));
+    assert.match(report, new RegExp(`Commits:\\n- ${sha} ok\\nCarried items:\\n${lines.map(line => `- ${line.replace(/[`.]/g, '\\$&')}`).join('\\n')}\\nChecks:\\n- none\\nBehaviors:`));
     assert.doesNotMatch(report, /Fix file items/);
   });
 

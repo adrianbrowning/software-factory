@@ -162,9 +162,9 @@ export const noFixItems = (domain: Finding['domain']) => (domain === 'scope' ? {
 
 /**
  * Every reviewed domain submits (the given findings under their domains, the rest empty), then the validator keeps
- * `keep`. The scope domain gives `verdicts`, by default `fixed` for every fix item the review lists.
+ * `keep` (`validation` may add `downgrade` entries and `fixWarnings`). The scope domain gives `verdicts`, by default `fixed` for every fix item the review lists.
  */
-export async function review(ws: Workspace, reviewId: string, findings: Finding[], keep = findings.map(item => item.id), verdicts?: FixVerdict[]) {
+export async function review(ws: Workspace, reviewId: string, findings: Finding[], keep = findings.map(item => item.id), verdicts?: FixVerdict[], validation: { downgrade?: { category: string; id: string; reason: string }[]; fixWarnings?: { id: string; warning: string }[] } = {}) {
   const reviewed = readRun(ws, 'demo').slices.find(item => item.review?.id === reviewId);
   const skipped = reviewed?.review?.skipped ?? [];
   const fixVerdicts = verdicts ?? (reviewed?.fixItems ?? []).map(item => ({ id: item.id, reason: 'the diff fixes it', status: 'fixed' as const }));
@@ -172,8 +172,8 @@ export async function review(ws: Workspace, reviewId: string, findings: Finding[
     const own = findings.filter(item => item.domain === domain);
     await step(ws, run => submitDomain(ws, run, { agentId: `r-${domain}`, domain, findings: own, reviewId, ...(domain === 'scope' ? { fixItems: fixVerdicts } : {}) }));
   }
-  const dropped = findings.filter(item => !keep.includes(item.id)).map(item => ({ id: item.id, reason: 'not in diff' }));
-  await step(ws, run => submitValidation(ws, run, { agentId: 'validator', dropped, keep, reviewId }));
+  const dropped = findings.filter(item => !keep.includes(item.id) && !validation.downgrade?.some(entry => entry.id === item.id)).map(item => ({ id: item.id, reason: 'not in diff' }));
+  await step(ws, run => submitValidation(ws, run, { agentId: 'validator', dropped, keep, reviewId, ...validation }));
 }
 
 /** Takes a slice that commits `ok` to a green review with `findings` (default: one thermo naming observation). */

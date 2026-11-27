@@ -8,9 +8,11 @@ import { CONFIG_PATH, describeModels, loadConfig, requireAvailableModels, requir
 import { flaggedFilesSection } from './flagged-files.ts';
 import { newChecksSection } from './new-checks.ts';
 import { gitArchWarning } from './git-arch.ts';
+import { followUpOverlap } from './follow-up-overlap.ts';
 import { carriedKeys } from './legacy-observations.ts';
 import { deferItems } from './deferred.ts';
-import { chooseChecks, ensureChecks, gate, loadSource } from './gates.ts';
+import { evidenceLine, redact } from './evidence.ts';
+import { chooseChecks, ensureChecks, GATE_BODY_LIMIT, gate, loadSource } from './gates.ts';
 import {
   activeSlice,
   addEvent,
@@ -29,6 +31,7 @@ import {
   withRun,
   type Workspace,
 } from './run.ts';
+import { missingTypecheckLine, observeTypecheck } from './typecheck.ts';
 import { implementerReportSchema, startImplementerSession, submitImplementerReport } from './report.ts';
 import { boundAt, cachedRoot, NO_ACTIVE_RUN, resetRoots, type RootEntry, toolRegistrar } from './tool-scope.ts';
 import { submitHeadless } from './headless-submit.ts';
@@ -37,13 +40,14 @@ import { decisionInputSchema, planDecisions, recordDecisions, runChecks } from '
 import { recordSelfHostWarning, setLoadedPlugin } from './self-host.ts';
 import { registerReviewTools } from './review-tools.ts';
 import { requireFeatureName } from './feature-name.ts';
-import { headlessTarget } from './headless-target.ts';
+import { headlessStartMessage, headlessTarget } from './headless-target.ts';
 import { decideStall, emptySchema, reply, STALL_DESCRIPTION } from './tool-replies.ts';
 import {
   addFollowUp,
   amendSeams,
   applyReslice,
   approvePlan,
+  configuredBase,
   headlessBase,
   localBranchSha,
   markPaused,
@@ -208,6 +212,13 @@ function describeStop(messages: readonly unknown[] | undefined) {
     if (text !== undefined) break;
   }
   return `latest tool: ${latestToolCallName(messages) ?? 'none'}; last assistant text: ${text ?? 'none'}`;
+}
+
+/** The provider error of the latest assistant message as `{ errorMessage }` (errorMessage is undefined when the message's `errorMessage` is not a string), or undefined when that message did not end with stopReason 'error'. */
+function providerError(messages: readonly unknown[] | undefined) {
+  const latest = (messages ?? []).findLast(message => (message as { role?: string }).role === 'assistant') as { errorMessage?: unknown; stopReason?: string } | undefined;
+  if (latest?.stopReason !== 'error') return undefined;
+  return { errorMessage: typeof latest.errorMessage === 'string' ? latest.errorMessage : undefined };
 }
 
 /** Stop gate: block a stop while the owner session's run is running, and pause it after repeated idle stops. An interactive run waiting on an ask is allowed to stop. */
@@ -480,7 +491,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
   tool({
     caller: IMPLEMENTER,
     description:
-      'Submit your final report for the active slice: commits, fix file items (required in fix mode; in build mode only `<carried key> fixed in <sha>` lines, on a slice with carried keys), behaviors, and open items, one line per item. Call it before your final message, and again after every follow-up turn; each call replaces the stored report. The orchestrator reads the stored report file, which the factory_next and factory_checks replies name.',
+      'Submit your final report for the active slice: commits, checks (one `<command> → exit <code>` line per check command you ran), fix file items (required in fix mode; in build mode only `<carried key> fixed in <sha>` lines, on a slice with carried keys), behaviors, and open items, one line per item. Call it before your final message, and again after every follow-up turn; each call replaces the stored report. The orchestrator reads the stored report file, which the factory_next and factory_checks replies name.',
     label: 'Factory: implementer report',
     name: 'factory_implementer_report',
     schema: implementerReportSchema,
@@ -488,7 +499,8 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
       const result = await withRun(ws, feature, run => submitImplementerReport(ws, run, params));
       const recorded = result.fixed.length === 0 ? '' : `\nRecorded as fixed in the ledger and added to this round's fix items for the next review's verdict: ${result.fixed.join(', ')}.`;
       const skipped = result.skippedForOpenReview ? '\n`fixed in <sha>` lines were not recorded as fixed because a review is open; report them again once it closes.' : '';
-      return reply(`${result.replaced ? 'Replaced the stored report' : 'Stored the report'}: ${result.path}${recorded}${skipped}`);
+      const observed = result.observed.lines.length === 0 ? '' : `\nFactory-observed typecheck:\n${result.observed.lines.map(line => `- ${line}`).join('\n')}${result.observed.missing.map(command => `\n${missingTypecheckLine(command)}`).join('')}`;
+      return reply(`${result.replaced ? 'Replaced the stored report' : 'Stored the report'}: ${result.path}${recorded}${skipped}${observed}`);
     },
   });
 
@@ -531,14 +543,23 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
       const current = readRun(ws, feature);
       const planned = planFollowUp(ws, current, params);
       const carried = current.waiting.length === 0 ? '' : `\n\nThe slice also takes the carried items waiting on the run (${current.waiting.length}).`;
-      const body = `${params.whatToBuild}\n\nAcceptance:\n${params.acceptance.map(item => `- ${item}`).join('\n')}${carried}\n\nThe slice branches from ${planned.parentBranch}. The slices below it are not changed. The run needs a new retro before /factory submit.`;
-      if (!(await gate(ctx, ws, feature, 'followUp', `Add follow-up slice "${params.title}"?`, body))) {
+      const overlap = await followUpOverlap(ws.root, current);
+      const head = `${params.whatToBuild}\n\nAcceptance:\n${params.acceptance.map(item => `- ${item}`).join('\n')}`;
+      // A headless gate event holds the whole overlap block: only the free text is clipped to the room left under GATE_BODY_LIMIT (none when the block fills it), and the gate gets no event limit.
+      const tail = `\n\nThe slice branches from ${planned.parentBranch}. The slices below it are not changed. The run needs a new retro before /factory submit.`;
+      const overlapPart = overlap === '' ? '' : `\n\n${overlap}`;
+      const room = Math.max(0, GATE_BODY_LIMIT - carried.length - overlapPart.length - tail.length - 1);
+      // Redact before clipping, as the gate does, so a credential cut at the clip leaves no prefix below the redactor's length threshold.
+      const safeHead = current.mode === 'headless' ? redact(head) : head;
+      const shownHead = current.mode === 'headless' && safeHead.length > room ? `${safeHead.slice(0, room)}…` : safeHead;
+      const body = `${shownHead}${carried}${overlapPart}${tail}`;
+      if (!(await gate(ctx, ws, feature, 'followUp', `Add follow-up slice "${params.title}"?`, body, Number.POSITIVE_INFINITY))) {
         return reply('The user did not add the follow-up slice. Ask how to handle the work.');
       }
       return withRun(ws, feature, run => {
         const slice = addFollowUp(ws, run, params);
         const taken = slice.carried.length === 0 ? '' : `, with the waiting carried items (${slice.carried.length})`;
-        return reply(`Slice ${slice.id} "${slice.title}" is added on ${slice.branch}${taken}.\nNext: ${nextAction(run)}`);
+        return reply(`Slice ${slice.id} "${slice.title}" is added on ${slice.branch}${taken}.${overlap === '' ? '' : `\n${overlap}`}\nNext: ${nextAction(run)}`);
       });
     },
   });
@@ -676,7 +697,8 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
         const feature = target.feature;
         const source = target.source;
         await startOrResume({ ...(target.base === undefined ? {} : { base: target.base }), feature, ...(target.maxRounds === undefined ? {} : { maxRounds: target.maxRounds }), mode: 'headless', source }, { entry: await cachedRoot(ctx.cwd), ws }, ctx);
-        sendContinuation(`A headless software-factory run "${feature}" is started for: ${argument}\nRead skill://software-factory and continue it from its next action (${nextAction(readRun(ws, feature))}).`);
+        const started = readRun(ws, feature);
+        sendContinuation(`A headless software-factory run "${feature}" is started for: ${argument}\n${headlessStartMessage(started, await configuredBase(ws))}\nRead skill://software-factory and continue it from its next action (${nextAction(started)}).`);
         return;
       }
       sendContinuation(`Start a software-factory run for: ${args.trim()}\nRead skill://software-factory and follow it.`);
@@ -708,8 +730,11 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
     }
     if (decision.action === 'pause') {
       stopAttempts.delete(feature);
-      await withRun(ws, feature, current => pauseRun(current, `no progress after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts; ${describeStop(event.messages)}`));
-      ctx.ui.notify(`Software factory paused "${feature}": no progress. /factory resume ${feature} continues.`, 'warning');
+      const failure = providerError(event.messages);
+      const cause = failure === undefined ? undefined : evidenceLine(failure.errorMessage ?? '', 300) || 'no error message';
+      const reason = cause === undefined ? `no progress after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts` : `provider error after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts: ${cause}`;
+      await withRun(ws, feature, current => pauseRun(current, `${reason}; ${describeStop(event.messages)}`));
+      ctx.ui.notify(`Software factory paused "${feature}": ${cause === undefined ? 'no progress' : `provider error: ${cause}`}. /factory resume ${feature} continues.`, 'warning');
       return;
     }
     stopAttempts.set(feature, decision.attempts);
@@ -745,6 +770,26 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
       await auditChild(ctx, pi.getThinkingLevel(), found);
     } finally {
       await trackImplementer(ctx, found, false);
+    }
+  });
+  // Notes each unfiltered typecheck run of a factory-implementer session on the active slice, for the Factory-observed
+  // typecheck section of its report. Outside a factory run, with no active slice, or for any other session or tool, it
+  // does nothing and never throws.
+  pi.on('tool_result', async (event, ctx) => {
+    if (ctx.agent.kind !== 'sub' || ctx.agent.name !== IMPLEMENTER) return;
+    try {
+      const found = await runForCwd(ctx.cwd);
+      if (found === undefined) return;
+      const run = readRun(found.ws, found.feature);
+      if (activeSlice(run) === undefined) return;
+      const seen = observeTypecheck(event, run.checks);
+      if (seen === undefined) return;
+      await withRun(found.ws, found.feature, latest => {
+        const slice = activeSlice(latest);
+        if (slice !== undefined) slice.typecheckRuns = { ...slice.typecheckRuns, [seen.command]: seen.exit };
+      });
+    } catch {
+      return;
     }
   });
   pi.on('auto_compaction_start', async (_event, ctx) => trackImplementer(ctx, await runForCwd(ctx.cwd), true));

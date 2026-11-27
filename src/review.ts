@@ -193,7 +193,8 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   const commits = own.map(commit => commit.oneline).join('\n');
   if (own.length === 0) throw new Error(`Slice ${slice.id} has no commits past ${slice.parentBranch}. The implementer must commit the slice work first.\n${report}`);
   // A fix round's commits (past the fix file's commit) must all be in the stored report, so the orchestrator reads a report that matches the work.
-  if (slice.phase === 'fix' && slice.fixFromSha !== undefined) {
+  // This also holds in phase 'checks' with fixFromSha set, which resume produces and which dropPass(slice, 'checks') after an invalidated fix round also produces, because only restartSlice clears fixFromSha.
+  if ((slice.phase === 'fix' || slice.phase === 'checks') && slice.fixFromSha !== undefined) {
     const roundShas = new Set((await git(ws.root, 'rev-list', `${slice.fixFromSha}..HEAD`)).split('\n').filter(Boolean));
     const unlisted = own.filter(commit => roundShas.has(commit.sha) && !reportListsCommit(ws, run, slice, commit.sha));
     if (unlisted.length > 0) {
@@ -411,7 +412,7 @@ export async function startReview(ws: Workspace, run: Run, skip: unknown = [], k
   return { ...reviewPaths(ws, run, id), domains: reviewDomains(skipped), pathSkipped: byPath, reviewId: id };
 }
 
-/** The IMPLEMENTER BEHAVIORS section: only the Behaviors of the latest stored report, as untrusted claims; its commits, fix items and open items stay out. */
+/** The IMPLEMENTER BEHAVIORS section: only the Behaviors of the latest stored report, as untrusted claims; its commits, fix items, checks, the factory-observed typecheck section and open items stay out. */
 function renderBehaviors(ws: Workspace, run: Run, slice: Slice) {
   const behaviors = storedBehaviors(ws, run, slice);
   const body =
@@ -538,7 +539,7 @@ export function readDomainFindings(ws: Workspace, run: Run, reviewId: string) {
  * else. Only a `critical` or `high` finding can be downgraded, and only to `observation`. Only an `observation` can be
  * escalated, to `high`, and only by naming one of the `decisionCount` recorded decisions or quoting an acceptance criterion. A duplicate may only be
  * dropped in favour of a kept, downgraded, or escalated finding of the same or higher severity (original severity,
- * except that an escalated finding counts as high). A blocking finding that cites an autonomous decision may be dropped only as a
+ * except that an escalated finding counts as high). A finding whose `decision` field is set can be downgraded only when its downgrade entry gives `decisionMatch`. A blocking finding that cites an autonomous decision may be dropped only as a
  * duplicate of a finding that stays blocking (kept at critical or high, or escalated) and cites the same decision.
  */
 function checkCoverage(findings: Finding[], validation: Validation, decisionCount: number, decisions: Decision[], fixLines?: Record<string, [number, number][]>) {
@@ -589,17 +590,19 @@ function checkCoverage(findings: Finding[], validation: Validation, decisionCoun
       `A blocking finding that breaks an autonomous decision cannot be dropped or downgraded; keep it, or drop it as a duplicate of a kept blocking finding that cites the same decision: ${usesAutonomous.map(entry => entry.id).join(', ')}`,
     );
   }
-  const breaksDecision = downgraded.filter(id => byId.get(id)?.decision !== undefined);
-  if (breaksDecision.length > 0) {
-    throw new Error(`A finding that breaks a recorded decision cannot be downgraded; keep it or drop it: ${breaksDecision.join(', ')}`);
+  const unmatched = validation.downgrade.filter(entry => byId.get(entry.id)?.decision !== undefined && entry.decisionMatch === undefined).map(entry => entry.id);
+  if (unmatched.length > 0) {
+    throw new Error(`Downgrade entry of ${unmatched.join(', ')}: a finding that breaks a recorded decision is downgraded only with \`decisionMatch\` (why the code matches the cited decision); set it, or keep or drop the finding.`);
   }
+  const noDecision = validation.downgrade.filter(entry => entry.decisionMatch !== undefined && byId.get(entry.id)?.decision === undefined).map(entry => entry.id);
+  if (noDecision.length > 0) throw new Error(`\`decisionMatch\` applies only to a finding whose \`decision\` field is set; remove it from the downgrade entry of: ${noDecision.join(', ')}`);
   const alreadyBlocking = escalated.filter(id => byId.get(id)?.severity !== 'observation');
   if (alreadyBlocking.length > 0) throw new Error(`Only observation findings can be escalated; keep these instead: ${alreadyBlocking.join(', ')}`);
   const warnedIds = validation.fixWarnings.map(entry => entry.id);
   const repeated = warnedIds.filter((id, index) => warnedIds.indexOf(id) !== index);
   if (repeated.length > 0) throw new Error(`A fixWarnings id appears twice: ${[...new Set(repeated)].join(', ')}`);
-  const warnedNotBlocking = warnedIds.filter(id => !escalated.includes(id) && !(validation.keep.includes(id) && byId.get(id)?.severity !== 'observation'));
-  if (warnedNotBlocking.length > 0) throw new Error(`A fixWarnings id must name a finding that blocks after validation (kept at critical or high, or escalated): ${warnedNotBlocking.join(', ')}`);
+  const unkept = warnedIds.filter(id => !escalated.includes(id) && !downgraded.includes(id) && !validation.keep.includes(id));
+  if (unkept.length > 0) throw new Error(`A fixWarnings id must name a finding the validation keeps (in keep, downgrade or escalate): ${unkept.join(', ')}`);
   for (const entry of validation.escalate) {
     if (entry.decision !== undefined && entry.decision > decisionCount) {
       throw new Error(`"${entry.id}" names decision ${entry.decision}, but the review data lists ${decisionCount} decisions.`);
@@ -621,7 +624,7 @@ function checkCoverage(findings: Finding[], validation: Validation, decisionCoun
 /**
  * The validator only selects: every raw finding is kept, downgraded to an observation, escalated to high for a broken
  * decision or an unmet acceptance criterion, or dropped with a reason. It adds no finding and rewrites no text, except a fix warning:
- * the text it adds beside a blocking finding (`fixWarnings`) when the suggested fix narrows the cited decision or criterion, shown in the fix file. The same validator may replace its
+ * the text it adds beside a kept finding (in keep, downgrade or escalate; `fixWarnings`) when the suggested fix narrows the cited decision or criterion, or is a prose fix that leaves out a case, mode or input that any numbered decision or acceptance criterion gives for the rule (cited or not). The warning is stored in the validation file; the fix file of a red review shows it for a blocking finding, and an observation fix round's fix file shows it in the section of each observation sent to it (the entry on the slice's unplaced list keeps it). The same validator may replace its
  * validation once (to correct its verdict) until the review is recorded.
  */
 export function submitValidation(
@@ -701,7 +704,8 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
   const kept = keptFindings(findings, validation);
   const blocking = kept.filter(finding => finding.severity !== 'observation');
   const observations = kept.filter(finding => finding.severity === 'observation');
-  collectObservations(run, slice, review.id, review.sha, observations);
+  const warningOf = new Map(validation.fixWarnings.map(entry => [entry.id, entry.warning]));
+  collectObservations(run, slice, review.id, review.sha, observations, warningOf);
   const verdicts = review.fixVerdicts ?? [];
   const verdictOf = new Map(verdicts.map(entry => [entry.id, entry]));
   // An item without a closing verdict stays open, so no item passes unchecked; a blocking finding under its id already carries it.
@@ -727,7 +731,6 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
   slice.targeting = targetingAfter(review, [...blocking.map(finding => finding.domain), ...(open.length > 0 ? (['scope'] as const) : [])]);
   const blockingIds = [...blocking.map(finding => finding.id), ...open.map(item => `${item.id} (open fix item)`)];
   const blockingDetail = `${detail}; blocking ${blockingIds.join(', ')}`;
-  const warningOf = new Map(validation.fixWarnings.map(entry => [entry.id, entry.warning]));
   const pairs = blocking.map(finding => ({ finding, record: findingRecord(finding, `## Blocking review findings from ${review.id}`, run.decisions, warningOf.get(finding.id)) }));
   const records: FixRecord[] = [
     ...pairs.map(({ record }) => record),

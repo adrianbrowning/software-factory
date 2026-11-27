@@ -12,7 +12,7 @@ import { MAX_IDLE_STOP_ATTEMPTS, ORCHESTRATION_TOOLS, resetModuleState, stopDeci
 import { readRun, reportPath, type Run, runDir, reviewPaths, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, pauseRun, planSlices, resolveStall } from '../src/workflow.ts';
-import { seedUnplacedObservation, settleObservations, commit, finding, green, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
+import { checkRuns, countedCheck, seedUnplacedObservation, settleObservations, commit, finding, green, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
 
 beforeEach(() => resetModuleState());
 
@@ -49,8 +49,8 @@ describe('tool registration', () => {
 
   it('advertises the implementer report fields, fix file items optional', () => {
     const report = load().get('factory_implementer_report');
-    assert.deepEqual(Object.keys(report?.parameters.properties ?? {}).toSorted(), ['behaviors', 'commits', 'fixItems', 'open']);
-    assert.deepEqual(report?.parameters.required?.toSorted(), ['behaviors', 'commits', 'open']);
+    assert.deepEqual(Object.keys(report?.parameters.properties ?? {}).toSorted(), ['behaviors', 'checks', 'commits', 'fixItems', 'open']);
+    assert.deepEqual(report?.parameters.required?.toSorted(), ['behaviors', 'checks', 'commits', 'open']);
     const items = (report?.parameters.properties?.behaviors as { items?: { properties?: object; required?: string[] } } | undefined)?.items;
     assert.deepEqual(Object.keys(items?.properties ?? {}).toSorted(), ['behavior', 'red', 'seenRed', 'test']);
     assert.deepEqual(items?.required?.toSorted(), ['behavior', 'seenRed', 'test']);
@@ -162,7 +162,7 @@ describe('implementer sessions', () => {
     const { call, handlers, implementer, main } = await startedRun(root);
     const spawn = (agent: string, spawner: unknown = main) =>
       handlers.get('before_subagent_spawn')?.({ agent, invocationKind: 'task', patterns: [], type: 'before_subagent_spawn' }, spawner);
-    const report = { behaviors: [], commits: [], open: ['NEEDS SEAM: x'] };
+    const report = { behaviors: [], checks: [], commits: [], open: ['NEEDS SEAM: x'] };
     await call('factory_implementer_report', report, implementer);
 
     await spawn('factory-reviewer');
@@ -181,13 +181,13 @@ describe('implementer sessions', () => {
     const { root } = repo;
     const { call, handlers, implementer, main } = await startedRun(root);
     commitFile(root, 'test/work.test.ts');
-    await call('factory_implementer_report', { behaviors: oneBehavior, commits: [], open: ['first round'] }, implementer);
+    await call('factory_implementer_report', { behaviors: oneBehavior, checks: [], commits: [], open: ['first round'] }, implementer);
 
     const checks = call('factory_checks', {}, main);
     const spawned = handlers.get('before_subagent_spawn')?.({ agent: 'factory-implementer', invocationKind: 'task', patterns: [], type: 'before_subagent_spawn' }, main);
     assert.match(await checks, /first round/);
     await spawned;
-    assert.match(await call('factory_implementer_report', { behaviors: oneBehavior, commits: [], open: [] }, implementer), /Stored the report/);
+    assert.match(await call('factory_implementer_report', { behaviors: oneBehavior, checks: [], commits: [], open: [] }, implementer), /Stored the report/);
   });
 
   it('refuses commits items that are not slice commits, lists the slice commits, and keeps the stored report', async () => {
@@ -197,7 +197,7 @@ describe('implementer sessions', () => {
     commitFile(root, 'test/work.test.ts', 'work done');
     const sha = git(root, 'rev-parse', 'HEAD').toString().trim();
     const otherSha = git(root, 'rev-parse', 'HEAD~1').toString().trim();
-    const report = (commits: string[], open: string[] = []) => ({ behaviors: oneBehavior, commits, open });
+    const report = (commits: string[], open: string[] = []) => ({ behaviors: oneBehavior, checks: [], commits, open });
     const file = join(root, '.scratch', 'demo', 'reports', '01.md');
     await assert.rejects(call('factory_implementer_report', report(['(see git log)'], ['second']), implementer), (error: Error) => {
       assert.match(error.message, /\(see git log\)/);
@@ -235,7 +235,7 @@ describe('implementer sessions', () => {
     it('refuses a report with no behavior and no stop report, naming the seams, and stores nothing', async () => {
       using repo = emptyRepo();
       const { call, implementer } = await startedRun(repo.root);
-      await assert.rejects(call('factory_implementer_report', { behaviors: [], commits: [], open: [] }, implementer), /seams \(cli\).*report lists no behavior.*NEEDS SEAM/);
+      await assert.rejects(call('factory_implementer_report', { behaviors: [], checks: [], commits: [], open: [] }, implementer), /seams \(cli\).*report lists no behavior.*NEEDS SEAM/);
       assert.equal(existsSync(file(repo.root)), false);
     });
 
@@ -243,38 +243,38 @@ describe('implementer sessions', () => {
       using repo = emptyRepo();
       const { call, implementer } = await startedRun(repo.root);
       commitFile(repo.root, 'test/a.test.ts');
-      await assert.rejects(call('factory_implementer_report', { behaviors: [], commits: [], open: [] }, implementer), /report lists no behavior.*NEEDS SEAM/);
+      await assert.rejects(call('factory_implementer_report', { behaviors: [], checks: [], commits: [], open: [] }, implementer), /report lists no behavior.*NEEDS SEAM/);
       assert.equal(existsSync(file(repo.root)), false);
     });
 
     it('refuses a report whose behaviors are all unseen red, keeps the earlier report, and says how to see red', async () => {
       using repo = emptyRepo();
       const { call, implementer } = await startedRun(repo.root);
-      await call('factory_implementer_report', { behaviors: [], commits: [], open: ['NEEDS SEAM: x'] }, implementer);
+      await call('factory_implementer_report', { behaviors: [], checks: [], commits: [], open: ['NEEDS SEAM: x'] }, implementer);
       const before = readFileSync(file(repo.root), 'utf8');
       commitFile(repo.root, 'test/a.test.ts');
       await assert.rejects(
-        call('factory_implementer_report', { behaviors: [{ ...behavior, seenRed: false, red: undefined }], commits: [], open: [] }, implementer),
+        call('factory_implementer_report', { behaviors: [{ ...behavior, seenRed: false, red: undefined }], checks: [], commits: [], open: [] }, implementer),
         /Slice 01.*no behavior was seen red.*revert the production change/,
       );
       assert.equal(readFileSync(file(repo.root), 'utf8'), before);
-      assert.match(await call('factory_implementer_report', { behaviors: [{ ...behavior, seenRed: false, red: undefined }, behavior], commits: [], open: [] }, implementer), /Replaced the stored report/);
+      assert.match(await call('factory_implementer_report', { behaviors: [{ ...behavior, seenRed: false, red: undefined }, behavior], checks: [], commits: [], open: [] }, implementer), /Replaced the stored report/);
     });
 
     it('stores an all-unseen-red report for a slice that has seams and a noTestReason', async () => {
       using repo = emptyRepo();
       const { call, implementer } = await startedRun(repo.root, 'true', { noTestReason: 'docs only' });
       commitFile(repo.root, 'test/a.test.ts');
-      assert.match(await call('factory_implementer_report', { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], commits: [], open: [] }, implementer), /Stored the report/);
+      assert.match(await call('factory_implementer_report', { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], checks: [], commits: [], open: [] }, implementer), /Stored the report/);
     });
 
     it('refuses a report whose commits change no test file, and keeps the earlier stored report', async () => {
       using repo = emptyRepo();
       const { call, implementer } = await startedRun(repo.root);
-      await call('factory_implementer_report', { behaviors: [], commits: [], open: ['NEEDS SEAM: x'] }, implementer);
+      await call('factory_implementer_report', { behaviors: [], checks: [], commits: [], open: ['NEEDS SEAM: x'] }, implementer);
       const before = readFileSync(file(repo.root), 'utf8');
       commitFile(repo.root, 'src/a.ts');
-      await assert.rejects(call('factory_implementer_report', { behaviors: [behavior], commits: [], open: [] }, implementer), /change no test file.*NEEDS SEAM/);
+      await assert.rejects(call('factory_implementer_report', { behaviors: [behavior], checks: [], commits: [], open: [] }, implementer), /change no test file.*NEEDS SEAM/);
       assert.equal(readFileSync(file(repo.root), 'utf8'), before);
     });
 
@@ -282,16 +282,16 @@ describe('implementer sessions', () => {
       using repo = emptyRepo();
       const { call, implementer } = await startedRun(repo.root, 'true', { noTestReason: 'refactor, behavior unchanged' });
       commitFile(repo.root, 'src/a.ts');
-      assert.match(await call('factory_implementer_report', { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], commits: [], open: [] }, implementer), /Stored the report/);
+      assert.match(await call('factory_implementer_report', { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], checks: [], commits: [], open: [] }, implementer), /Stored the report/);
     });
 
     it('refuses a report with no behavior for a slice that has seams and a noTestReason, and keeps the earlier stored report', async () => {
       using repo = emptyRepo();
       const { call, implementer } = await startedRun(repo.root, 'true', { noTestReason: 'refactor, behavior unchanged' });
-      await call('factory_implementer_report', { behaviors: [], commits: [], open: ['NEEDS SEAM: x'] }, implementer);
+      await call('factory_implementer_report', { behaviors: [], checks: [], commits: [], open: ['NEEDS SEAM: x'] }, implementer);
       const before = readFileSync(file(repo.root), 'utf8');
       commitFile(repo.root, 'src/a.ts');
-      await assert.rejects(call('factory_implementer_report', { behaviors: [], commits: [], open: [] }, implementer), (error: Error) => /lists no behavior/.test(error.message) && /pins the code.*seenRed false/.test(error.message) && !/red-first/.test(error.message));
+      await assert.rejects(call('factory_implementer_report', { behaviors: [], checks: [], commits: [], open: [] }, implementer), (error: Error) => /lists no behavior/.test(error.message) && /pins the code.*seenRed false/.test(error.message) && !/red-first/.test(error.message));
       assert.equal(readFileSync(file(repo.root), 'utf8'), before);
     });
 
@@ -300,15 +300,15 @@ describe('implementer sessions', () => {
       const { call, implementer } = await startedRun(repo.root);
       commitFile(repo.root, 'src/a.ts');
       await assert.rejects(
-        call('factory_implementer_report', { behaviors: [{ ...behavior, seenRed: false, red: undefined }], commits: [], open: [] }, implementer),
+        call('factory_implementer_report', { behaviors: [{ ...behavior, seenRed: false, red: undefined }], checks: [], commits: [], open: [] }, implementer),
         (error: Error) => /change no test file/.test(error.message) && !/no behavior was seen red/.test(error.message),
       );
       assert.equal(existsSync(file(repo.root)), false);
     });
 
     it('refuses with the exact full text of each of the four refusals', async () => {
-      const none = { behaviors: [], commits: [], open: [] };
-      const seen = { behaviors: [{ ...behavior, seenRed: false, red: undefined }], commits: [], open: [] };
+      const none = { behaviors: [], checks: [], commits: [], open: [] };
+      const seen = { behaviors: [{ ...behavior, seenRed: false, red: undefined }], checks: [], commits: [], open: [] };
       const redFirst = 'Commit a red-first test through one of these seams and report it in behaviors, or report NEEDS SEAM in Open.';
       const message = async (call: (name: string, args: unknown, who: never) => Promise<unknown>, args: unknown, who: unknown) => {
         try {
@@ -346,14 +346,14 @@ describe('implementer sessions', () => {
       using repo = emptyRepo();
       const { call, implementer } = await startedRun(repo.root);
       commitFile(repo.root, 'test/a.test.ts');
-      assert.match(await call('factory_implementer_report', { behaviors: [behavior], commits: [], open: [] }, implementer), /Stored the report/);
+      assert.match(await call('factory_implementer_report', { behaviors: [behavior], checks: [], commits: [], open: [] }, implementer), /Stored the report/);
     });
 
     it('stores a report with no behavior when Open names a stop report', async () => {
       using repo = emptyRepo();
       const { call, implementer } = await startedRun(repo.root);
       for (const stop of ['NEEDS SEAM: x', 'SLICE TOO BIG: y', 'MISSING DEPENDENCY: z']) {
-        assert.match(await call('factory_implementer_report', { behaviors: [], commits: [], open: [stop] }, implementer), /Stored the report|Replaced the stored report/);
+        assert.match(await call('factory_implementer_report', { behaviors: [], checks: [], commits: [], open: [stop] }, implementer), /Stored the report|Replaced the stored report/);
       }
     });
 
@@ -362,7 +362,7 @@ describe('implementer sessions', () => {
       const { call, implementer } = await startedRun(repo.root);
       commitFile(repo.root, 'test/a.test.ts');
       for (const stop of ['NEEDS SEAM: x', 'SLICE TOO BIG: y', 'MISSING DEPENDENCY: z']) {
-        assert.match(await call('factory_implementer_report', { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], commits: [], open: [stop] }, implementer), /Stored the report|Replaced the stored report/);
+        assert.match(await call('factory_implementer_report', { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], checks: [], commits: [], open: [stop] }, implementer), /Stored the report|Replaced the stored report/);
       }
     });
 
@@ -372,14 +372,69 @@ describe('implementer sessions', () => {
       commitFile(repo.root, 'test/a.test.ts');
       const sha = String(git(repo.root, 'rev-parse', 'HEAD')).trim();
       await withRun({ config: loadConfig(repo.root), root: repo.root }, 'demo', run => { run.slices[0]!.fixFromSha = sha; });
-      assert.match(await call('factory_implementer_report', { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], commits: [], fixItems: ['bug-f1: not a defect: x'], open: [] }, implementer), /Stored the report/);
+      assert.match(await call('factory_implementer_report', { behaviors: [{ behavior: 'b', seenRed: false, test: 't' }], checks: [], commits: [], fixItems: ['bug-f1: not a defect: x'], open: [] }, implementer), /Stored the report/);
+    });
+  });
+
+  describe('checks', () => {
+    const reportFile = (root: string) => join(root, '.scratch', 'demo', 'reports', '01.md');
+    const base = { behaviors: oneBehavior, commits: [], open: [] };
+
+    it('stores the checks lines in order, after Commits and before Behaviors', async () => {
+      using repo = emptyRepo();
+      const { call, implementer } = await startedRun(repo.root);
+      commitFile(repo.root, 'test/work.test.ts');
+      const checks = ['pnpm run typecheck → exit 0', 'sh scripts/test.sh test/report.test.ts → exit 1'];
+      await call('factory_implementer_report', { ...base, checks }, implementer);
+      const lines = readFileSync(reportFile(repo.root), 'utf8').split('\n');
+      const at = (title: string) => lines.indexOf(`${title}:`);
+      assert.deepEqual(lines.slice(at('Checks'), at('Behaviors')), ['Checks:', `- ${checks[0]}`, `- ${checks[1]}`]);
+      assert.ok(at('Commits') < at('Checks'));
+    });
+
+    it('stores - none for an empty checks list', async () => {
+      using repo = emptyRepo();
+      const { call, implementer } = await startedRun(repo.root);
+      commitFile(repo.root, 'test/work.test.ts');
+      await call('factory_implementer_report', { ...base, checks: [] }, implementer);
+      assert.match(readFileSync(reportFile(repo.root), 'utf8'), /\nChecks:\n- none\nBehaviors:/);
+    });
+
+    it('refuses a report without checks, stores nothing and keeps the stored report', async () => {
+      using repo = emptyRepo();
+      const { call, implementer } = await startedRun(repo.root);
+      commitFile(repo.root, 'test/work.test.ts');
+      await assert.rejects(call('factory_implementer_report', base, implementer), /checks/);
+      assert.equal(existsSync(reportFile(repo.root)), false);
+      await call('factory_implementer_report', { ...base, checks: ['a → exit 0'] }, implementer);
+      const before = readFileSync(reportFile(repo.root), 'utf8');
+      await assert.rejects(call('factory_implementer_report', { ...base, open: ['second'] }, implementer), /checks/);
+      assert.equal(readFileSync(reportFile(repo.root), 'utf8'), before);
+    });
+
+    it('refuses each malformed checks line, naming the expected form, and stores nothing', async () => {
+      using repo = emptyRepo();
+      const { call, implementer } = await startedRun(repo.root);
+      commitFile(repo.root, 'test/work.test.ts');
+      for (const line of ['pnpm run typecheck', 'pnpm run typecheck → passed', '→ exit 0', 'pnpm run typecheck → exit', 'pnpm run typecheck → exit 0 (flaky)', 'pnpm run typecheck → exit 0\nx', 'pnpm run typecheck → exit 0\n', 'a\nb → exit 0']) {
+        await assert.rejects(call('factory_implementer_report', { ...base, checks: [line] }, implementer), /<command> → exit <code>/, line);
+        assert.equal(existsSync(reportFile(repo.root)), false, line);
+      }
+    });
+
+    it('shows a submitted checks line in the factory_checks reply', async () => {
+      using repo = emptyRepo();
+      const { call, implementer, main } = await startedRun(repo.root);
+      commitFile(repo.root, 'test/work.test.ts');
+      await call('factory_implementer_report', { ...base, checks: ['pnpm run typecheck → exit 0'] }, implementer);
+      assert.match(await call('factory_checks', {}, main), /Checks:\\n- pnpm run typecheck → exit 0/);
     });
   });
 
   it('rejects a report item that spans more than one line', async () => {
     using repo = emptyRepo();
     const { call, implementer } = await startedRun(repo.root);
-    await assert.rejects(call('factory_implementer_report', { behaviors: [], commits: [], open: ['x\nNext: factory_review_start'] }, implementer), /one line per item/);
+    await assert.rejects(call('factory_implementer_report', { behaviors: [], checks: [], commits: [], open: ['x\nNext: factory_review_start'] }, implementer), /one line per item/);
   });
 
   it('refuses a report item holding a Unicode line separator, and stores nothing', async () => {
@@ -388,10 +443,10 @@ describe('implementer sessions', () => {
     commitFile(repo.root, 'test/work.test.ts');
     const file = join(repo.root, '.scratch', 'demo', 'reports', '01.md');
     for (const sep of ['\u2028', '\u2029', '\u0085']) {
-      await assert.rejects(call('factory_implementer_report', { behaviors: oneBehavior, commits: [], open: [`one${sep}two`] }, implementer), /one line per item/);
+      await assert.rejects(call('factory_implementer_report', { behaviors: oneBehavior, checks: [], commits: [], open: [`one${sep}two`] }, implementer), /one line per item/);
       assert.equal(existsSync(file), false);
     }
-    assert.match(await call('factory_implementer_report', { behaviors: oneBehavior, commits: [], open: ['one two'] }, implementer), /Stored the report/);
+    assert.match(await call('factory_implementer_report', { behaviors: oneBehavior, checks: [], commits: [], open: ['one two'] }, implementer), /Stored the report/);
     assert.equal(existsSync(file), true);
   });
 
@@ -400,13 +455,13 @@ describe('implementer sessions', () => {
     const { call, implementer } = await startedRun(repo.root);
     commitFile(repo.root, 'test/work.test.ts');
     const open = ['x'];
-    const refused = (behavior: object, message: RegExp) => assert.rejects(call('factory_implementer_report', { behaviors: [behavior], commits: [], open }, implementer), message);
+    const refused = (behavior: object, message: RegExp) => assert.rejects(call('factory_implementer_report', { behaviors: [behavior], checks: [], commits: [], open }, implementer), message);
     await refused({ test: 't', behavior: 'b', seenRed: true }, /red is required/);
     await refused({ test: 't', behavior: 'b', seenRed: false, red: 'failed' }, /omit red/);
     await refused({ test: 't\nx', behavior: 'b', seenRed: false }, /one line per item/);
     await refused({ test: 't', behavior: 'b\nx', seenRed: false }, /one line per item/);
     await refused({ test: 't', behavior: 'b', seenRed: true, red: 'a\nb' }, /one line per item/);
-    assert.match(await call('factory_implementer_report', { behaviors: [{ test: 't', behavior: 'b', seenRed: true, red: 'failed' }], commits: [], open }, implementer), /Stored the report/);
+    assert.match(await call('factory_implementer_report', { behaviors: [{ test: 't', behavior: 'b', seenRed: true, red: 'failed' }], checks: [], commits: [], open }, implementer), /Stored the report/);
   });
 
   it('stores each behavior on one line with its seen-red evidence', async () => {
@@ -417,7 +472,7 @@ describe('implementer sessions', () => {
       { test: 'a', behavior: 'does a', seenRed: true, red: 'a threw' },
       { test: 'b', behavior: 'does b', seenRed: false },
     ];
-    await call('factory_implementer_report', { behaviors, commits: [], open: [] }, implementer);
+    await call('factory_implementer_report', { behaviors, checks: [], commits: [], open: [] }, implementer);
     const stored = readFileSync(join(repo.root, '.scratch', 'demo', 'reports', '01.md'), 'utf8');
     assert.match(stored, /Behaviors:\n- a → does a \(seen red: yes — a threw\)\n- b → does b \(seen red: no\)\nOpen:/);
   });
@@ -472,7 +527,7 @@ describe('implementer sessions', () => {
     const { root } = repo;
     const { call, implementer, main } = await startedRun(root);
     commitFile(root, 'test/work.test.ts');
-    await call('factory_implementer_report', { behaviors: oneBehavior, commits: [], open: [] }, implementer);
+    await call('factory_implementer_report', { behaviors: oneBehavior, checks: [], commits: [], open: [] }, implementer);
     await call('factory_checks', {}, main);
     const reply = await call('factory_review_start', { skip: [] }, main);
     assert.match(reply, /in one eval step/);
@@ -653,6 +708,56 @@ describe('implementer sessions', () => {
     });
   });
 
+  describe('stop gate pause after a provider error', () => {
+    const pauseAfter = async (messages: unknown[], headless = false) => {
+      using repo = emptyRepo();
+      const notices: [string, unknown][] = [];
+      const started = await startedRun(repo.root);
+      const main = { ...started.main, ui: { ...started.main.ui, notify: (message: string, level?: unknown) => notices.push([message, level]) } };
+      if (headless) await withRun({ config: loadConfig(repo.root), root: repo.root }, 'demo', run => { run.mode = 'headless'; });
+      const decisions: unknown[] = [];
+      for (let i = 0; i < MAX_IDLE_STOP_ATTEMPTS; i += 1) decisions.push(((await started.handlers.get('session_stop')?.({ session_id: 'session', messages, type: 'session_stop' }, main)) as { decision?: string } | undefined)?.decision);
+      const status = JSON.parse(await started.call('factory_status', {}, main)) as { content: { text: string }[] };
+      const detail = /(?:provider error|no progress) after \d+ stop attempts[^"]*/.exec(status.content[0]?.text ?? '')?.[0];
+      return { decisions, detail, notices };
+    };
+    const failed = (errorMessage?: string) => [{ role: 'assistant', content: [{ type: 'text', text: 'working' }], stopReason: 'error', ...(errorMessage === undefined ? {} : { errorMessage }) }];
+    const tail = 'latest tool: none; last assistant text: working';
+
+    it('names the provider error, keeps the stop timing, and notifies', async () => {
+      const { decisions, detail, notices } = await pauseAfter(failed('The AWS SSO token has expired'));
+      assert.equal(detail, `provider error after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts: The AWS SSO token has expired; ${tail}`);
+      assert.deepEqual(decisions, [...Array(MAX_IDLE_STOP_ATTEMPTS - 1).fill('block'), undefined]);
+      assert.deepEqual(notices, [['Software factory paused "demo": provider error: The AWS SSO token has expired. /factory resume demo continues.', 'warning']]);
+    });
+
+    it('behaves the same in a headless run', async () => {
+      assert.equal((await pauseAfter(failed('boom'), true)).detail, `provider error after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts: boom; ${tail}`);
+    });
+
+    it('redacts and clips the error text to one line', async () => {
+      assert.equal((await pauseAfter(failed('denied Bearer abc123'))).detail, `provider error after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts: denied Bearer <REDACTED>; ${tail}`);
+      const long = `line one\n\n${'y'.repeat(400)}`;
+      const expected = `line one ${'y'.repeat(400)}`.slice(0, 300);
+      assert.equal((await pauseAfter(failed(long))).detail, `provider error after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts: ${expected}…; ${tail}`);
+    });
+
+    it('says no error message when the message is absent or blank', async () => {
+      const want = `provider error after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts: no error message; ${tail}`;
+      assert.equal((await pauseAfter(failed())).detail, want);
+      assert.equal((await pauseAfter(failed('  \n '))).detail, want);
+    });
+
+    it('counts only the latest assistant message', async () => {
+      for (const stopReason of ['stop', 'aborted']) {
+        const messages = [{ role: 'assistant', content: [], stopReason: 'error', errorMessage: 'old' }, { role: 'assistant', content: [{ type: 'text', text: 'working' }], stopReason }];
+        const { detail, notices } = await pauseAfter(messages);
+        assert.equal(detail, `no progress after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts; ${tail}`);
+        assert.deepEqual(notices, [['Software factory paused "demo": no progress. /factory resume demo continues.', 'warning']]);
+      }
+    });
+  });
+
   describe('stop gate, guard for existing behavior', () => {
     it('keeps the owner idle count when another session stops in between', async () => {
       using repo = emptyRepo();
@@ -821,7 +926,7 @@ describe('used-up fix budget', () => {
   type Reply = { content: { text: string }[] };
 
   /** A temp repo whose checks pass once `ok` is committed and `bad` is not, with maxRounds 1; removed when `using` ends. */
-  const budgetRepo = () => tempRepo('factory-budget-', { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok', '! test -f bad'], maxRounds: 1 }) });
+  const budgetRepo = (checks = ['test -f ok', '! test -f bad']) => tempRepo('factory-budget-', { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks, maxRounds: 1 }) });
 
   /**
    * Starts a run in the budget repo at `root` through the loaded tools, its plan approved and slice 01 started.
@@ -953,6 +1058,82 @@ describe('used-up fix budget', () => {
       assert.equal(result.phase, 'fix');
       assert.match(result.text, /fix mode/);
       assert.match(result.text, /read its report file \(reports\/01\.md.*handle any stop report in its Open list, then call factory_checks/);
+    });
+  });
+
+  describe('resume of a committed, reported fix round', () => {
+    async function resumeFix(options: { report: 'none' | 'round' | 'old' | 'stop'; roundCommits?: boolean; checks?: string[]; then?: (call: (name: string, params: unknown) => Promise<unknown>, ws: Workspace) => Promise<void> }) {
+      using repo = budgetRepo(options.checks);
+      const { call, ws } = await budgetRun(repo.root, ['Feature']);
+      commit(ws, 'f.txt');
+      const before = sh(ws.root, 'rev-parse', 'HEAD');
+      if (options.roundCommits !== false) commit(ws, 'g.txt');
+      const round = sh(ws.root, 'rev-parse', '--short=12', 'HEAD');
+      await withRun(ws, 'demo', current => {
+        current.slices[0]!.phase = 'fix';
+        current.slices[0]!.fixFromSha = before;
+      });
+      const path = reportPath(ws, 'demo', readRun(ws, 'demo').slices[0]!);
+      if (options.report !== 'none') {
+        mkdirSync(dirname(path), { recursive: true });
+        const listed = options.report === 'old' ? before.slice(0, 12) : round;
+        writeFileSync(path, `Implementer report:\nCommits:\n- ${listed} c\nBehaviors:\n- none\nOpen:\n- ${options.report === 'stop' ? 'NEEDS SEAM: x' : 'none'}\n`);
+      }
+      await withRun(ws, 'demo', current => pauseRun(current, 'test'));
+      const reply = await call('factory_start', { resume: 'demo' }, { confirm: async () => true });
+      const run = readRun(ws, 'demo');
+      await options.then?.(call, ws);
+      return { events: run.events.map(event => event.detail), phase: run.slices[0]?.phase, round, text: reply.content[0]?.text ?? '' };
+    }
+
+    it('moves to checks, records the event and says to call factory_checks', async () => {
+      const result = await resumeFix({ report: 'round' });
+      assert.equal(result.phase, 'checks');
+      assert.ok(result.events.includes(`slice 01 fix round already committed and reported ${result.round.slice(0, 7)}: moved to checks`));
+      assert.match(result.text, /Next: Call factory_checks for slice 01 "Feature"\./);
+    });
+
+    const counted = [countedCheck('run')];
+    const runCount = (ws: Workspace) => (existsSync(join(ws.root, '.git', 'check-runs')) ? checkRuns(ws).length : 0);
+
+    it('factory_checks refuses a commit made after the resume move that the report does not list, and runs no check', async () => {
+      await resumeFix({
+        checks: counted,
+        report: 'round',
+        then: async (call, ws) => {
+          commit(ws, 'late.txt');
+          const oneline = sh(ws.root, 'log', '-1', '--oneline');
+          await assert.rejects(call('factory_checks', {}), (error: Error) => {
+            assert.match(error.message, /has 1 commits from this fix round that its implementer report does not list/);
+            assert.ok(error.message.includes(oneline));
+            return true;
+          });
+          assert.equal(runCount(ws), 0);
+        },
+      });
+    });
+
+    it('factory_checks runs the checks once after the resume move when no commit was added', async () => {
+      await resumeFix({ checks: counted, report: 'round', then: async (call, ws) => { await call('factory_checks', {}); assert.equal(runCount(ws), 1); } });
+    });
+
+    it('factory_checks does not refuse an unreported commit of a slice at checks without fixFromSha, and runs the checks', async () => {
+      await resumeFix({
+        checks: counted,
+        report: 'round',
+        then: async (call, ws) => {
+          await withRun(ws, 'demo', current => { current.slices[0]!.fixFromSha = undefined; });
+          commit(ws, 'late.txt');
+          await call('factory_checks', {});
+          assert.equal(runCount(ws), 1);
+        },
+      });
+    });
+
+    it('keeps fix without round commits, with a round commit unlisted, without a report, or with a stop report', async () => {
+      for (const options of [{ report: 'round', roundCommits: false }, { report: 'old' }, { report: 'none' }, { report: 'stop' }] as const) {
+        assert.equal((await resumeFix(options)).phase, 'fix');
+      }
     });
   });
 
@@ -1322,10 +1503,148 @@ describe('used-up fix budget', () => {
     const followUp = { acceptance: ['logged'], estimateTokens: 500, seams: ['cli'], title: 'Polish', whatToBuild: 'Polish' };
     const added = await call('factory_follow_up', followUp, yes);
     assert.match(asked[1] ?? '', /The slice also takes the carried items waiting on the run \(2\)\./);
-    assert.match(added.content[0]?.text ?? '', /^Slice 02 "Polish" is added on .*, with the waiting carried items \(2\)\.\nNext: Call factory_next/);
+    assert.match(added.content[0]?.text ?? '', /^Slice 02 "Polish" is added on .*, with the waiting carried items \(2\)\.\nOverlap with done slices \(file-level\):\n- \S+ \(ok\): slice 01 "Feature" changed this file[\s\S]*\nNext: Call factory_next/);
     const state = readRun(ws, 'demo');
     assert.deepEqual(state.waiting, []);
     assert.match(readFileSync(ticketPath(ws, 'demo', state.slices[1] ?? assert.fail('no slice')), 'utf8'), /## Carried-in work[\s\S]*Log the parse time\./);
+  });
+
+  describe('factory_follow_up overlap report', () => {
+    const followUp = { acceptance: ['logged'], estimateTokens: 500, seams: ['cli'], title: 'Polish', whatToBuild: 'Polish' };
+
+    async function queued(ws: Workspace, call: Awaited<ReturnType<typeof budgetRun>>['call'], paths: string[], note?: string) {
+      commit(ws, 'work.txt');
+      await withRun(ws, 'demo', run => runChecks(ws, run));
+      commit(ws, 'ok');
+      await withRun(ws, 'demo', run => runChecks(ws, run));
+      const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+      await review(ws, reviewId, paths.map(path => ({ ...finding('thermo', 'observation', path), path: 'ok' })));
+      await withRun(ws, 'demo', run => recordReview(ws, run));
+      await call('factory_carry', { ...(note === undefined ? {} : { note }), observations: paths.map(path => `thermo-${path}`), to: 'end' }, { confirm: async () => true });
+      // A review only accepts findings in its diff, so point the not-overlapping entries at a file the slice did not change.
+      await withRun(ws, 'demo', run => {
+        for (const entry of run.observations) if (entry.id === 'thermo-untouched') entry.location = 'untouched:1';
+      });
+      await withRun(ws, 'demo', current => completeSlice(ws, current));
+    }
+
+    it('lists the waiting item whose file its own slice changed, not the other, in the reply and the dialog, and still adds the slice', async () => {
+      using repo = budgetRepo();
+      const { call, ws } = await budgetRun(repo.root, ['Feature']);
+      await queued(ws, call, ['ok', 'untouched']);
+      const asked: string[] = [];
+      const added = await call('factory_follow_up', followUp, { confirm: async (_title: string, body: string) => (asked.push(body), true) });
+      const line = (key: string, path: string) => `- ${key} (${path}): slice 01 "Feature" changed this file; a factory_reopen of slice 01 that changes the same lines conflicts when this slice restacks onto it.`;
+      const changedKey = `${readRun(ws, 'demo').observations.find(entry => entry.id === 'thermo-ok')?.key}`;
+      const otherKey = `${readRun(ws, 'demo').observations.find(entry => entry.id === 'thermo-untouched')?.key}`;
+      for (const text of [asked[0] ?? '', added.content[0]?.text ?? '']) {
+        assert.match(text, /Overlap with done slices \(file-level\):\n/);
+        assert.ok(text.includes(line(changedKey, 'ok')));
+        assert.ok(!text.includes(otherKey));
+      }
+      assert.match(asked[0] ?? '', /takes the carried items waiting on the run \(2\)\.\n\nOverlap with done slices/);
+      assert.match(added.content[0]?.text ?? '', /with the waiting carried items \(2\)\.\nOverlap[\s\S]*\nNext: /);
+      const state = readRun(ws, 'demo');
+      assert.deepEqual(state.waiting, []);
+      assert.equal(state.slices[1]?.carried.length, 2);
+      const ticket = readFileSync(ticketPath(ws, 'demo', state.slices[1] ?? assert.fail('no slice')), 'utf8');
+      assert.ok(ticket.includes(changedKey) && ticket.includes(otherKey));
+    });
+
+    it('records the overlap block in the followUp gate event of a headless run', async () => {
+      using repo = budgetRepo();
+      const { call, ws } = await budgetRun(repo.root, ['Feature']);
+      await queued(ws, call, ['ok']);
+      await withRun(ws, 'demo', run => { run.mode = 'headless'; });
+      await call('factory_follow_up', followUp, {});
+      const event = readRun(ws, 'demo').events.find(item => item.detail.includes('gate followUp (auto)'));
+      assert.match(event?.detail ?? '', /Overlap with done slices \(file-level\):\n- \S+ \(ok\): slice 01/);
+    });
+
+    it('keeps the overlap block in the headless gate event when the follow-up text is long', async () => {
+      using repo = budgetRepo();
+      const { call, ws } = await budgetRun(repo.root, ['Feature']);
+      await queued(ws, call, ['ok']);
+      await withRun(ws, 'demo', run => { run.mode = 'headless'; });
+      await call('factory_follow_up', { ...followUp, whatToBuild: 'Long. '.repeat(1_000) }, {});
+      const event = readRun(ws, 'demo').events.find(item => item.detail.includes('gate followUp (auto)'));
+      assert.match(event?.detail ?? '', /Overlap with done slices \(file-level\):\n- \S+ \(ok\): slice 01/);
+    });
+
+    it('keeps every overlap line in the headless gate event when the block is longer than the event clip', async () => {
+      using repo = budgetRepo();
+      const { call, ws } = await budgetRun(repo.root, ['Feature']);
+      const ids = Array.from({ length: 14 }, (_, index) => `many${index}`);
+      await queued(ws, call, ids);
+      await withRun(ws, 'demo', run => { run.mode = 'headless'; });
+      const added = await call('factory_follow_up', { ...followUp, whatToBuild: 'Long. '.repeat(1_000) }, {});
+      const keys = readRun(ws, 'demo').observations.filter(entry => ids.includes(entry.id.replace('thermo-', ''))).map(entry => entry.key);
+      assert.equal(keys.length, 14);
+      const detail = readRun(ws, 'demo').events.find(item => item.detail.includes('gate followUp (auto)'))?.detail ?? '';
+      const block = (added.content[0]?.text ?? '').slice((added.content[0]?.text ?? '').indexOf('Overlap with done slices'), (added.content[0]?.text ?? '').indexOf('\nNext: '));
+      assert.ok(block.length > 2_000);
+      assert.ok(detail.includes(block));
+      for (const key of keys) assert.ok(detail.includes(`- ${key} (ok):`));
+    });
+
+    it('redacts the follow-up text before the headless event clip, so a credential cut at the clip leaves no prefix', async () => {
+      const eventDetail = async (whatToBuild: string) => {
+        using repo = budgetRepo();
+        const { call, ws } = await budgetRun(repo.root, ['Feature']);
+        await queued(ws, call, ['ok']);
+        await withRun(ws, 'demo', run => { run.mode = 'headless'; });
+        await call('factory_follow_up', { ...followUp, whatToBuild }, {});
+        return readRun(ws, 'demo').events.find(item => item.detail.includes('gate followUp (auto)'))?.detail ?? '';
+      };
+      const room = (await eventDetail('x'.repeat(5_000))).match(/x+/)?.[0].length ?? 0;
+      assert.ok(room > 100, `room ${room}`);
+      const detail = await eventDetail(`${'x'.repeat(room - 6)} ghp_${'a1B2'.repeat(9)}${'z'.repeat(5_000)}`);
+      assert.doesNotMatch(detail, /ghp_/);
+    });
+
+    it('holds no overlap text when no waiting item overlaps', async () => {
+      using repo = budgetRepo();
+      const { call, ws } = await budgetRun(repo.root, ['Feature']);
+      await queued(ws, call, ['untouched'], 'Log it.');
+      const asked: string[] = [];
+      const added = await call('factory_follow_up', followUp, { confirm: async (_title: string, body: string) => (asked.push(body), true) });
+      assert.doesNotMatch(asked[0] ?? '', /Overlap with done slices/);
+      assert.doesNotMatch(added.content[0]?.text ?? '', /Overlap with done slices/);
+      assert.match(added.content[0]?.text ?? '', /^Slice 02 "Polish" is added on .*, with the waiting carried items \(2\)\.\nNext: /);
+    });
+
+    /** Slice 02 of a two-slice run changes `other`; the waiting item queued from slice 01 is left in the queue. */
+    async function twoDone(ws: Workspace, call: (name: string, params: unknown, ui?: Ui) => Promise<Reply>) {
+      await queued(ws, call, ['ok']);
+      await withRun(ws, 'demo', run => nextSlice(ws, run));
+      commit(ws, 'other');
+      await withRun(ws, 'demo', run => { const second = run.slices[1]; if (second !== undefined) second.status = 'done'; });
+    }
+
+    it('compares only the observation\'s own slice: a path only another done slice changed gives no overlap', async () => {
+      using repo = budgetRepo();
+      const { call, ws } = await budgetRun(repo.root, ['Feature', 'Second']);
+      await twoDone(ws, call);
+      await withRun(ws, 'demo', run => { for (const entry of run.observations) if (entry.id === 'thermo-ok') entry.location = 'other:1'; });
+      const state = readRun(ws, 'demo');
+      assert.equal(state.observations.find(entry => entry.id === 'thermo-ok')?.slice, '01');
+      assert.deepEqual(state.slices.map(item => item.status), ['done', 'done']);
+      const asked: string[] = [];
+      const added = await call('factory_follow_up', followUp, { confirm: async (_title: string, body: string) => (asked.push(body), true) });
+      assert.equal(asked.length, 1);
+      assert.doesNotMatch(asked[0] ?? '', /Overlap with done slices/);
+      assert.doesNotMatch(added.content[0]?.text ?? '', /Overlap with done slices/);
+    });
+
+    it('lists a waiting item whose ledger location has the symbol (path:line) form', async () => {
+      using repo = budgetRepo();
+      const { call, ws } = await budgetRun(repo.root, ['Feature', 'Second']);
+      await twoDone(ws, call);
+      await withRun(ws, 'demo', run => { for (const entry of run.observations) if (entry.id === 'thermo-ok') entry.location = 'parse (ok:7)'; });
+      const key = `${readRun(ws, 'demo').observations.find(entry => entry.id === 'thermo-ok')?.key}`;
+      const added = await call('factory_follow_up', followUp, { confirm: async () => true });
+      assert.ok((added.content[0]?.text ?? '').includes(`- ${key} (ok): slice 01 "Feature" changed this file; `));
+    });
   });
 
   it('does not send a paused stall to the retro while carried items wait', async () => {

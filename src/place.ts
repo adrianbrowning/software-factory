@@ -146,9 +146,9 @@ export async function placeDefaults(ws: Workspace, run: Run) {
 /**
  * Adds the kept observations of review `reviewId`, green or red, to the slice's unplaced list, in place of any it already
  * holds from that review (so recording a review again adds nothing twice). One the ledger already holds is not added.
- * Every kept observation has a category: submitDomain refuses one without it, and a downgrade needs one.
+ * Each takes the validator's fix warning from `warnings` (by finding id) when it has one. Every kept observation has a category: submitDomain refuses one without it, and a downgrade needs one.
  */
-export function collectObservations(run: Run, slice: Slice, reviewId: string, reviewSha: string, observations: Finding[]) {
+export function collectObservations(run: Run, slice: Slice, reviewId: string, reviewSha: string, observations: Finding[], warnings: ReadonlyMap<string, string>) {
   const others = slice.unplaced.filter(entry => entry.review !== reviewId);
   const fresh = observations.filter(
     finding =>
@@ -159,7 +159,8 @@ export function collectObservations(run: Run, slice: Slice, reviewId: string, re
     ...others,
     ...fresh.map(finding => {
       if (finding.category === undefined) throw new Error(`Observation "${finding.id}" has no category.`);
-      return { category: finding.category, finding, review: reviewId, sha: reviewSha };
+      const fixWarning = warnings.get(finding.id);
+      return { category: finding.category, ...(fixWarning === undefined ? {} : { fixWarning }), finding, review: reviewId, sha: reviewSha };
     }),
   ];
 }

@@ -236,7 +236,7 @@ describe('implementer report', () => {
     const first = await step(ws, run =>
       submitImplementerReport(ws, run, {
         behaviors: [{ test: 'old test', behavior: 'old behavior', seenRed: true, red: 'failed' }],
-        commits: [`${firstSha} 01: first try`],
+        checks: [], commits: [`${firstSha} 01: first try`],
         open: [],
       }),
     );
@@ -246,7 +246,7 @@ describe('implementer report', () => {
     const second = await step(ws, run =>
       submitImplementerReport(ws, run, {
         behaviors: [{ test: 'writes ok', behavior: 'checks pass', seenRed: true, red: 'ok was missing' }],
-        commits: [`${firstSha} 01: first try`, `${head} 01: add ok`],
+        checks: ['pnpm run typecheck → exit 0'], commits: [`${firstSha} 01: first try`, `${head} 01: add ok`],
         open: [],
       }),
     );
@@ -254,7 +254,7 @@ describe('implementer report', () => {
     const passed = await step(ws, run => runChecks(ws, run));
     assert.equal(
       passed.report,
-      `Implementer report:\nCommits:\n- ${firstSha} 01: first try\n- ${head} 01: add ok\nBehaviors:\n- writes ok → checks pass (seen red: yes — ok was missing)\nOpen:\n- none\nReport file: ${path}`,
+      `Implementer report:\nCommits:\n- ${firstSha} 01: first try\n- ${head} 01: add ok\nChecks:\n- pnpm run typecheck → exit 0\nBehaviors:\n- writes ok → checks pass (seen red: yes — ok was missing)\nOpen:\n- none\nReport file: ${path}`,
     );
   });
 
@@ -262,14 +262,14 @@ describe('implementer report', () => {
     using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
-    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [], open: ['SLICE TOO BIG: the rest'] }));
+    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], checks: [], commits: [], open: ['SLICE TOO BIG: the rest'] }));
     commit(ws, 'ok');
     assert.equal(
       (await step(ws, run => runChecks(ws, run))).report,
-      `Implementer report:\nCommits:\n- none\nBehaviors:\n- none\nOpen:\n- SLICE TOO BIG: the rest\nReport file: ${join(ws.root, '.scratch', 'demo', 'reports', '01.md')}`,
+      `Implementer report:\nCommits:\n- none\nChecks:\n- none\nBehaviors:\n- none\nOpen:\n- SLICE TOO BIG: the rest\nReport file: ${join(ws.root, '.scratch', 'demo', 'reports', '01.md')}`,
     );
     for (const fixItems of [[], ['bug-f1: already fixed']]) {
-      await assert.rejects(step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [], fixItems, open: [] })), /not in fix mode: leave fixItems out/);
+      await assert.rejects(step(ws, run => submitImplementerReport(ws, run, { behaviors: [], checks: [], commits: [], fixItems, open: [] })), /not in fix mode: leave fixItems out/);
     }
   });
 
@@ -287,17 +287,36 @@ describe('implementer report', () => {
     assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'review');
     const sha = sh(ws.root, 'rev-parse', '--short=12', 'HEAD');
     const submit = (fixItems?: string[]) =>
-      step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [`${sha} fix`], ...(fixItems === undefined ? {} : { fixItems }), open: [] }));
+      step(ws, run => submitImplementerReport(ws, run, { behaviors: [], checks: [], commits: [`${sha} fix`], ...(fixItems === undefined ? {} : { fixItems }), open: [] }));
     await assert.rejects(submit(), /fix mode: list every fix file item in fixItems/);
     await assert.rejects(submit([]), /fix mode: list every fix file item in fixItems/);
     await submit([`scope-gap: fixed in ${sha}`]);
+  });
+
+  it('stores Checks after the Fix file items section and before Behaviors', async () => {
+    using ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => runChecks(ws, run));
+    const opened = await step(ws, run => startReview(ws, run));
+    await review(ws, opened.reviewId, [finding('scope', 'high', 'gap')]);
+    await step(ws, run => recordReview(ws, run));
+    commit(ws, 'fixed.txt');
+    await step(ws, run => runChecks(ws, run));
+    const sha = sh(ws.root, 'rev-parse', '--short=12', 'HEAD');
+    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], checks: ['pnpm run typecheck → exit 0'], commits: [`${sha} fix`], fixItems: [`scope-gap: fixed in ${sha}`], open: [] }));
+    assert.equal(
+      readFileSync(join(ws.root, '.scratch', 'demo', 'reports', '01.md'), 'utf8'),
+      `Implementer report:\nCommits:\n- ${sha} fix\nFix file items:\n- scope-gap: fixed in ${sha}\nChecks:\n- pnpm run typecheck → exit 0\nBehaviors:\n- none\nOpen:\n- none\n`,
+    );
   });
 
   it('shows a stop report submitted before any commit in the no-commits refusal', async () => {
     using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
-    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [], open: ['NEEDS SEAM: the clock — no agreed seam'] }));
+    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], checks: [], commits: [], open: ['NEEDS SEAM: the clock — no agreed seam'] }));
     await assert.rejects(step(ws, run => runChecks(ws, run)), /has no commits past main[\s\S]*Open:\n- NEEDS SEAM: the clock — no agreed seam/);
   });
 
@@ -309,7 +328,7 @@ describe('implementer report', () => {
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
     sh(ws.root, 'merge', '-q', '--ff-only', 'ext-950');
-    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [], open: ['MISSING DEPENDENCY: x'] }));
+    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], checks: [], commits: [], open: ['MISSING DEPENDENCY: x'] }));
     await assert.rejects(step(ws, run => runChecks(ws, run)), /commits from other branches[\s\S]*Open:\n- MISSING DEPENDENCY: x/);
   });
 
@@ -320,7 +339,7 @@ describe('implementer report', () => {
     commit(ws, 'work.txt');
     await step(ws, run => runChecks(ws, run));
     await assert.rejects(
-      step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: ['abc1234 01: fix'], open: [] })),
+      step(ws, run => submitImplementerReport(ws, run, { behaviors: [], checks: [], commits: ['abc1234 01: fix'], open: [] })),
       /fix mode: list every fix file item in fixItems/,
     );
   });
@@ -329,7 +348,7 @@ describe('implementer report', () => {
     using ws = workspace();
     await newRun(ws, [slice('Feature')]);
     await step(ws, run => nextSlice(ws, run));
-    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [], open: ['NEEDS SEAM: x'] }));
+    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], checks: [], commits: [], open: ['NEEDS SEAM: x'] }));
     await step(ws, run => amendSeams(ws, run, ['the clock']));
     await assert.rejects(step(ws, run => runChecks(ws, run)), /has no commits past main[\s\S]*Open:\n- NEEDS SEAM: x/);
 
@@ -410,7 +429,7 @@ describe('re-slice', () => {
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'ok');
     const partial = sh(ws.root, 'rev-parse', '--short=12', 'HEAD');
-    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [`${partial} 01: partial`], open: ['SLICE TOO BIG: part two'] }));
+    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], checks: [], commits: [`${partial} 01: partial`], open: ['SLICE TOO BIG: part two'] }));
 
     await step(ws, run => applyReslice(ws, run, planReslice(ws, run, [slice('Part one'), slice('Part two', ['Part one'])])));
     const checks = await step(ws, run => runChecks(ws, run));
@@ -471,6 +490,55 @@ describe('pause and resume', () => {
       assert.equal(readFileSync(path, 'utf8'), after);
       const resumed = readRun(ws, 'demo').slices[0]!;
       assert.deepEqual([resumed.fixItems.length, resumed.fixFiles], [items, 1]);
+    });
+
+    describe('moving a reported fix round to checks', () => {
+      const writeReport = (ws: Workspace, listed: string[], open = 'none') => {
+        const items = listed.map(sha => `- ${sha} c`).join('\n');
+        writeAtomic(reportPath(ws, 'demo', readRun(ws, 'demo').slices[0]!), `Implementer report:\nCommits:\n${items}\nBehaviors:\n- none\nOpen:\n- ${open}\n`);
+      };
+      const short = (ws: Workspace, rev: string) => sh(ws.root, 'rev-parse', '--short=12', rev);
+
+      it('moves a paused fix slice to checks, copies the pause cause once, and does so for a headless run', async () => {
+        for (const mode of ['interactive', 'headless'] as const) {
+          using ws = workspace();
+          const { path, before } = await pausedInFix(ws, 'cause');
+          if (mode === 'headless') await step(ws, run => { run.mode = 'headless'; });
+          commit(ws, 'round');
+          writeReport(ws, [short(ws, 'HEAD')]);
+          await step(ws, run => resumeRun(ws, run, 'session-2'));
+          const run = readRun(ws, 'demo');
+          assert.deepEqual([run.status, run.slices[0]?.phase], ['running', 'checks']);
+          assert.equal((readFileSync(path, 'utf8').match(/## Pause cause/g) ?? []).length, 1);
+          assert.equal(readFileSync(path, 'utf8').startsWith(before), true);
+        }
+      });
+
+      it('stays in fix when only some of several round commits are listed, or for any stop report', async () => {
+        for (const open of ['NEEDS SEAM: x', 'SLICE TOO BIG: x', 'MISSING DEPENDENCY: x', 'partial']) {
+          using ws = workspace();
+          await pausedInFix(ws, 'cause');
+          commit(ws, 'r1');
+          const first = short(ws, 'HEAD');
+          commit(ws, 'r2');
+          writeReport(ws, open === 'partial' ? [short(ws, 'HEAD')] : [first, short(ws, 'HEAD')], open === 'partial' ? 'none' : open);
+          await step(ws, run => resumeRun(ws, run, 'session-2'));
+          assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'fix');
+        }
+      });
+
+      it('judges the slice branch, not a different dirty checkout', async () => {
+        using ws = workspace();
+        await pausedInFix(ws, 'cause');
+        const start = readRun(ws, 'demo').slices[0]!.fixFromSha!;
+        commit(ws, 'round');
+        writeReport(ws, [short(ws, 'HEAD')]);
+        sh(ws.root, 'switch', '-c', 'other', start);
+        writeFileSync(join(ws.root, 'dirty.txt'), 'x');
+        await step(ws, run => resumeRun(ws, run, 'session-2'));
+        assert.equal(sh(ws.root, 'branch', '--show-current'), 'other');
+        assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'checks');
+      });
     });
 
     it('leaves the fix file alone when the slice is not in fix', async () => {
@@ -1194,7 +1262,7 @@ describe('reopen', () => {
     if (extra !== undefined) commit(ws, extra);
     const sha = sh(ws.root, 'rev-parse', '--short=12', 'HEAD');
     const line = `${sha} ${sh(ws.root, 'log', '--format=%s', '-1')}`;
-    if (report === undefined) await step(ws, run => submitImplementerReport(ws, run, { behaviors: [{ behavior: 'b', seenRed: true, red: 'failed', test: 't' }], commits: [line], open: [] }));
+    if (report === undefined) await step(ws, run => submitImplementerReport(ws, run, { behaviors: [{ behavior: 'b', seenRed: true, red: 'failed', test: 't' }], checks: [], commits: [line], open: [] }));
     else writeAtomic(reportPath(ws, 'demo', readRun(ws, 'demo').slices[1] ?? assert.fail('no slice')), report(sha));
     await green(ws);
     await step(ws, run => completeSlice(ws, run));
@@ -1224,7 +1292,7 @@ describe('reopen', () => {
     await step(ws, run => nextSlice(ws, run));
     commit(ws, 'second.test.ts');
     const second = sh(ws.root, 'log', '--format=%h %s', '-1');
-    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [{ behavior: 'b', seenRed: true, red: 'failed', test: 't' }], commits: [second], open: [] }));
+    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [{ behavior: 'b', seenRed: true, red: 'failed', test: 't' }], checks: [], commits: [second], open: [] }));
     const before = readFileSync(reportPath(ws, 'demo', readRun(ws, 'demo').slices[1] ?? assert.fail('no slice')), 'utf8');
 
     await step(ws, run => reopenSlice(ws, run, '01', 'bug'));
@@ -1343,7 +1411,7 @@ describe('reopen', () => {
     await green(ws);
     await step(ws, run => completeSlice(ws, run));
     await step(ws, run => nextSlice(ws, run));
-    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], commits: [], open: ['NEEDS SEAM: x'] }));
+    await step(ws, run => submitImplementerReport(ws, run, { behaviors: [], checks: [], commits: [], open: ['NEEDS SEAM: x'] }));
     const path = reportPath(ws, 'demo', readRun(ws, 'demo').slices[1] ?? assert.fail('no slice'));
     assert.ok(existsSync(path));
     await step(ws, run => reopenSlice(ws, run, '01', 'bug'));

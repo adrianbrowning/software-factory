@@ -70,12 +70,13 @@ export const validationSchema = z.object({
           .enum(OBSERVATION_CATEGORIES)
           .optional()
           .describe('Required when the reviewer gave the finding no category: what the observation is about (correctness, missing-test, misleading-doc, naming, structure or style); it sets where the observation goes by default'),
+        decisionMatch: z.string().min(1).optional().describe('Required to downgrade a finding whose `decision` field is set (user or autonomous decision), and refused otherwise: why the code matches the cited decision'),
         id: z.string().min(1),
         reason: z.string().min(1),
       }),
     )
     .default([])
-    .describe('critical/high findings the diff supports but that fail the correctness-or-requirements bar; kept as observations'),
+    .describe('critical/high findings the diff supports but that fail the correctness-or-requirements bar; kept as observations. A finding whose `decision` field is set can be downgraded only with `decisionMatch`'),
   escalate: z
     .array(
       z.union(
@@ -104,7 +105,7 @@ export const validationSchema = z.object({
   fixWarnings: z
     .array(z.object({ id: z.string().min(1), warning: z.string().min(1) }))
     .default([])
-    .describe('Optional: for a blocking finding (kept at critical or high, or escalated) whose suggested fix (Fix or Fix prompt) narrows behavior beyond the cited decision or acceptance criterion, the input or case the fix would reject that the wording allows'),
+    .describe('Optional: for a kept finding (in keep, downgrade or escalate) whose suggested fix (Fix or Fix prompt) narrows behavior beyond the cited decision or acceptance criterion, or is a prose fix that leaves out a case, mode or input that any numbered decision or acceptance criterion gives for the rule (cited or not), the input or case the fix would reject or leave out that the wording allows'),
   keep: z.array(z.string().min(1)).describe('Ids of findings the diff substantiates, one per distinct problem'),
 });
 
@@ -123,7 +124,10 @@ export function keptFindings(findings: Finding[], validation: Validation) {
   return findings
     .filter(finding => validation.keep.includes(finding.id) || downgraded.has(finding.id) || escalated.has(finding.id))
     .map(finding => {
-      if (downgraded.has(finding.id)) return { ...finding, category: finding.category ?? downgraded.get(finding.id), severity: 'observation' as const };
+      if (downgraded.has(finding.id)) {
+        const { decision: _decision, ...rest } = finding;
+        return { ...rest, category: finding.category ?? downgraded.get(finding.id), severity: 'observation' as const };
+      }
       const entry = escalated.get(finding.id);
       if (entry !== undefined) return { ...finding, ...(entry.criterion === undefined ? { decision: escalatedDecision(finding, entry) } : { criterion: entry.criterion }), severity: 'high' as const };
       return finding;
@@ -138,13 +142,18 @@ export function targetingAfter(review: { id: string; sha: string }, domains: rea
 const SIBLING_COMMENT_NOTE =
   '\n- Sibling comments: search src/, README.md, agents/ and skills/ for key words of the fact the comment states and fix in this round every other comment the diff makes false for that fact, not only the one at this location.';
 
+const DOCUMENTED_BEHAVIOR_NOTE =
+  '\n- Documented behavior: if the fix changes behavior that prose states, search src/, README.md, agents/ and skills/ for key words of that behavior and fix in this round every doc comment and README, agent or skill statement the fix makes false, not only the code.';
+
 /**
  * A finding as a fix record in `group`: its id and summary `[severity] <location>: title` as the fix item, and its location-free `title`. The section of a
- * finding with a validator `warning` on its suggested fix holds the warning line after its decision or criterion line; a comments-domain finding's section ends with the sibling-comment note.
+ * finding with a validator `warning` on its suggested fix holds the warning line after its decision or criterion line; a comments-domain finding's section ends with the sibling-comment note,
+ * and a bug-domain finding's section ends with the documented-behavior note (after the warning line when there is one).
  */
 export function findingRecord(finding: Finding, group: string, decisions: Decision[], warning?: string): FixRecord & { title: string } {
   const title = `[${finding.severity}] ${findingTitle(finding.title)}`;
   const summary = `[${finding.severity}] ${findingLocation(finding)}: ${findingTitle(finding.title)}`;
-  const warned = warning === undefined ? '' : `\n- Validator warning on the suggested fix (meet the cited decision or acceptance criterion as written, not a narrower fix): ${evidenceLine(warning, 1_000)}`;
-  return { group, item: { id: finding.id, summary }, section: renderFinding(finding, decisions, '###') + warned + (finding.domain === 'comments' ? SIBLING_COMMENT_NOTE : ''), title };
+  const warned = warning === undefined ? '' : `\n- Validator warning on the suggested fix (meet the recorded decisions and acceptance criteria as written, not a narrower fix): ${evidenceLine(warning, 1_000)}`;
+  const note = finding.domain === 'comments' ? SIBLING_COMMENT_NOTE : finding.domain === 'bug' ? DOCUMENTED_BEHAVIOR_NOTE : '';
+  return { group, item: { id: finding.id, summary }, section: renderFinding(finding, decisions, '###') + warned + note, title };
 }
