@@ -446,10 +446,13 @@ describe('self-host warning', () => {
       using repo = tempRepo('factory-selfhost-', { ...FACTORY, 'package.json': PLUGIN, 'src/index.ts': 'one' });
       setLoadedPlugin({ hashes: pluginHashes(repo.root), root: repo.root });
       writeFileSync(join(repo.root, 'src/new.ts'), 'x');
-      const reply = await session(repo.root, false).call('factory_start', { feature: 'demo', source: SOURCE });
+      const { call } = session(repo.root, false);
+      const reply = await call('factory_start', { feature: 'demo', source: SOURCE });
       const line = reply.split('\n').find(l => l.startsWith('Warning:')) ?? assert.fail(reply);
       assert.doesNotMatch(line, /Slices not done yet/);
       assert.ok(line.endsWith('headless run goes on with the loaded gates and needs no action.'), line);
+      assert.doesNotMatch(await call('factory_start', { resume: 'demo' }), /Warning:/);
+      assert.equal(warningsOf(repo.root, 'demo').length, 1);
     });
 
     it('follows the other-checkout form of the warning', async () => {
