@@ -359,7 +359,7 @@ describe('batched observation placement', () => {
     using dir = repo();
     const { call, full, ws } = await interactive(dir.root);
     const text = (await full([observation('test', 'missing-test'), observation('doc', 'misleading-doc')])).content[0]?.text ?? '';
-    assert.match(text, /thermo-test[\s\S]*Default placement: fix in this slice/);
+    assert.match(text, /thermo-test(?:(?!thermo-doc)[\s\S])*Default placement: fix in this slice/);
     const run = readRun(ws, 'demo');
     const active = run.slices[0];
     const test = active?.unplaced.find(entry => entry.finding.id === 'thermo-test');
@@ -376,6 +376,7 @@ describe('batched observation placement', () => {
     assert.equal(sliceNow?.fixRounds, 0);
     const fix = readFileSync(sliceNow?.fixPath ?? 'missing', 'utf8');
     assert.match(fix, /thermo-test/);
+    assert.deepEqual(readRun(ws, 'demo').observations.map(entry => [entry.id, entry.placement]).sort(), [['thermo-doc', 'fixed'], ['thermo-test', 'fixed']]);
     assert.match(fix, /thermo-doc/);
   });
 
@@ -443,6 +444,19 @@ describe('batched observation placement', () => {
     assert.deepEqual([...(active?.targeting?.domains ?? [])].sort(), ['comments', 'thermo']);
     assert.deepEqual(run.observations.map(entry => entry.id), ['thermo-note']);
     assert.deepEqual(run.deferred, before.deferred);
+  });
+
+  it('an accepted-unresolved high missing-test finding does not join the observation-only fix round', async () => {
+    using dir = repo();
+    const high = { ...observation('hole', 'missing-test', 'comments'), severity: 'high' as const };
+    const { call, ws } = await acceptedUnresolvedWith(dir.root, [observation('note', 'missing-test')], [high]);
+    await call('factory_complete_slice', {});
+    const active = readRun(ws, 'demo').slices[0];
+    const file = readFileSync(active?.fixPath ?? 'missing', 'utf8');
+    const listed = file.slice(file.indexOf('## Fix items'), file.indexOf('\n## ', file.indexOf('## Fix items') + 1));
+    assert.match(listed, /- `thermo-note`/);
+    assert.doesNotMatch(listed, /comments-hole/);
+    assert.ok(!(active?.fixItems ?? []).some(item => item.id === 'comments-hole'));
   });
 
   it('a joined accepted-unresolved finding holds the validator warning of its own validation, and one without a warning has no warning line', async () => {
