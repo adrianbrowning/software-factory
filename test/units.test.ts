@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 import { checksPrompt, detectChecks, loadConfig, parseChecks, runCommands, suggestChecks } from '../src/config.ts';
 import { evidence, evidenceLine, redact } from '../src/evidence.ts';
 import { runShell } from '../src/exec.ts';
@@ -339,5 +339,23 @@ describe('evidence', () => {
 
   it('redacts a multi-line value before joining it onto one line', () => {
     assert.equal(evidenceLine(`Failed:\n  ${secrets.privateKey}\n  done`), 'Failed: <REDACTED> done');
+  });
+});
+
+describe('runShell clock jump', () => {
+  it('reports the wall-clock versus monotonic difference as clockJumpMs, and a small value for an ordinary command', async () => {
+    using temp = dir();
+    const marker = join(temp.root, 'jumped');
+    const realNow = Date.now.bind(Date);
+    const now = mock.method(Date, 'now', () => realNow() + (existsSync(marker) ? 60_000 : 0));
+    try {
+      const jumped = await runShell(`touch '${marker}'`, temp.root, 10_000);
+      assert.ok(jumped.clockJumpMs > 30_000 && jumped.clockJumpMs < 90_000, `clockJumpMs ${jumped.clockJumpMs}`);
+      assert.equal(Number.isInteger(jumped.clockJumpMs), true);
+    } finally {
+      now.mock.restore();
+    }
+    const ordinary = await runShell('true', temp.root, 10_000);
+    assert.ok(ordinary.clockJumpMs <= 30_000, `clockJumpMs ${ordinary.clockJumpMs}`);
   });
 });

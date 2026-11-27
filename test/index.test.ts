@@ -12,7 +12,7 @@ import { MAX_IDLE_STOP_ATTEMPTS, ORCHESTRATION_TOOLS, resetModuleState, stopDeci
 import { readRun, reportPath, type Run, runDir, reviewPaths, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { completeSlice, recordReview, runChecks, startReview } from '../src/review.ts';
 import { approvePlan, nextSlice, pauseRun, planSlices, resolveStall } from '../src/workflow.ts';
-import { seedUnplacedObservation, settleObservations, commit, finding, green, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
+import { checkRuns, countedCheck, seedUnplacedObservation, settleObservations, commit, finding, green, review, sh, slice, tempDir, tempRepo } from './helpers.ts';
 
 beforeEach(() => resetModuleState());
 
@@ -708,6 +708,56 @@ describe('implementer sessions', () => {
     });
   });
 
+  describe('stop gate pause after a provider error', () => {
+    const pauseAfter = async (messages: unknown[], headless = false) => {
+      using repo = emptyRepo();
+      const notices: [string, unknown][] = [];
+      const started = await startedRun(repo.root);
+      const main = { ...started.main, ui: { ...started.main.ui, notify: (message: string, level?: unknown) => notices.push([message, level]) } };
+      if (headless) await withRun({ config: loadConfig(repo.root), root: repo.root }, 'demo', run => { run.mode = 'headless'; });
+      const decisions: unknown[] = [];
+      for (let i = 0; i < MAX_IDLE_STOP_ATTEMPTS; i += 1) decisions.push(((await started.handlers.get('session_stop')?.({ session_id: 'session', messages, type: 'session_stop' }, main)) as { decision?: string } | undefined)?.decision);
+      const status = JSON.parse(await started.call('factory_status', {}, main)) as { content: { text: string }[] };
+      const detail = /(?:provider error|no progress) after \d+ stop attempts[^"]*/.exec(status.content[0]?.text ?? '')?.[0];
+      return { decisions, detail, notices };
+    };
+    const failed = (errorMessage?: string) => [{ role: 'assistant', content: [{ type: 'text', text: 'working' }], stopReason: 'error', ...(errorMessage === undefined ? {} : { errorMessage }) }];
+    const tail = 'latest tool: none; last assistant text: working';
+
+    it('names the provider error, keeps the stop timing, and notifies', async () => {
+      const { decisions, detail, notices } = await pauseAfter(failed('The AWS SSO token has expired'));
+      assert.equal(detail, `provider error after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts: The AWS SSO token has expired; ${tail}`);
+      assert.deepEqual(decisions, [...Array(MAX_IDLE_STOP_ATTEMPTS - 1).fill('block'), undefined]);
+      assert.deepEqual(notices, [['Software factory paused "demo": provider error: The AWS SSO token has expired. /factory resume demo continues.', 'warning']]);
+    });
+
+    it('behaves the same in a headless run', async () => {
+      assert.equal((await pauseAfter(failed('boom'), true)).detail, `provider error after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts: boom; ${tail}`);
+    });
+
+    it('redacts and clips the error text to one line', async () => {
+      assert.equal((await pauseAfter(failed('denied Bearer abc123'))).detail, `provider error after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts: denied Bearer <REDACTED>; ${tail}`);
+      const long = `line one\n\n${'y'.repeat(400)}`;
+      const expected = `line one ${'y'.repeat(400)}`.slice(0, 300);
+      assert.equal((await pauseAfter(failed(long))).detail, `provider error after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts: ${expected}…; ${tail}`);
+    });
+
+    it('says no error message when the message is absent or blank', async () => {
+      const want = `provider error after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts: no error message; ${tail}`;
+      assert.equal((await pauseAfter(failed())).detail, want);
+      assert.equal((await pauseAfter(failed('  \n '))).detail, want);
+    });
+
+    it('counts only the latest assistant message', async () => {
+      for (const stopReason of ['stop', 'aborted']) {
+        const messages = [{ role: 'assistant', content: [], stopReason: 'error', errorMessage: 'old' }, { role: 'assistant', content: [{ type: 'text', text: 'working' }], stopReason }];
+        const { detail, notices } = await pauseAfter(messages);
+        assert.equal(detail, `no progress after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts; ${tail}`);
+        assert.deepEqual(notices, [['Software factory paused "demo": no progress. /factory resume demo continues.', 'warning']]);
+      }
+    });
+  });
+
   describe('stop gate, guard for existing behavior', () => {
     it('keeps the owner idle count when another session stops in between', async () => {
       using repo = emptyRepo();
@@ -876,7 +926,7 @@ describe('used-up fix budget', () => {
   type Reply = { content: { text: string }[] };
 
   /** A temp repo whose checks pass once `ok` is committed and `bad` is not, with maxRounds 1; removed when `using` ends. */
-  const budgetRepo = () => tempRepo('factory-budget-', { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok', '! test -f bad'], maxRounds: 1 }) });
+  const budgetRepo = (checks = ['test -f ok', '! test -f bad']) => tempRepo('factory-budget-', { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks, maxRounds: 1 }) });
 
   /**
    * Starts a run in the budget repo at `root` through the loaded tools, its plan approved and slice 01 started.
@@ -1008,6 +1058,82 @@ describe('used-up fix budget', () => {
       assert.equal(result.phase, 'fix');
       assert.match(result.text, /fix mode/);
       assert.match(result.text, /read its report file \(reports\/01\.md.*handle any stop report in its Open list, then call factory_checks/);
+    });
+  });
+
+  describe('resume of a committed, reported fix round', () => {
+    async function resumeFix(options: { report: 'none' | 'round' | 'old' | 'stop'; roundCommits?: boolean; checks?: string[]; then?: (call: (name: string, params: unknown) => Promise<unknown>, ws: Workspace) => Promise<void> }) {
+      using repo = budgetRepo(options.checks);
+      const { call, ws } = await budgetRun(repo.root, ['Feature']);
+      commit(ws, 'f.txt');
+      const before = sh(ws.root, 'rev-parse', 'HEAD');
+      if (options.roundCommits !== false) commit(ws, 'g.txt');
+      const round = sh(ws.root, 'rev-parse', '--short=12', 'HEAD');
+      await withRun(ws, 'demo', current => {
+        current.slices[0]!.phase = 'fix';
+        current.slices[0]!.fixFromSha = before;
+      });
+      const path = reportPath(ws, 'demo', readRun(ws, 'demo').slices[0]!);
+      if (options.report !== 'none') {
+        mkdirSync(dirname(path), { recursive: true });
+        const listed = options.report === 'old' ? before.slice(0, 12) : round;
+        writeFileSync(path, `Implementer report:\nCommits:\n- ${listed} c\nBehaviors:\n- none\nOpen:\n- ${options.report === 'stop' ? 'NEEDS SEAM: x' : 'none'}\n`);
+      }
+      await withRun(ws, 'demo', current => pauseRun(current, 'test'));
+      const reply = await call('factory_start', { resume: 'demo' }, { confirm: async () => true });
+      const run = readRun(ws, 'demo');
+      await options.then?.(call, ws);
+      return { events: run.events.map(event => event.detail), phase: run.slices[0]?.phase, round, text: reply.content[0]?.text ?? '' };
+    }
+
+    it('moves to checks, records the event and says to call factory_checks', async () => {
+      const result = await resumeFix({ report: 'round' });
+      assert.equal(result.phase, 'checks');
+      assert.ok(result.events.includes(`slice 01 fix round already committed and reported ${result.round.slice(0, 7)}: moved to checks`));
+      assert.match(result.text, /Next: Call factory_checks for slice 01 "Feature"\./);
+    });
+
+    const counted = [countedCheck('run')];
+    const runCount = (ws: Workspace) => (existsSync(join(ws.root, '.git', 'check-runs')) ? checkRuns(ws).length : 0);
+
+    it('factory_checks refuses a commit made after the resume move that the report does not list, and runs no check', async () => {
+      await resumeFix({
+        checks: counted,
+        report: 'round',
+        then: async (call, ws) => {
+          commit(ws, 'late.txt');
+          const oneline = sh(ws.root, 'log', '-1', '--oneline');
+          await assert.rejects(call('factory_checks', {}), (error: Error) => {
+            assert.match(error.message, /has 1 commits from this fix round that its implementer report does not list/);
+            assert.ok(error.message.includes(oneline));
+            return true;
+          });
+          assert.equal(runCount(ws), 0);
+        },
+      });
+    });
+
+    it('factory_checks runs the checks once after the resume move when no commit was added', async () => {
+      await resumeFix({ checks: counted, report: 'round', then: async (call, ws) => { await call('factory_checks', {}); assert.equal(runCount(ws), 1); } });
+    });
+
+    it('factory_checks does not refuse an unreported commit of a slice at checks without fixFromSha, and runs the checks', async () => {
+      await resumeFix({
+        checks: counted,
+        report: 'round',
+        then: async (call, ws) => {
+          await withRun(ws, 'demo', current => { current.slices[0]!.fixFromSha = undefined; });
+          commit(ws, 'late.txt');
+          await call('factory_checks', {});
+          assert.equal(runCount(ws), 1);
+        },
+      });
+    });
+
+    it('keeps fix without round commits, with a round commit unlisted, without a report, or with a stop report', async () => {
+      for (const options of [{ report: 'round', roundCommits: false }, { report: 'old' }, { report: 'none' }, { report: 'stop' }] as const) {
+        assert.equal((await resumeFix(options)).phase, 'fix');
+      }
     });
   });
 

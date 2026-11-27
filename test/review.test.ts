@@ -114,24 +114,55 @@ describe('review submissions', { concurrency: 4 }, () => {
       'src/View.js': "import React from 'react';\nexport const View = () => React.createElement('div');\n",
       'src/client.mjs': 'import { createRoot } from "react-dom/client";\n',
       'src/legacy.cjs': "const { jsx } = require('react/jsx-runtime');\n",
+      'src/useThing.ts': "import { useState } from 'react';\nexport const useThing = () => useState(0);\n",
+      'src/app.ts': 'export const a = 1;\n',
+      'lib/a.mts': 'export const b = 2;\n',
+      'b.cts': 'module.exports = 3;\n',
+      'ui/View.tsx': 'export const V = () => <div />;\n',
+      'c.jsx': 'export const C = () => <p />;\n',
+      'lib/client.mts': 'import { createRoot } from "react-dom/client";\n',
     };
     const skipsFor = async (files: string[]) => (await pathSkips(files, async file => contents[file])).map(entry => entry.domain);
     assert.deepEqual(await skipsFor(['README.md', 'docs/guide.md']), ['react-ts', 'test-validity', 'devops']);
-    for (const file of ['src/app.ts', 'ui/View.tsx', 'lib/a.mts', 'b.cts', 'c.jsx', 'src/View.js', 'src/client.mjs', 'src/legacy.cjs']) {
+    for (const file of ['ui/View.tsx', 'c.jsx', 'src/View.js', 'src/client.mjs', 'src/legacy.cjs', 'src/useThing.ts', 'lib/client.mts']) {
       assert.ok(!(await skipsFor([file])).includes('react-ts'), file);
     }
-    for (const file of ['src/plain.js', 'lib/a.mjs', 'b.cjs']) assert.ok((await skipsFor([file])).includes('react-ts'), file);
-    assert.deepEqual(
-      (await pathSkips(['src/plain.js'], async file => contents[file])).find(entry => entry.domain === 'react-ts')?.reason,
-      'no TypeScript, JSX, or React file changed (factory path rule)',
-    );
+    for (const file of ['src/plain.js', 'lib/a.mjs', 'b.cjs', 'src/app.ts', 'lib/a.mts', 'b.cts', 'src/gone.ts']) {
+      assert.ok((await skipsFor([file])).includes('react-ts'), file);
+    }
+    for (const file of ['ui/Gone.tsx', 'd.jsx']) {
+      const skips = await pathSkips([file], async () => undefined);
+      assert.ok(!skips.map(entry => entry.domain).includes('react-ts'), file);
+    }
+    for (const file of ['src/app.ts', 'lib/a.mts', 'b.cts']) {
+      assert.equal(
+        (await pathSkips([file], async name => contents[name])).find(entry => entry.domain === 'react-ts')?.reason,
+        'no JSX or React file changed (factory path rule)',
+        file,
+      );
+    }
     for (const file of ['test/a.ts', 'src/__tests__/b.ts', 'a.test.ts', 'b.spec.js', 'pkg/c_test.go', 'tests/test_d.py', 'spec/e.rb']) {
       assert.ok(!(await skipsFor([file])).includes('test-validity'), file);
     }
     for (const file of ['.github/workflows/ci.yml', 'Dockerfile', 'api/Dockerfile.prod', 'docker-compose.yml', 'Jenkinsfile', 'Makefile', 'package.json', 'pnpm-lock.yaml', 'yarn.lock', 'tsconfig.build.json', 'go.mod', 'Cargo.toml', 'pyproject.toml', 'requirements-dev.txt', 'infra/main.tf', 'vite.config.ts', 'helm/chart.yaml']) {
       assert.ok(!(await skipsFor([file])).includes('devops'), file);
     }
-    assert.deepEqual(await skipsFor(['src/contest.md', 'src/latest.ts']), ['test-validity', 'devops']);
+    assert.deepEqual(await skipsFor(['src/contest.md', 'src/latest.ts']), ['react-ts', 'test-validity', 'devops']);
+  });
+
+  it('keeps react-ts for a TypeScript file that imports React, skips a plain one', async () => {
+    using ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    commit(ws, 'plain.ts', 'export const a = 1;\n');
+    const plain = await step(ws, run => runChecks(ws, run));
+    assert.ok(plain.passed);
+    assert.ok(plain.pathSkipped.find(entry => entry.domain === 'react-ts'));
+    commit(ws, 'hook.ts', "import { useState } from 'react';\n");
+    const react = await step(ws, run => runChecks(ws, run));
+    assert.ok(react.passed);
+    assert.deepEqual(react.pathSkipped.filter(entry => entry.domain === 'react-ts'), []);
   });
 
   it('keeps react-ts for a JavaScript file that imports React at the checked commit, not for plain or deleted ones', async () => {

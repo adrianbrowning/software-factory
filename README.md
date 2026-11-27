@@ -149,7 +149,8 @@ with the whole team, set `checks` in `.omp/factory.json` instead; then the facto
 While a run is active, the session cannot end until the run is done, paused, or stalled. The third stop attempt in a
 row without progress pauses the run instead. In an interactive run, a stop whose latest tool call is the omp `ask`
 tool is allowed and clears the stop-attempt count, so waiting on an answer never auto-pauses the run. Headless runs get
-no such exemption: their stops are still blocked, then paused.
+no such exemption: their stops are still blocked, then paused. When the latest assistant message ended with a provider
+error (`stopReason` `error`), the pause names that error, redacted, as its cause instead of no progress.
 
 When a slice uses up its fix budget (from red checks, a blocking review, `factory_fix` with a bug, or `factory_reopen`; a `factory_fix` round for observations only does not count), a dialog asks whether to
 continue with `maxRounds` more fix rounds or pause. A paused stall leaves the run stalled, and the tool reply and its
@@ -160,6 +161,7 @@ the reply says so. With a dirty tree or a failed switch it leaves the checkout a
 or remove the changes and check out the slice branch before the next factory tool.
 Resume also moves a running run's active slice from implement to checks when its branch has own commits, the stored
 implementer report lists every one in Commits, and Open names no stop report; it records a resume event.
+Resume also moves a running run's active slice in a fix round to checks when its round commits (after the fix file's commit) are all in the stored report's Commits and Open names no stop report.
 Resume also copies the latest pause cause, redacted, once into the open fix file of an active slice in fix, as a `## Pause cause` section; it adds no fix item.
 
 ### Headless runs
@@ -380,7 +382,7 @@ confirm:
 Optional `.omp/factory.json` in the target repository. Commit it on the base branch: every gate needs a clean
 working tree, and unknown keys are rejected.
 
-`factory_checks` reruns each failed check command once, as a whole command. A rerun that passes counts as passed: the summary marks the check flaky with the first failure's exit code and duration and names the failing tests of that first run (node:test `✖ failing tests:` entries with file:line, TAP `not ok` lines; redacted, at most 10 and a count of the rest; with no test named, the last non-empty line of the stream that received non-blank output last instead, naming the stream), and no fix file or fix round is used. A rerun that fails goes into the fix file and counts as a fix round. A timed-out check is not rerun, and a command-not-found check is refused as an environment error without a rerun.
+`factory_checks` reruns each failed check command once, as a whole command. A rerun that passes counts as passed: the summary marks the check flaky with the first failure's exit code and duration and names the failing tests of that first run (node:test `✖ failing tests:` entries with file:line, TAP `not ok` lines; redacted, at most 10 and a count of the rest; with no test named, the last non-empty line of the stream that received non-blank output last instead, naming the stream), and no fix file or fix round is used. A rerun that fails goes into the fix file and counts as a fix round. A timed-out check is not rerun, and a command-not-found check is refused as an environment error without a rerun. A check that ends failed or timed out while the host clock jumped (a host sleep or clock change of more than 30 s during its deciding run) is refused as an environment error with no fix file and no fix round, and `factory_checks` is called again.
 
 | Key | Default | Meaning |
 | --- | --- | --- |
@@ -488,7 +490,7 @@ under `issues/`, fix files under `fixes/`, the latest implementer report per sli
 data, per-domain findings, validation and `review.json` under
 `reviews/<slice>-r<n>/`, `confirmed/` (the exact redacted note or bug text each `factory_carry` or `factory_fix` dialog shows, one file per distinct text), and `retro.md`. Each fix file lists its fix items under `## Fix items`: review findings by id,
 and factory-assigned ids for a bug (`bug-f<N>`), a reopen reason (`reopen-f<N>`), a failed check (`check-f<N>-<k>`),
-and a working tree the checks changed (`tree-f<N>`). The section of a comments-domain finding ends with a sibling-comment note: search `src/`, `README.md`, `agents/` and `skills/` for key words of the fact the comment states and fix every other comment the diff makes false for it in the same round. The review data file lists the ticket, then a `## LATER SLICES`
+and a working tree the checks changed (`tree-f<N>`). The section of a comments-domain finding ends with a sibling-comment note: search `src/`, `README.md`, `agents/` and `skills/` for key words of the fact the comment states and fix every other comment the diff makes false for it in the same round. The section of a bug-domain finding ends with a documented-behavior note: if the fix changes behavior that prose states, search `src/`, `README.md`, `agents/` and `skills/` for key words of the changed behavior and fix every doc comment and README, agent or skill statement the fix makes false in the same round. The review data file lists the ticket, then a `## LATER SLICES`
 section with each not-done slice stacked after the reviewed one, in stack order (id, title, what to build, acceptance
 criteria), or says none follows; reviewers and the validator do not count work a later slice lists as a gap in this
 slice. Then come each check's result and duration on the reviewed commit, a `## KNOWN OBSERVATIONS` section with the observation ledger (None when empty), a `## FIX ITEMS` section with every fix item
@@ -522,7 +524,8 @@ slice trips this too; delete it, or keep backups under a name the check ignores 
 
 In a fix round, checks also refuse when a commit made since the fix file is missing from the Commits section of the
 stored implementer report (or no report is stored). The refusal lists those commits, does not count a fix round, and
-asks you to message the implementer to resubmit its report with `factory_implementer_report`.
+asks you to message the implementer to resubmit its report with `factory_implementer_report`. The refusal also holds
+after a resume moved the fix round to checks, and after a passed fix round's checks were invalidated (HEAD moved, repository changed), for a commit made after that.
 
 ## Trust boundaries
 

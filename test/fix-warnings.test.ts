@@ -108,6 +108,9 @@ describe('validator fix warnings', { concurrency: 4 }, () => {
     const bugDecisionAt = bug.indexOf('- Breaks decision 1:');
     assert.ok(bugDecisionAt >= 0);
     assert.ok(bugDecisionAt < bug.indexOf('- Validator warning'));
+    const docLines = bug.trimEnd().split('\n');
+    assert.ok((docLines.at(-1) ?? '').startsWith('- Documented behavior: if the fix changes behavior that prose states, search src/, README.md, agents/ and skills/ for key words of that behavior and fix in this round every doc comment and README, agent or skill statement the fix makes false, not only the code.'));
+    assert.ok(bug.indexOf('- Validator warning') < bug.indexOf('- Documented behavior:'));
     const comments = section('comments-stale');
     const decisionAt = comments.indexOf('- Breaks decision 1:');
     const warningAt = comments.indexOf('- Validator warning');

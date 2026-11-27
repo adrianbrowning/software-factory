@@ -177,6 +177,9 @@ function firstFailureNames({ lastStream, stderr, stdout }: CommandResult) {
   const rest = names.size - MAX_NAMED_TESTS;
   return `; failing tests: ${listed}${rest > 0 ? ` and ${rest} more` : ''}`;
 }
+/** A check run whose wall clock and monotonic clock disagree by more than this saw a host sleep or clock change. */
+const CLOCK_JUMP_MS = 30_000;
+
 export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   const slice = requireActive(run);
   const sha = await requireOnBranchClean(ws.root, slice, 'Checks run on committed work only');
@@ -193,7 +196,8 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   const commits = own.map(commit => commit.oneline).join('\n');
   if (own.length === 0) throw new Error(`Slice ${slice.id} has no commits past ${slice.parentBranch}. The implementer must commit the slice work first.\n${report}`);
   // A fix round's commits (past the fix file's commit) must all be in the stored report, so the orchestrator reads a report that matches the work.
-  if (slice.phase === 'fix' && slice.fixFromSha !== undefined) {
+  // This also holds in phase 'checks' with fixFromSha set, which resume produces and which dropPass(slice, 'checks') after an invalidated fix round also produces, because only restartSlice clears fixFromSha.
+  if ((slice.phase === 'fix' || slice.phase === 'checks') && slice.fixFromSha !== undefined) {
     const roundShas = new Set((await git(ws.root, 'rev-list', `${slice.fixFromSha}..HEAD`)).split('\n').filter(Boolean));
     const unlisted = own.filter(commit => roundShas.has(commit.sha) && !reportListsCommit(ws, run, slice, commit.sha));
     if (unlisted.length > 0) {
@@ -243,6 +247,14 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
     entry.result = await runShell(entry.command, ws.root, ws.config.checkTimeoutMs, signal, env);
   }
   signal?.throwIfAborted();
+  // A host sleep or clock change during the run that decides a failed check makes that failure unreliable, and a code fix cannot change it.
+  const jumped = results.filter(({ result }) => (result.exitCode !== 0 || result.timedOut) && result.clockJumpMs > CLOCK_JUMP_MS);
+  if (jumped.length > 0) {
+    const listed = jumped.map(({ command, result }) => `- ${command}: clockJumpMs ${result.clockJumpMs}`).join('\n');
+    throw new Error(
+      `Checks ended failed while the host clock jumped:\n${listed}\nThis is an environment error from a host sleep or a clock change during the check, not a code fault. Then call factory_checks again.`,
+    );
+  }
   const dirty = (await porcelain(ws.root)).trim();
   const failed = results.filter(({ result }) => result.exitCode !== 0 || result.timedOut);
   const describe = ({ command, first, result }: { command: string; first?: CommandResult; result: CommandResult }) => {
@@ -292,14 +304,14 @@ async function passChecks(ws: Workspace, run: Run, slice: Slice, sha: string, re
  */
 const PATH_SKIPS: { contentMatches?: { content: RegExp; paths: RegExp }; domain: Domain; matches: RegExp; reason: string }[] = [
   {
-    // react-ts also reviews TypeScript; plain JavaScript needs it only when the file uses React.
+    // react-ts is kept for .jsx/.tsx paths and for TypeScript or JavaScript files that import React.
     contentMatches: {
       content: /(\bfrom\s*|\b(?:require|import)\s*\(\s*|\bimport\s*)['"]react(?:-dom)?(?:\/[^'"]*)?['"]/,
-      paths: /\.[cm]?js$/,
+      paths: /\.[cm]?[jt]s$/,
     },
     domain: 'react-ts',
-    matches: /\.([cm]?ts|[jt]sx)$/,
-    reason: 'no TypeScript, JSX, or React file changed',
+    matches: /\.[jt]sx$/,
+    reason: 'no JSX or React file changed',
   },
   {
     domain: 'test-validity',
