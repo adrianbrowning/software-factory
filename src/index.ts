@@ -478,7 +478,7 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
         : '';
       const missing = result.unaccounted.length === 0
         ? ''
-        : `\nFix file items the implementer report does not account for: ${result.unaccounted.join(', ')}\nMessage the implementer (agent://<id>) to resubmit its report with factory_implementer_report, with a line for each of these ids, before factory_review_start. This is not a fix round; do not call factory_checks again for it.`;
+        : `\nFix file items the implementer report does not account for: ${result.unaccounted.join(', ')}\nMessage the implementer (agent://<id>) to resubmit its report with factory_implementer_report, with a line that starts with each of these ids exactly as listed, before factory_review_start. This is not a fix round; do not call factory_checks again for it.`;
       const flagged = `${await flaggedFilesSection(ws.root)}${missing}`;
       const newChecks = await newChecksSection(ws.root, result.sha, run.checks);
       if (result.passed) {
