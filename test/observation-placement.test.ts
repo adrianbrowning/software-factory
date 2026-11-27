@@ -338,6 +338,58 @@ describe('batched observation placement', () => {
     assert.equal(done.status, 'done');
   });
 
+  /** A headless run whose slice has used its fix budget, then a full review that is accepted unresolved: blocking findings of three categories, an open fix item and `observations`. */
+  async function acceptedUnresolvedWith(root: string, observations: Finding[]) {
+    const { call, ws } = await headlessSubmitRun(root, ['Feature']);
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    await withRun(ws, 'demo', run => {
+      const active = run.slices[0]!;
+      active.fixRounds = active.roundLimit;
+      active.fixItems.push({ id: 'bug-f1', path: 'fixes/01-f1.md', round: 1, summary: 'an earlier bug' });
+    });
+    const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
+    const doc = { ...observation('stale', 'misleading-doc', 'comments'), severity: 'high' as const };
+    const wrong = { ...observation('wrong', 'correctness'), severity: 'high' as const };
+    const bare = { ...observation('bare', 'naming'), category: undefined, severity: 'high' as const };
+    await review(ws, reviewId, [doc, wrong, bare, ...observations], undefined, [{ id: 'bug-f1', reason: 'still wrong', status: 'open' }]);
+    assert.equal((await withRun(ws, 'demo', run => recordReview(ws, run))).kind, 'accepted-unresolved');
+    return { call, ws };
+  }
+
+  it('a headless completion of an accepted-unresolved slice joins its misleading-doc findings to the observation fix round', async () => {
+    using dir = repo();
+    const { call, ws } = await acceptedUnresolvedWith(dir.root, [observation('note', 'misleading-doc')]);
+    const before = readRun(ws, 'demo');
+    const text = (await call('factory_complete_slice', {})).content[0]?.text ?? '';
+    assert.match(text, /Slice 01 is back in fix: its default placement fixes observations in this slice\. Fix file: \S+/);
+    const run = readRun(ws, 'demo');
+    const active = run.slices[0];
+    assert.equal(active?.phase, 'fix');
+    assert.equal(active?.fixRounds, before.slices[0]?.fixRounds);
+    assert.equal(active?.stalled, false);
+    const file = readFileSync(active?.fixPath ?? 'missing', 'utf8');
+    const listed = file.slice(file.indexOf('## Fix items'), file.indexOf('\n## ', file.indexOf('## Fix items') + 1));
+    assert.match(listed, /- `thermo-note`/);
+    assert.match(listed, /- `comments-stale`/);
+    assert.doesNotMatch(listed, /thermo-wrong|thermo-bare|bug-f1/);
+    assert.match(file, /## Accepted-unresolved findings of review \S+[\s\S]*### \[high\] comments-stale/);
+    assert.match(file, /### \[observation\] thermo-note/);
+    assert.doesNotMatch(file, /thermo-wrong|thermo-bare|### .*bug-f1/);
+    assert.deepEqual(active?.fixItems.map(item => item.id), ['thermo-note', 'comments-stale']);
+    assert.deepEqual([...(active?.targeting?.domains ?? [])].sort(), ['comments', 'thermo']);
+    assert.deepEqual(run.observations.map(entry => entry.id), ['thermo-note']);
+    assert.deepEqual(run.deferred, before.deferred);
+  });
+
+  it('a headless completion of an accepted-unresolved slice whose observations default to no fix completes as before', async () => {
+    using dir = repo();
+    const { call, ws } = await acceptedUnresolvedWith(dir.root, [observation('note', 'naming')]);
+    await call('factory_complete_slice', {});
+    const run = readRun(ws, 'demo');
+    assert.equal(run.slices[0]?.status, 'done');
+    assert.equal(run.slices[0]?.fixPath, undefined);
+  });
+
   it('a headless completion that finishes the slice calls submitHeadless once and puts its text in the reply', async () => {
     using dir = repo();
     const submitted: string[] = [];

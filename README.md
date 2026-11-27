@@ -322,7 +322,7 @@ reviews, red ones too. The reply of the slice's final full green review lists th
 correctness and missing-test to the end queue, misleading-doc to fix in this slice (an observation-only fix round that uses no fix budget; once the slice has an observation placed as fixed, misleading-doc falls back to the end queue; correctness on a follow-up slice built from end-queue items defaults to the same fix, then falls back to the sink or leave), naming, structure and style to leave. `factory_place`
 takes the exceptions (fix, carry to a pending slice, end, defer, leave; `placements: []` takes every default), asks one
 confirm in an interactive run, applies them all and records each in the ledger. `factory_complete_slice` refuses while
-the slice has an unplaced observation. A headless run places the defaults with no dialog when it completes the slice, starts the observation-only fix round for the fix defaults (the slice stays active in fix and the reply names the fix file),
+the slice has an unplaced observation. A headless run places the defaults with no dialog when it completes the slice, starts the observation-only fix round for the fix defaults (the slice stays active in fix and the reply names the fix file; when the slice was accepted unresolved, its blocking findings of category misleading-doc join that round and its fix file, and do not start it on their own),
 and sends the leave items to the deferred sink when one is set. The observations of a follow-up slice built from end-queue
 items (headless or interactive) and of a Record deferred items slice do not default back to the end queue: their end-category
 defaults become defer to the sink when the slice may defer to it (a Record slice may not), else leave, and the user can
