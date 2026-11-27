@@ -9,8 +9,8 @@ import { draftOf, deferItems, isRecordSlice, itemKey, requireSink } from './defe
 import { evidenceLine } from './evidence.ts';
 import { findingPlace, findingTitle, findUnplaced, placeObservations } from './ledger.ts';
 import { carriedSections, renderFinding } from './finding-text.ts';
-import { addEvent, sliceIdSchema, DEFAULT_PLACEMENT, fixesOnceInSlice, greenCommit, Invalidated, requireActive, type Finding, type Run, type Slice, type Unplaced, type Workspace } from './run.ts';
-import { needsFullReview, writeTicket } from './workflow.ts';
+import { addEvent, needsFullReview, sliceIdSchema, DEFAULT_PLACEMENT, fixesOnceInSlice, greenCommit, Invalidated, requireActive, type Finding, type Run, type Slice, type Unplaced, type Workspace } from './run.ts';
+import { writeTicket } from './workflow.ts';
 
 export const PLACE_CHOICES = ['fix', 'carry', 'end', 'defer', 'leave'] as const;
 export type PlaceChoice = (typeof PLACE_CHOICES)[number];

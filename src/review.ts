@@ -38,6 +38,7 @@ import {
   SEVERITIES,
   skippedDomainsSchema,
   sliceIdSchema,
+  needsFullReview,
   type Slice,
   requireActive,
   standingChecks,
@@ -53,7 +54,6 @@ import { changedLines, changedPaths, renderChangedLines, targetedReview } from '
 import { clearReport, remapReportShas, reportListsCommit, storedBehaviors, storedReport } from './report.ts';
 import { head, ownCommits, porcelain, requireOnBranchClean, snapshot } from './repo.ts';
 import {
-  needsFullReview,
   type FixRecord,
   pauseRun,
   renderTicket,

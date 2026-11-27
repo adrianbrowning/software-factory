@@ -3,10 +3,10 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { ctx, load } from './extension.ts';
 
-import { readRun, type Workspace, withRun } from '../src/run.ts';
+import { needsFullReview, readRun, type Workspace, withRun } from '../src/run.ts';
 import { submitImplementerReport } from '../src/report.ts';
 import { recordReview, runChecks, startReview } from '../src/review.ts';
-import { needsFullReview, nextSlice } from '../src/workflow.ts';
+import { nextSlice } from '../src/workflow.ts';
 import { HEADLESS_FILES, commit, tempRepo, finding, headlessSubmitRun, fixItems, newRun, review, sh, slice, step, workspace } from './helpers.ts';
 
 const OBSERVATION = 'thermo-naming';

@@ -9,8 +9,7 @@ import { changedPaths } from './targeted.ts';
 import { findingRecord } from './review-record.ts';
 import { carriedKeys } from './legacy-observations.ts';
 import { observedTypecheck } from './typecheck.ts';
-import { needsFullReview } from './workflow.ts';
-import { activeSlice, addEvent, reportPath, reviewIsOpen, requireActive, type Run, type Slice, type Workspace, writeAtomic } from './run.ts';
+import { activeSlice, needsFullReview, addEvent, reportPath, reviewIsOpen, requireActive, type Run, type Slice, type Workspace, writeAtomic } from './run.ts';
 
 // Guards only items sent through the factory_implementer_report tool: each item is one line (no \r, \n, U+2028, U+2029 or U+0085),
 // so it cannot add lines that read as factory output in the factory_checks reply. A reports/<slice>.md written directly is not checked.

@@ -671,3 +671,8 @@ export function discardReview(run: Run, slice: Slice, reason: string) {
   addEvent(run, 'review-invalidated', `${review.id}: ${reason}`, slice);
   return review.id;
 }
+
+/** True while the slice's last green review was targeted and no full green stands (`slice.fullGreen`); a full green survives an observation-only fix round and is cleared by a red review or a counted fix round. */
+export function needsFullReview(slice: Slice) {
+  return slice.green?.targeted === true && slice.fullGreen !== true;
+}

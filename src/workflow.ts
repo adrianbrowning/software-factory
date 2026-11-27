@@ -12,7 +12,7 @@ import {
   runDir, type Run, reviewDomains, reviewIsOpen, reviewPaths, saveRun, type Slice, type SliceInput, resliceItemSchema,
   sliceInputSchema, standingChecks, type Source, sourceSchema, statePath, reviewDir, ticketPath, type Workspace,
   requireActive, requireNotStalled, reportFile, stallNotice, writeAtomic,
-  filed,
+  filed, needsFullReview,
 } from './run.ts';
 import { moveCarried } from './legacy-observations.ts';
 import { copyPauseCause } from './pause-cause.ts';
@@ -606,11 +606,6 @@ export type FixItemInput = { id: string; summary: string } | { kind: 'bug' | 'ch
  * findings of a review) has one heading over its sections.
  */
 export type FixRecord = { group?: string; item: FixItemInput; section: string };
-
-/** True while the slice's last green review was targeted and no full green stands (`slice.fullGreen`); a full green survives an observation-only fix round and is cleared by a red review or a counted fix round. */
-export function needsFullReview(slice: Slice) {
-  return slice.green?.targeted === true && slice.fullGreen !== true;
-}
 
 /**
  * Writes the fix file and moves the slice to `fix`. `sha` is the commit the fix file describes. `records` are what the
