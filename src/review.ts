@@ -801,8 +801,9 @@ async function pairCommits(ws: Workspace, entry: { old: string; tip: string; par
 
 /**
  * Moves every existing later slice branch onto the completed slice's tip, bottom up, when its parent moved since it was
- * cut: a reopened slice (doneSha is its old tip) or a slice that was never reopened (its old tip is the merge-base of
- * the next later branch and the tip; nothing happens when that branch already holds the tip). Each child goes from its parent's old
+ * cut: a reopened slice (doneSha is its old tip) or a slice that was never reopened (no doneSha: the merge-base of the next
+ * later branch and the tip is the rebase boundary; it is the tip the branch was cut from when fix rounds only added commits,
+ * and lies lower, so the rebase may conflict, when they rewrote commits the branch holds; nothing happens when that branch already holds the tip). Each child goes from its parent's old
  * tip onto the parent's new tip, so it keeps only its own commits. Every old tip is snapshotted into a backup ref
  * before the first rebase. A child already on its parent's new tip (rebased by hand) stays as it is. A failed rebase
  * puts every branch back at its old tip, pauses the run, and throws. Each later slice that moved, or was not done,
@@ -823,7 +824,7 @@ async function restack(ws: Workspace, run: Run, reopened: Slice, doneSha: string
   let parentNew = await head(ws.root);
   let parentOld = doneSha;
   if (parentOld === undefined) {
-    // A slice that was never reopened: the later branch was cut from the parent's old tip, the merge-base of the two.
+    // A slice that was never reopened has no doneSha: use the merge-base of the later branch and the new tip as the rebase boundary. It is the tip the branch was cut from when fix rounds only added commits; if they rewrote commits the branch holds, it lies lower and the rebase may conflict (restack-conflict path).
     const [first] = later;
     if (first === undefined) return;
     const current = await git(ws.root, 'merge-base', '--is-ancestor', parentNew, first.old).then(
