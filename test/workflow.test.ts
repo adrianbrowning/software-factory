@@ -365,6 +365,8 @@ describe('re-slice', () => {
     await newRun(ws, [slice('Big'), slice('After', ['Big'])]);
     const big = await step(ws, run => nextSlice(ws, run));
     commit(ws, 'partial.txt');
+    const cut = readRun(ws, 'demo').slices[0]?.cutSha;
+    assert.match(cut ?? '', /^[0-9a-f]{40}$/);
 
     const first = await step(ws, run => applyReslice(ws, run, planReslice(ws, run, [slice('Big part two', ['Big part one']), slice('Big part one')])));
     const run = readRun(ws, 'demo');
@@ -379,6 +381,7 @@ describe('re-slice', () => {
     assert.equal(sh(ws.root, 'branch', '--show-current'), first.branch);
     assert.match(sh(ws.root, 'log', '--oneline', '-1'), /add partial.txt/);
     assert.equal(sh(ws.root, 'branch', '--list', big?.branch ?? ''), '');
+    assert.equal(run.slices[0]?.cutSha, cut);
   });
 
   it("moves the split slice's decisions to its last child, and other slices keep theirs under their new ids", async () => {
@@ -1435,6 +1438,95 @@ describe('reopen', () => {
     const run = readRun(ws, 'demo');
     assert.equal(run.status, 'paused');
     assert.equal(run.slices[0]?.status, 'active');
+  });
+
+  /** 01 done after a reopen restack, 02 active with its own commit and 03 stacked on it; `change` runs on 02 before its review. Returns the branches and the old tips. */
+  async function secondOfThreeWithChange(ws: Workspace, change?: () => void) {
+    const [first, second, third] = await stackOfThree(ws);
+    await reopenFixAndComplete(ws, 'other.txt');
+    assert.equal(sh(ws.root, 'branch', '--show-current'), second);
+    change?.();
+    return { first, second, third, oldThird: tip(ws, third), own: subjects(ws, `${second}..${third}`) };
+  }
+
+  it('restacks later branches onto a slice that was never reopened when a fix round moved its head', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    const { second, third, own } = await secondOfThreeWithChange(ws, () => commit(ws, 'extra.txt'));
+    const before = readRun(ws, 'demo').events.filter(event => event.kind === 'restack').length;
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+
+    execFileSync('git', ['merge-base', '--is-ancestor', tip(ws, second), third], { cwd: ws.root });
+    assert.deepEqual(subjects(ws, `${second}..${third}`), own);
+    assert.equal(sh(ws.root, 'for-each-ref', 'refs/factory'), '');
+    const run = readRun(ws, 'demo');
+    assert.deepEqual([run.slices[2]?.status, run.slices[2]?.phase], ['pending', 'checks']);
+    const added = run.events.filter(event => event.kind === 'restack').slice(before);
+    assert.equal(added.length, 1);
+    assert.match(added[0]?.detail ?? '', new RegExp(`^${third} onto ${second}$`));
+  });
+
+  it('leaves a later branch that already holds the completed head and adds no restack event', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    const { second, third, oldThird } = await secondOfThreeWithChange(ws);
+    const before = readRun(ws, 'demo').events.filter(event => event.kind === 'restack').length;
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+
+    execFileSync('git', ['merge-base', '--is-ancestor', tip(ws, second), third], { cwd: ws.root });
+    assert.equal(tip(ws, third), oldThird);
+    assert.equal(readRun(ws, 'demo').events.filter(event => event.kind === 'restack').length, before);
+  });
+
+  it('does not bring back a parent change that a fix round amended away when it restacks a later branch', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    const { second, third, own } = await secondOfThreeWithChange(ws);
+    sh(ws.root, 'rm', '-q', 'second.txt');
+    writeFileSync(join(ws.root, 'bar.txt'), 'bar\n');
+    sh(ws.root, 'add', 'bar.txt');
+    sh(ws.root, 'commit', '-q', '--amend', '--no-edit');
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+
+    execFileSync('git', ['merge-base', '--is-ancestor', tip(ws, second), third], { cwd: ws.root });
+    assert.deepEqual(subjects(ws, `${second}..${third}`), own);
+    const files = sh(ws.root, 'ls-tree', '-r', '--name-only', third).split('\n');
+    assert.ok(files.includes('bar.txt'));
+    assert.ok(!files.includes('second.txt'));
+    assert.equal(readRun(ws, 'demo').slices[2]?.cutSha, tip(ws, second));
+  });
+
+  it('restores every later branch and pauses the run when the restack after a never-reopened slice conflicts', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    const { second, third, oldThird } = await secondOfThreeWithChange(ws, () => commit(ws, 'third.txt', 'conflict\n'));
+    const oldSecond = tip(ws, second);
+    await green(ws);
+    await assert.rejects(step(ws, run => completeSlice(ws, run)), new RegExp(`${third}[\\s\\S]*user must resolve`));
+
+    assert.equal(tip(ws, third), oldThird);
+    assert.equal(tip(ws, second), oldSecond);
+    assert.equal(sh(ws.root, 'for-each-ref', 'refs/factory'), '');
+    const run = readRun(ws, 'demo');
+    assert.equal(run.status, 'paused');
+    assert.equal(run.slices[1]?.status, 'active');
+  });
+
+  it('restarts a later slice the user rebased by hand after a never-reopened restack conflict, and removes its stale report', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    const { second, third, oldThird } = await secondOfThreeWithChange(ws, () => commit(ws, 'third.txt', 'conflict\n'));
+    const thirdSlice = readRun(ws, 'demo').slices[2] ?? assert.fail('no slice');
+    writeAtomic(reportPath(ws, 'demo', thirdSlice), `Implementer report:\nCommits:\n- ${oldThird.slice(0, 12)} 03: third\nOpen:\n- none\n`);
+    await green(ws);
+    await assert.rejects(step(ws, run => completeSlice(ws, run)), /user must resolve/);
+
+    sh(ws.root, 'rebase', '-q', '-X', 'theirs', '--onto', second, sh(ws.root, 'merge-base', second, third), third);
+    sh(ws.root, 'switch', '-q', second);
+    assert.notEqual(tip(ws, third), oldThird);
+    await step(ws, run => completeSlice(ws, run));
+
+    const run = readRun(ws, 'demo');
+    assert.deepEqual([run.slices[1]?.status, run.slices[2]?.status, run.slices[2]?.phase], ['done', 'pending', 'checks']);
+    assert.match(storedReport(ws, run, run.slices[2] ?? assert.fail('no slice')), /^No implementer report was submitted for slice 03/);
   });
 
   it('runs a done run again and asks for a new retro', async () => {

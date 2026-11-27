@@ -366,7 +366,7 @@ bug:
 - The active slice goes back to pending. Its branch keeps its commits.
 - The reopened slice gets a fix file with the bug and goes through fix, checks, and review again. The fix round counts
   against its round limit.
-- When the reopened slice is complete again, the factory rebases every later slice branch onto the fix, bottom up.
+- When the reopened slice is complete again, the factory rebases every later slice branch onto the fix, bottom up. Completing any slice does the same for the existing later slice branches whose parent moved since they were cut, not only a reopened slice.
   Each branch keeps only its own commits on top of its parent. Backup refs `refs/factory/<feature>/backup/<NN>` hold
   the old tips until every rebase passes. Each later slice goes back to pending and starts again at checks.
 - If a rebase conflicts, the factory aborts it, puts every later branch back at its old tip, and pauses the run. The
