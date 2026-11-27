@@ -1,7 +1,7 @@
 import { execFile, spawn } from 'node:child_process';
 import { promisify } from 'node:util';
 
-export type CommandResult = { durationMs: number; exitCode: number; lastStream: 'stderr' | 'stdout' | undefined; stderr: string; stdout: string; timedOut: boolean };
+export type CommandResult = { clockJumpMs: number; durationMs: number; exitCode: number; lastStream: 'stderr' | 'stdout' | undefined; stderr: string; stdout: string; timedOut: boolean };
 
 /** Bytes kept per stream. The tail is kept because failure summaries print last. */
 const MAX_CAPTURE_BYTES = 1_000_000;
@@ -39,10 +39,12 @@ function hasNonWhitespaceByte(chunk: Buffer) {
 
 /**
  * Runs `command` through `sh -c` (with `env`, default the process environment) in its own process group, so a timeout or `signal` abort kills the whole tree.
+ * `clockJumpMs` is the absolute difference between the command's wall-clock and monotonic elapsed times: a host sleep or clock change while it ran.
  * `onStdout`, when given, is called synchronously with each stdout chunk after the chunk is recorded and lastStream is updated.
  */
 export function runShell(command: string, cwd: string, timeoutMs: number, signal?: AbortSignal, env?: NodeJS.ProcessEnv, onStdout?: (chunk: Buffer) => void): Promise<CommandResult> {
   const started = Date.now();
+  const startedMonotonic = performance.now();
   const { promise, resolve } = Promise.withResolvers<CommandResult>();
   const stdout = new Tail();
   const stderr = new Tail();
@@ -85,7 +87,8 @@ export function runShell(command: string, cwd: string, timeoutMs: number, signal
     clearTimeout(forceKill);
     clearTimeout(drain);
     signal?.removeEventListener('abort', stop);
-    resolve({ durationMs: Date.now() - started, exitCode, lastStream, stderr: stderr.text() + extraError, stdout: stdout.text(), timedOut });
+    const wallMs = Date.now() - started;
+    resolve({ clockJumpMs: Math.round(Math.abs(wallMs - (performance.now() - startedMonotonic))), durationMs: wallMs, exitCode, lastStream, stderr: stderr.text() + extraError, stdout: stdout.text(), timedOut });
   };
   child.on('error', error => finish(127, error.message));
   child.on('exit', () => {
