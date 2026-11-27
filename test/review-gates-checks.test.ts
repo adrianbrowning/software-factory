@@ -250,11 +250,15 @@ describe('slice loop gates: checks and the fix budget', { concurrency: 4 }, () =
     it('is not a working tree change when the scratch dir is not git-ignored', async () => {
       using counter = tempDir('factory-attempt1-tree-');
       using ws = workspace({ checks: [failOnce(counter.root, 'o', 'e')] });
-      sh(ws.root, 'config', 'core.excludesFile', '/dev/null');
       await newRun(ws, [slice('Feature')]);
+      // startRun ignores the whole scratch dir; ignore only the run's own files, so a log under checks/ would show in porcelain.
+      const exclude = join(ws.root, '.git', 'info', 'exclude');
+      const kept = readFileSync(exclude, 'utf8').split('\n').filter(line => !line.includes('.scratch'));
+      writeFileSync(exclude, `${kept.join('\n')}\n/.scratch/*/*\n!/.scratch/*/checks/\n`);
       await step(ws, run => nextSlice(ws, run));
       commit(ws, 'work.txt');
       assert.ok((await step(ws, run => runChecks(ws, run))).passed);
+      assert.match(sh(ws.root, 'status', '--porcelain', '-uall'), /checks\/01-f0-check1-attempt1\.log/);
     });
   });
 
