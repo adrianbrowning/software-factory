@@ -606,10 +606,10 @@ export type FixItemInput = { id: string; summary: string } | { kind: 'bug' | 'ch
 
 /**
  * One thing a fix round asks for: the fix item, and its section of the fix file. A record without `group` has its own
- * heading in `section`. Consecutive records with the same `group` share it as their heading, so a group (the blocking
+ * heading in `section`. A record with `unlisted` adds only its section (its item is already listed by another record). Consecutive records with the same `group` share it as their heading, so a group (the blocking
  * findings of a review) has one heading over its sections.
  */
-export type FixRecord = { group?: string; item: FixItemInput; section: string };
+export type FixRecord = { group?: string; item: FixItemInput; section: string; unlisted?: true };
 
 /**
  * Writes the fix file and moves the slice to `fix`. `sha` is the commit the fix file describes. `records` are what the
@@ -621,15 +621,15 @@ export function requestFix(ws: Workspace, run: Run, slice: Slice, sha: string, r
   return startFix(run, slice, sha, writeFixFile(ws, run, slice, records), counted);
 }
 
-/** Writes the next round's fix file, touching neither run nor slice, so a failed write changes nothing. An id two records share (finding ids are unique per review only) is listed once; both sections stay. */
+/** Writes the next round's fix file, touching neither run nor slice, so a failed write changes nothing. */
 export function writeFixFile(ws: Workspace, run: Run, slice: Slice, records: FixRecord[]) {
   const round = slice.fixFiles + 1;
   let checks = 0;
-  const items = records.map(({ item }) => {
-    if ('id' in item) return item;
-    const id = item.kind === 'check' ? `check-f${round}-${++checks}` : `${item.kind}-f${round}`;
-    return { id, summary: item.summary };
-  }).filter((item, index, all) => all.findIndex(other => other.id === item.id) === index);
+  const items = records.flatMap(({ item, unlisted }) => {
+    if (unlisted) return [];
+    const id = 'id' in item ? item.id : item.kind === 'check' ? `check-f${round}-${++checks}` : `${item.kind}-f${round}`;
+    return [{ id, summary: item.summary }];
+  });
   const parts: string[] = [];
   records.forEach(({ group, section }, index) => {
     if (group === undefined) parts.push(section);

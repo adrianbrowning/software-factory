@@ -637,7 +637,7 @@ function checkCoverage(findings: Finding[], validation: Validation, decisionCoun
 /**
  * The validator only selects: every raw finding is kept, downgraded to an observation, escalated to high for a broken
  * decision or an unmet acceptance criterion, or dropped with a reason. It adds no finding and rewrites no text, except a fix warning:
- * the text it adds beside a kept finding (in keep, downgrade or escalate; `fixWarnings`) when the suggested fix narrows the cited decision or criterion, or is a prose fix that leaves out a case, mode or input that any numbered decision or acceptance criterion gives for the rule (cited or not). The warning is stored in the validation file; the fix file of a red review shows it for a blocking finding, and an observation fix round's fix file shows it in the section of each observation sent to it (the entry on the slice's unplaced list keeps it). The same validator may replace its
+ * the text it adds beside a kept finding (in keep, downgrade or escalate; `fixWarnings`) when the suggested fix narrows the cited decision or criterion, or is a prose fix that leaves out a case, mode or input that any numbered decision or acceptance criterion gives for the rule (cited or not). The warning is stored in the validation file; the fix file of a red review shows it for a blocking finding, and an observation fix round's fix file shows it in the section of each observation sent to it and in the section of an accepted-unresolved misleading-doc finding that joins a default observation fix round (the entry on the slice's unplaced list keeps it). The same validator may replace its
  * validation once (to correct its verdict) until the review is recorded.
  */
 export function submitValidation(
@@ -907,7 +907,8 @@ async function restack(ws: Workspace, run: Run, reopened: Slice, doneSha: string
 
 /**
  * The blocking findings of category misleading-doc of the review the slice was accepted unresolved with, read from that
- * review's review.json; none when the slice was not accepted unresolved. A missing or unreadable file throws.
+ * review's review.json; none when the slice was not accepted unresolved. It also reads the review's validation.json
+ * (hash-checked, so a file changed since submission throws) and returns its fixWarnings by finding id. A missing or unreadable file throws.
  */
 function acceptedDocFindings(ws: Workspace, run: Run, slice: Slice) {
   const review = slice.review;

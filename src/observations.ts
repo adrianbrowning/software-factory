@@ -212,7 +212,12 @@ export function fixAfterGreen(ws: Workspace, run: Run, request: FixRequest, reas
       group.observations.map(finding => findingRecord(finding, `## Observations from ${group.review.id === review.id ? 'green review' : 'review'} ${group.review.id} the user chose to fix\n\n${why}`, run.decisions, group.warnings.get(finding.id))),
     ),
     ...(accepted?.findings ?? []).map(finding => findingRecord(finding, `## Accepted-unresolved findings of review ${accepted?.review}`, run.decisions, accepted?.warnings.get(finding.id))),
-  ];
+  ].map((record, index, all): FixRecord => {
+    // Finding ids are unique per review only: a repeated id is listed once, both sections stay.
+    const { item } = record;
+    const repeated = 'id' in item && all.slice(0, index).some(earlier => 'id' in earlier.item && earlier.item.id === item.id);
+    return repeated ? { ...record, unlisted: true } : record;
+  });
   // The fix file is written before the run changes, so a failed write leaves the run as it was.
   const written = writeFixFile(ws, run, slice, records);
   addEvent(run, 'fix-after-green', `${groups.map(group => group.review.id).join(', ')}: ${[...items.map(item => item.label), ...(accepted?.findings ?? []).map(finding => finding.id)].join(', ')}`, slice);
