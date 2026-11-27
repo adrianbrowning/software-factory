@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 import { readRun } from '../src/run.ts';
 import { recordReview, runChecks, startReview } from '../src/review.ts';
 import { nextAction, nextSlice, pauseRun, planFollowUp, resolveStall, repoChecks, resumeRun, saveChecks, startRun } from '../src/workflow.ts';
@@ -445,5 +445,87 @@ describe('slice loop gates: checks and the fix budget', { concurrency: 4 }, () =
     await assert.rejects(step(ws, run => runChecks(ws, run)), dirty);
     sh(ws.root, 'checkout', '--', 'ok');
     assert.ok((await step(ws, run => runChecks(ws, run))).passed);
+  });
+});
+
+// Date.now is mocked process-wide, so these tests run alone, outside the concurrent suite above.
+describe('checks and a host clock jump', () => {
+  /**
+   * Runs checks with a Date.now that moves 60 s ahead for each file in `jumps`, so a check command that creates a file
+   * there makes the host clock jump while that command runs.
+   */
+  async function withClockJumps(jumps: string, checks: (jumps: string) => string[], body: (ws: ReturnType<typeof workspace>) => Promise<void>) {
+    const realNow = Date.now.bind(Date);
+    const now = mock.method(Date, 'now', () => realNow() + readdirSync(jumps).length * 60_000);
+    try {
+      using ws = workspace({ checks: checks(jumps) });
+      await newRun(ws, [slice('Feature')]);
+      await step(ws, run => nextSlice(ws, run));
+      commit(ws, 'work.txt');
+      await body(ws);
+    } finally {
+      now.mock.restore();
+    }
+  }
+
+  it('refuses a failed check whose deciding run saw a clock jump as an environment error, not a fix round', async () => {
+    using jumps = tempDir('factory-jumps-');
+    const check = (dir: string) => `if [ "$(ls '${dir}' | wc -l)" -ge 2 ]; then exit 0; fi; touch '${dir}'/$$; exit 1`;
+    await withClockJumps(jumps.root, dir => [check(dir)], async ws => {
+      const before = readRun(ws, 'demo');
+      await assert.rejects(
+        step(ws, run => runChecks(ws, run)),
+        error => {
+          assert.ok(error instanceof Error);
+          assert.match(error.message, /touch '[^']*'\/\$\$; exit 1[^\n]*clockJumpMs \d+/);
+          assert.match(error.message, /environment error[^\n]*host sleep or a clock change[^\n]*not a code fault/);
+          assert.match(error.message, /Then call factory_checks again\.$/);
+          return true;
+        },
+      );
+      const after = readRun(ws, 'demo');
+      assert.equal(after.slices[0]?.fixRounds, 0);
+      assert.equal(after.slices[0]?.phase, 'implement');
+      assert.equal(after.slices[0]?.fixPath, undefined);
+      assert.equal(existsSync(join(ws.root, '.scratch', 'demo', 'fixes')), false);
+      assert.deepEqual(after.events.filter(e => e.kind === 'checks-fail'), before.events.filter(e => e.kind === 'checks-fail'));
+      // The next step the error names: the clock is stable now, so the same call passes.
+      assert.ok((await step(ws, run => runChecks(ws, run))).passed);
+    });
+  });
+
+  it('refuses a timed-out check whose run saw a clock jump', async () => {
+    using jumps = tempDir('factory-jumps-');
+    await withClockJumps(jumps.root, dir => [`touch '${dir}'/$$; sleep 30`], async ws => {
+      ws.config.checkTimeoutMs = 2000;
+      await assert.rejects(step(ws, run => runChecks(ws, run)), /environment error[\s\S]*Then call factory_checks again\.$/);
+      assert.equal(readRun(ws, 'demo').slices[0]?.fixRounds, 0);
+    });
+  });
+
+  it('passes a check that failed with a clock jump and passed on a rerun without one, marked flaky', async () => {
+    using jumps = tempDir('factory-jumps-');
+    await withClockJumps(jumps.root, dir => [`if [ -f '${dir}'/a ]; then exit 0; fi; touch '${dir}'/a; exit 1`], async ws => {
+      const result = await step(ws, run => runChecks(ws, run));
+      assert.ok(result.passed);
+      assert.match(result.summary.join('\n'), /passed on rerun, flaky/);
+    });
+  });
+
+  it('opens a fix round when a clock-jumped first run is followed by a failing rerun without a jump', async () => {
+    using jumps = tempDir('factory-jumps-');
+    await withClockJumps(jumps.root, dir => [`if [ -f '${dir}'/a ]; then exit 1; fi; touch '${dir}'/a; exit 1`], async ws => {
+      const result = await step(ws, run => runChecks(ws, run));
+      assert.ok(!result.passed);
+      assert.match(readFileSync(result.fixPath, 'utf8'), /on rerun/);
+      assert.equal(readRun(ws, 'demo').slices[0]?.fixRounds, 1);
+    });
+  });
+
+  it('passes checks that all pass while the clock jumps', async () => {
+    using jumps = tempDir('factory-jumps-');
+    await withClockJumps(jumps.root, dir => [`touch '${dir}'/$$`], async ws => {
+      assert.ok((await step(ws, run => runChecks(ws, run))).passed);
+    });
   });
 });

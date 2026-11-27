@@ -142,13 +142,18 @@ export function targetingAfter(review: { id: string; sha: string }, domains: rea
 const SIBLING_COMMENT_NOTE =
   '\n- Sibling comments: search src/, README.md, agents/ and skills/ for key words of the fact the comment states and fix in this round every other comment the diff makes false for that fact, not only the one at this location.';
 
+const DOCUMENTED_BEHAVIOR_NOTE =
+  '\n- Documented behavior: if the fix changes behavior that prose states, search src/, README.md, agents/ and skills/ for key words of that behavior and fix in this round every doc comment and README, agent or skill statement the fix makes false, not only the code.';
+
 /**
  * A finding as a fix record in `group`: its id and summary `[severity] <location>: title` as the fix item, and its location-free `title`. The section of a
- * finding with a validator `warning` on its suggested fix holds the warning line after its decision or criterion line; a comments-domain finding's section ends with the sibling-comment note.
+ * finding with a validator `warning` on its suggested fix holds the warning line after its decision or criterion line; a comments-domain finding's section ends with the sibling-comment note,
+ * and a bug-domain finding's section ends with the documented-behavior note (after the warning line when there is one).
  */
 export function findingRecord(finding: Finding, group: string, decisions: Decision[], warning?: string): FixRecord & { title: string } {
   const title = `[${finding.severity}] ${findingTitle(finding.title)}`;
   const summary = `[${finding.severity}] ${findingLocation(finding)}: ${findingTitle(finding.title)}`;
   const warned = warning === undefined ? '' : `\n- Validator warning on the suggested fix (meet the recorded decisions and acceptance criteria as written, not a narrower fix): ${evidenceLine(warning, 1_000)}`;
-  return { group, item: { id: finding.id, summary }, section: renderFinding(finding, decisions, '###') + warned + (finding.domain === 'comments' ? SIBLING_COMMENT_NOTE : ''), title };
+  const note = finding.domain === 'comments' ? SIBLING_COMMENT_NOTE : finding.domain === 'bug' ? DOCUMENTED_BEHAVIOR_NOTE : '';
+  return { group, item: { id: finding.id, summary }, section: renderFinding(finding, decisions, '###') + warned + note, title };
 }

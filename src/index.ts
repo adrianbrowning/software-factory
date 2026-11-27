@@ -11,7 +11,7 @@ import { gitArchWarning } from './git-arch.ts';
 import { followUpOverlap } from './follow-up-overlap.ts';
 import { carriedKeys } from './legacy-observations.ts';
 import { deferItems } from './deferred.ts';
-import { redact } from './evidence.ts';
+import { evidenceLine, redact } from './evidence.ts';
 import { chooseChecks, ensureChecks, GATE_BODY_LIMIT, gate, loadSource } from './gates.ts';
 import {
   activeSlice,
@@ -212,6 +212,13 @@ function describeStop(messages: readonly unknown[] | undefined) {
     if (text !== undefined) break;
   }
   return `latest tool: ${latestToolCallName(messages) ?? 'none'}; last assistant text: ${text ?? 'none'}`;
+}
+
+/** The provider error of the latest assistant message as `{ errorMessage }` (errorMessage is undefined when the message's `errorMessage` is not a string), or undefined when that message did not end with stopReason 'error'. */
+function providerError(messages: readonly unknown[] | undefined) {
+  const latest = (messages ?? []).findLast(message => (message as { role?: string }).role === 'assistant') as { errorMessage?: unknown; stopReason?: string } | undefined;
+  if (latest?.stopReason !== 'error') return undefined;
+  return { errorMessage: typeof latest.errorMessage === 'string' ? latest.errorMessage : undefined };
 }
 
 /** Stop gate: block a stop while the owner session's run is running, and pause it after repeated idle stops. An interactive run waiting on an ask is allowed to stop. */
@@ -723,8 +730,11 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
     }
     if (decision.action === 'pause') {
       stopAttempts.delete(feature);
-      await withRun(ws, feature, current => pauseRun(current, `no progress after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts; ${describeStop(event.messages)}`));
-      ctx.ui.notify(`Software factory paused "${feature}": no progress. /factory resume ${feature} continues.`, 'warning');
+      const failure = providerError(event.messages);
+      const cause = failure === undefined ? undefined : evidenceLine(failure.errorMessage ?? '', 300) || 'no error message';
+      const reason = cause === undefined ? `no progress after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts` : `provider error after ${MAX_IDLE_STOP_ATTEMPTS} stop attempts: ${cause}`;
+      await withRun(ws, feature, current => pauseRun(current, `${reason}; ${describeStop(event.messages)}`));
+      ctx.ui.notify(`Software factory paused "${feature}": ${cause === undefined ? 'no progress' : `provider error: ${cause}`}. /factory resume ${feature} continues.`, 'warning');
       return;
     }
     stopAttempts.set(feature, decision.attempts);

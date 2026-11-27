@@ -2,7 +2,8 @@ import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { z } from 'zod';
 import { itemKey } from './deferred.ts';
 import { findUnplaced, placeObservations } from './ledger.ts';
-import { ownCommits } from './repo.ts';
+import { git } from './exec.ts';
+import { ownCommits, sliceBranchExists } from './repo.ts';
 import { TEST_PATH } from './test-paths.ts';
 import { changedPaths } from './targeted.ts';
 import { findingRecord } from './review-record.ts';
@@ -222,6 +223,21 @@ export function reportNamesOnly(ws: Workspace, run: Run, slice: Slice, shas: str
 export function reportCoversCommits(ws: Workspace, run: Run, slice: Slice, shas: string[]) {
   const stopped = (reportSection(ws, run, slice, 'Open') ?? []).some(item => STOP_REPORT.test(item));
   return shas.length > 0 && !stopped && shas.every(sha => reportListsCommit(ws, run, slice, sha));
+}
+
+/**
+ * Moves a slice at `implement`, or in `fix` with `fixFromSha` set, to `checks` and records a resume event when its
+ * branch has commits (all own commits at `implement`; the own commits of `fixFromSha..HEAD` in `fix`) that the stored
+ * report lists in full with no stop report in Open. Commits from before a fix round need not be listed.
+ */
+export async function moveReportedToChecks(ws: Workspace, run: Run, slice: Slice) {
+  const fix = slice.phase === 'fix' && slice.fixFromSha !== undefined;
+  if ((slice.phase !== 'implement' && !fix) || !(await sliceBranchExists(ws, slice))) return;
+  const roundShas = fix ? new Set((await git(ws.root, 'rev-list', `${slice.fixFromSha}..refs/heads/${slice.branch}`)).split('\n').filter(Boolean)) : undefined;
+  const commits = (await ownCommits(ws, slice)).filter(commit => roundShas?.has(commit.sha) ?? true);
+  if (!reportCoversCommits(ws, run, slice, commits.map(commit => commit.sha))) return;
+  slice.phase = 'checks';
+  addEvent(run, 'resume', `slice ${slice.id} ${fix ? 'fix round ' : ''}already committed and reported ${commits.map(commit => commit.sha.slice(0, 7)).join(', ')}: moved to checks`, slice);
 }
 
 /**
