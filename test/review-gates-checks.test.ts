@@ -224,6 +224,27 @@ describe('slice loop gates: checks and the fix budget', { concurrency: 4 }, () =
       commit(ws2, 'work.txt');
       assert.equal((await step(ws2, run => runChecks(ws2, run))).passed, false);
       assert.equal(existsSync(logDir(ws2)), false);
+
+      using counter2 = tempDir('factory-attempt1-failed-');
+      using ws3 = workspace({ checks: [failOnce(counter2.root, 'o', 'e'), 'exit 1'] });
+      await newRun(ws3, [slice('Feature')]);
+      await step(ws3, run => nextSlice(ws3, run));
+      commit(ws3, 'work.txt');
+      assert.equal((await step(ws3, run => runChecks(ws3, run))).passed, false);
+      assert.equal(existsSync(logDir(ws3)), false);
+    });
+
+    it('writes no file when a flaky check leaves the working tree dirty', async () => {
+      using counter = tempDir('factory-attempt1-dirty-');
+      const check = `if [ -f '${counter.root}/seen' ]; then touch stray.txt; exit 0; fi; touch '${counter.root}/seen'; exit 3`;
+      using ws = workspace({ checks: [check] });
+      await newRun(ws, [slice('Feature')]);
+      await step(ws, run => nextSlice(ws, run));
+      commit(ws, 'work.txt');
+      const result = await step(ws, run => runChecks(ws, run));
+      assert.equal(result.passed, false);
+      assert.ok(existsSync(join(ws.root, 'stray.txt')));
+      assert.equal(existsSync(logDir(ws)), false);
     });
 
     it('counts the slice fix files in the name, and a state without the field still loads', async () => {

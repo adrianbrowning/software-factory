@@ -9,7 +9,7 @@ export type CheckRun = { command: string; first?: CommandResult; result: Command
 /**
  * Keeps the first attempt's output of each check that failed and then passed on its rerun, in
  * `<run dir>/checks/<slice id>-f<N>-check<K>-attempt1.log` (N: the slice's fixFiles count, K: the 1-based position of the
- * command in the run's checks). The output is redacted, not truncated. Returns the log paths relative to the run dir, in check order.
+ * command in the run's checks). Call it only for a run whose checks all passed: the first attempt output of a flaky check is kept when the checks pass, and a run that ends failed keeps none. The output is redacted, not truncated. Returns the log paths relative to the run dir, in check order.
  */
 export function writeFirstAttemptLogs(ws: Workspace, run: Run, slice: Slice, results: CheckRun[]) {
   const dir = runDir(ws, run.feature);
