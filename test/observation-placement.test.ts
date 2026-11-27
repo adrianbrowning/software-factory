@@ -474,7 +474,7 @@ describe('batched observation placement', () => {
     const listed = file.slice(file.indexOf('## Fix items'), file.indexOf('\n## ', file.indexOf('## Fix items') + 1));
     assert.match(listed, /- `thermo-note`/);
     assert.doesNotMatch(listed, /comments-hole/);
-    assert.ok(!(active?.fixItems ?? []).some(item => item.id === 'comments-hole'));
+    assert.deepEqual((active?.fixItems ?? []).filter(item => item.id === 'comments-hole'), []);
   });
 
   it('a joined accepted-unresolved finding holds the validator warning of its own validation, and one without a warning has no warning line', async () => {
