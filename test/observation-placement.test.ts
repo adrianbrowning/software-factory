@@ -340,7 +340,7 @@ describe('batched observation placement', () => {
 
   /** A headless run whose slice has used its fix budget, then a full review that is accepted unresolved: blocking findings of three categories, an open fix item and `observations`. */
   async function acceptedUnresolvedWith(root: string, observations: Finding[]) {
-    const { call, ws } = await headlessSubmitRun(root, ['Feature']);
+    const { call, ws } = await headlessSubmitRun(root, ['Feature'], {}, { deferred: { kind: 'file' } });
     await withRun(ws, 'demo', run => runChecks(ws, run));
     await withRun(ws, 'demo', run => {
       const active = run.slices[0]!;
@@ -360,6 +360,7 @@ describe('batched observation placement', () => {
     using dir = repo();
     const { call, ws } = await acceptedUnresolvedWith(dir.root, [observation('note', 'misleading-doc')]);
     const before = readRun(ws, 'demo');
+    assert.deepEqual(before.deferred.map(item => [item.id, item.kind]).filter(([id]) => id === 'comments-stale'), [['comments-stale', 'unresolved']]);
     const text = (await call('factory_complete_slice', {})).content[0]?.text ?? '';
     assert.match(text, /Slice 01 is back in fix: its default placement fixes observations in this slice\. Fix file: \S+/);
     const run = readRun(ws, 'demo');

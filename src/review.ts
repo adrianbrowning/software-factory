@@ -907,18 +907,13 @@ async function restack(ws: Workspace, run: Run, reopened: Slice, doneSha: string
 
 /**
  * The blocking findings of category misleading-doc of the review the slice was accepted unresolved with, read from that
- * review's review.json; none when the slice was not accepted unresolved or the file is absent.
+ * review's review.json; none when the slice was not accepted unresolved. A missing or unreadable file throws.
  */
 function acceptedDocFindings(ws: Workspace, run: Run, slice: Slice) {
   const review = slice.review;
   if (slice.unresolved === undefined || review === undefined) return undefined;
   const file = join(reviewDir(ws, run.feature, review.id), 'review.json');
-  let recorded: { findings?: unknown };
-  try {
-    recorded = JSON.parse(readFileSync(file, 'utf8')) as { findings?: unknown };
-  } catch {
-    return undefined;
-  }
+  const recorded = JSON.parse(readFileSync(file, 'utf8')) as { findings?: unknown };
   const findings = findingListSchema.parse(recorded.findings ?? []).filter(finding => finding.severity !== 'observation' && finding.category === 'misleading-doc');
   return findings.length === 0 ? undefined : { findings, review: review.id };
 }
