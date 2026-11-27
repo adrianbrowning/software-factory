@@ -7,7 +7,7 @@ import { ctx, load } from './extension.ts';
 import { loadConfig } from '../src/config.ts';
 import { resetModuleState } from '../src/index.ts';
 import { carriedKeysLine, carriesKey } from '../src/legacy-observations.ts';
-import { Invalidated, type Finding, readRun, REVIEW_DOMAINS, runDir, ticketPath, withRun, type Workspace } from '../src/run.ts';
+import { activeSlice, Invalidated, type Finding, readRun, REVIEW_DOMAINS, runDir, ticketPath, withRun, type Workspace } from '../src/run.ts';
 import { defaultChoice } from '../src/place.ts';
 import { keptFindings, validationSchema } from '../src/review-record.ts';
 import { fixAfterGreen } from '../src/observations.ts';
@@ -20,6 +20,10 @@ beforeEach(() => resetModuleState());
 type Reply = { content: { text: string }[] };
 
 const repo = (extra: Record<string, unknown> = {}) => tempRepo('factory-place-', { 'demo.md': '# Demo\n\nDo it.\n', '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'], ...extra }) });
+const holdFixed = (ws: Workspace) => withRun(ws, 'demo', run => {
+  const id = activeSlice(run)?.id ?? '';
+  run.observations.push({ id: 'held', key: 'held-key', location: 'a', placement: 'fixed', problem: 'p', review: '01-r0', slice: id, title: 't' });
+});
 
 /** An observation of `domain` (thermo by default) with an explicit category. */
 const observation = (name: string, category: NonNullable<Finding['category']>, domain = 'thermo'): Finding => ({ ...finding(domain as Finding['domain'], 'observation', name), category, problem: `${name} misleads the reader` });
@@ -351,6 +355,52 @@ describe('batched observation placement', () => {
     assert.equal(done.status, 'done');
   });
 
+  it('a missing-test observation defaults to fix once, then to the end queue, and factory_place starts the observation-only round', async () => {
+    using dir = repo();
+    const { call, full, ws } = await interactive(dir.root);
+    const text = (await full([observation('test', 'missing-test'), observation('doc', 'misleading-doc')])).content[0]?.text ?? '';
+    assert.match(text, /thermo-test[\s\S]*Default placement: fix in this slice/);
+    const run = readRun(ws, 'demo');
+    const active = run.slices[0];
+    const test = active?.unplaced.find(entry => entry.finding.id === 'thermo-test');
+    if (active === undefined || test === undefined) throw new Error('missing');
+    const held = { id: 'x', key: '01-r0:x', location: 'a', placement: 'fixed' as const, problem: 'p', review: '01-r0', slice: active.id, title: 't' };
+    const after = { ...run, observations: [...run.observations, held] };
+    const sink = { ...ws, config: { ...ws.config, deferred: { kind: 'github' as const } } };
+    assert.equal(defaultChoice(ws, after, active, test), 'end');
+    assert.equal(defaultChoice(ws, after, { ...active, fromEndQueue: true }, test), 'leave');
+    assert.equal(defaultChoice(sink, after, { ...active, fromEndQueue: true }, test), 'defer');
+    await call('factory_place', { placements: [] });
+    const sliceNow = readRun(ws, 'demo').slices[0];
+    assert.equal(sliceNow?.phase, 'fix');
+    assert.equal(sliceNow?.fixRounds, 0);
+    const fix = readFileSync(sliceNow?.fixPath ?? 'missing', 'utf8');
+    assert.match(fix, /thermo-test/);
+    assert.match(fix, /thermo-doc/);
+  });
+
+  it('a headless completion with a missing-test observation starts the observation-only fix round and completes after it', async () => {
+    using dir = repo();
+    const { call, ws } = await headlessSubmitRun(dir.root, ['Feature']);
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    const first = await withRun(ws, 'demo', run => startReview(ws, run));
+    await review(ws, first.reviewId, [observation('test', 'missing-test')]);
+    await withRun(ws, 'demo', run => recordReview(ws, run));
+    const text = (await call('factory_complete_slice', {})).content[0]?.text ?? '';
+    const fixPath = /Fix file: (\S+)/.exec(text)?.[1] ?? 'missing';
+    assert.match(readFileSync(fixPath, 'utf8'), /thermo-test/);
+    const run = readRun(ws, 'demo');
+    assert.equal(run.slices[0]?.status, 'active');
+    assert.equal(run.slices[0]?.phase, 'fix');
+    assert.equal(run.slices[0]?.fixRounds, 0);
+    assert.deepEqual(run.observations.map(entry => [entry.id, entry.placement]), [['thermo-test', 'fixed']]);
+    commit(ws, 'test.txt');
+    await withRun(ws, 'demo', current => runChecks(ws, current));
+    await review(ws, (await withRun(ws, 'demo', current => startReview(ws, current))).reviewId, []);
+    await withRun(ws, 'demo', current => recordReview(ws, current));
+    assert.equal((await withRun(ws, 'demo', current => completeSlice(ws, current))).status, 'done');
+  });
+
   /** A headless run whose slice has used its fix budget, then a full review that is accepted unresolved: blocking findings of three categories, an open fix item and `observations`. */
   async function acceptedUnresolvedWith(root: string, observations: Finding[], extra: Finding[] = [], fixWarnings: { id: string; warning: string }[] = []) {
     const { call, ws } = await headlessSubmitRun(root, ['Feature'], {}, { deferred: { kind: 'file' } });
@@ -448,7 +498,7 @@ describe('batched observation placement', () => {
   it('a correctness observation of a follow-up slice built from end-queue items defaults to fix until the slice has one placed as fixed', async () => {
     using dir = repo();
     const { full, ws } = await interactive(dir.root);
-    await full([observation('gap', 'correctness'), observation('test', 'missing-test')]);
+    await full([observation('gap', 'correctness'), observation('test', 'naming')]);
     const run = readRun(ws, 'demo');
     const base = run.slices[0];
     const gap = base?.unplaced.find(entry => entry.finding.id === 'thermo-gap');
@@ -598,6 +648,7 @@ describe('batched observation placement', () => {
       await withRun(ws, 'demo', run => nextSlice(ws, run));
       commit(ws, 'follow.txt');
       await withRun(ws, 'demo', run => runChecks(ws, run));
+      await holdFixed(ws);
       const text = (await full([{ ...observation('again', 'missing-test'), path: 'follow.txt' }])).content[0]?.text ?? '';
       assert.match(text, new RegExp(`thermo-again[\\s\\S]*Default placement: ${sink ? 'defer to the sink' : 'leave'}`));
       await call('factory_place', { placements: [] });
@@ -620,6 +671,7 @@ describe('batched observation placement', () => {
     await withRun(ws, 'demo', run => nextSlice(ws, run));
     commit(ws, 'follow.txt');
     await withRun(ws, 'demo', run => runChecks(ws, run));
+    await holdFixed(ws);
     const second = await withRun(ws, 'demo', run => startReview(ws, run));
     await review(ws, second.reviewId, [{ ...observation('again', 'missing-test'), path: 'follow.txt' }]);
     await withRun(ws, 'demo', run => recordReview(ws, run));
@@ -643,6 +695,7 @@ describe('batched observation placement', () => {
     await withRun(ws, 'demo', run => nextSlice(ws, run));
     commit(ws, 'follow.txt');
     await withRun(ws, 'demo', run => runChecks(ws, run));
+    await holdFixed(ws);
     const second = await withRun(ws, 'demo', run => startReview(ws, run));
     await review(ws, second.reviewId, [{ ...observation('again', 'missing-test'), path: 'follow.txt' }]);
     await withRun(ws, 'demo', run => recordReview(ws, run));
@@ -686,6 +739,7 @@ describe('batched observation placement', () => {
       assert.deepEqual(plan.children.map(child => child.fromEndQueue), [true, true]);
     });
     await withRun(ws, 'demo', run => runChecks(ws, run));
+    await holdFixed(ws);
     const second = await withRun(ws, 'demo', run => startReview(ws, run));
     await review(ws, second.reviewId, [{ ...observation('again', 'missing-test'), path: 'follow.txt' }]);
     await withRun(ws, 'demo', run => recordReview(ws, run));
@@ -792,7 +846,7 @@ describe('batched observation placement', () => {
     const { ws } = await headlessSubmitRun(dir.root, ['Feature'], {}, { deferred: { kind: 'file' } });
     await withRun(ws, 'demo', run => runChecks(ws, run));
     const { reviewId } = await withRun(ws, 'demo', run => startReview(ws, run));
-    await review(ws, reviewId, [observation('naming', 'naming'), observation('gap', 'missing-test')]);
+    await review(ws, reviewId, [observation('naming', 'naming'), observation('gap', 'correctness')]);
     await withRun(ws, 'demo', run => recordReview(ws, run));
     await withRun(ws, 'demo', run => completeSlice(ws, run));
     const run = readRun(ws, 'demo');
