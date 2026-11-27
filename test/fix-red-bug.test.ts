@@ -98,7 +98,7 @@ describe('factory_fix with a bug on a red review', () => {
     await withRun(ws, 'demo', run => runChecks(ws, run));
     const opened = await call('factory_review_start', { skip: [] });
     const data = opened.details?.dataFile ?? assert.fail('no data file');
-    assert.doesNotMatch(data, /## TARGETED REVIEW/);
+    assert.doesNotMatch(readFileSync(data, 'utf8'), /## TARGETED REVIEW/);
     assert.match(fixItems(data), /- `bug-f1-1` \([^\n]*fixes\/01-f1\.md, round 1\): [^\n]*Crash/);
     const reviewId = readRun(ws, 'demo').slices[0]?.review?.id ?? assert.fail('no review');
     await assert.rejects(call('factory_review_submit', { domain: 'scope', findings: [], fixItems: [{ id: 'bug-crash', reason: 'ok', status: 'fixed' }], reviewId }, {}, 'factory-reviewer'), /bug-f1-1/);
