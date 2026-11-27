@@ -651,6 +651,8 @@ describe('/factory headless start message names the base', () => {
 
   it('without --base names the configured base and the PR target, with no warning', async () => {
     using repo = tempRepo('factory-headless-msg-', CHECKS_OK);
+    sh(repo.root, 'switch', '-q', '-c', 'work');
+    sh(repo.root, 'commit', '-q', '--allow-empty', '-m', 'ahead of main');
     const { command, sent } = session(repo.root);
     await command('headless ticket.md');
     const message = sent[0] ?? '';
@@ -658,6 +660,7 @@ describe('/factory headless start message names the base', () => {
     assert.ok(message.includes('PRs target main'), message);
     assert.ok(message.includes(`slice 01 branches from ${baseOf(repo.root).baseRef} when the plan is approved`), message);
     assert.ok(!message.includes('is not the configured base'), message);
+    assert.ok(!message.includes('Commits on'), message);
   });
 
   it('with a --base that is neither the configured base nor the trunk names the pinned sha and warns', async () => {
