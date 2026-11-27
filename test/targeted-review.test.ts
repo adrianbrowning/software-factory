@@ -54,6 +54,7 @@ async function setup(root: string) {
 }
 
 const repo = () => tempRepo('factory-targeted-', { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }) });
+const targetedSection = (file: string) => /## TARGETED REVIEW\n([\s\S]*?)\n## /.exec(readFileSync(file, 'utf8'))?.[1] ?? assert.fail('no TARGETED REVIEW section');
 const sorted = (...domains: string[]) => [...domains].sort();
 
 describe('targeted re-review', () => {
@@ -70,7 +71,7 @@ describe('targeted re-review', () => {
     const data = readFileSync(targeted.dataFile, 'utf8');
     assert.match(data, /## TARGETED REVIEW\n/);
     assert.match(/## TARGETED REVIEW\n([\s\S]*?)\n## /.exec(data)?.[1] ?? '', new RegExp(`This review follows review ${first.reviewId}`));
-    assert.match(data, /- second\.txt: 1-2\n/, 'the fix diff changed lines are listed');
+    assert.match(targetedSection(targeted.dataFile), /- second\.txt: 1-2\n/, 'the fix diff changed lines are listed');
     assert.doesNotMatch(/## TARGETED REVIEW\n([\s\S]*?)\n## /.exec(data)?.[1] ?? '', /- ok: /, 'lines of the slice outside the fix diff are not listed');
     assert.match(data, /add second\.txt/, 'the commits of the fix diff are listed');
   });
@@ -249,11 +250,22 @@ describe('targeted re-review in other flows', () => {
     await call('factory_implementer_report', { behaviors: [], checks: [], commits: [`${sha.slice(0, 7)} remove gone.txt`], fixItems: ['security-leak: already fixed'], open: [] }, 'factory-implementer');
     await call('factory_checks', {});
     const targeted = await open();
-    assert.match(readFileSync(targeted.dataFile, 'utf8'), /- gone\.txt: \(no hunk lines/);
+    assert.match(targetedSection(targeted.dataFile), /- gone\.txt: \(no hunk lines/);
     const { line: _line, ...base } = finding('bug', 'observation', 'deleted');
     const fileLevel: Finding = { ...base, path: 'gone.txt' };
     const recorded = await finish(targeted.domains, [fileLevel], [fileLevel.id]);
     assert.match(recorded?.content[0]?.text ?? '', /Review is green/);
+  });
+
+  it('renders None. for a fix diff that changes no lines', async () => {
+    using dir = repo();
+    const { call, finish, open } = await setup(dir.root);
+    await finish((await open()).domains, [finding('security', 'high', 'leak')], ['security-leak']);
+    execFileSync('git', ['commit', '-q', '--allow-empty', '-m', 'empty fix'], { cwd: dir.root });
+    const sha = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: dir.root, encoding: 'utf8' }).trim();
+    await call('factory_implementer_report', { behaviors: [], checks: [], commits: [`${sha.slice(0, 7)} empty fix`], fixItems: ['security-leak: already fixed'], open: [] }, 'factory-implementer');
+    await call('factory_checks', {});
+    assert.match(targetedSection((await open()).dataFile), /Changed lines \(new side\):\n\nNone\.\n/);
   });
 
   it('refuses a file-level observation on a file whose fix changed lines', async () => {
@@ -263,7 +275,7 @@ describe('targeted re-review in other flows', () => {
     commit(ws, 'second.txt', 'a\nb\n');
     await call('factory_checks', {});
     const targeted = await open();
-    assert.match(readFileSync(targeted.dataFile, 'utf8'), /- second\.txt: 1-2/);
+    assert.match(targetedSection(targeted.dataFile), /- second\.txt: 1-2/);
     const { line: _line, ...base } = finding('bug', 'observation', 'long');
     const fileLevel: Finding = { ...base, path: 'second.txt' };
     await assert.rejects(finish(targeted.domains, [fileLevel], [fileLevel.id]), /outside the fix diff/);

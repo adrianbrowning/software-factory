@@ -506,7 +506,7 @@ decision that does not exist. Recording a review stores the verdicts in `review.
 items, except open ones: an open item makes the review `CHANGES_REQUESTED` even with no blocking finding, goes into the
 next fix file (which then names it as asked in that round), and carries into the next review's `## FIX ITEMS`.
 Each reviewer writes only its own domain file, so parallel reviewers never share a write. The submit tool rejects a
-finding whose `path` the diff does not change, or whose `line` is outside that file's new-side hunks.
+finding whose `path` the diff does not change, or whose `line` is outside that file's new-side hunks; the review data file's `## CHANGED FILES` section lists those ranges per file.
 
 `state.json` records the state schema version and the `factoryVersion` that saved it. Version 1 files still load and
 are saved as version 2. A file with a newer state version, written by a newer factory, is refused with a message naming the writer's factory version, the
