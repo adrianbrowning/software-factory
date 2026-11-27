@@ -156,8 +156,25 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
     assert.match(fixItems(opened.dataFile), /thermo-naming/);
   });
 
-  for (const green of [false, true]) {
-    it(`tool reply ${green ? 'after green says no fix item was added' : 'in phase fix says the item was added'}`, async () => {
+  it('adds the fix item when the branch moved past the green commit, and the next review lists it', async () => {
+    using ws = workspace({ maxRounds: 3 });
+    await redWithObservation(ws);
+    await greenReview(ws, true);
+    commit(ws, 'later.txt');
+    const sha = sh(ws.root, 'rev-parse', 'HEAD');
+    const result = await report(ws, sha, [`${OBSERVATION}: fixed in ${sha.slice(0, 7)}`]);
+    assert.deepEqual(result.fixed, ['01-r1:thermo-naming']);
+    assert.equal(result.afterGreen, false);
+    const { ledger, slice: after } = state(ws);
+    assert.deepEqual(ledger.map(entry => [entry.key, entry.placement]), [['01-r1:thermo-naming', 'fixed']]);
+    assert.deepEqual(after.fixItems.map(item => item.id), [OBSERVATION]);
+    await step(ws, run => runChecks(ws, run));
+    const opened = await step(ws, run => startReview(ws, run));
+    assert.match(fixItems(opened.dataFile), /thermo-naming/);
+  });
+
+  for (const green of [false, true, 'moved'] as const) {
+    it(`tool reply ${green === true ? 'after green says no fix item was added' : green === 'moved' ? 'after green with a moved branch says the item was added' : 'in phase fix says the item was added'}`, async () => {
       using dir = tempRepo('factory-fixed-obs-tool-', HEADLESS_FILES);
       const { ws } = await headlessSubmitRun(dir.root, ['Feature'], {}, {}, async () => '');
       await withRun(ws, 'demo', run => runChecks(ws, run));
@@ -165,8 +182,8 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
       await review(ws, first.reviewId, [finding('scope', 'high', 'gap'), finding('thermo', 'observation', 'naming')]);
       assert.equal((await withRun(ws, 'demo', run => recordReview(ws, run))).kind, 'fix');
       commit(ws, 'fixed.txt');
-      const sha = sh(ws.root, 'rev-parse', 'HEAD');
-      if (green) {
+      let sha = sh(ws.root, 'rev-parse', 'HEAD');
+      if (green !== false) {
         await withRun(ws, 'demo', run => runChecks(ws, run));
         for (let round = 0; round < 2; round++) {
           const opened = await withRun(ws, 'demo', run => startReview(ws, run));
@@ -175,16 +192,21 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
           assert.equal((await withRun(ws, 'demo', run => recordReview(ws, run))).kind, 'green');
         }
       }
+      if (green === 'moved') {
+        commit(ws, 'later.txt');
+        sha = sh(ws.root, 'rev-parse', 'HEAD');
+      }
       const implementer = { ...ctx('sub', 'factory-implementer'), cwd: dir.root };
       const reported = await load().get('factory_implementer_report')?.execute('id', { behaviors: [], checks: [], commits: [`${sha.slice(0, 7)} fix`], fixItems: [`${OBSERVATION}: fixed in ${sha.slice(0, 7)}`], open: [] }, undefined, undefined, implementer);
       const text = reported !== null && typeof reported === 'object' && 'content' in reported && Array.isArray(reported.content) ? JSON.stringify(reported.content) : '';
       assert.match(text, /thermo-naming/);
-      if (green) {
+      if (green === true) {
         assert.match(text, /Recorded as fixed in the ledger/);
         assert.match(text, /No fix item was added because the slice's review is green/);
         assert.doesNotMatch(text, /added to this round's fix items/);
       } else {
         assert.match(text, /added to this round's fix items for the next review's verdict/);
+        assert.doesNotMatch(text, /No fix item was added/);
       }
     });
   }
