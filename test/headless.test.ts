@@ -82,6 +82,15 @@ describe('/factory headless', () => {
     assert.doesNotMatch(sent[0] ?? '', /factory_start/);
   });
 
+  it('carries the headless intake wording in the continuation it sends', async () => {
+    using repo = tempRepo('factory-headless-intake-', CHECKS_OK);
+    const { command, sent } = session(repo.root);
+    await command('headless ticket.md');
+    assert.match(sent[0] ?? '', /conservative reading/);
+    assert.match(sent[0] ?? '', /factory_decide/);
+    assert.doesNotMatch(sent[0] ?? '', /Clarify the issue with the user/);
+  });
+
   it('sends the headless, resume and plain /factory continuations as an agent steer, the only form omp -p dispatches', async () => {
     using repo = tempRepo('factory-headless-cmd-', CHECKS_OK);
     const { command, sent, sentOptions } = session(repo.root);

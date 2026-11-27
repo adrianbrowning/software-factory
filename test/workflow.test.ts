@@ -21,6 +21,7 @@ import {
   reopenSlice,
   resolveBase,
   resumeRun,
+  startRun,
   summarize,
 } from '../src/workflow.ts';
 import { parseRetro, recordRetro } from '../src/retro.ts';
@@ -1831,5 +1832,32 @@ describe('review references', () => {
   it('ships one reference per review domain', () => {
     const missing = REVIEW_DOMAINS.filter(domain => !existsSync(join(REVIEW_REFERENCE_DIR, `${domain}.md`)));
     assert.deepEqual(missing, []);
+  });
+});
+
+describe('nextAction at intake', () => {
+  const pointer = 'The issue text is in issue.md in the run directory: read it there, do not fetch the issue again with gh.';
+  const intakeRun = async (ws: Workspace, mode: Run['mode']) => {
+    await startRun(ws, { feature: 'demo', sessionId: 'session-1', source: { body: 'Do it', kind: 'text', ref: 'pasted', title: 'Demo' } });
+    await step(ws, run => { run.mode = mode; });
+    const run = readRun(ws, 'demo');
+    assert.equal(run.status, 'intake');
+    return run;
+  };
+
+  it('tells a headless run to ask no questions and take the conservative reading', async () => {
+    using ws = workspace();
+    const next = nextAction(await intakeRun(ws, 'headless'));
+    assert.ok(next.includes(pointer));
+    assert.match(next, /ask the user no questions/i);
+    assert.match(next, /conservative reading/);
+    assert.match(next, /factory_decide/);
+    assert.match(next, /factory_plan/);
+    assert.doesNotMatch(next, /Clarify|with the user/);
+  });
+
+  it('keeps the interactive text unchanged', async () => {
+    using ws = workspace();
+    assert.equal(nextAction(await intakeRun(ws, 'interactive')), `${pointer} Clarify the issue with the user, then propose slices with factory_plan.`);
   });
 });

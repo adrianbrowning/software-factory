@@ -894,7 +894,10 @@ const afterImplementer = (slice: Slice) =>
 
 /** The one thing the orchestrator should do next, in words a model can act on. */
 export function nextAction(run: Run): string {
-  if (run.status === 'intake') return 'The issue text is in issue.md in the run directory: read it there, do not fetch the issue again with gh. Clarify the issue with the user, then propose slices with factory_plan.';
+  if (run.status === 'intake') {
+    const step = run.mode === 'headless' ? 'Ask the user no questions: take the narrower, conservative reading of each ambiguity and record it with factory_decide, then propose' : 'Clarify the issue with the user, then propose';
+    return `The issue text is in issue.md in the run directory: read it there, do not fetch the issue again with gh. ${step} slices with factory_plan.`;
+  }
   if (run.status === 'done') {
     if (run.mode === 'headless' && run.landOn === undefined && submittedAfterStackReady(run)) return 'The draft PRs are open; merging stays manual.';
     return run.landOn === undefined
