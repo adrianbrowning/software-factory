@@ -714,6 +714,29 @@ describe('/factory headless start message names the base', () => {
     assert.ok(message.includes('Base: feat/base at '), message);
   });
 
+  it('lists the base commits whatever log.showSignature and color.ui the repository config sets', async () => {
+    using repo = tempRepo('factory-headless-msg-', CHECKS_OK);
+    using verifier = tempDir('factory-gpg-');
+    const program = join(verifier.root, 'gpg');
+    writeFileSync(program, '#!/bin/sh\necho "gpg: fake verification line" >&2\nexit 1\n', { mode: 0o755 });
+    sh(repo.root, 'config', 'log.showSignature', 'true');
+    sh(repo.root, 'config', 'color.ui', 'always');
+    sh(repo.root, 'config', 'gpg.program', program);
+    sh(repo.root, 'switch', '-q', '-c', 'feat/base');
+    const signed = execFileSync('git', ['hash-object', '-t', 'commit', '-w', '--stdin'], {
+      cwd: repo.root,
+      encoding: 'utf8',
+      input: `tree ${sh(repo.root, 'rev-parse', 'HEAD^{tree}')}\nparent ${sh(repo.root, 'rev-parse', 'HEAD')}\nauthor A <a@b.c> 1 +0000\ncommitter A <a@b.c> 1 +0000\ngpgsig -----BEGIN PGP SIGNATURE-----\n \n x\n -----END PGP SIGNATURE-----\n\nsigned work\n`,
+    }).trim();
+    sh(repo.root, 'reset', '-q', '--hard', signed);
+    sh(repo.root, 'switch', '-q', 'main');
+    const { command, sent } = session(repo.root);
+    await command('headless ticket.md --base feat/base');
+    const message = sent[0] ?? '';
+    assert.ok(message.includes(`Commits on feat/base above main:\n${signed.slice(0, 12)} signed work\n`), message);
+    assert.ok(!message.includes('gpg'), message);
+  });
+
   it('with --base lists at most 50 commits and gives the rest as a count and command', async () => {
     using repo = tempRepo('factory-headless-msg-', CHECKS_OK);
     sh(repo.root, 'switch', '-q', '-c', 'feat/base');

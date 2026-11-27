@@ -95,7 +95,7 @@ export async function baseCommitsSection(cwd: string, run: { baseBranch?: string
   const range = `${configured}..${sha.slice(0, 12)}`;
   let out: string;
   try {
-    out = await git(cwd, 'log', '--format=%H %s', `${configured}..${sha}`);
+    out = await git(cwd, 'log', '--no-show-signature', '--no-color', '--format=%H %s', `${configured}..${sha}`);
   } catch {
     return `\nThe base commits could not be listed: git cannot read the range ${range}.`;
   }
