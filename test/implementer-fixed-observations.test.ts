@@ -6,7 +6,7 @@ import { ctx, load } from './extension.ts';
 import { readRun, type Workspace, withRun } from '../src/run.ts';
 import { submitImplementerReport } from '../src/report.ts';
 import { recordReview, runChecks, startReview } from '../src/review.ts';
-import { nextSlice } from '../src/workflow.ts';
+import { needsFullReview, nextSlice } from '../src/workflow.ts';
 import { HEADLESS_FILES, commit, tempRepo, finding, headlessSubmitRun, fixItems, newRun, review, sh, slice, step, workspace } from './helpers.ts';
 
 const OBSERVATION = 'thermo-naming';
@@ -30,6 +30,19 @@ async function redWithObservation(ws: Workspace) {
 
 const report = (ws: Workspace, sha: string, fixItems: string[]) =>
   step(ws, run => submitImplementerReport(ws, run, { behaviors: [], checks: [], commits: [`${sha.slice(0, 7)} fix`], fixItems, open: [] }));
+
+/** Reviews the committed fix (targeted after the red), then, when `full`, runs the full review of the same commit; both green. */
+async function greenReview(ws: Workspace, full: boolean) {
+  await step(ws, run => runChecks(ws, run));
+  const rounds = full ? 2 : 1;
+  for (let round = 0; round < rounds; round++) {
+    const opened = await step(ws, run => startReview(ws, run));
+    const listed = [...fixItems(opened.dataFile).matchAll(/^- `([^`]+)`/gm)].map(match => match[1]!);
+    await review(ws, opened.reviewId, [], [], listed.map(id => ({ id, reason: 'the diff fixes it', status: 'fixed' as const })));
+    assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
+    assert.equal(needsFullReview(readRun(ws, 'demo').slices[0]!), round === 0);
+  }
+}
 
 const state = (ws: Workspace) => {
   const run = readRun(ws, 'demo');
@@ -117,15 +130,11 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
     assert.equal((await report(ws, sha, [`${OBSERVATION}: fixed in ${'a'.repeat(40)}`])).skippedForOpenReview, false);
   });
 
-  it('records a `fixed in <sha>` observation reported after the review returned green, as no review is open then', async () => {
+  it('records a `fixed in <sha>` observation reported after a full green review, as no review is open or follows', async () => {
     using ws = workspace({ maxRounds: 3 });
     const sha = await redWithObservation(ws);
-    await step(ws, run => runChecks(ws, run));
-    const opened = await step(ws, run => startReview(ws, run));
-    const listed = [...fixItems(opened.dataFile).matchAll(/^- `([^`]+)`/gm)].map(match => match[1]!);
-    await review(ws, opened.reviewId, [], [], listed.map(id => ({ id, reason: 'the diff fixes it', status: 'fixed' as const })));
-    assert.equal((await step(ws, run => recordReview(ws, run))).kind, 'green');
-    assert.notEqual(readRun(ws, 'demo').slices[0]?.phase, 'review');
+    await greenReview(ws, true);
+    assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'ready');
     const result = await report(ws, sha, [`${OBSERVATION}: fixed in ${sha.slice(0, 7)}`]);
     assert.deepEqual(result.fixed, ['01-r1:thermo-naming']);
     assert.equal(result.skippedForOpenReview, false);
@@ -133,6 +142,18 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
     assert.deepEqual(ledger.map(entry => [entry.key, entry.placement]), [['01-r1:thermo-naming', 'fixed']]);
     assert.deepEqual(after.unplaced, []);
     assert.deepEqual(after.fixItems, []);
+  });
+
+  it('adds the fix item for a report after a targeted green that still needs a full review, and that review lists it', async () => {
+    using ws = workspace({ maxRounds: 3 });
+    const sha = await redWithObservation(ws);
+    await greenReview(ws, false);
+    const result = await report(ws, sha, [`${OBSERVATION}: fixed in ${sha.slice(0, 7)}`]);
+    assert.deepEqual(result.fixed, ['01-r1:thermo-naming']);
+    assert.equal(result.afterGreen, false);
+    assert.deepEqual(state(ws).slice.fixItems.map(item => item.id), [OBSERVATION]);
+    const opened = await step(ws, run => startReview(ws, run));
+    assert.match(fixItems(opened.dataFile), /thermo-naming/);
   });
 
   for (const green of [false, true]) {
@@ -147,16 +168,19 @@ describe('implementer report records fixed observations', { concurrency: 4 }, ()
       const sha = sh(ws.root, 'rev-parse', 'HEAD');
       if (green) {
         await withRun(ws, 'demo', run => runChecks(ws, run));
-        const opened = await withRun(ws, 'demo', run => startReview(ws, run));
-        const listed = [...fixItems(opened.dataFile).matchAll(/^- `([^`]+)`/gm)].map(match => match[1]!);
-        await review(ws, opened.reviewId, [], [], listed.map(id => ({ id, reason: 'the diff fixes it', status: 'fixed' as const })));
-        assert.equal((await withRun(ws, 'demo', run => recordReview(ws, run))).kind, 'green');
+        for (let round = 0; round < 2; round++) {
+          const opened = await withRun(ws, 'demo', run => startReview(ws, run));
+          const listed = [...fixItems(opened.dataFile).matchAll(/^- `([^`]+)`/gm)].map(match => match[1]!);
+          await review(ws, opened.reviewId, [], [], listed.map(id => ({ id, reason: 'the diff fixes it', status: 'fixed' as const })));
+          assert.equal((await withRun(ws, 'demo', run => recordReview(ws, run))).kind, 'green');
+        }
       }
       const implementer = { ...ctx('sub', 'factory-implementer'), cwd: dir.root };
       const reported = await load().get('factory_implementer_report')?.execute('id', { behaviors: [], checks: [], commits: [`${sha.slice(0, 7)} fix`], fixItems: [`${OBSERVATION}: fixed in ${sha.slice(0, 7)}`], open: [] }, undefined, undefined, implementer);
       const text = reported !== null && typeof reported === 'object' && 'content' in reported && Array.isArray(reported.content) ? JSON.stringify(reported.content) : '';
       assert.match(text, /thermo-naming/);
       if (green) {
+        assert.match(text, /Recorded as fixed in the ledger/);
         assert.match(text, /No fix item was added because the slice's review is green/);
         assert.doesNotMatch(text, /added to this round's fix items/);
       } else {
