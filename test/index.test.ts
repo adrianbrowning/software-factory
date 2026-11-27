@@ -1130,6 +1130,119 @@ describe('used-up fix budget', () => {
       });
     });
 
+    describe('fix file ids the report does not account for', () => {
+      const LINE = /Fix file items the implementer report does not account for: ([^\n]*)\nMessage the implementer \(agent:\/\/<id>\) to resubmit its report with factory_implementer_report, with a line for each of these ids, before factory_review_start\. This is not a fix round; do not call factory_checks again for it\./;
+      const seedItems = (ws: Workspace, ids: string[], olderId?: string) =>
+        withRun(ws, 'demo', current => {
+          const target = current.slices[0]!;
+          target.fixPath = join(ws.root, 'fixes', '01-f2.md');
+          const item = (id: string, path: string) => ({ id, kind: 'check' as const, path, round: 2, summary: id });
+          if (olderId !== undefined) target.fixItems.push(item(olderId, join(ws.root, 'fixes', '01-f1.md')));
+          for (const id of ids) target.fixItems.push(item(id, target.fixPath));
+        });
+      const reportWith = (ws: Workspace, lines: string[]) => {
+        const path = reportPath(ws, 'demo', readRun(ws, 'demo').slices[0]!);
+        const text = readFileSync(path, 'utf8').replace(/Behaviors:/, `Fix file items:\n${lines.map(line => `- ${line}`).join('\n')}\nBehaviors:`);
+        writeFileSync(path, text);
+      };
+      const text = async (call: (name: string, params: unknown) => Promise<unknown>) => ((await call('factory_checks', {})) as Reply).content[0]?.text ?? '';
+
+      it('lists the ids the report lacks, not the ones it accounts for or an earlier fix file holds, and changes nothing else', async () => {
+        await resumeFix({
+          checks: ['test -f g.txt'],
+          report: 'round',
+          then: async (call, ws) => {
+            await seedItems(ws, ['check-f2-1', 'check-f2-2', '01-r1:foo'], 'check-f1-1');
+            reportWith(ws, ['`check-f2-1`: fixed in abc1234', '01-r1:foo fixed in abc1234']);
+            const before = readRun(ws, 'demo').slices[0]!;
+            const reply = await text(call);
+            assert.equal(LINE.exec(reply)?.[1], 'check-f2-2');
+            const after = readRun(ws, 'demo').slices[0]!;
+            assert.deepEqual([after.fixRounds, after.fixItems], [before.fixRounds, before.fixItems]);
+          },
+        });
+      });
+
+      it('matches only a leading id, and ignores ids in other sections', async () => {
+        await resumeFix({
+          report: 'round',
+          then: async (call, ws) => {
+            await seedItems(ws, ['check-f2-1', 'check-f2-2', 'check-f2-3', 'check-f2-4', 'check-f2-5', 'check-f2-6']);
+            reportWith(ws, ['check-f2-1 fixed in abc1234', '`check-f2-2` already fixed', 'check-f2-3: not a defect: flaky host', 'check-f2-10 fixed in abc1234', 'fixed check-f2-4 in abc1234', 'see check-f2-5']);
+            const path = reportPath(ws, 'demo', readRun(ws, 'demo').slices[0]!);
+            writeFileSync(path, readFileSync(path, 'utf8').replace('Fix file items:', '- check-f2-4 fixed in abc1234\nFix file items:').replace(/Open:\n- none/, 'Open:\n- check-f2-6 fixed in abc1234'));
+            const reply = await text(call);
+            assert.equal(LINE.exec(reply)?.[1], 'check-f2-4, check-f2-5, check-f2-6');
+          },
+        });
+      });
+
+      it('does not treat check-f2-10 as accounting for check-f2-1', async () => {
+        await resumeFix({
+          report: 'round',
+          then: async (call, ws) => {
+            await seedItems(ws, ['check-f2-1']);
+            reportWith(ws, ['check-f2-10 fixed in abc1234']);
+            assert.equal(LINE.exec(await text(call))?.[1], 'check-f2-1');
+          },
+        });
+      });
+
+      it('lists none in build mode or when all are accounted for', async () => {
+        await resumeFix({
+          checks: ['test -f g.txt'],
+          report: 'round',
+          then: async (call, ws) => {
+            await seedItems(ws, ['check-f2-1']);
+            const path = reportPath(ws, 'demo', readRun(ws, 'demo').slices[0]!);
+            reportWith(ws, ['check-f2-1 already fixed']);
+            assert.doesNotMatch(await text(call), /does not account for/);
+            await withRun(ws, 'demo', current => { current.slices[0]!.fixFromSha = undefined; });
+            rmSync(path);
+            assert.doesNotMatch(await text(call), /does not account for/);
+          },
+        });
+      });
+
+      it('lists every id when no report is stored', async () => {
+        await resumeFix({
+          checks: ['test -f g.txt'],
+          report: 'none',
+          roundCommits: false,
+          then: async (call, ws) => {
+            await seedItems(ws, ['check-f2-1', 'check-f2-2']);
+            assert.equal(LINE.exec(await text(call))?.[1], 'check-f2-1, check-f2-2');
+          },
+        });
+      });
+
+      it('lists the checked fix file ids when a check fails and when standing results are reused', async () => {
+        await resumeFix({
+          checks: ['test -f g.txt'],
+          report: 'round',
+          then: async (call, ws) => {
+            await seedItems(ws, ['check-f2-1']);
+            const passed = await text(call);
+            assert.match(passed, /All checks passed/);
+            assert.equal(LINE.exec(passed)?.[1], 'check-f2-1');
+            const reused = await text(call);
+            assert.match(reused, /reusing their results/);
+            assert.equal(LINE.exec(reused)?.[1], 'check-f2-1');
+          },
+        });
+        await resumeFix({
+          checks: ['test -f missing.txt'],
+          report: 'round',
+          then: async (call, ws) => {
+            await seedItems(ws, ['check-f2-1']);
+            const failed = await text(call);
+            assert.match(failed, /Checks failed/);
+            assert.equal(LINE.exec(failed)?.[1], 'check-f2-1');
+          },
+        });
+      });
+    });
+
     it('keeps fix without round commits, with a round commit unlisted, without a report, or with a stop report', async () => {
       for (const options of [{ report: 'round', roundCommits: false }, { report: 'old' }, { report: 'none' }, { report: 'stop' }] as const) {
         assert.equal((await resumeFix(options)).phase, 'fix');
