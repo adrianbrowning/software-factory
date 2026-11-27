@@ -45,4 +45,6 @@ An empty `keep` list is a normal result for sound work.
 
 You select findings; their text and severity stay as the domain reviewer wrote them. A fix warning (step 6) is the one text you add, beside the finding.
 
-End with one line: `kept <n>, dropped <n>`. Your final message holds no fix suggestion; a concern about a suggested fix goes in `fixWarnings` (step 6).
+When your own re-check or an advisor note shows a real bug in the diff that no submitted finding describes, you cannot record it with `factory_review_validate`. Write one line per such bug in your final message, before the closing line: `Unsubmitted bug: <path>:<line>: <problem>`. The line states the problem and holds no fix suggestion. It changes no `keep`, `downgrade`, `escalate` or `dropped` list, and it is not a finding.
+
+End with one line, always the last: `kept <n>, dropped <n>`. Your final message holds no fix suggestion, the `Unsubmitted bug:` lines included; a concern about a suggested fix goes in `fixWarnings` (step 6).
