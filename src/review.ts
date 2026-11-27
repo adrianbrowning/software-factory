@@ -805,17 +805,17 @@ async function pairCommits(ws: Workspace, entry: { old: string; tip: string; par
  * branch is then rebased from the commit it was cut from (Slice.cutSha) while that commit is an ancestor of the branch,
  * so a parent commit that a fix round amended or rebased away is not replayed. Without a usable cutSha (older state or a
  * hand rebase), the boundary is the merge-base of the branch and the tip. That lies below rewritten commits, so the
- * rebase may conflict. Nothing happens when the next later branch already holds the tip. A deeper child that is not on
- * its parent is still rebased then, and that adds a restack event. The restart below applies either way. Every later
- * slice's cutSha becomes its parent's new tip. Each child goes from its parent's old tip onto the parent's new tip, so it
- * keeps only its own commits. Every old tip is snapshotted into a backup ref
- * before the first rebase. A child already on its parent's new tip (rebased by hand) stays as it is. A failed rebase
- * puts every branch back at its old tip, pauses the run, and throws. Each later slice that moved, or was not done,
- * goes back to pending (see restartSlice). A moved slice's implementer report is rewritten to the rebased shas: its old
- * own commits pair with the new ones by position, when the counts match and each pair has the same subject. When they
- * do not pair (for example the rebase dropped an empty commit), the report is removed. At the restart a report is kept
- * only when it has at least one Commits item and each of its Commits items names a current own commit of the slice, and is removed otherwise: a branch
- * rebased by hand was not moved here, so its report with the pre-rebase shas is removed.
+ * rebase may conflict. A next later branch that already holds the tip is not rebased, but a deeper child that is not on
+ * its parent still is, and that adds a restack event. Later slices that are not done still go back to pending. Every
+ * later slice's cutSha becomes its parent's new tip. Each child goes from its parent's old tip onto the parent's new tip,
+ * so it keeps only its own commits. Every old tip is snapshotted into a backup ref before the first rebase. A child
+ * already on its parent's new tip (rebased by hand) stays as it is. A failed rebase puts every branch back at its old
+ * tip, pauses the run, and throws. Each later slice that moved, or was not done, goes back to pending (see
+ * restartSlice). A moved slice's implementer report is rewritten to the rebased shas: its old own commits pair with the
+ * new ones by position, when the counts match and each pair has the same subject. When they do not pair (for example
+ * the rebase dropped an empty commit), the report is removed. At the restart a report is kept only when it has at least
+ * one Commits item and each of its Commits items names a current own commit of the slice, and is removed otherwise: a
+ * branch rebased by hand was not moved here, so its report with the pre-rebase shas is removed.
  */
 async function restack(ws: Workspace, run: Run, reopened: Slice, doneSha: string | undefined) {
   const later: { old: string; slice: Slice }[] = [];
@@ -875,8 +875,12 @@ async function restack(ws: Workspace, run: Run, reopened: Slice, doneSha: string
           stuck.length === 0
             ? 'Every later slice branch is back at its old tip'
             : `These branches could not be reset to their old tips: ${stuck.join(', ')}. The old tips are kept in ${later.map(({ slice }) => backup(slice)).join(', ')}`;
+        // The first later branch names its own old parent tip; when it was already on its parent, the failing child does.
+        const firstRebased = child === later[0] || moved.some(({ slice }) => slice === later[0]?.slice);
+        const oldTipOwner = firstRebased ? later[0] : child;
+        const oldTip = firstRebased ? firstOld : parentOld;
         throw new Invalidated(
-          `Restacking ${child.slice.branch} onto the fixed ${child.slice.parentBranch} failed:\n${evidence(error instanceof Error ? error.message : String(error), 2_000)}\n${state}, and the run is paused. The user must resolve the conflict: rebase each later slice branch onto the one below it by hand, bottom up (git rebase --onto <parent> <old parent tip> <branch>). The old parent tip of ${later[0]?.slice.branch} is ${firstOld.slice(0, 12)}. Then /factory resume ${run.feature}. Completing slice ${reopened.id} again keeps the branches that are already on their parent.`,
+          `Restacking ${child.slice.branch} onto the fixed ${child.slice.parentBranch} failed:\n${evidence(error instanceof Error ? error.message : String(error), 2_000)}\n${state}, and the run is paused. The user must resolve the conflict: rebase each later slice branch onto the one below it by hand, bottom up (git rebase --onto <parent> <old parent tip> <branch>). The old parent tip of ${oldTipOwner?.slice.branch} is ${oldTip.slice(0, 12)}. Then /factory resume ${run.feature}. Completing slice ${reopened.id} again keeps the branches that are already on their parent.`,
         );
       }
       moved.push({ ...child, parentOld, parentNew, tip: (await git(ws.root, 'rev-parse', `refs/heads/${child.slice.branch}`)).trim() });

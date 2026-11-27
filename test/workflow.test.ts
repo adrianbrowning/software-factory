@@ -1530,6 +1530,35 @@ describe('reopen', () => {
     assert.match(added[0]?.detail ?? '', new RegExp(`^${fourth} onto ${second}$`));
   });
 
+  it('names the old parent tip of the conflicting deeper child when the first later branch was already current', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    await newRun(ws, [slice('First'), slice('Second', ['First']), slice('Third', ['Second']), slice('Fourth', ['Third'])]);
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'second.txt');
+    const [, second, third, fourth] = readRun(ws, 'demo').slices.map(item => item.branch) as [string, string, string, string];
+    const oldSecond = tip(ws, second);
+    sh(ws.root, 'switch', '-q', '-c', third);
+    commit(ws, 'third.txt');
+    sh(ws.root, 'switch', '-q', '-c', fourth);
+    commit(ws, 'fourth.txt', 'one\n');
+    sh(ws.root, 'switch', '-q', third);
+    commit(ws, 'fourth.txt', 'two\n');
+    sh(ws.root, 'switch', '-q', second);
+    commit(ws, 'extra.txt');
+    sh(ws.root, 'rebase', '-q', '--onto', second, oldSecond, third);
+    sh(ws.root, 'switch', '-q', second);
+    const thirdTip = tip(ws, third);
+    await green(ws);
+    await assert.rejects(
+      step(ws, run => completeSlice(ws, run)),
+      new RegExp(`The old parent tip of ${fourth} is ${thirdTip.slice(0, 12)}`),
+    );
+  });
+
   it('restores every later branch and pauses the run when the restack after a never-reopened slice conflicts', async () => {
     using ws = workspace({ maxRounds: 2 });
     const { second, third, oldThird } = await secondOfThreeWithChange(ws, () => commit(ws, 'third.txt', 'conflict\n'));
