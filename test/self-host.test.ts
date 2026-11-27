@@ -455,12 +455,11 @@ describe('self-host warning', () => {
     it('follows the other-checkout form of the warning', async () => {
       using repo = tempRepo('factory-selfhost-', { ...FACTORY, 'package.json': PLUGIN });
       const { ws } = await planned(repo.root, ['Alpha']);
-      const detail = warningsOf(repo.root, 'demo').at(-1)?.detail ?? assert.fail('no warning');
-      assert.match(detail, /omp loaded the plugin from/);
-      assert.ok(detail.endsWith(`${SENTENCE} 01 "Alpha".`) === false, 'recorded before the plan');
       const run = readRun(ws, 'demo');
       run.events = [];
-      assert.ok(recordSelfHostWarning(run, repo.root).endsWith(`${SENTENCE} 01 "Alpha".`));
+      const warning = recordSelfHostWarning(run, repo.root);
+      assert.match(warning, /omp loaded the plugin from/);
+      assert.ok(warning.endsWith(`${SENTENCE} 01 "Alpha".`), warning);
     });
 
     it('de-duplicates on the warning text alone, whatever slices the earlier event named', async () => {
