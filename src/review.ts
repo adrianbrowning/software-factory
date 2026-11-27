@@ -267,9 +267,11 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
     return `${describeCheck(command, result)} on rerun (first failed (exit ${first.exitCode}) in ${first.durationMs}ms)`;
   };
   const summary = results.map(describe);
-  // Written after the porcelain read above, so the log files never count as a change the checks made to the working tree.
-  const logs = writeFirstAttemptLogs(ws, run, slice, results);
-  if (failed.length === 0 && dirty === '') return { commits, report, unaccounted, unchanged, ...(await passChecks(ws, run, slice, sha, summary, false, logs)) };
+  if (failed.length === 0 && dirty === '') {
+    // Written after the porcelain read above, so the log files never count as a change the checks made to the working tree.
+    const logs = writeFirstAttemptLogs(ws, run, slice, results);
+    return { commits, report, unaccounted, unchanged, ...(await passChecks(ws, run, slice, sha, summary, false, logs)) };
+  }
 
   const records: FixRecord[] = failed.map(entry => {
     const { result } = entry;
