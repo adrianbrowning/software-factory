@@ -380,6 +380,24 @@ describe('batched observation placement', () => {
     assert.match(fix, /thermo-doc/);
   });
 
+  it('a missing-test observation of a slice that already placed one as fixed shows end queue in the reply and factory_place puts it in the end queue', async () => {
+    using dir = repo();
+    const { call, full, ws } = await interactive(dir.root);
+    await full([observation('doc', 'misleading-doc')]);
+    await call('factory_place', { placements: [] });
+    assert.equal(readRun(ws, 'demo').slices[0]?.phase, 'fix');
+    commit(ws, 'more.txt');
+    await withRun(ws, 'demo', run => runChecks(ws, run));
+    await full([]);
+    const text = (await full([observation('test', 'missing-test')])).content[0]?.text ?? '';
+    assert.match(text, /thermo-test[\s\S]*Default placement: end queue/);
+    await call('factory_place', { placements: [] });
+    const run = readRun(ws, 'demo');
+    assert.equal(run.slices[0]?.phase, 'ready');
+    assert.equal(run.waiting.length, 1);
+    assert.equal(run.observations.find(entry => entry.id === 'thermo-test')?.placement, 'carried');
+  });
+
   it('a headless completion with a missing-test observation starts the observation-only fix round and completes after it', async () => {
     using dir = repo();
     const { call, ws } = await headlessSubmitRun(dir.root, ['Feature']);
