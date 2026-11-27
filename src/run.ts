@@ -78,7 +78,7 @@ export const findingSchema = z.object({
     .string()
     .regex(/^[a-z0-9-]+$/)
     .describe('Stable id: {domain}-{kebab-case-title}, no line numbers'),
-  line: z.number().int().positive().optional().describe('New-file line inside one of the diff hunks for this path; omit for file-level findings'),
+  line: z.number().int().positive().optional().describe('New-file line inside one of the new-side hunk ranges listed for this path in CHANGED FILES; omit for file-level findings'),
   path: text.describe('Repo-relative path from the CHANGED FILES list'),
   problem: text.describe('What is wrong and why it matters'),
   severity: z.enum(SEVERITIES),

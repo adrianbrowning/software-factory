@@ -108,6 +108,33 @@ describe('review submissions', { concurrency: 4 }, () => {
     assert.equal(await submit(valid), valid.length);
   });
 
+  it('lists each changed file with the new-side range of each hunk in the data file', async () => {
+    using ws = workspace();
+    commit(ws, 'long.txt', Array.from({ length: 20 }, (_, index) => `line ${index + 1}\n`).join(''));
+    commit(ws, 'many.txt', Array.from({ length: 20 }, (_, index) => `line ${index + 1}\n`).join(''));
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => nextSlice(ws, run));
+    writeFileSync(join(ws.root, 'long.txt'), Array.from({ length: 20 }, (_, index) => `line ${index === 9 ? 'ten' : index + 1}\n`).join(''));
+    writeFileSync(join(ws.root, 'many.txt'), Array.from({ length: 20 }, (_, index) => `line ${index === 0 || index === 19 ? 'x' : index + 1}\n`).join(''));
+    writeFileSync(join(ws.root, 'a b.txt'), 'spaced\n');
+    writeFileSync(join(ws.root, 'bin'), Buffer.from([0, 1, 2, 0]));
+    rmSync(join(ws.root, 'README.md'));
+    commit(ws, 'ok');
+    sh(ws.root, 'add', '-A');
+    sh(ws.root, 'commit', '-qm', 'slice work');
+    await step(ws, run => runChecks(ws, run));
+    const { dataFile } = await step(ws, run => startReview(ws, run));
+    const section = /## CHANGED FILES\n\n([\s\S]*?)\n?$/.exec(readFileSync(dataFile, 'utf8'))?.[1]?.split('\n').sort();
+    assert.deepEqual(section, [
+      '- README.md: (no hunk lines: file-level only)',
+      '- a b.txt: 1-1',
+      '- bin: (no hunk lines: file-level only)',
+      '- long.txt: 7-13',
+      '- many.txt: 1-4, 17-20',
+      '- ok: 1-1',
+    ]);
+  });
+
   it('skips a path-ruled domain only when no changed file could hold its subject', async () => {
     const contents: Record<string, string> = {
       'src/plain.js': "const fs = require('fs');\nmodule.exports = () => fs.readFileSync('reactor.txt');\n",

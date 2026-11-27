@@ -9,10 +9,15 @@ export async function targetedReview(ws: Workspace, targeting: NonNullable<Slice
   const fixDiff = await git(ws.root, '-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--unified=0', fixRange);
   const lines = changedLines(fixDiff, await changedPaths(ws.root, fixRange));
   const commits = (await git(ws.root, 'log', '--oneline', fixRange)).trim();
-  const listedLines = Object.entries(lines).map(([file, ranges]) => `- ${file}: ${ranges.length === 0 ? '(no hunk lines: file-level only)' : ranges.map(([start, end]) => `${start}-${end}`).join(', ')}`);
+  const listedLines = renderChangedLines(lines);
   const targeted = { from: targeting.from, lines };
   const section = `## TARGETED REVIEW\n\nThis review follows review ${targeting.from}. It runs only the domains that blocked it (${targeting.domains.join(', ') || 'none'}) and the domains that always run. Report an observation only on a line the fix changed, listed below; the validator drops any other observation. Blocking findings anywhere in the slice diff still count. A full review of this commit follows once this one is green.\n\nFix diff: the commits since review ${targeting.from} (${targeting.base}):\n\n\`\`\`\n${evidence(commits === '' ? 'none' : commits, 2_000)}\n\`\`\`\n\nChanged lines (new side):\n\n${listedLines.join('\n') || 'None.'}\n\n`;
   return { section, targeted };
+}
+
+/** One `- <path>: <start>-<end>, ...` entry per changed path; a path with no hunks reads `(no hunk lines: file-level only)`. */
+export function renderChangedLines(lines: Record<string, [number, number][]>) {
+  return Object.entries(lines).map(([file, ranges]) => `- ${file}: ${ranges.length === 0 ? '(no hunk lines: file-level only)' : ranges.map(([start, end]) => `${start}-${end}`).join(', ')}`);
 }
 
 export async function changedPaths(root: string, range: string, ...filter: string[]) {
