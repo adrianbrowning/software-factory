@@ -586,7 +586,10 @@ export async function nextSlice(ws: Workspace, run: Run) {
   await requireClean(ws.root, `Cannot start slice ${slice.id}`);
   const exists = (await git(ws.root, 'branch', '--list', slice.branch)).trim() !== '';
   if (exists) await git(ws.root, 'switch', slice.branch);
-  else await git(ws.root, 'switch', '--no-track', '-c', slice.branch, slice.parentBranch);
+  else {
+    await git(ws.root, 'switch', '--no-track', '-c', slice.branch, slice.parentBranch);
+    slice.cutSha = await head(ws.root);
+  }
   const restart = exists && slice.phase === 'checks';
   slice.status = 'active';
   slice.phase = restart ? 'checks' : 'implement';

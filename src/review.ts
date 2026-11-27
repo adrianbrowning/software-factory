@@ -801,9 +801,11 @@ async function pairCommits(ws: Workspace, entry: { old: string; tip: string; par
 
 /**
  * Moves every existing later slice branch onto the completed slice's tip, bottom up, when its parent moved since it was
- * cut: a reopened slice (doneSha is its old tip) or a slice that was never reopened (no doneSha: the merge-base of the next
- * later branch and the tip is the rebase boundary; it is the tip the branch was cut from when fix rounds only added commits,
- * and lies lower, so the rebase may conflict, when they rewrote commits the branch holds; when that branch already holds the tip it is not rebased, but a deeper child not on its parent still is (and then adds a restack event), and the restart below still applies). Each child goes from its parent's old
+ * cut: a reopened slice (doneSha is its old tip) or a slice that was never reopened (no doneSha: the next later branch
+ * is rebased from the commit it was cut from, Slice.cutSha, while that is an ancestor of the branch, so a parent commit a
+ * fix round amended or rebased away is not replayed; without a usable cutSha, older state or a hand rebase, the merge-base
+ * of the branch and the tip is the boundary and lies below rewritten commits, so the rebase may conflict; when that branch
+ * already holds the tip it is not rebased, but a deeper child not on its parent still is (and then adds a restack event), and the restart below still applies). Every later slice's cutSha becomes its parent's new tip. Each child goes from its parent's old
  * tip onto the parent's new tip, so it keeps only its own commits. Every old tip is snapshotted into a backup ref
  * before the first rebase. A child already on its parent's new tip (rebased by hand) stays as it is. A failed rebase
  * puts every branch back at its old tip, pauses the run, and throws. Each later slice that moved, or was not done,
@@ -824,19 +826,24 @@ async function restack(ws: Workspace, run: Run, reopened: Slice, doneSha: string
   let parentNew = await head(ws.root);
   let parentOld = doneSha;
   if (parentOld === undefined) {
-    // A slice that was never reopened has no doneSha: use the merge-base of the later branch and the new tip as the rebase boundary. It is the tip the branch was cut from when fix rounds only added commits; if they rewrote commits the branch holds, it lies lower and the rebase may conflict (restack-conflict path).
+    // A slice that was never reopened has no doneSha: rebase from the commit the first later branch was cut from (cutSha) while it is an ancestor of the branch, so a parent commit a fix round rewrote is not replayed. Without it (older state, or rebased by hand) fall back to the merge-base of the branch and the new tip, which lies below rewritten commits and may then conflict (restack-conflict path).
     const [first] = later;
     if (first === undefined) return;
     // A later branch that already holds the new tip (rebased by hand) needs no rebase, but deeper children and the restart below still apply; its own parentOld is unused because it is on its parent.
-    const current = await git(ws.root, 'merge-base', '--is-ancestor', parentNew, first.old).then(
-      () => true,
-      () => false,
-    );
-    parentOld = current ? first.old : (await git(ws.root, 'merge-base', first.old, parentNew)).trim();
+    const isAncestor = (ancestor: string) =>
+      git(ws.root, 'merge-base', '--is-ancestor', ancestor, first.old).then(
+        () => true,
+        () => false,
+      );
+    const cut = first.slice.cutSha;
+    if (await isAncestor(parentNew)) parentOld = first.old;
+    else if (cut !== undefined && (await isAncestor(cut))) parentOld = cut;
+    else parentOld = (await git(ws.root, 'merge-base', first.old, parentNew)).trim();
   }
   const backup = (slice: Slice) => `refs/factory/${run.feature}/backup/${slice.id}`;
   for (const { old, slice } of later) await git(ws.root, 'update-ref', backup(slice), old);
   const moved: { old: string; slice: Slice; tip: string; parentOld: string; parentNew: string }[] = [];
+  const cuts: { slice: Slice; sha: string }[] = [];
   for (const child of later) {
     const onParent = await git(ws.root, 'merge-base', '--is-ancestor', parentNew, child.old).then(
       () => true,
@@ -871,9 +878,11 @@ async function restack(ws: Workspace, run: Run, reopened: Slice, doneSha: string
       }
       moved.push({ ...child, parentOld, parentNew, tip: (await git(ws.root, 'rev-parse', `refs/heads/${child.slice.branch}`)).trim() });
     }
+    cuts.push({ slice: child.slice, sha: parentNew });
     parentOld = child.old;
     parentNew = (await git(ws.root, 'rev-parse', `refs/heads/${child.slice.branch}`)).trim();
   }
+  for (const { slice, sha } of cuts) slice.cutSha = sha;
   await git(ws.root, 'switch', reopened.branch);
   for (const { slice } of later) await git(ws.root, 'update-ref', '-d', backup(slice));
   for (const entry of moved) {

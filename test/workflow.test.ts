@@ -1475,6 +1475,24 @@ describe('reopen', () => {
     assert.equal(readRun(ws, 'demo').events.filter(event => event.kind === 'restack').length, before);
   });
 
+  it('does not bring back a parent change that a fix round amended away when it restacks a later branch', async () => {
+    using ws = workspace({ maxRounds: 2 });
+    const { second, third, own } = await secondOfThreeWithChange(ws);
+    sh(ws.root, 'rm', '-q', 'second.txt');
+    writeFileSync(join(ws.root, 'bar.txt'), 'bar\n');
+    sh(ws.root, 'add', 'bar.txt');
+    sh(ws.root, 'commit', '-q', '--amend', '--no-edit');
+    await green(ws);
+    await step(ws, run => completeSlice(ws, run));
+
+    execFileSync('git', ['merge-base', '--is-ancestor', tip(ws, second), third], { cwd: ws.root });
+    assert.deepEqual(subjects(ws, `${second}..${third}`), own);
+    const files = sh(ws.root, 'ls-tree', '-r', '--name-only', third).split('\n');
+    assert.ok(files.includes('bar.txt'));
+    assert.ok(!files.includes('second.txt'));
+    assert.equal(readRun(ws, 'demo').slices[2]?.cutSha, tip(ws, second));
+  });
+
   it('restores every later branch and pauses the run when the restack after a never-reopened slice conflicts', async () => {
     using ws = workspace({ maxRounds: 2 });
     const { second, third, oldThird } = await secondOfThreeWithChange(ws, () => commit(ws, 'third.txt', 'conflict\n'));

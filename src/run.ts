@@ -217,6 +217,8 @@ const sliceSchema = sliceInputSchema.extend({
    */
   checked: z.object({ results: z.array(text), sha }).optional(),
   compactions: z.number().int().nonnegative(),
+  /** The parent branch tip this slice's branch was cut from; nextSlice sets it and restack moves it to the parent's new tip. A completing slice that was never reopened restacks its first later branch from here. */
+  cutSha: sha.optional(),
   /** Branch tip when a done slice was reopened; completing it restacks every later slice from this commit. */
   doneSha: sha.optional(),
   fixPath: text.optional(),
