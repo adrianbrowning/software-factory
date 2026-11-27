@@ -175,7 +175,7 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
         );
       }
       const stall = result.stalled ? await decideStall(ctx, ws, feature, 'other') : '';
-      const addBug = '\nTo add a bug no reviewer submitted (for example one an advisor found), call factory_fix with `bug` and `reason` before you spawn the fix-mode implementer.';
+      const addBug = result.stalled ? '' : '\nTo add a bug no reviewer submitted (for example one an advisor found), call factory_fix with `bug` and `reason` before you spawn the fix-mode implementer.';
       return reply(`${result.blocking} blocking findings, ${result.open} open fix items. Fix file: ${result.fixPath}${stall}${addBug}\nNext: ${nextAction(readRun(ws, feature))}`);
     },
   });
