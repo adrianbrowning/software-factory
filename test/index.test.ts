@@ -1177,6 +1177,17 @@ describe('used-up fix budget', () => {
         });
       });
 
+      it('does not treat check-f2-10 as accounting for check-f2-1', async () => {
+        await resumeFix({
+          report: 'round',
+          then: async (call, ws) => {
+            await seedItems(ws, ['check-f2-1']);
+            reportWith(ws, ['check-f2-10 fixed in abc1234']);
+            assert.equal(LINE.exec(await text(call))?.[1], 'check-f2-1');
+          },
+        });
+      });
+
       it('lists none in build mode or when all are accounted for', async () => {
         await resumeFix({
           checks: ['test -f g.txt'],
