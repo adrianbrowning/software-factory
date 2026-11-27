@@ -81,7 +81,8 @@ function recordableFixedClaim(unplaced: Slice['unplaced'], line: string, own: { 
 }
 
 /**
- * True when the slice is green and no review follows: phase 'ready', its last green was full, and the slice branch tip
+ * True when the slice is green and no review follows: phase 'ready', no full review is needed (its last green was full, or a
+ * full green still stands after a targeted one), and the slice branch tip
  * (`own[0]`, ownCommits lists newest first) is still the green commit. A newer commit makes completeSlice drop the pass,
  * so a new checks run and review follow.
  */
