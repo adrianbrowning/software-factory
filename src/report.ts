@@ -218,6 +218,19 @@ function reportSection(ws: Workspace, run: Run, slice: Slice, title: string) {
   return items;
 }
 
+/** The id a Fix file items line starts with: plain or in backticks, an optional colon after it, then whitespace or the line end. */
+const LEADING_ID = /^(`?)([^\s`]+?):?\1:?(?=\s|$)/;
+
+/**
+ * The ids of the slice's current fix file (its fixItems entries whose path is `slice.fixPath`, in fix file order) that no
+ * line of the stored report's Fix file items section starts with; every id when no report is stored. Empty outside a fix round.
+ */
+export function unaccountedFixItems(ws: Workspace, run: Run, slice: Slice) {
+  if (slice.fixFromSha === undefined) return [];
+  const accounted = new Set((reportSection(ws, run, slice, 'Fix file items') ?? []).map(line => LEADING_ID.exec(line)?.[2]));
+  return slice.fixItems.filter(item => item.path === slice.fixPath && !accounted.has(item.id)).map(item => item.id);
+}
+
 /** The Behaviors lines of the slice's stored implementer report (one `<test> → <behavior> (seen red: ...)` line each), or undefined when no report is stored. */
 export function storedBehaviors(ws: Workspace, run: Run, slice: Slice) {
   return reportSection(ws, run, slice, 'Behaviors');

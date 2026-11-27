@@ -51,7 +51,7 @@ import { fixAfterGreen } from './observations.ts';
 import { collectObservations, placeDefaults } from './place.ts';
 import { TEST_PATH } from './test-paths.ts';
 import { changedLines, changedPaths, renderChangedLines, targetedReview } from './targeted.ts';
-import { clearReport, remapReportShas, reportListsCommit, storedBehaviors, storedReport } from './report.ts';
+import { clearReport, remapReportShas, reportListsCommit, storedBehaviors, storedReport, unaccountedFixItems } from './report.ts';
 import { head, ownCommits, porcelain, requireOnBranchClean, snapshot } from './repo.ts';
 import {
   type FixRecord,
@@ -183,6 +183,8 @@ const CLOCK_JUMP_MS = 30_000;
 export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   const slice = requireActive(run);
   const sha = await requireOnBranchClean(ws.root, slice, 'Checks run on committed work only');
+  // Read before a failed check writes the next fix file, so it names the ids of the fix file that was checked.
+  const unaccounted = unaccountedFixItems(ws, run, slice);
   // Read before the refusals, so a stop report submitted before any commit still reaches the orchestrator.
   const report = storedReport(ws, run, slice);
   const own = await ownCommits(ws, slice);
@@ -214,7 +216,7 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   // pending) clears it, so every check runs; a review reopened for newer decisions (reopenReview) or a resume on the
   // same commit keeps its checks.
   const stored = standingChecks(slice, sha);
-  if (stored !== undefined) return { commits, report, unchanged, ...(await passChecks(ws, run, slice, sha, stored, true)) };
+  if (stored !== undefined) return { commits, report, unaccounted, unchanged, ...(await passChecks(ws, run, slice, sha, stored, true)) };
   const results: { command: string; first?: CommandResult; result: CommandResult }[] = [];
   const checkPath = [...ws.config.checkPath, process.env.PATH ?? ''].join(delimiter);
   const env = { ...process.env, PATH: checkPath };
@@ -263,7 +265,7 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
     return `${describeCheck(command, result)} on rerun (first failed (exit ${first.exitCode}) in ${first.durationMs}ms)`;
   };
   const summary = results.map(describe);
-  if (failed.length === 0 && dirty === '') return { commits, report, unchanged, ...(await passChecks(ws, run, slice, sha, summary, false)) };
+  if (failed.length === 0 && dirty === '') return { commits, report, unaccounted, unchanged, ...(await passChecks(ws, run, slice, sha, summary, false)) };
 
   const records: FixRecord[] = failed.map(entry => {
     const { result } = entry;
@@ -283,7 +285,7 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
     [...failed.map(({ command }) => command), ...(dirty === '' ? [] : ['working tree changed'])].join('; '),
     slice,
   );
-  return { commits, passed: false as const, report, sha, summary, unchanged, ...requestFix(ws, run, slice, sha, records) };
+  return { commits, passed: false as const, report, sha, summary, unaccounted, unchanged, ...requestFix(ws, run, slice, sha, records) };
 }
 
 /** Moves the slice to review with check `results` passed on `sha`. `reused` marks stored results that stand, when no check ran. */

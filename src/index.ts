@@ -476,7 +476,10 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
       const unchanged = result.unchanged
         ? '\nNo new commits since the fix file. The implementer report should explain, for each item, why no change was needed.'
         : '';
-      const flagged = await flaggedFilesSection(ws.root);
+      const missing = result.unaccounted.length === 0
+        ? ''
+        : `\nFix file items the implementer report does not account for: ${result.unaccounted.join(', ')}\nMessage the implementer (agent://<id>) to resubmit its report with factory_implementer_report, with a line for each of these ids, before factory_review_start. This is not a fix round; do not call factory_checks again for it.`;
+      const flagged = `${await flaggedFilesSection(ws.root)}${missing}`;
       const newChecks = await newChecksSection(ws.root, result.sha, run.checks);
       if (result.passed) {
         const byPath = result.pathSkipped.length === 0 ? '' : `\nPath rules skip: ${result.pathSkipped.map(entry => `${entry.domain} (${entry.reason})`).join('; ')}. Pass a domain in factory_review_start keep when a changed file holds its subject after all.`;

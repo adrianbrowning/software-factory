@@ -539,6 +539,9 @@ stored implementer report (or no report is stored). The refusal lists those comm
 asks you to message the implementer to resubmit its report with `factory_implementer_report`. The refusal also holds
 after a resume moved the fix round to checks, and after a passed fix round's checks were invalidated (HEAD moved, repository changed), for a commit made after that.
 
+In a fix round the checks reply also lists the ids of the current fix file that the Fix file items of the stored
+implementer report do not account for, without refusing, counting a fix round or rerunning checks.
+
 ## Trust boundaries
 
 The gates stop model mistakes and limit what a misled agent can do. They are not a sandbox:
