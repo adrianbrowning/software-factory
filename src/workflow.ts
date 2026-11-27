@@ -655,6 +655,7 @@ export function startFix(run: Run, slice: Slice, sha: string, written: ReturnTyp
   slice.fixItems.push(...items.map(item => ({ ...item, path: fixPath, round })));
   slice.fixPath = fixPath;
   slice.fixFromSha = sha;
+  slice.redReview = undefined;
   dropPass(slice, 'fix');
   if (!counted) return { fixPath, stalled: false };
   clearFullGreen(slice);
@@ -681,6 +682,7 @@ export async function restartSlice(ws: Workspace, run: Run, slice: Slice) {
   slice.targeting = undefined;
   slice.fixPath = undefined;
   slice.fixFromSha = undefined;
+  slice.redReview = undefined;
   if (!reportNamesOnly(ws, run, slice, own.map(commit => commit.sha))) clearReport(ws, run.feature, slice);
   writeTicket(ws, run, slice);
 }

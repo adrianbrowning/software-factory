@@ -200,7 +200,7 @@ const reviewSchema = z.object({
 
 /**
  * One thing a fix round asked the implementer to fix: a review finding by its id, or a factory-assigned id for a bug
- * (`bug-f<N>`), a reopen reason (`reopen-f<N>`), a failed check (`check-f<N>-<k>`), or a working tree the checks
+ * (`bug-f<N>`, or `bug-f<N>-<n>` for a bug added to a red review's fix file), a reopen reason (`reopen-f<N>`), a failed check (`check-f<N>-<k>`), or a working tree the checks
  * changed (`tree-f<N>`). `path` and `round` name the fix file that asked for it.
  */
 const fixItemSchema = z.object({ id: text, path: text, round: z.number().int().positive(), summary: text });
@@ -222,6 +222,8 @@ const sliceSchema = sliceInputSchema.extend({
   fixPath: text.optional(),
   /** Commit the current fix file describes; checks on the same commit mean the fix round changed nothing. */
   fixFromSha: sha.optional(),
+  /** Id of the red review whose fix file is the slice's current one (`fixPath`); set by a red review, cleared by every other fix file and by restartSlice. factory_fix adds a bug to that fix file only while this is set. */
+  redReview: text.optional(),
   /** Fix items from every fix round since the slice's last recorded review; recording a review clears them, and its fix file asks again for the blocking findings and open items. */
   fixItems: z.array(fixItemSchema).default([]),
   /** Fix files written for the slice, counted or not; the next fix file is `<id>-f<fixFiles + 1>`. `fixRounds` is only the fix budget count. A slice saved without it starts from the higher of `fixRounds` and the N in its retained `fixPath` (`<id>-f<N>.md`); see legacySlice. */

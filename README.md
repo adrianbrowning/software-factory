@@ -152,7 +152,7 @@ tool is allowed and clears the stop-attempt count, so waiting on an answer never
 no such exemption: their stops are still blocked, then paused. When the latest assistant message ended with a provider
 error (`stopReason` `error`), the pause names that error, redacted, as its cause instead of no progress.
 
-When a slice uses up its fix budget (from red checks, a blocking review, `factory_fix` with a bug, or `factory_reopen`; a `factory_fix` round for observations only does not count), a dialog asks whether to
+When a slice uses up its fix budget (from red checks, a blocking review, `factory_fix` with a bug after a green review, or `factory_reopen`; a `factory_fix` round for observations only does not count, and neither does a bug added to a red review's fix file with `bug-f<round>-<n>`), a dialog asks whether to
 continue with `maxRounds` more fix rounds or pause. A paused stall leaves the run stalled, and the tool reply and its
 `Next:` line say so. `/factory resume <feature>` on a stalled run names the slice and its used rounds and asks
 whether to raise the fix budget by `maxRounds` and resume; declining keeps the run stalled.
@@ -263,7 +263,7 @@ Then push your branch. You can delete the slice branches.
 
 ### Fix observations or a bug before a slice is done
 
-After a red review the next review is targeted: the factory runs only the domains that blocked, plus bug, scope and (with seams) testing, and reviewers report observations only on the lines the fix changed. A green targeted review is followed by a full review of the same commit, and `factory_complete_slice` refuses until the last green review is a full one (an observation-only `factory_fix` round after a full green needs only its own targeted review). A bug fix round always needs a full review.
+After a red review the next review is targeted (unless a bug was added to that red review's fix file with `factory_fix`, below, which makes it a full review): the factory runs only the domains that blocked, plus bug, scope and (with seams) testing, and reviewers report observations only on the lines the fix changed. A green targeted review is followed by a full review of the same commit, and `factory_complete_slice` refuses until the last green review is a full one (an observation-only `factory_fix` round after a full green needs only its own targeted review). A bug fix round always needs a full review.
 
 A green review can list non-blocking observations. When you want some of them fixed in the active slice, the
 orchestrator asks you which. When you find a bug in the active slice after its green review, tell the orchestrator.
@@ -280,6 +280,14 @@ names that file with its line and character counts. After you confirm:
   and a slice without a green review. The ids may be observations of any review of the active slice, red ones
   too (the slice's unplaced list). A slice cannot complete with an unplaced observation, so a done slice has none to
   fix; a bug in a slice that is already done goes through `factory_reopen`.
+
+After a red review, before the fix-mode implementer commits, `factory_fix` with only `bug` and `reason` (a bug no
+reviewer submitted, for example one an advisor found) adds the bug to the fix file the red review wrote: one more item
+`bug-f<round>-<n>` under `## Fix items` (`<n>` counts from 1) plus its own section with the reason and the redacted
+bug. No new fix file is written, no fix round is counted, and the slice never stalls from it. The next review is a
+full review, and its scope reviewer gives the item a verdict like any fix item; an open verdict blocks. In that state
+`factory_fix` refuses observation ids (with or without a bug), and refuses a bug once HEAD is past the commit the fix
+file describes (the implementer has committed); each refusal comes before any dialog and names its reason.
 
 ### Carry observations into a later slice
 
@@ -489,7 +497,7 @@ user or plugin agent named `scout`, which replaces omp's bundled `scout`, is rou
 under `issues/`, fix files under `fixes/`, the latest implementer report per slice under `reports/<slice>.md` (with a factory-written `Factory-observed typecheck:` section after `Checks:`: the last unfiltered run of each typecheck command of the run's checks that the factory saw in the implementer's bash calls, or a line saying it saw none), review
 data, per-domain findings, validation and `review.json` under
 `reviews/<slice>-r<n>/`, `confirmed/` (the exact redacted note or bug text each `factory_carry` or `factory_fix` dialog shows, one file per distinct text), and `retro.md`. Each fix file lists its fix items under `## Fix items`: review findings by id,
-and factory-assigned ids for a bug (`bug-f<N>`), a reopen reason (`reopen-f<N>`), a failed check (`check-f<N>-<k>`),
+and factory-assigned ids for a bug (`bug-f<N>`, or `bug-f<N>-<n>` for a bug added to a red review's fix file), a reopen reason (`reopen-f<N>`), a failed check (`check-f<N>-<k>`),
 and a working tree the checks changed (`tree-f<N>`). The section of a comments-domain finding ends with a sibling-comment note: search `src/`, `README.md`, `agents/` and `skills/` for key words of the fact the comment states and fix every other comment the diff makes false for it in the same round. The section of a bug-domain finding ends with a documented-behavior note: if the fix changes behavior that prose states, search `src/`, `README.md`, `agents/` and `skills/` for key words of the changed behavior and fix every doc comment and README, agent or skill statement the fix makes false in the same round. The review data file lists the ticket, then a `## LATER SLICES`
 section with each not-done slice stacked after the reviewed one, in stack order (id, title, what to build, acceptance
 criteria), or says none follows; reviewers and the validator do not count work a later slice lists as a gap in this

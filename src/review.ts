@@ -778,7 +778,9 @@ export async function recordReview(ws: Workspace, run: Run): Promise<RecordedRev
   }
   // No deferred sink step on this path, so nothing can fail between the review and this event: it is added once.
   addEvent(run, 'review-blocking', blockingDetail, slice);
-  return { blocking: blocking.length, kind: 'fix', open: open.length, ...requestFix(ws, run, slice, review.sha, records) };
+  const fixed = requestFix(ws, run, slice, review.sha, records);
+  slice.redReview = review.id;
+  return { blocking: blocking.length, kind: 'fix', open: open.length, ...fixed };
 }
 
 /** A fix item the scope reviewer left open, with where it was asked for and the reviewer's reason. */

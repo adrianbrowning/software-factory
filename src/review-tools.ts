@@ -6,7 +6,8 @@ import { evidenceLine } from './evidence.ts';
 import { confirmInteractive, gate } from './gates.ts';
 import { findingTitle, placeObservations } from './ledger.ts';
 import { defaultChoice, describeChoice, describePlan, placeObservationBatch, placementSchema, planPlace } from './place.ts';
-import { carryObservations, fixAfterGreen, leaveObservations, planCarry, planDefer, planFix, planLeave } from './observations.ts';
+import { addBugToRedFix, carryObservations, fixAfterGreen, leaveObservations, planCarry, planDefer, planFix, planLeave, planRedFix } from './observations.ts';
+import { head } from './repo.ts';
 import { renderFinding, storedNote } from './finding-text.ts';
 import { completeSlice, recordReview, startReview, submitDomain, submitValidation } from './review.ts';
 import { escalateDescription, escalateInputSchema, validationSchema } from './review-record.ts';
@@ -52,7 +53,7 @@ const fixSchema = z.object({
   bug: z
     .string()
     .optional()
-    .describe('A bug the user found in the active slice after its green review, in full, for the fix file. Give it, observations, or both'),
+    .describe('A bug the user found in the active slice after its green review, or a bug no reviewer submitted (for example one an advisor found) to add to a red review\'s fix file before the fix implementer commits, in full, for the fix file. Give it, observations, or both (a red review\'s fix file takes only a bug)'),
   observations: z
     .array(z.string().min(1))
     .optional()
@@ -174,7 +175,8 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
         );
       }
       const stall = result.stalled ? await decideStall(ctx, ws, feature, 'other') : '';
-      return reply(`${result.blocking} blocking findings, ${result.open} open fix items. Fix file: ${result.fixPath}${stall}\nNext: ${nextAction(readRun(ws, feature))}`);
+      const addBug = '\nTo add a bug no reviewer submitted (for example one an advisor found), call factory_fix with `bug` and `reason` before you spawn the fix-mode implementer.';
+      return reply(`${result.blocking} blocking findings, ${result.open} open fix items. Fix file: ${result.fixPath}${stall}${addBug}\nNext: ${nextAction(readRun(ws, feature))}`);
     },
   });
 
@@ -236,13 +238,23 @@ export function registerReviewTools(tool: RunTool, submit: typeof submitHeadless
   tool({
     caller: 'main',
     description:
-      `After a green review, send the active slice back to the fix loop for a bug the user found in it (bug), review observations the user chose to fix in this slice (observations), or both, after the user agreed. Observation ids are unplaced observations of any review of the active slice, red ones too (\`<review>:<id>\` when two reviews kept the same id). Writes a tracked fix file; a round with a bug counts toward the fix budget, an observation-only round does not and never stalls the slice. The slice earns checks and a new review before factory_complete_slice. ${STALL_DESCRIPTION}`,
+      `After a green review, send the active slice back to the fix loop for a bug the user found in it (bug), review observations the user chose to fix in this slice (observations), or both, after the user agreed. After a red review, add a bug no reviewer submitted (for example one an advisor found) to the red review's fix file before the fix implementer commits: one more fix item \`bug-f<round>-<n>\`, no fix round counted, the next review a full review; there factory_fix takes only a bug, not observation ids. Observation ids are unplaced observations of any review of the active slice, red ones too (\`<review>:<id>\` when two reviews kept the same id). Writes a tracked fix file after a green review; a round with a bug counts toward the fix budget, an observation-only round does not and never stalls the slice. The slice earns checks and a new review before factory_complete_slice. ${STALL_DESCRIPTION}`,
     label: 'Factory: fix observations or a bug',
     name: 'factory_fix',
     schema: fixSchema,
     async run(params, { feature, ws }, ctx) {
-      // Refuses a call with neither a bug nor observations, a slice without a green review, an id that is not one of
-      // its observations, without a dialog.
+      // Refuses, without a dialog: after a red review, observation ids and a bug once the implementer committed. Otherwise a call
+      // with neither a bug nor observations, a slice without a green review, an id that is not one of its observations.
+      const headSha = await head(ws.root);
+      const redPlan = planRedFix(readRun(ws, feature), params, headSha);
+      if (redPlan !== undefined) {
+        const body = `${params.reason}\n\n- Bug: ${redPlan.shownBug}\n\nThe bug joins the fix file of red review ${redPlan.review} (${redPlan.fixPath}) as one more fix item. No fix round is counted, and the next review is a full review.\n\n${confirmedTextLine(ws, feature, 'fix-bug', 'bug', redPlan.shownBug)}`;
+        if (!(await gate(ctx, ws, feature, 'fix', `Fix a bug in slice ${redPlan.slice.id} "${redPlan.slice.title}"?`, body))) {
+          return reply(`The user did not add the bug to the fix file. Ask how to handle the bug.\nNext: ${nextAction(readRun(ws, feature))}`);
+        }
+        const added = await withRun(ws, feature, async run => addBugToRedFix(run, params, params.reason, await head(ws.root)));
+        return reply(`Added bug item ${added.id} to the fix file of red review ${redPlan.review} in slice ${redPlan.slice.id}. Fix file: ${added.fixPath}\nNext: ${nextAction(readRun(ws, feature))}`);
+      }
       const planned = planFix(ws, readRun(ws, feature), params);
       const bugRound = planned.items.some(item => item.kind === 'bug');
       const what = planned.items.map(item => item.label).join(', ');
