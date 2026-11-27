@@ -365,6 +365,8 @@ describe('re-slice', () => {
     await newRun(ws, [slice('Big'), slice('After', ['Big'])]);
     const big = await step(ws, run => nextSlice(ws, run));
     commit(ws, 'partial.txt');
+    const cut = readRun(ws, 'demo').slices[0]?.cutSha;
+    assert.match(cut ?? '', /^[0-9a-f]{40}$/);
 
     const first = await step(ws, run => applyReslice(ws, run, planReslice(ws, run, [slice('Big part two', ['Big part one']), slice('Big part one')])));
     const run = readRun(ws, 'demo');
@@ -379,6 +381,7 @@ describe('re-slice', () => {
     assert.equal(sh(ws.root, 'branch', '--show-current'), first.branch);
     assert.match(sh(ws.root, 'log', '--oneline', '-1'), /add partial.txt/);
     assert.equal(sh(ws.root, 'branch', '--list', big?.branch ?? ''), '');
+    assert.equal(run.slices[0]?.cutSha, cut);
   });
 
   it("moves the split slice's decisions to its last child, and other slices keep theirs under their new ids", async () => {

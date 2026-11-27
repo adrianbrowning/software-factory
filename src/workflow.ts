@@ -415,13 +415,14 @@ export function planReslice(ws: Workspace, run: Run, proposed: unknown): Reslice
   first.status = 'active';
   // Carried-in work goes to the first child; moveCarried then hands each later child the items it names in `carried`.
   first.carried = active.carried;
+  first.cutSha = active.cutSha; // the first child keeps the active branch, so it keeps the commit that branch was cut from
   moveCarried(active, childInputs, slices.slice(index, index + children.length), [...run.slices.map(slice => slice.title), ...run.splitTitles]);
   // Unplaced observations of the split slice (red reviews' too) go with its work to the first child.
   first.unplaced = active.unplaced;
   const remap = renumbering(run, active, slices);
   pending.forEach(slice => {
     const remade = remap.get(slice);
-    if (remade !== undefined) remade.carried = slice.carried;
+    if (remade !== undefined) Object.assign(remade, { carried: slice.carried, cutSha: slice.cutSha });
   });
   // Review ids are `<slice id>-r<n>` and the first child keeps the slice id: continue the count so a new review
   // never reuses an old review directory.
