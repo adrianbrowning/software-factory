@@ -286,8 +286,12 @@ reviewer submitted, for example one an advisor found) adds the bug to the fix fi
 `bug-f<round>-<n>` under `## Fix items` (`<n>` counts from 1) plus its own section with the reason and the redacted
 bug. No new fix file is written, no fix round is counted, and the slice never stalls from it. The next review is a
 full review, and its scope reviewer gives the item a verdict like any fix item; an open verdict blocks. In that state
-`factory_fix` refuses observation ids (with or without a bug), and refuses a bug once HEAD is past the commit the fix
-file describes (the implementer has committed); each refusal comes before any dialog and names its reason.
+`factory_fix` refuses observation ids (with or without a bug), refuses a bug once HEAD is past the commit the fix
+file describes (the implementer has committed), and refuses a bug while the slice is stalled (fix budget used up),
+with the same stall notice the other slice tools give; each refusal comes before any dialog, names its reason and
+changes neither the fix file nor the run. The `factory_review_record` reply for a red review that stalled the slice
+leaves out the `factory_fix` bug hint. Each added bug's section heading is
+`## Bug added after red review <review>: <id>`, matching its line under `## Fix items`.
 
 ### Carry observations into a later slice
 
