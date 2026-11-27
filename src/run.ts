@@ -200,7 +200,7 @@ const reviewSchema = z.object({
 
 /**
  * One thing a fix round asked the implementer to fix: a review finding by its id, or a factory-assigned id for a bug
- * (`bug-f<N>`), a reopen reason (`reopen-f<N>`), a failed check (`check-f<N>-<k>`), or a working tree the checks
+ * (`bug-f<N>`, or `bug-f<N>-<n>` for a bug added to a red review's fix file), a reopen reason (`reopen-f<N>`), a failed check (`check-f<N>-<k>`), or a working tree the checks
  * changed (`tree-f<N>`). `path` and `round` name the fix file that asked for it.
  */
 const fixItemSchema = z.object({ id: text, path: text, round: z.number().int().positive(), summary: text });

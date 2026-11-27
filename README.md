@@ -152,7 +152,7 @@ tool is allowed and clears the stop-attempt count, so waiting on an answer never
 no such exemption: their stops are still blocked, then paused. When the latest assistant message ended with a provider
 error (`stopReason` `error`), the pause names that error, redacted, as its cause instead of no progress.
 
-When a slice uses up its fix budget (from red checks, a blocking review, `factory_fix` with a bug, or `factory_reopen`; a `factory_fix` round for observations only does not count), a dialog asks whether to
+When a slice uses up its fix budget (from red checks, a blocking review, `factory_fix` with a bug after a green review, or `factory_reopen`; a `factory_fix` round for observations only does not count, and neither does a bug added to a red review's fix file with `bug-f<round>-<n>`), a dialog asks whether to
 continue with `maxRounds` more fix rounds or pause. A paused stall leaves the run stalled, and the tool reply and its
 `Next:` line say so. `/factory resume <feature>` on a stalled run names the slice and its used rounds and asks
 whether to raise the fix budget by `maxRounds` and resume; declining keeps the run stalled.
@@ -497,7 +497,7 @@ user or plugin agent named `scout`, which replaces omp's bundled `scout`, is rou
 under `issues/`, fix files under `fixes/`, the latest implementer report per slice under `reports/<slice>.md` (with a factory-written `Factory-observed typecheck:` section after `Checks:`: the last unfiltered run of each typecheck command of the run's checks that the factory saw in the implementer's bash calls, or a line saying it saw none), review
 data, per-domain findings, validation and `review.json` under
 `reviews/<slice>-r<n>/`, `confirmed/` (the exact redacted note or bug text each `factory_carry` or `factory_fix` dialog shows, one file per distinct text), and `retro.md`. Each fix file lists its fix items under `## Fix items`: review findings by id,
-and factory-assigned ids for a bug (`bug-f<N>`), a reopen reason (`reopen-f<N>`), a failed check (`check-f<N>-<k>`),
+and factory-assigned ids for a bug (`bug-f<N>`, or `bug-f<N>-<n>` for a bug added to a red review's fix file), a reopen reason (`reopen-f<N>`), a failed check (`check-f<N>-<k>`),
 and a working tree the checks changed (`tree-f<N>`). The section of a comments-domain finding ends with a sibling-comment note: search `src/`, `README.md`, `agents/` and `skills/` for key words of the fact the comment states and fix every other comment the diff makes false for it in the same round. The section of a bug-domain finding ends with a documented-behavior note: if the fix changes behavior that prose states, search `src/`, `README.md`, `agents/` and `skills/` for key words of the changed behavior and fix every doc comment and README, agent or skill statement the fix makes false in the same round. The review data file lists the ticket, then a `## LATER SLICES`
 section with each not-done slice stacked after the reviewed one, in stack order (id, title, what to build, acceptance
 criteria), or says none follows; reviewers and the validator do not count work a later slice lists as a gap in this
