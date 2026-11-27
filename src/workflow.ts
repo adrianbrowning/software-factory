@@ -621,18 +621,15 @@ export function requestFix(ws: Workspace, run: Run, slice: Slice, sha: string, r
   return startFix(run, slice, sha, writeFixFile(ws, run, slice, records), counted);
 }
 
-/** Writes the next round's fix file, touching neither run nor slice, so a failed write changes nothing. */
+/** Writes the next round's fix file, touching neither run nor slice, so a failed write changes nothing. An id two records share (finding ids are unique per review only) is listed once; both sections stay. */
 export function writeFixFile(ws: Workspace, run: Run, slice: Slice, records: FixRecord[]) {
   const round = slice.fixFiles + 1;
   let checks = 0;
-  const items = records
-    .map(({ item }) => {
-      if ('id' in item) return item;
-      const id = item.kind === 'check' ? `check-f${round}-${++checks}` : `${item.kind}-f${round}`;
-      return { id, summary: item.summary };
-    })
-    // A finding id is unique only within one review, so records of two reviews can share one; the id is listed once, both sections stay.
-    .filter((item, index, all) => all.findIndex(other => other.id === item.id) === index);
+  const items = records.map(({ item }) => {
+    if ('id' in item) return item;
+    const id = item.kind === 'check' ? `check-f${round}-${++checks}` : `${item.kind}-f${round}`;
+    return { id, summary: item.summary };
+  }).filter((item, index, all) => all.findIndex(other => other.id === item.id) === index);
   const parts: string[] = [];
   records.forEach(({ group, section }, index) => {
     if (group === undefined) parts.push(section);
