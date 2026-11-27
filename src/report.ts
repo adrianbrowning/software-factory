@@ -68,6 +68,19 @@ function commitPrefix(item: string) {
 const FIXED_LINE = /^(`?)([^\s`]+?):?\1:?\s+fixed in ([0-9a-f]{7,40})\b/i;
 
 /**
+ * The entry a fixItems line claims as fixed: the line matches FIXED_LINE, its sha prefix starts one of the slice's own
+ * commits, and its id names exactly one entry of `unplaced`. Undefined for any other line.
+ */
+function recordableFixedClaim(unplaced: Slice['unplaced'], line: string, own: { sha: string }[]) {
+  const match = FIXED_LINE.exec(line);
+  const prefix = match?.[3]?.toLowerCase();
+  if (match === null || prefix === undefined || !own.some(commit => commit.sha.startsWith(prefix))) return undefined;
+  const found = findUnplaced({ unplaced }, match[2] ?? '');
+  const entry = found.length === 1 ? found[0] : undefined;
+  return entry === undefined ? undefined : { entry, sha: match[3] };
+}
+
+/**
  * Records each observation unplaced on the slice that a fixItems line names with `fixed in <sha>` (a commit of the slice) as
  * placed `fixed`, and adds it as a fix item of the current round so the next review's scope reviewer gives it a verdict.
  * Other lines, unknown or ambiguous ids and other shas change nothing. Returns the ids recorded.
@@ -75,20 +88,17 @@ const FIXED_LINE = /^(`?)([^\s`]+?):?\1:?\s+fixed in ([0-9a-f]{7,40})\b/i;
 function recordFixedObservations(run: Run, slice: Slice, fixItems: string[], own: { sha: string }[]) {
   const recorded: string[] = [];
   // Ids resolve against the list as the report found it, so an earlier line cannot make a later bare id unambiguous.
-  const initial = { unplaced: [...slice.unplaced] };
+  const initial = [...slice.unplaced];
   const placed = new Set<string>();
   for (const line of fixItems) {
-    const match = FIXED_LINE.exec(line);
-    const prefix = match?.[3]?.toLowerCase();
-    if (match === null || prefix === undefined || !own.some(commit => commit.sha.startsWith(prefix))) continue;
-    const found = findUnplaced(initial, match[2] ?? '');
-    const entry = found.length === 1 ? found[0] : undefined;
-    if (entry === undefined) continue;
+    const claim = recordableFixedClaim(initial, line, own);
+    if (claim === undefined) continue;
+    const { entry } = claim;
     const key = itemKey(entry.review, entry.finding.id);
     if (placed.has(key)) continue;
     placed.add(key);
     placeObservations(run, { id: entry.review }, slice, [entry.finding], 'fixed');
-    addEvent(run, 'fixed-by-implementer', `${entry.review}: ${entry.finding.id} fixed in ${match[3]}`, slice);
+    addEvent(run, 'fixed-by-implementer', `${entry.review}: ${entry.finding.id} fixed in ${claim.sha}`, slice);
     if (slice.fixPath !== undefined) {
       const { item } = findingRecord(entry.finding, '', run.decisions);
       // Two reviews can keep the same id: the later one is listed as `<review>:<id>`, so each gets its own verdict.
@@ -170,7 +180,7 @@ export async function submitImplementerReport(ws: Workspace, run: Run, report: I
   // An open review's data file already lists the fix items its scope reviewer must judge; adding more would leave it unable to give them.
   const reviewOpen = reviewIsOpen(slice);
   const fixed = fixMode && report.fixItems !== undefined && !reviewOpen ? recordFixedObservations(run, slice, report.fixItems, own) : [];
-  const skippedForOpenReview = fixMode && reviewOpen && report.fixItems?.some(line => FIXED_LINE.test(line)) === true;
+  const skippedForOpenReview = fixMode && reviewOpen && report.fixItems?.some(line => recordableFixedClaim(slice.unplaced, line, own) !== undefined) === true;
 
   return { fixed, observed, path, replaced, skippedForOpenReview };
 }
