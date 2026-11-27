@@ -9,7 +9,7 @@ import { forgetRun, readRun, runDir, saveRun, statePath } from '../src/run.ts';
 import { loadSource } from '../src/gates.ts';
 import { fetchGithubIssue, githubSource, sourceInputSchema } from '../src/source.ts';
 import { resetModuleState } from '../src/index.ts';
-import { headlessTarget } from '../src/headless-target.ts';
+import { baseCommitsSection, headlessTarget } from '../src/headless-target.ts';
 import { issueGh, prependPath, sh, slice, tempDir, tempRepo } from './helpers.ts';
 
 const CHECKS_OK = { '.omp/factory.json': JSON.stringify({ baseRef: 'main', checks: ['test -f ok'] }), 'ticket.md': '# Add the widget\n\nBuild it.\n' };
@@ -742,5 +742,19 @@ describe('/factory headless start message names the base', () => {
     const { command, sent } = session(repo.root);
     await command('headless ticket.md --base feat/base');
     assert.match(sent[0] ?? '', /base commits could not be listed.*nope\/missing\.\./);
+  });
+
+  it('lists a SHA-256 repository commit as sha12 and subject', async () => {
+    using repo = tempDir('factory-headless-sha256-', root => {
+      sh(root, 'init', '-q', '--object-format=sha256', '-b', 'main');
+      sh(root, 'config', 'user.email', 'a@b.c');
+      sh(root, 'config', 'user.name', 'a');
+      sh(root, 'commit', '-q', '--allow-empty', '-m', 'trunk');
+      sh(root, 'switch', '-q', '-c', 'feat/base');
+      sh(root, 'commit', '-q', '--allow-empty', '-m', 'on base');
+    });
+    const sha = sh(repo.root, 'rev-parse', 'HEAD');
+    const section = await baseCommitsSection(repo.root, { baseBranch: 'feat/base', baseSha: sha }, 'main');
+    assert.equal(section, `\nCommits on feat/base above main:\n${sha.slice(0, 12)} on base`);
   });
 });

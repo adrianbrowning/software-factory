@@ -101,7 +101,7 @@ export async function baseCommitsSection(cwd: string, run: { baseBranch?: string
   }
   const commits = out.split('\n').filter(line => line !== '');
   if (commits.length === 0) return '';
-  const lines = commits.slice(0, BASE_COMMITS_MAX).map(line => `${line.slice(0, 12)}${line.slice(40)}`);
+  const lines = commits.slice(0, BASE_COMMITS_MAX).map(line => `${line.slice(0, 12)}${line.slice(line.indexOf(' '))}`);
   const rest = commits.length - lines.length;
   if (rest > 0) lines.push(`${rest} more commit${rest === 1 ? '' : 's'} not listed; run \`git log ${range}\` to see them.`);
   return `\nCommits on ${branch} above ${configured}:\n${lines.join('\n')}`;
