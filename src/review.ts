@@ -14,13 +14,14 @@ import {
   activeSlice,
   addEvent,
   builtBy,
+  replacesMark,
   clearFullGreen,
   clearGreen,
   discardReview,
   dropPass,
   greenCommit,
   outdatedGreenCount,
-  isAutonomous,
+  isActiveAutonomous, isAutonomous,
   OBSERVATION_CATEGORIES,
   type Decision,
   type Domain,
@@ -66,33 +67,41 @@ import {
   writeTicket,
 } from './workflow.ts';
 
-/** One decision for factory_decide: its text, or its text and the id of the pending or active slice that builds it. */
+/** One decision for factory_decide: its text, or its text with the id of the pending or active slice that builds it and the numbers of the earlier decisions it replaces. */
 export const decisionInputSchema = z.union([
   z.string().min(1),
   z.object({
-    slice: sliceIdSchema.describe('Id of the pending or active slice that builds this decision, for example "03"'),
+    slice: sliceIdSchema.optional().describe('Id of the pending or active slice that builds this decision, for example "03"'),
+    supersedes: z.array(z.number().int()).min(1).optional().describe('Numbers of the earlier decisions this decision replaces'),
     text: z.string().min(1),
   }),
 ]);
 
-/**
- * The decisions as text, each with the slice that builds it, if it names one. Throws for an empty list and for a slice
- * that is unknown or done. Does not change the run.
- */
+/** The decisions as text, each with its builder slice and replaced numbers, if any. Throws for an empty list, an unknown or done slice, and a supersedes number not recorded before this call, already replaced, or named twice. Does not change the run. */
 export function planDecisions(run: Run, decisions: unknown) {
-  return z.array(decisionInputSchema).min(1).parse(decisions).map(decision => {
-    if (typeof decision === 'string') return { owner: undefined, text: decision };
-    const owner = run.slices.find(slice => slice.id === decision.slice);
-    if (owner === undefined) throw new Error(`No slice ${decision.slice}. Slices: ${run.slices.map(slice => slice.id).join(', ') || 'none'}.`);
-    if (owner.status === 'done') throw new Error(`Slice ${owner.id} is done; a decision names a pending or active slice to build it.`);
-    return { owner, text: decision.text };
+  const replaced = new Set(run.decisions.flatMap(decision => decision.supersedes ?? []));
+  const named = new Set<number>();
+  return z.array(decisionInputSchema).min(1).parse(decisions).map(input => {
+    const decision: { slice?: string | undefined; supersedes?: number[] | undefined; text: string } = typeof input === 'string' ? { text: input } : input;
+    for (const number of decision.supersedes ?? []) {
+      if (number < 1 || number > run.decisions.length) throw new Error(`supersedes: decision ${number} is not a decision recorded before this call (${run.decisions.length} recorded).`);
+      if (replaced.has(number)) throw new Error(`supersedes: decision ${number} is already replaced by an earlier decision.`);
+      if (named.has(number)) throw new Error(`supersedes: decision ${number} is named twice in this call.`);
+      named.add(number);
+    }
+    const owner = decision.slice === undefined ? undefined : run.slices.find(slice => slice.id === decision.slice);
+    if (decision.slice !== undefined && owner === undefined) throw new Error(`No slice ${decision.slice}. Slices: ${run.slices.map(slice => slice.id).join(', ') || 'none'}.`);
+    if (owner?.status === 'done') throw new Error(`Slice ${owner.id} is done; a decision names a pending or active slice to build it.`);
+    return { owner, supersedes: decision.supersedes, text: decision.text };
   });
 }
 
 /**
  * Records decisions for the run (accepted tradeoffs, out-of-scope work) so every later ticket and review
  * data file carries them. A user's decision has author `user`; a headless run records its own as `autonomous`.
- * Reviewers check the code against them: they report code that breaks a decision, and do not re-raise a tradeoff
+ * A decision item may carry `supersedes`, the numbers of earlier decisions it replaces; tickets and review data mark
+ * those as replaced (no longer in force), and reviewers do not check the code against them or ask for what they said.
+ * Reviewers check the code against the decisions in force (not replaced ones): they report code that breaks a decision, and do not re-raise a tradeoff
  * the user accepted. An autonomous decision is checked, not a waiver. A decision that names a slice belongs to it: slices before it
  * mark the decision as built later. An open review of the active slice froze the older decisions,
  * so it is discarded and `discarded` names it; a green review did not see them either, so the slice goes back to
@@ -100,12 +109,12 @@ export function planDecisions(run: Run, decisions: unknown) {
  */
 export function recordDecisions(ws: Workspace, run: Run, decisions: unknown) {
   const added = planDecisions(run, decisions);
-  for (const { owner, text } of added) {
-    run.decisions.push({ author: run.mode === 'headless' ? 'autonomous' : 'user', text });
+  for (const { owner, supersedes, text } of added) {
+    run.decisions.push({ author: run.mode === 'headless' ? 'autonomous' : 'user', text, ...(supersedes === undefined ? {} : { supersedes }) });
     owner?.ownsDecisions.push(run.decisions.length);
   }
   for (const slice of run.slices.filter(candidate => candidate.status !== 'done')) writeTicket(ws, run, slice);
-  addEvent(run, 'decision', added.map(({ owner, text }) => (owner === undefined ? text : `${text} (${builtBy(owner)})`)).join('; '));
+  addEvent(run, 'decision', added.map(({ owner, supersedes, text }) => `${text}${owner === undefined ? '' : ` (${builtBy(owner)})`}${replacesMark(supersedes)}`).join('; '));
   const active = activeSlice(run);
   if (active === undefined) return { decisions: run.decisions, discarded: undefined };
   const discarded = discardReview(run, active, 'decisions recorded during review');
@@ -603,7 +612,7 @@ function checkCoverage(findings: Finding[], validation: Validation, decisionCoun
   };
   const usesAutonomous = validation.dropped.filter(entry => {
     const dropped = byId.get(entry.id);
-    if (dropped === undefined || dropped.severity === 'observation' || !isAutonomous(decisions, dropped.decision)) return false;
+    if (dropped === undefined || dropped.severity === 'observation' || !isActiveAutonomous(decisions, dropped.decision)) return false;
     return entry.duplicateOf === undefined || keptBlockingDecision(entry.duplicateOf) !== dropped.decision;
   });
   if (usesAutonomous.length > 0) {

@@ -9,7 +9,7 @@ import { isRecordSlice, recordFailed, waitsForRecord } from './deferred.ts';
 import { requireFeatureName } from './feature-name.ts';
 import {
   activeSlice, addEvent, builtBy, discardReview, clearFullGreen, dropPass, greenCommit, hasPass, outdatedGreenCount,
-  runDir, type Run, reviewDomains, reviewIsOpen, reviewPaths, saveRun, type Slice, type SliceInput, resliceItemSchema,
+  replacesMark, runDir, type Run, reviewDomains, reviewIsOpen, reviewPaths, saveRun, type Slice, type SliceInput, resliceItemSchema,
   sliceInputSchema, standingChecks, type Source, sourceSchema, statePath, reviewDir, ticketPath, type Workspace,
   requireActive, requireNotStalled, reportFile, stallNotice, writeAtomic,
   filed, needsFullReview,
@@ -236,10 +236,7 @@ function makeSlice(ws: Workspace, run: Run, input: SliceInput, index: number, pa
   };
 }
 
-/**
- * Numbered, so a validator can name the decision a finding conflicts with. A decision a later slice than `slice` builds
- * is marked with that slice, so this slice's reviewers do not count it as a gap.
- */
+/** Numbered, so a validator can name the decision a finding conflicts with. A decision a later slice than `slice` builds is marked with that slice; a replaced decision and its replacer are marked, so reviewers do not ask for what a replaced decision said. */
 function renderDecisions(run: Run, slice: Slice) {
   if (run.decisions.length === 0) return 'None recorded.';
   const later = run.slices.slice(run.slices.indexOf(slice) + 1);
@@ -248,7 +245,8 @@ function renderDecisions(run: Run, slice: Slice) {
       const owner = later.find(item => item.ownsDecisions.includes(index + 1));
       const mark = owner === undefined ? '' : ` ${builtBy(owner, 'Built')}: this slice need not build it; report only code that contradicts it.`;
       const author = decision.author === 'autonomous' ? ' [AUTONOMOUS: made by a headless run without the user; check the code against it, it is not a waiver]' : '';
-      return `${index + 1}. ${decision.text}${author}${mark}`;
+      const by = run.decisions.findIndex(item => item.supersedes?.includes(index + 1)) + 1;
+      return `${index + 1}. ${decision.text}${author}${mark}${replacesMark(decision.supersedes)}${by === 0 ? '' : ` [REPLACED by decision ${by}: no longer in force; do not check the code against it or ask for what it said]`}`;
     })
     .join('\n');
 }

@@ -931,6 +931,71 @@ describe('factory_decide', () => {
     assert.deepEqual(confirms, []);
     assert.deepEqual(readRun(ws, 'demo'), before);
   });
+
+  it('marks a superseded decision as replaced and the superseding one as replacing, in tickets, review data, the dialog and the event', async () => {
+    using repo = tempRepo('factory-decide-supersedes-', CHECKS_OK);
+    const { call, confirms, ws } = await sliceAtCommit(repo.root);
+    const replaced = (by: number) => `[REPLACED by decision ${by}: no longer in force; do not check the code against it or ask for what it said]`;
+
+    await call('factory_decide', { decisions: ['Old one.', 'Old two.', 'Old three.'] });
+    const reply = (await call('factory_decide', { decisions: [{ supersedes: [1], text: 'New one.' }, { supersedes: [2, 3], text: 'New two.' }] })) as { content: { text: string }[] };
+    assert.match(reply.content[0]?.text ?? '', /^Decisions recorded \(5 in total\)\. Reviews from now on include them\.\nNext: /);
+    assert.match(confirms.at(-1) ?? '', /^- New one\. \(replaces decision 1\)\n- New two\. \(replaces decisions 2, 3\)$/);
+    const run = readRun(ws, 'demo');
+    assert.deepEqual(run.decisions.map(item => item.supersedes), [undefined, undefined, undefined, [1], [2, 3]]);
+    assert.equal(run.events.at(-1)?.detail, 'New one. (replaces decision 1); New two. (replaces decisions 2, 3)');
+    const lines = (text: string) => [
+      `1. Old one. ${replaced(4)}`,
+      `2. Old two. ${replaced(5)}`,
+      `3. Old three. ${replaced(5)}`,
+      '4. New one. (replaces decision 1)',
+      '5. New two. (replaces decisions 2, 3)',
+    ].map(line => text.includes(`\n${line}\n`) ? '' : line);
+    const ticket = readFileSync(ticketPath(ws, 'demo', run.slices[0] ?? assert.fail('no slice')), 'utf8');
+    assert.deepEqual(lines(ticket).filter(Boolean), []);
+
+    await withRun(ws, 'demo', current => runChecks(ws, current));
+    const { dataFile } = await withRun(ws, 'demo', current => startReview(ws, current));
+    assert.deepEqual(lines(readFileSync(dataFile, 'utf8')).filter(Boolean), []);
+  });
+
+  it('refuses a supersedes number that is out of range, already superseded or named twice, before the dialog and without recording', async () => {
+    using repo = tempRepo('factory-decide-supersedes-refuse-', CHECKS_OK);
+    const { call, confirms, ws } = await sliceAtCommit(repo.root);
+    await call('factory_decide', { decisions: ['Old.'] });
+    await call('factory_decide', { decisions: [{ supersedes: [1], text: 'New.' }] });
+    const before = readRun(ws, 'demo');
+    const dialogs = confirms.length;
+
+    await assert.rejects(call('factory_decide', { decisions: [{ supersedes: [0], text: 'Zero.' }] }), /decision 0/);
+    await assert.rejects(call('factory_decide', { decisions: [{ supersedes: [3], text: 'Not yet recorded.' }] }), /decision 3/);
+    await assert.rejects(call('factory_decide', { decisions: [{ supersedes: [1], text: 'Again.' }] }), /decision 1 .*already/);
+    await assert.rejects(call('factory_decide', { decisions: [{ supersedes: [2, 2], text: 'Twice.' }] }), /decision 2 .*twice/);
+    await assert.rejects(call('factory_decide', { decisions: [{ supersedes: [2], text: 'A.' }, { supersedes: [2], text: 'B.' }] }), /decision 2 .*twice/);
+    assert.equal(confirms.length, dialogs);
+    assert.deepEqual(readRun(ws, 'demo'), before);
+  });
+
+  it('accepts { text, slice, supersedes } and shows the built-by mark with replaces on the replacing decision in an earlier ticket', async () => {
+    using repo = tempRepo('factory-decide-supersedes-owner-', CHECKS_OK);
+    const { call, ws } = await sliceAtCommit(repo.root, ['First', 'Second']);
+    await call('factory_decide', { decisions: ['Old.'] });
+    await call('factory_decide', { decisions: [{ slice: '02', supersedes: [1], text: 'New.' }] });
+    const run = readRun(ws, 'demo');
+    const ticket = readFileSync(ticketPath(ws, 'demo', run.slices[0] ?? assert.fail('no slice')), 'utf8');
+    assert.ok(ticket.includes('\n1. Old. [REPLACED by decision 2: no longer in force; do not check the code against it or ask for what it said]\n'), ticket);
+    assert.ok(ticket.includes(`\n2. New. ${BUILT_BY_SECOND} (replaces decision 1)\n`), ticket);
+  });
+
+  it('shows both the built-by and the replaced mark on a replaced decision owned by a later slice', async () => {
+    using repo = tempRepo('factory-decide-supersedes-replaced-owned-', CHECKS_OK);
+    const { call, ws } = await sliceAtCommit(repo.root, ['First', 'Second']);
+    await call('factory_decide', { decisions: [{ slice: '02', text: 'Old.' }] });
+    await call('factory_decide', { decisions: [{ supersedes: [1], text: 'New.' }] });
+    const run = readRun(ws, 'demo');
+    const ticket = readFileSync(ticketPath(ws, 'demo', run.slices[0] ?? assert.fail('no slice')), 'utf8');
+    assert.ok(ticket.includes(`\n1. Old. ${BUILT_BY_SECOND} [REPLACED by decision 2: no longer in force; do not check the code against it or ask for what it said]\n`), ticket);
+  });
 });
 
 describe('factory_checks', () => {
