@@ -67,7 +67,7 @@ export function failedTestFiles(result: CommandResult) {
 
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
-/** The template with every `{files}` replaced by `"$@"`, after a `set --` prefix that holds the files single-quoted: the output text never enters the template, so it never runs as shell code whatever quoting the template puts around `{files}` (a quoted placeholder may get wrong arguments). */
+/** The template with every `{files}` replaced by `"$@"`, after a `set --` prefix that holds the files single-quoted: the output text never enters the command text the factory builds, and the outer `sh -c` gets each file as one literal argument whatever quoting the template puts around `{files}` (a quoted placeholder may get wrong arguments). Limit: a template that hands its arguments to a second shell interpreter as command text (`sh -c "echo {files}"`, `sh -c {files}`, `eval {files}`) makes that interpreter parse the file text as shell code. Safe nested form: the inner shell reads the files as its own positional parameters, with `{files}` outside the inner command string: `sh -c 'cd packages/tests && vitest run "$@"' sh {files}`. */
 export function targetedCommand(template: string, files: string[]) {
   return `set -- ${files.map(shellQuote).join(' ')}; ${template.replaceAll('{files}', () => '"$@"')}`;
 }

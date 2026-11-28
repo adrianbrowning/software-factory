@@ -194,6 +194,16 @@ describe('factory_checks targeted rerun of failed test files', () => {
     });
   }
 
+  it('passes a parsed file as one literal argument through the safe nested-shell template', async () => {
+    const t = await setup({ template: `sh -c 'sh .git/targeted.sh "$@"' sh {files}`, output: 'FAIL test/$(touch${IFS}pwned).test.ts\n' });
+    using ws = t.ws;
+    assert.ok((await step(ws, run => runChecks(ws, run))).passed);
+    assert.equal(t.targetedRuns(), 1);
+    assert.deepEqual(t.targetedArgs(), ['test/$(touch${IFS}pwned).test.ts']);
+    assert.equal(existsSync(join(ws.root, 'pwned')), false);
+    assert.equal(existsSync(join(ws.root, '.git', 'pwned')), false);
+  });
+
   it('takes the FAIL path up to the first " > ", " (", " [" or the line end', async () => {
     const output = 'FAIL test/my dir/b.test.ts > s\nFAIL  test/c.test.ts [ test/c.test.ts ]\nFAIL test/d.test.ts [chromium]\nFAIL app/[id]/page.test.ts\n';
     const t = await setup({ output });
