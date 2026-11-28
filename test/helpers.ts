@@ -82,6 +82,8 @@ export function workspace(overrides: Partial<FactoryConfig> = {}): Workspace & D
       headlessMaxRounds: 3,
       maxRounds: 1,
       models: {},
+      rerunFiles: {},
+      rerunFilesTries: 3,
       scratchDir: '.scratch',
       sliceTokenBudget: 1_000,
       trunk: 'main',

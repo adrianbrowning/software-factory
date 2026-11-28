@@ -4,7 +4,7 @@ import { redact } from './evidence.ts';
 import { runDir, type Run, type Slice, type Workspace, writeAtomic } from './run.ts';
 
 /** A check command and its runs: `first` is the failed first attempt of a check that ran again, `result` the last run. */
-export type CheckRun = { command: string; first?: CommandResult; result: CommandResult };
+export type CheckRun = { command: string; first?: CommandResult; result: CommandResult; targeted?: { files: string[]; passedOn: number; tries: number } };
 
 /**
  * Keeps the first attempt's output of each check that failed and then passed on its rerun, in

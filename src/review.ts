@@ -6,10 +6,11 @@ import { readFileSync, rmSync } from 'node:fs';
 import { delimiter, join } from 'node:path';
 import { z } from 'zod';
 import { type CheckRun, writeFirstAttemptLogs } from './check-log.ts';
-import { evidence, evidenceLine, redact } from './evidence.ts';
+import { describeCheck, rerunFailedChecks } from './check-rerun.ts';
+import { evidence, redact } from './evidence.ts';
 import { deferItems, draftOf, isRecordSlice, itemKey } from './deferred.ts';
 import { CARRIED_HERE, renderKnownObservations } from './ledger.ts';
-import { git, runShell, type CommandResult } from './exec.ts';
+import { git, runShell } from './exec.ts';
 import {
   activeSlice,
   addEvent,
@@ -132,11 +133,6 @@ function reopenReview(run: Run, slice: Slice, reason = 'decisions recorded after
 /** The shell's own diagnostic for a command it cannot find (bash and dash wording). */
 const COMMAND_NOT_FOUND = /^[\w./-]*sh(?:: line \d+)?: (?:\d+: )?(\S+): (?:command )?not found$/m;
 
-function describeCheck(command: string, result: CommandResult) {
-  if (result.timedOut) return `${command}: timed out`;
-  return `${command}: ${result.exitCode === 0 ? 'passed' : `failed (exit ${result.exitCode})`} in ${result.durationMs}ms`;
-}
-
 /**
  * Commits on the slice branch past its parent that a branch or remote outside this run also holds: work pulled in
  * from elsewhere (a merge, rebase, or fast-forward onto another stack) instead of written for this slice.
@@ -153,41 +149,6 @@ async function foreignCommits(ws: Workspace, run: Run, slice: Slice, own: string
   return own.filter(sha => !unique.has(sha));
 }
 
-const MAX_NAMED_TESTS = 10;
-/** Spec entries (`test at`, `✖ name`) longer than this are skipped: a check can print a megabyte-long whitespace line. TAP `not ok` lines are not length-limited. */
-const MAX_PARSED_LINE = 2_000;
-
-const parsable = (line: string | undefined) => (line !== undefined && line.length <= MAX_PARSED_LINE ? line : undefined);
-
-/** What a check's first failure reported: its failing tests (node:test spec `✖ failing tests:` entries, TAP `not ok` lines), else its last non-empty output line. */
-function firstFailureNames({ lastStream, stderr, stdout }: CommandResult) {
-  const lines = `${stdout}\n${stderr}`.split(/\r?\n/);
-  const names = new Set<string>();
-  const section = lines.indexOf('✖ failing tests:');
-  if (section >= 0) {
-    for (let i = section + 1; i < lines.length; i++) {
-      const at = parsable(lines[i])?.match(/^test at (.+)$/);
-      const name = parsable(lines[i + 1])?.match(/^✖ (.*?) \([\d.]+m?s\)\s*$/);
-      // The rest of the line, trimmed: a lazy group before `\s*$` backtracks quadratically on a long run of spaces.
-      const where = at?.[1]?.trim();
-      if (where && name) names.add(evidenceLine(`${where} ${name[1]}`));
-    }
-  }
-  for (const line of lines) {
-    const tap = line.match(/^\s*not ok \d+ - (.+)$/);
-    if (tap) names.add(evidenceLine(tap[1] ?? ''));
-  }
-  if (names.size === 0) {
-    for (const stream of lastStream === 'stderr' ? (['stderr', 'stdout'] as const) : (['stdout', 'stderr'] as const)) {
-      const last = (stream === 'stderr' ? stderr : stdout).split(/\r?\n/).findLast(line => line.trim() !== '');
-      if (last !== undefined) return `; last ${stream} line: ${evidenceLine(last, 299)}`;
-    }
-    return '';
-  }
-  const listed = [...names].slice(0, MAX_NAMED_TESTS).join(', ');
-  const rest = names.size - MAX_NAMED_TESTS;
-  return `; failing tests: ${listed}${rest > 0 ? ` and ${rest} more` : ''}`;
-}
 /** A check run whose wall clock and monotonic clock disagree by more than this saw a host sleep or clock change. */
 const CLOCK_JUMP_MS = 30_000;
 
@@ -252,13 +213,8 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
       `Checks could not find a command:\n${listed}\nPATH used: ${checkPath}\nThis is an environment error, not a code fault. When the command is a tool installed on the user's machine, add the directory that holds it (find it with \`command -v ${tool}\` in the user's terminal) to "checkPath" in .omp/factory.json.${dependency} Then call factory_checks again.`,
     );
   }
-  // Each failed check (not a timeout: a rerun could cost another full timeout) runs once more, as a whole command.
-  for (const entry of results) {
-    if (entry.result.exitCode === 0 || entry.result.timedOut) continue;
-    signal?.throwIfAborted();
-    entry.first = entry.result;
-    entry.result = await runShell(entry.command, ws.root, ws.config.checkTimeoutMs, signal, env);
-  }
+  // Each failed check (not a timeout: a rerun could cost another full timeout) runs once more as a whole command, and that run decides it. A check with a `rerunFiles` template whose output names failed test files first reruns only those files (up to `rerunFilesTries` times); when one of those runs passes, the whole-command run follows and is the only further run. When none passes, or no template or file applies, one whole-command rerun decides.
+  await rerunFailedChecks(ws, results, env, signal);
   signal?.throwIfAborted();
   // A host sleep or clock change during the run that decides a failed check makes that failure unreliable, and a code fix cannot change it.
   const jumped = results.filter(({ result }) => (result.exitCode !== 0 || result.timedOut) && result.clockJumpMs > CLOCK_JUMP_MS);
@@ -270,12 +226,7 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
   }
   const dirty = (await porcelain(ws.root)).trim();
   const failed = results.filter(({ result }) => result.exitCode !== 0 || result.timedOut);
-  const describe = ({ command, first, result }: CheckRun) => {
-    if (first === undefined) return describeCheck(command, result);
-    if (result.exitCode === 0 && !result.timedOut) return `${command}: passed on rerun, flaky (first failed (exit ${first.exitCode}) in ${first.durationMs}ms${firstFailureNames(first)})`;
-    return `${describeCheck(command, result)} on rerun (first failed (exit ${first.exitCode}) in ${first.durationMs}ms)`;
-  };
-  const summary = results.map(describe);
+  const summary = results.map(describeCheck);
   if (failed.length === 0 && dirty === '') {
     // Written after the porcelain read above, so the log files never count as a change the checks made to the working tree.
     const logs = writeFirstAttemptLogs(ws, run, slice, results);
@@ -284,7 +235,7 @@ export async function runChecks(ws: Workspace, run: Run, signal?: AbortSignal) {
 
   const records: FixRecord[] = failed.map(entry => {
     const { result } = entry;
-    const described = describe(entry);
+    const described = describeCheck(entry);
     const section = `## ${described}\n\n### stdout\n\n\`\`\`\n${evidence(result.stdout)}\n\`\`\`\n\n### stderr\n\n\`\`\`\n${evidence(result.stderr)}\n\`\`\``;
     return { item: { kind: 'check', summary: described }, section };
   });
