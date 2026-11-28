@@ -99,7 +99,9 @@ export function planDecisions(run: Run, decisions: unknown) {
 /**
  * Records decisions for the run (accepted tradeoffs, out-of-scope work) so every later ticket and review
  * data file carries them. A user's decision has author `user`; a headless run records its own as `autonomous`.
- * Reviewers check the code against them: they report code that breaks a decision, and do not re-raise a tradeoff
+ * A decision item may carry `supersedes`, the numbers of earlier decisions it replaces; tickets and review data mark
+ * those as replaced (no longer in force), and reviewers do not check the code against them or ask for what they said.
+ * Reviewers check the code against the decisions in force (not replaced ones): they report code that breaks a decision, and do not re-raise a tradeoff
  * the user accepted. An autonomous decision is checked, not a waiver. A decision that names a slice belongs to it: slices before it
  * mark the decision as built later. An open review of the active slice froze the older decisions,
  * so it is discarded and `discarded` names it; a green review did not see them either, so the slice goes back to
