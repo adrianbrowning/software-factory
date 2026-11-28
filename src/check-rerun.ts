@@ -54,7 +54,7 @@ export function failedTestFiles(result: CommandResult) {
   const lines = outputLines(result);
   const found: { file: string; index: number }[] = [];
   lines.forEach((line, index) => {
-    const file = parsable(line)?.match(/^\s*FAIL\s+(\S+)/)?.[1];
+    const file = parsable(line)?.match(/^\s*FAIL\s+(.+?)(?: > | \(| \[|$)/)?.[1]?.trim();
     if (file) found.push({ file, index });
   });
   for (const { index, where } of specFailures(lines)) {
@@ -67,10 +67,9 @@ export function failedTestFiles(result: CommandResult) {
 
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
-/** The template with every `{files}` replaced by the files, each one single-quoted so output text never runs as shell code. */
+/** The template with every `{files}` (and a double-quoted `"{files}"`) replaced by `"$@"`, after a `set --` prefix that holds the files single-quoted: the output text never enters the template, so it never runs as shell code whatever quoting the template puts around `{files}`. */
 export function targetedCommand(template: string, files: string[]) {
-  const quoted = files.map(shellQuote).join(' ');
-  return template.replaceAll('{files}', () => quoted);
+  return `set -- ${files.map(shellQuote).join(' ')}; ${template.replaceAll('"{files}"', () => '"$@"').replaceAll('{files}', () => '"$@"')}`;
 }
 
 /**
