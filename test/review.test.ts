@@ -568,6 +568,14 @@ describe('autonomous decisions', { concurrency: 4 }, () => {
     return step(ws, run => startReview(ws, run, [], ['react-ts', 'test-validity', 'devops']));
   }
 
+  it('keeps the AUTONOMOUS mark on a replaced autonomous decision, before the REPLACED mark', async () => {
+    using ws = workspace();
+    await decisionReview(ws, 'headless');
+    await step(ws, run => recordDecisions(ws, run, [{ supersedes: [1], text: 'Export wanted.' }]));
+    const text = readFileSync(ticketPath(ws, 'demo', readRun(ws, 'demo').slices[0]!), 'utf8');
+    assert.match(text, /\n1\. Narrow reading: no export\. \[AUTONOMOUS: [^\]]*not a waiver\] \[REPLACED by decision 2: no longer in force;/);
+  });
+
   it('records the author by run mode, marks autonomous ones in the review data, and loads old string decisions as user', async () => {
     using ws = workspace();
     const { dataFile } = await decisionReview(ws, 'headless');
@@ -600,6 +608,23 @@ describe('autonomous decisions', { concurrency: 4 }, () => {
     await assert.rejects(validate({ downgrade: [{ id: 'react-ts-cited', reason: 'x' }], keep: ['bug-dup'] }), /react-ts-cited.*decisionMatch/);
     await assert.rejects(validate({ downgrade: [{ category: 'correctness', decisionMatch: 'x', id: 'bug-dup', reason: 'x' }], keep: ['react-ts-cited'] }), /decisionMatch.*bug-dup/);
     await validate({ keep: ['bug-dup', 'react-ts-cited'] });
+  });
+
+  it('drops a blocking finding that cites a replaced autonomous decision', async () => {
+    using ws = workspace();
+    await newRun(ws, [slice('Feature')]);
+    await step(ws, run => void (run.mode = 'headless'));
+    await step(ws, run => nextSlice(ws, run));
+    commit(ws, 'ok');
+    await step(ws, run => recordDecisions(ws, run, ['Narrow reading: no export.']));
+    await step(ws, run => recordDecisions(ws, run, [{ supersedes: [1], text: 'Export wanted.' }]));
+    await step(ws, run => runChecks(ws, run));
+    const { reviewId } = await step(ws, run => startReview(ws, run, [], ['react-ts', 'test-validity', 'devops']));
+    const cited = { ...finding('react-ts', 'high', 'cited'), decision: 1 };
+    for (const domain of REVIEW_DOMAINS) {
+      await step(ws, run => submitDomain(ws, run, { agentId: domain, domain, findings: domain === 'react-ts' ? [cited] : [], reviewId, ...noFixItems(domain) }));
+    }
+    await step(ws, run => submitValidation(ws, run, { agentId: 'v', dropped: [{ id: 'react-ts-cited', reason: 'decision replaced' }], keep: [], reviewId }));
   });
 
   for (const mode of ['interactive', 'headless'] as const) {

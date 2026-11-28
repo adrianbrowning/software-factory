@@ -333,9 +333,9 @@ export function replacesMark(supersedes: number[] | undefined) {
   return supersedes === undefined ? '' : ` (replaces decision${supersedes.length === 1 ? '' : 's'} ${supersedes.join(', ')})`;
 }
 
-/** Whether decision `number` (1-based) is one a headless run made without the user. An autonomous decision is checked, never a waiver. */
+/** Whether decision `number` (1-based) is one a headless run made without the user. An autonomous decision is checked, never a waiver; a decision a later one replaces is no longer in force, so it is not autonomous here. */
 export function isAutonomous(decisions: Decision[], number: number | undefined) {
-  return number !== undefined && decisions[number - 1]?.author === 'autonomous';
+  return number !== undefined && decisions[number - 1]?.author === 'autonomous' && !decisions.some(item => item.supersedes?.includes(number));
 }
 
 /**

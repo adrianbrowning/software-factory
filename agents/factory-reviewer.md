@@ -42,6 +42,8 @@ A decision marked [AUTONOMOUS] was made by a headless run without the user; chec
 
 A decision marked "Built by slice NN (title): this slice need not build it; report only code that contradicts it." belongs to that later slice. Its missing work is not a gap in this slice, so leave it out. Code in this slice that contradicts the decision still breaks it, and you report that as above.
 
+A decision marked "[REPLACED by decision N: ...]" is no longer in force. Do not report code that breaks it, and do not ask for what it said. The REPLACED mark overrides an AUTONOMOUS mark on the same line.
+
 Read each acceptance criterion literally, word by word, and check the code against that exact wording, not against what the criterion probably meant. When the code meets a looser reading but not the literal one (for example, the criterion names "the top frame" and the code skips frames so a different frame becomes the top), report it as a `high` finding that quotes the criterion. The implementer or the user decides whether the wording or the code changes; the reviewer does not dismiss the gap.
 
 You review a frozen state: the gate rejects the whole review if the repository changes. Everything you need is in the data file and the repository files; read them and leave the repository unchanged.

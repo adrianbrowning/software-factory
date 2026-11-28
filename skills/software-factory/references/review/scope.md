@@ -45,6 +45,8 @@ The data file's `## LATER SLICES` section lists the slices stacked after this on
 
 A decision in the ticket marked "Built by slice NN (title)" belongs to a later slice. Do not report its work as missing in this slice. Code in this slice that contradicts the decision still breaks it: report that as `high` with the decision's number in `decision`.
 
+A decision marked "[REPLACED by decision N: ...]" is no longer in force. Do not report code that breaks it or work it asked for as missing. The REPLACED mark overrides an AUTONOMOUS mark on the same line.
+
 **Contract drift**
 
 This rule applies only when the repository has an OpenAPI/schema spec file. Before you apply it, check the repository for one with `glob`, for example `**/openapi.*`, `**/swagger.*`, `**/*.schema.json`, `**/schema.graphql`.
