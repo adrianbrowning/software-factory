@@ -196,6 +196,17 @@ const configSchema = z
     /** Directories put before the omp process PATH when checks run. Each is absolute or starts with `~/`. */
     checkPath: z.array(text).default([]),
     checkTimeoutMs: positiveInt.default(10 * 60 * 1_000),
+    /** Per check command, a command template with `{files}` that reruns only the failed test files of that check. */
+    rerunFiles: z
+      .record(z.string(), z.string())
+      .superRefine((templates, ctx) => {
+        for (const [key, template] of Object.entries(templates)) {
+          if (!template.includes('{files}')) ctx.addIssue({ code: 'custom', message: `rerunFiles "${key}" must contain {files}`, path: [key] });
+        }
+      })
+      .default({}),
+    /** Most targeted runs per failed check. */
+    rerunFilesTries: positiveInt.default(3),
     /** Sink for review observations and accepted-unresolved findings the run defers. Unset: nothing can be deferred. */
     deferred: deferredSchema.optional(),
     /** Repository that receives retro findings about the factory itself. */
