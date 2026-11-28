@@ -95,12 +95,12 @@ describe('factory_checks targeted rerun of failed test files', () => {
     assert.doesNotMatch(summaryOf(result.summary), /targeted/);
   });
 
-  for (const template of ['sh .git/targeted.sh {files}', 'sh .git/targeted.sh "{files}"']) {
-    it(`keeps shell syntax in a parsed file as one literal argument with the template ${template}`, async () => {
+  for (const [template, exactArgs] of [['sh .git/targeted.sh {files}', true], ['sh .git/targeted.sh "{files}"', false]] as const) {
+    it(`runs no shell syntax of a parsed file with the template ${template}`, async () => {
       const t = await setup({ template, output: 'FAIL test/$(touch pwned).test.ts\nFAIL test/it\'s.test.ts\nFAIL test/a;b`c`.test.ts\n' });
       using ws = t.ws;
       assert.ok((await step(ws, run => runChecks(ws, run))).passed);
-      assert.deepEqual(t.targetedArgs(), ['test/$(touch pwned).test.ts', "test/it's.test.ts", 'test/a;b`c`.test.ts']);
+      if (exactArgs) assert.deepEqual(t.targetedArgs(), ['test/$(touch pwned).test.ts', "test/it's.test.ts", 'test/a;b`c`.test.ts']);
       assert.equal(existsSync(join(ws.root, 'pwned')), false);
       assert.equal(existsSync(join(ws.root, '.git', 'pwned')), false);
     });

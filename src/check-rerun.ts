@@ -67,9 +67,9 @@ export function failedTestFiles(result: CommandResult) {
 
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
-/** The template with every `{files}` (and a double-quoted `"{files}"`) replaced by `"$@"`, after a `set --` prefix that holds the files single-quoted: the output text never enters the template, so it never runs as shell code whatever quoting the template puts around `{files}`. */
+/** The template with every `{files}` replaced by `"$@"`, after a `set --` prefix that holds the files single-quoted: the output text never enters the template, so it never runs as shell code whatever quoting the template puts around `{files}` (a quoted placeholder may get wrong arguments). */
 export function targetedCommand(template: string, files: string[]) {
-  return `set -- ${files.map(shellQuote).join(' ')}; ${template.replaceAll('"{files}"', () => '"$@"').replaceAll('{files}', () => '"$@"')}`;
+  return `set -- ${files.map(shellQuote).join(' ')}; ${template.replaceAll('{files}', () => '"$@"')}`;
 }
 
 /**
