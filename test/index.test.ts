@@ -976,7 +976,7 @@ describe('factory_decide', () => {
     assert.deepEqual(readRun(ws, 'demo'), before);
   });
 
-  it('accepts { text, slice, supersedes } and shows both the built-by and the replaced mark in an earlier ticket', async () => {
+  it('accepts { text, slice, supersedes } and shows the built-by mark with replaces on the replacing decision in an earlier ticket', async () => {
     using repo = tempRepo('factory-decide-supersedes-owner-', CHECKS_OK);
     const { call, ws } = await sliceAtCommit(repo.root, ['First', 'Second']);
     await call('factory_decide', { decisions: ['Old.'] });
@@ -985,6 +985,16 @@ describe('factory_decide', () => {
     const ticket = readFileSync(ticketPath(ws, 'demo', run.slices[0] ?? assert.fail('no slice')), 'utf8');
     assert.ok(ticket.includes('\n1. Old. [REPLACED by decision 2: no longer in force; do not check the code against it or ask for what it said]\n'), ticket);
     assert.ok(ticket.includes(`\n2. New. ${BUILT_BY_SECOND} (replaces decision 1)\n`), ticket);
+  });
+
+  it('shows both the built-by and the replaced mark on a replaced decision owned by a later slice', async () => {
+    using repo = tempRepo('factory-decide-supersedes-replaced-owned-', CHECKS_OK);
+    const { call, ws } = await sliceAtCommit(repo.root, ['First', 'Second']);
+    await call('factory_decide', { decisions: [{ slice: '02', text: 'Old.' }] });
+    await call('factory_decide', { decisions: [{ supersedes: [1], text: 'New.' }] });
+    const run = readRun(ws, 'demo');
+    const ticket = readFileSync(ticketPath(ws, 'demo', run.slices[0] ?? assert.fail('no slice')), 'utf8');
+    assert.ok(ticket.includes(`\n1. Old. ${BUILT_BY_SECOND} [REPLACED by decision 2: no longer in force; do not check the code against it or ask for what it said]\n`), ticket);
   });
 });
 
