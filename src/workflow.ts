@@ -246,7 +246,7 @@ function renderDecisions(run: Run, slice: Slice) {
       const mark = owner === undefined ? '' : ` ${builtBy(owner, 'Built')}: this slice need not build it; report only code that contradicts it.`;
       const author = decision.author === 'autonomous' ? ' [AUTONOMOUS: made by a headless run without the user; check the code against it, it is not a waiver]' : '';
       const by = run.decisions.findIndex(item => item.supersedes?.includes(index + 1)) + 1;
-      return `${index + 1}. ${decision.text}${author}${mark}${by === 0 ? '' : ` [REPLACED by decision ${by}: no longer in force; do not check the code against it or ask for what it said]`}${replacesMark(decision.supersedes)}`;
+      return `${index + 1}. ${decision.text}${author}${mark}${replacesMark(decision.supersedes)}${by === 0 ? '' : ` [REPLACED by decision ${by}: no longer in force; do not check the code against it or ask for what it said]`}`;
     })
     .join('\n');
 }

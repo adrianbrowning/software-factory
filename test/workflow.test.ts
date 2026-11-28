@@ -192,6 +192,9 @@ describe('planSlices', () => {
     assert.ok(text.includes('\n2. Other.\n'), text);
     assert.ok(text.includes('\n1. Old. [REPLACED by decision 3: no longer in force; do not check the code against it or ask for what it said]\n'), text);
     assert.ok(text.includes('\n3. New. (replaces decision 1)\n'), text);
+    await step(ws, run => recordDecisions(ws, run, [{ supersedes: [3], text: 'Newest.' }]));
+    const chain = readFileSync(ticketPath(ws, 'demo', run.slices[0] ?? assert.fail('no slice')), 'utf8');
+    assert.ok(chain.includes('\n3. New. (replaces decision 1) [REPLACED by decision 4: no longer in force; do not check the code against it or ask for what it said]\n'), chain);
   });
 
   it('ends each ticket file with a note for the advisor, once, and leaves the shared ticket rendering without it', async () => {
