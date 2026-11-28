@@ -14,7 +14,7 @@ const outputLines = ({ stderr, stdout }: CommandResult) => `${stdout}\n${stderr}
 
 /** The `test at <location>` lines of a node:test spec `✖ failing tests:` section that a `✖ <name> (<duration>)` line follows. */
 function specFailures(lines: string[]) {
-  const found: { name: string; where: string }[] = [];
+  const found: { index: number; name: string; where: string }[] = [];
   const section = lines.indexOf('✖ failing tests:');
   if (section < 0) return found;
   for (let i = section + 1; i < lines.length; i++) {
@@ -22,7 +22,7 @@ function specFailures(lines: string[]) {
     const name = parsable(lines[i + 1])?.match(/^✖ (.*?) \([\d.]+m?s\)\s*$/);
     // The rest of the line, trimmed: a lazy group before `\s*$` backtracks quadratically on a long run of spaces.
     const where = at?.[1]?.trim();
-    if (where && name) found.push({ name: name[1] ?? '', where });
+    if (where && name) found.push({ index: i, name: name[1] ?? '', where });
   }
   return found;
 }
@@ -52,15 +52,16 @@ function firstFailureNames(result: CommandResult) {
 /** The failed test files a run's output names, first-seen order, each once: vitest/jest `FAIL <file>` lines and node:test spec `test at <file>:<line>:<col>` entries. */
 export function failedTestFiles(result: CommandResult) {
   const lines = outputLines(result);
-  const files = new Set<string>();
-  for (const line of lines) {
+  const found: { file: string; index: number }[] = [];
+  lines.forEach((line, index) => {
     const file = parsable(line)?.match(/^\s*FAIL\s+(\S+)/)?.[1];
-    if (file) files.add(file);
-  }
-  for (const { where } of specFailures(lines)) {
+    if (file) found.push({ file, index });
+  });
+  for (const { index, where } of specFailures(lines)) {
     const file = where.replace(/:\d+:\d+$/, '');
-    if (file !== where) files.add(file);
+    if (file !== where) found.push({ file, index });
   }
+  const files = new Set(found.sort((a, b) => a.index - b.index).map(({ file }) => file));
   return [...files].filter(file => !file.startsWith('-'));
 }
 

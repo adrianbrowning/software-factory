@@ -70,6 +70,14 @@ describe('factory_checks targeted rerun of failed test files', () => {
     assert.deepEqual(t.targetedArgs(), ['test/my dir/b.test.ts']);
   });
 
+  it('passes files in first-seen order when node:test entries and FAIL lines are mixed', async () => {
+    const output = '✖ failing tests:\n\ntest at test/a.test.ts:5:1\n✖ alpha (1ms)\n\nFAIL test/b.test.ts\n';
+    const t = await setup({ output });
+    using ws = t.ws;
+    assert.ok((await step(ws, run => runChecks(ws, run))).passed);
+    assert.deepEqual(t.targetedArgs(), ['test/a.test.ts', 'test/b.test.ts']);
+  });
+
   it('drops a file that starts with a dash and a spec location without a line suffix', async () => {
     const output = 'FAIL --reporter=x\nFAIL test/a.test.ts\n✖ failing tests:\n\ntest at somewhere\n✖ beta (1ms)\n';
     const t = await setup({ output });
