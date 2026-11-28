@@ -21,7 +21,7 @@ import {
   dropPass,
   greenCommit,
   outdatedGreenCount,
-  isAutonomous,
+  isActiveAutonomous, isAutonomous,
   OBSERVATION_CATEGORIES,
   type Decision,
   type Domain,
@@ -612,7 +612,7 @@ function checkCoverage(findings: Finding[], validation: Validation, decisionCoun
   };
   const usesAutonomous = validation.dropped.filter(entry => {
     const dropped = byId.get(entry.id);
-    if (dropped === undefined || dropped.severity === 'observation' || !isAutonomous(decisions, dropped.decision)) return false;
+    if (dropped === undefined || dropped.severity === 'observation' || !isActiveAutonomous(decisions, dropped.decision)) return false;
     return entry.duplicateOf === undefined || keptBlockingDecision(entry.duplicateOf) !== dropped.decision;
   });
   if (usesAutonomous.length > 0) {
