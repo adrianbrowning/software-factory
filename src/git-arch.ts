@@ -20,8 +20,8 @@ export type GitArchHost = {
 const SYSTEM_GIT = '/usr/bin/git';
 
 /**
- * The real host. `timeouts` sets the `execFileSync` timeout in milliseconds of the file probe
- * (`describeMs`, default 5000) and of the sysctl probe (`sysctlMs`, default 2000).
+ * The real host. The optional `{ describeMs, sysctlMs }` argument sets the `execFileSync` timeout in
+ * milliseconds of the file probe (default 5000) and of the sysctl probe (default 2000).
  */
 export function defaultGitArchHost({ describeMs = 5000, sysctlMs = 2000 }: { describeMs?: number; sysctlMs?: number } = {}): GitArchHost {
   return {
