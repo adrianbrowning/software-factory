@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, it } from 'node:test';
+import type { CheckRun } from '../src/check-log.ts';
+import { rerunFailedChecks } from '../src/check-rerun.ts';
 import { readRun, runDir } from '../src/run.ts';
 import { runChecks } from '../src/review.ts';
 import { nextSlice } from '../src/workflow.ts';
@@ -125,14 +127,59 @@ describe('factory_checks targeted rerun of failed test files', () => {
     assert.doesNotMatch(summaryOf(result.summary), /targeted/);
   });
 
-  it('falls back to one whole-command rerun when the targeted command cannot start', async () => {
+  it('drops a file name that holds a NUL byte and runs the other parsed files', async () => {
+    const t = await setup({ output: 'FAIL test/a\0b.test.ts\nFAIL test/c.test.ts\n' });
+    using ws = t.ws;
+    const result = await step(ws, run => runChecks(ws, run));
+    assert.ok(result.passed);
+    assert.deepEqual(t.targetedArgs(), ['test/c.test.ts']);
+  });
+
+  it('runs no targeted command when every parsed file holds a NUL byte, and one whole-command rerun decides', async () => {
     const t = await setup({ output: 'FAIL test/a\0b.test.ts\n' });
     using ws = t.ws;
     const result = await step(ws, run => runChecks(ws, run));
     assert.ok(result.passed);
     assert.equal(t.targetedRuns(), 0);
     assert.equal(t.checkRuns().length, 2);
-    assert.doesNotMatch(summaryOf(result.summary), /targeted/);
+    assert.match(summaryOf(result.summary), /^sh \.git\/check\.sh: passed on rerun, flaky \(first failed \(exit 1\) in \d+ms; last stdout line: FAIL test\/a\0b\.test\.ts\)$/);
+  });
+
+  describe('with an injected shell runner', () => {
+    const failed = { clockJumpMs: 0, durationMs: 1, exitCode: 1, lastStream: 'stdout' as const, stderr: '', stdout: 'FAIL test/a.test.ts\n', timedOut: false };
+    const passed = { ...failed, exitCode: 0, stdout: '' };
+    const prepare = async () => {
+      const ws = workspace({ checks: [CHECK], rerunFiles: { [CHECK]: 'run {files}' }, rerunFilesTries: 3 });
+      await newRun(ws, [slice('Feature')]);
+      return ws;
+    };
+
+    it('ends the targeted runs at once when a start throws, then runs the whole command', async () => {
+      using ws = await prepare();
+      const commands: string[] = [];
+      const shell = async (command: string) => {
+        commands.push(command);
+        if (commands.length === 1) throw new Error('E2BIG');
+        return passed;
+      };
+      const entry: CheckRun = { command: CHECK, result: failed };
+      await rerunFailedChecks(ws, [entry], {}, undefined, shell);
+      assert.equal(commands.length, 2);
+      assert.match(commands[0] ?? '', /^set -- 'test\/a\.test\.ts'; run "\$@"$/);
+      assert.equal(commands[1], CHECK);
+      assert.equal(entry.targeted, undefined);
+      assert.equal(entry.result, passed);
+    });
+
+    it('rejects with the error of a start that throws while the signal is aborted', async () => {
+      using ws = await prepare();
+      const controller = new AbortController();
+      const shell = async () => {
+        controller.abort();
+        throw new Error('boom');
+      };
+      await assert.rejects(rerunFailedChecks(ws, [{ command: CHECK, result: failed }], {}, controller.signal, shell), /boom/);
+    });
   });
 
   for (const [template, exactArgs] of [['sh .git/targeted.sh {files}', true], ['sh .git/targeted.sh "{files}"', false]] as const) {
@@ -146,6 +193,16 @@ describe('factory_checks targeted rerun of failed test files', () => {
       assert.equal(existsSync(join(ws.root, '.git', 'pwned')), false);
     });
   }
+
+  it('passes a parsed file as one literal argument through the safe nested-shell template', async () => {
+    const t = await setup({ template: `sh -c 'sh .git/targeted.sh "$@"' sh {files}`, output: 'FAIL test/$(touch${IFS}pwned).test.ts\n' });
+    using ws = t.ws;
+    assert.ok((await step(ws, run => runChecks(ws, run))).passed);
+    assert.equal(t.targetedRuns(), 1);
+    assert.deepEqual(t.targetedArgs(), ['test/$(touch${IFS}pwned).test.ts']);
+    assert.equal(existsSync(join(ws.root, 'pwned')), false);
+    assert.equal(existsSync(join(ws.root, '.git', 'pwned')), false);
+  });
 
   it('takes the FAIL path up to the first " > ", " (", " [" or the line end', async () => {
     const output = 'FAIL test/my dir/b.test.ts > s\nFAIL  test/c.test.ts [ test/c.test.ts ]\nFAIL test/d.test.ts [chromium]\nFAIL app/[id]/page.test.ts\n';

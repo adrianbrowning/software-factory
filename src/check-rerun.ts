@@ -62,23 +62,26 @@ export function failedTestFiles(result: CommandResult) {
     if (file !== where) found.push({ file, index });
   }
   const files = new Set(found.sort((a, b) => a.index - b.index).map(({ file }) => file));
-  return [...files].filter(file => !file.startsWith('-'));
+  return [...files].filter(file => !file.startsWith('-') && !file.includes('\0'));
 }
 
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 
-/** The template with every `{files}` replaced by `"$@"`, after a `set --` prefix that holds the files single-quoted: the output text never enters the template, so it never runs as shell code whatever quoting the template puts around `{files}` (a quoted placeholder may get wrong arguments). */
+/** The template with every `{files}` replaced by `"$@"`, after a `set --` prefix that holds the files single-quoted: the file text appears in the command only in that prefix, each file single-quoted (data, never shell code), and never in the template text; the outer `sh -c` gets each file as one literal argument whatever quoting the template puts around `{files}` (a quoted placeholder may get wrong arguments). Limit: a template that hands its arguments to a second shell interpreter as command text (`sh -c "echo {files}"`, `sh -c {files}`, `eval {files}`) makes that interpreter parse the file text as shell code. Safe nested form: the inner shell reads the files as its own positional parameters, with `{files}` outside the inner command string: `sh -c 'cd packages/tests && vitest run "$@"' sh {files}`. */
 export function targetedCommand(template: string, files: string[]) {
   return `set -- ${files.map(shellQuote).join(' ')}; ${template.replaceAll('{files}', () => '"$@"')}`;
 }
 
 /**
  * Runs each failed check again. A check with a `rerunFiles` template whose first run names failed test files first
- * runs only those files (up to `rerunFilesTries` runs, stopping at the first pass, at a timeout, or when a targeted run cannot start). Then every failed
+ * runs only those files (up to `rerunFilesTries` runs, stopping at the first pass). A targeted run that times out, or
+ * whose start throws (for example spawn `E2BIG`), ends the targeted runs; any other failed targeted run, including a
+ * spawn error `runShell` reports as exit 127, uses up one try. Then every failed
  * check runs once more as a whole command, and that run decides the check. Sets `first`, `result` and, when a targeted
- * run passed, `targeted` on the entry. The targeted runs' output is kept nowhere.
+ * run passed, `targeted` on the entry. The targeted runs' output is kept nowhere. `shell` is the runner of every
+ * command (a test passes a spy); `runChecks` passes none, so it runs `runShell`.
  */
-export async function rerunFailedChecks(ws: Workspace, results: CheckRun[], env: NodeJS.ProcessEnv, signal?: AbortSignal) {
+export async function rerunFailedChecks(ws: Workspace, results: CheckRun[], env: NodeJS.ProcessEnv, signal?: AbortSignal, shell: typeof runShell = runShell) {
   const { checkTimeoutMs, rerunFiles, rerunFilesTries } = ws.config;
   for (const entry of results) {
     if (entry.result.exitCode === 0 || entry.result.timedOut) continue;
@@ -92,9 +95,9 @@ export async function rerunFailedChecks(ws: Workspace, results: CheckRun[], env:
         signal?.throwIfAborted();
         let run: CommandResult;
         try {
-          run = await runShell(command, ws.root, checkTimeoutMs, signal, env);
+          run = await shell(command, ws.root, checkTimeoutMs, signal, env);
         } catch (error) {
-          // A targeted command that cannot start (spawn E2BIG, a NUL byte in an argument) ends the targeted runs; the whole-command rerun still decides.
+          // A targeted start that throws (for example spawn E2BIG) ends the targeted runs; the whole-command rerun still decides.
           if (signal?.aborted) throw error;
           break;
         }
@@ -106,7 +109,7 @@ export async function rerunFailedChecks(ws: Workspace, results: CheckRun[], env:
       }
     }
     signal?.throwIfAborted();
-    entry.result = await runShell(entry.command, ws.root, checkTimeoutMs, signal, env);
+    entry.result = await shell(entry.command, ws.root, checkTimeoutMs, signal, env);
   }
 }
 
