@@ -74,7 +74,7 @@ export function targetedCommand(template: string, files: string[]) {
 
 /**
  * Runs each failed check again. A check with a `rerunFiles` template whose first run names failed test files first
- * runs only those files (up to `rerunFilesTries` runs, stopping at the first pass or at a timeout). Then every failed
+ * runs only those files (up to `rerunFilesTries` runs, stopping at the first pass, at a timeout, or when a targeted run cannot start). Then every failed
  * check runs once more as a whole command, and that run decides the check. Sets `first`, `result` and, when a targeted
  * run passed, `targeted` on the entry. The targeted runs' output is kept nowhere.
  */
@@ -90,7 +90,14 @@ export async function rerunFailedChecks(ws: Workspace, results: CheckRun[], env:
       const command = targetedCommand(template, files);
       for (let attempt = 1; attempt <= rerunFilesTries; attempt++) {
         signal?.throwIfAborted();
-        const run = await runShell(command, ws.root, checkTimeoutMs, signal, env);
+        let run: CommandResult;
+        try {
+          run = await runShell(command, ws.root, checkTimeoutMs, signal, env);
+        } catch (error) {
+          // A targeted command that cannot start (spawn E2BIG, a NUL byte in an argument) ends the targeted runs; the whole-command rerun still decides.
+          if (signal?.aborted) throw error;
+          break;
+        }
         if (run.timedOut) break;
         if (run.exitCode === 0) {
           entry.targeted = { files, passedOn: attempt, tries: rerunFilesTries };

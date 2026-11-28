@@ -125,6 +125,16 @@ describe('factory_checks targeted rerun of failed test files', () => {
     assert.doesNotMatch(summaryOf(result.summary), /targeted/);
   });
 
+  it('falls back to one whole-command rerun when the targeted command cannot start', async () => {
+    const t = await setup({ output: 'FAIL test/a\0b.test.ts\n' });
+    using ws = t.ws;
+    const result = await step(ws, run => runChecks(ws, run));
+    assert.ok(result.passed);
+    assert.equal(t.targetedRuns(), 0);
+    assert.equal(t.checkRuns().length, 2);
+    assert.doesNotMatch(summaryOf(result.summary), /targeted/);
+  });
+
   for (const [template, exactArgs] of [['sh .git/targeted.sh {files}', true], ['sh .git/targeted.sh "{files}"', false]] as const) {
     it(`runs no shell syntax of a parsed file with the template ${template}`, async () => {
       const t = await setup({ template, output: 'FAIL test/$(touch pwned).test.ts\nFAIL test/it\'s.test.ts\nFAIL test/a;b`c`.test.ts\n' });
