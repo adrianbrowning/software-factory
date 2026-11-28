@@ -180,6 +180,20 @@ describe('planSlices', () => {
     assert.ok(ticket(1).includes('\n2. Export is built by API.\n'));
   });
 
+  it('shows no REPLACED or replaces mark for decisions recorded without supersedes, and stores supersedes on the replacing one', async () => {
+    using ws = workspace();
+    await start(ws);
+    await step(ws, run => recordDecisions(ws, run, ['Old.', 'Other.']));
+    await step(ws, run => recordDecisions(ws, run, [{ supersedes: [1], text: 'New.' }]));
+    await step(ws, run => approvePlan(ws, run, planSlices(ws, run, [slice('Schema')])));
+    const run = readRun(ws, 'demo');
+    assert.deepEqual(run.decisions.map(item => item.supersedes), [undefined, undefined, [1]]);
+    const text = readFileSync(ticketPath(ws, 'demo', run.slices[0] ?? assert.fail('no slice')), 'utf8');
+    assert.ok(text.includes('\n2. Other.\n'), text);
+    assert.ok(text.includes('\n1. Old. [REPLACED by decision 3: no longer in force; do not check the code against it or ask for what it said]\n'), text);
+    assert.ok(text.includes('\n3. New. (replaces decision 1)\n'), text);
+  });
+
   it('ends each ticket file with a note for the advisor, once, and leaves the shared ticket rendering without it', async () => {
     using ws = workspace();
     await start(ws);

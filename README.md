@@ -510,7 +510,11 @@ from the fix rounds since the last recorded review (id, fix file and round, summ
 diff, and the changed files. A decision can name the slice that builds it (`factory_decide` item `{ text, slice }`, or
 `ownsDecisions` on a `factory_plan` slice); that slice's state keeps the decision numbers it owns, and the tickets and
 review data of the slices before it mark the decision as built by that slice, so their reviewers report only code
-that contradicts it.
+that contradicts it. A `factory_decide` item can also carry `supersedes`, a list of earlier decision numbers it replaces
+(`{ text, supersedes }`, with or without `slice`); tickets and review data then end the replaced decision's line with a
+`[REPLACED by decision N: no longer in force; ...]` mark and the replacing decision's line with `(replaces decision M)`,
+so reviewers and the validator stop asking for what the replaced decision said. The tool refuses a number that is not
+an earlier recorded decision, one already replaced, or one named twice in the call.
 The scope reviewer gives each fix item a verdict in `fixItems` of its `factory_review_submit` call: `fixed`,
 `not-a-defect` (with evidence from the diff or code), `waived` (with a recorded decision number), or `open`, each with
 a reason. The tool refuses a scope submission that misses an id, names an unknown one, repeats one, or cites a

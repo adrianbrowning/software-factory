@@ -321,12 +321,17 @@ const agentRecordSchema = z.object({
 });
 export type AgentRecord = z.infer<typeof agentRecordSchema>;
 
-/** A recorded decision. `autonomous` marks one a headless run made without the user. Older state files hold plain strings, loaded as the user's. */
+/** A recorded decision. `autonomous` marks one a headless run made without the user. `supersedes` holds the numbers of the earlier decisions this one replaces. Older state files hold plain strings, loaded as the user's, and records without `supersedes`, which replace nothing. */
 const decisionSchema = z.preprocess(
   value => (typeof value === 'string' ? { text: value } : value),
-  z.object({ author: z.enum(['autonomous', 'user']).default('user'), text }),
+  z.object({ author: z.enum(['autonomous', 'user']).default('user'), supersedes: z.array(z.number().int()).min(1).optional(), text }),
 );
 export type Decision = z.infer<typeof decisionSchema>;
+
+/** ` (replaces decision N)` for a decision that replaces earlier ones, else empty: the ticket, the factory_decide dialog body and the decision event name the replaced numbers with it. */
+export function replacesMark(supersedes: number[] | undefined) {
+  return supersedes === undefined ? '' : ` (replaces decision${supersedes.length === 1 ? '' : 's'} ${supersedes.join(', ')})`;
+}
 
 /** Whether decision `number` (1-based) is one a headless run made without the user. An autonomous decision is checked, never a waiver. */
 export function isAutonomous(decisions: Decision[], number: number | undefined) {

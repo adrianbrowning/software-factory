@@ -17,6 +17,7 @@ import {
   activeSlice,
   addEvent,
   builtBy,
+  replacesMark,
   forgetRun,
   readRun,
   reportPath,
@@ -104,7 +105,7 @@ const decisionsSchema = z.object({
   decisions: z
     .array(decisionInputSchema)
     .min(1)
-    .describe('Decisions recorded for the run (a headless run records them as autonomous), each one self-contained sentence; give { text, slice } when the plan assigns the work to one pending or active slice'),
+    .describe('Decisions recorded for the run (a headless run records them as autonomous), each one self-contained sentence; give { text, slice } when the plan assigns the work to one pending or active slice; give supersedes (the numbers of the earlier decisions the new one replaces) when the decision replaces an earlier one'),
 });
 const planSchema = z.object({ slices: z.array(sliceInputSchema) });
 const planToolSchema = planSchema.extend({
@@ -423,14 +424,14 @@ export default function softwareFactory(pi: ExtensionAPI, checkGit: () => string
   tool({
     caller: 'main',
     description:
-      'Record decisions (accepted tradeoffs, out-of-scope work). In an interactive run the user confirms them; in a headless run they are recorded as autonomous and marked so. Every later ticket and review data file lists them. A decision may name the slice that builds it; slices before that one mark it as built later.',
+      'Record decisions (accepted tradeoffs, out-of-scope work). In an interactive run the user confirms them; in a headless run they are recorded as autonomous and marked so. Every later ticket and review data file lists them. A decision may name the slice that builds it; slices before that one mark it as built later. A decision may list in `supersedes` the earlier decisions it replaces; tickets and review data then mark the replaced ones as no longer in force.',
     label: 'Factory: record decisions',
     name: 'factory_decide',
     schema: decisionsSchema,
     async run(params, { feature, ws }, ctx) {
       // An unknown or done slice is refused by planDecisions, without a dialog.
       const planned = planDecisions(readRun(ws, feature), params.decisions);
-      const body = planned.map(({ owner, text }) => `- ${text}${owner === undefined ? '' : ` (${builtBy(owner)})`}`).join('\n');
+      const body = planned.map(({ owner, supersedes, text }) => `- ${text}${owner === undefined ? '' : ` (${builtBy(owner)})`}${replacesMark(supersedes)}`).join('\n');
       if (!(await gate(ctx, ws, feature, 'decide', 'Record these decisions for reviewers?', body))) {
         return reply('The decisions were rejected. Ask how to word them.');
       }
