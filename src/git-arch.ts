@@ -19,10 +19,14 @@ export type GitArchHost = {
 
 const SYSTEM_GIT = '/usr/bin/git';
 
-export function defaultGitArchHost(): GitArchHost {
+/**
+ * The real host. The optional `{ describeMs, sysctlMs }` argument sets the `execFileSync` timeout in
+ * milliseconds of the file probe (default 5000) and of the sysctl probe (default 2000).
+ */
+export function defaultGitArchHost({ describeMs = 5000, sysctlMs = 2000 }: { describeMs?: number; sysctlMs?: number } = {}): GitArchHost {
   return {
     arch: process.arch,
-    describe: path => execFileSync('file', ['-b', path], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 }),
+    describe: path => execFileSync('file', ['-b', path], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: describeMs }),
     exists: existsSync,
     isExecutable: path => {
       try {
@@ -33,7 +37,7 @@ export function defaultGitArchHost(): GitArchHost {
       }
     },
     realpath: realpathSync,
-    sysctlArm64: () => execFileSync('sysctl', ['-n', 'hw.optional.arm64'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000 }),
+    sysctlArm64: () => execFileSync('sysctl', ['-n', 'hw.optional.arm64'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: sysctlMs }),
     path: process.env.PATH,
     platform: process.platform,
   };

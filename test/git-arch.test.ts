@@ -96,7 +96,7 @@ test('an empty PATH component means the working directory', () => {
   assert.deepEqual(seen, [cwdGit]);
 });
 
-function runProbes(scripts: Record<string, string>, body: string, check: (dir: string, r: SpawnSyncReturns<string>) => void): void {
+function runProbes(scripts: Record<string, string>, body: string, check: (dir: string, r: SpawnSyncReturns<string>) => void, hostArg = ''): void {
   const dir = mkdtempSync(join(tmpdir(), 'probe-'));
   try {
     for (const [name, content] of Object.entries(scripts)) {
@@ -105,7 +105,7 @@ function runProbes(scripts: Record<string, string>, body: string, check: (dir: s
     }
     const src = fileURLToPath(new URL('../src/git-arch.ts', import.meta.url));
     const script = `import { defaultGitArchHost } from ${JSON.stringify(src)};
-const h = defaultGitArchHost();
+const h = defaultGitArchHost(${hostArg});
 ${body}`;
     const r = spawnSync(process.execPath, ['--no-warnings', '--input-type=module', '-e', script], {
       encoding: 'utf8',
@@ -128,6 +128,33 @@ test('a failing file or sysctl probe runs and writes nothing to the parent stder
       assert.ok(existsSync(join(dir, 'sysctl.ran')), 'sysctl probe did not run');
       assert.doesNotMatch(String(r.stderr), /probe noise/);
     },
+    '{ describeMs: 60000, sysctlMs: 60000 }',
+  );
+});
+
+test('defaultGitArchHost() keeps a 2000 ms sysctl timeout', () => {
+  runProbes(
+    { sysctl: 'exec /bin/sleep 3\n' },
+    `let threw = false; try { h.sysctlArm64(); } catch { threw = true; } console.log('T=' + threw);`,
+    (_dir, r) => assert.match(String(r.stdout), /T=true/),
+  );
+});
+
+test('defaultGitArchHost({ sysctlMs }) lets a slow sysctl probe finish', () => {
+  runProbes(
+    { sysctl: '/bin/sleep 3\necho 1\n' },
+    `console.log('S=' + h.sysctlArm64().trim());`,
+    (_dir, r) => assert.match(String(r.stdout), /S=1/),
+    '{ sysctlMs: 60000 }',
+  );
+});
+
+test('defaultGitArchHost({ describeMs }) applies the timeout to the file probe', () => {
+  runProbes(
+    { file: 'exec /bin/sleep 3\n' },
+    `let threw = false; try { h.describe('/x'); } catch { threw = true; } console.log('T=' + threw);`,
+    (_dir, r) => assert.match(String(r.stdout), /T=true/),
+    '{ describeMs: 500 }',
   );
 });
 
@@ -139,5 +166,6 @@ test('a succeeding file or sysctl probe returns its stdout', () => {
       assert.match(String(r.stdout), /D=Mach-O 64-bit executable x86_64/);
       assert.match(String(r.stdout), /S=1/);
     },
+    '{ describeMs: 60000, sysctlMs: 60000 }',
   );
 });
